@@ -1,18 +1,10 @@
 """Command-line entry points: `python -m smolbench.deduction.lean.cli <subcommand>`.
 
-Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs
-against Lean and so need `.verify`, which requires `lean_interact` (the `lean`
-extra, `uv sync --all-extras`) plus `elan` on `PATH` plus a mathlib4 checkout
-built with `elan`/`lake` and pointed to by `SMOLBENCH_MATHLIB_ROOT` at
-runtime (`replbackend.mathlib_root`); every other subcommand needs none of
-that. `lean_dojo` is NOT part of this split any more -- the deprecated `Dojo`
-interaction layer it provides cannot drive Lean >= v4.20 and so cannot reach
-this corpus's mathlib4 at Lean v4.34.0-rc2 -- but it remains a declared
-dependency of the `lean` extra for corpus tracing and for `premises`' source
-slicing out of `~/.cache/lean_dojo`, neither of which this CLI drives. To
-keep the split real, `.verify` is imported lazily inside `cmd_replay` and
-`cmd_filter`, and `run-cell`/`run-sweep` reach it only through
-`runner._default_verifier()`.
+Dependency split: `replay`, `filter`, `run-cell` and `run-sweep` verify proofs against Lean
+and so need `.verify`, which requires `lean_interact` plus `elan`/`lake` plus a mathlib4
+checkout pointed to by `SMOLBENCH_MATHLIB_ROOT`; every other subcommand needs none of that.
+`.verify` is imported lazily inside `cmd_replay`/`cmd_filter`, and `run-cell`/`run-sweep`
+reach it only through `runner._default_verifier()`, to keep that split real.
 """
 
 from __future__ import annotations
@@ -35,10 +27,7 @@ from .runner import (
 def cmd_metadata(_: argparse.Namespace) -> int:
     """Print the benchmark's `metadata.json` as indented JSON; always returns 0.
 
-    Raises
-    ------
-    FileNotFoundError
-        From `corpus.metadata` when the dataset is not bootstrapped.
+    Raises `FileNotFoundError` (from `corpus.metadata`) if the dataset is not bootstrapped.
     """
     print(json.dumps(metadata(), indent=2))
     return 0
@@ -60,16 +49,9 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_replay(args: argparse.Namespace) -> int:
     """Replay ground-truth tactics through a Lean REPL session for a sample of theorems.
 
-    Requires `lean_interact` (opens real REPL sessions via `.verify`).
-    ``--full-name`` replays that theorem instead of sampling ``-n`` from the
-    ``--max-tactics`` filtered pool under ``--seed``; ``--timeout`` is
-    per-theorem seconds.
-
-    Returns
-    -------
-    int
-        2 if ``--full-name`` matches no theorem, 0 if every replay verdict is
-        ``"success"``, else 1.
+    Requires `lean_interact`. ``--full-name`` replays that theorem instead of sampling
+    ``-n`` from the ``--max-tactics`` pool under ``--seed``. Returns 2 if ``--full-name``
+    matches no theorem, 0 if every replay succeeds, else 1.
     """
     # Local import: `.verify` requires `lean_interact`, so deferring it here
     # keeps every OTHER subcommand importable without lean_interact installed.
@@ -184,17 +166,11 @@ def cmd_filter(args: argparse.Namespace) -> int:
 def cmd_run_cell(args: argparse.Namespace) -> int:
     """Run one (theorem, k, rung) cell with N replicates and write a JSONL row file.
 
-    Requires `lean_interact`, reached through `runner.run_cell`'s lazily-resolved
-    default verifier. ``--k -1`` means the last step; ``--rung`` is
-    ``<chain>:<level>``, validated via `context.validate`; ``--seed`` is the base
-    decoding seed, replicate ``i`` using ``seed + i``. Writes one row per
-    replicate to ``<results_root()>/runs/<new_run_id()>.jsonl``.
-
-    Returns
-    -------
-    int
-        2 if ``--full-name`` matches no theorem or ``--rung`` is malformed or
-        out of range, 0 if every replicate verdict is ``"success"``, else 1.
+    Requires `lean_interact`, reached through `runner.run_cell`'s lazily-resolved default
+    verifier. ``--k -1`` means the last step; ``--rung`` is ``<chain>:<level>``, validated
+    via `context.validate`; replicate ``i`` uses seed ``--seed + i``. Writes to
+    ``<results_root()>/runs/<new_run_id()>.jsonl``. Returns 2 if ``--full-name``/``--rung``
+    is bad, 0 if every replicate succeeds, else 1.
     """
     pool = list(iter_with_proof(args.kind, args.split))
     matches = [t for t in pool if t.full_name == args.full_name]
@@ -257,18 +233,11 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 def cmd_prompt_stats(args: argparse.Namespace) -> int:
     """Render prompts for each (theorem, k=last, rung) and report token stats.
 
-    No Lean toolchain needed. The pool is replay-passing theorems only
-    (`corpus.iter_replay_passing`), filtered by ``--max-tactics`` and sub-sampled
-    by ``--limit``/``--seed``; ``--rungs`` defaults to
-    `context.IMPLEMENTED_RUNGS`. Tokens come from `tiktoken` ``cl100k_base`` with
-    NO char-based fallback, unlike `context._count_tokens`, so a missing
-    `tiktoken` surfaces as `ImportError`. A `render` exception counts as a render
-    error and is skipped.
-
-    Returns
-    -------
-    int
-        1 on an empty pool, else 0.
+    No Lean toolchain needed. Pool is replay-passing theorems only, filtered/sampled by
+    ``--max-tactics``/``--limit``/``--seed``. Tokens use `tiktoken` ``cl100k_base`` with no
+    char-based fallback (unlike `context._count_tokens`), so a missing `tiktoken` raises
+    `ImportError`. A `render` exception counts as a skipped render error. Returns 1 on an
+    empty pool, else 0.
     """
     import statistics as stats
     import tiktoken
@@ -325,25 +294,15 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 def cmd_analyze(args: argparse.Namespace) -> int:
     """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
-    Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or any file with
-    the same row schema): no Lean toolchain, no REPL session, no writes. Cell
-    rows are deduped through `runner.dedupe_cell_rows` before any counting (a
-    resumed lane may carry an exception row and its retry for the same cell
-    key; see that function's docstring) -- both the plain pass/N table and the
-    pass@N table below count DISTINCT cells, never raw rows. The ``trunc``
-    column counts rows that opened a ``<think>`` block without closing it, or
-    died in the reasoning channel. A pass@N table follows only when some cell
-    recorded more than one distinct ``replicate_idx`` after deduping: a cell
-    passes if ANY replicate verified, and N is the max number of distinct
-    replicate indices seen IN THE DATA, not the sweep config -- so N is
-    reported honestly for a partially-generated run, but a mixed-replicate file
-    still pools cells of unequal N under that one heading. `path` is checked
-    against `runner.reject_superseded_rows` before it is opened.
-
-    Returns
-    -------
-    int
-        1 if `path` has no cell rows, else 0.
+    Pure aggregation over ``path`` (a sweep's ``all_rows.jsonl`` or same-schema file): no
+    Lean toolchain, no writes. Checked against `runner.reject_superseded_rows` before
+    opening. Cell rows are deduped via `runner.dedupe_cell_rows` before counting, since a
+    resumed lane may carry an exception row and its retry for the same cell key; both tables
+    below count distinct cells, never raw rows. ``trunc`` counts rows that opened a
+    ``<think>`` block without closing it, or died in the reasoning channel. A pass@N table
+    follows only when some cell has more than one distinct ``replicate_idx``; N is the max
+    seen in the data, not the sweep config, so a partially-generated run still reports
+    honestly. Returns 1 if `path` has no cell rows, else 0.
     """
     from collections import defaultdict
 
@@ -356,24 +315,20 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
         }
     )
-    # Keyed on full cell identity (model, rung, theorem_id, k), not folded into
-    # `cells`: pass@N asks "did ANY replicate of *this exact* (theorem, k)
-    # succeed", which the (rung, model)-only `cells` aggregation has lost.
+    # Full cell identity, not folded into `cells`: pass@N asks whether ANY replicate of
+    # this exact (theorem, k) succeeded, which the (rung, model)-only `cells` has lost.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
 
     n_rows = 0
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_sanity_skipped = 0
-    # Unlike the run-directory globs elsewhere in this file, `path` is
-    # unfiltered upstream -- the likeliest place to point at a retired
-    # `all_rows_SUPERSEDED-<stamp>.jsonl` (runner.RETIRED_MARKERS).
+    # Unlike the run-dir globs elsewhere in this file, `path` is unfiltered upstream -- the
+    # likeliest place to point at a retired `all_rows_SUPERSEDED-<stamp>.jsonl`.
     reject_superseded_rows([args.path])
-    # Cell rows are collected here, not aggregated inline: `runner.dedupe_cell_rows`
-    # must run on the whole set BEFORE `cells`/`groups` are built, or a lane that
-    # resumed past one exception counts its retried cell twice -- both as 1/2 in
-    # `cells` and as an inflated pass@N `N` (see `groups`, below). Sanity rows
-    # have no cell identity and stay a single streaming pass.
+    # Collected here, not aggregated inline: dedupe_cell_rows must run on the whole set
+    # before `cells`/`groups` are built, or a resumed lane's retried cell counts twice.
+    # Sanity rows have no cell identity and stay a single streaming pass.
     cell_rows: list[dict] = []
     with open(args.path) as f:
         for line in f:
@@ -385,13 +340,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
                     n_sanity_fail += 1
                 else:
-                    # "skipped": a generation-only sweep deferred the replay.
-                    # "exception": an infrastructure failure (unset
-                    # SMOLBENCH_MATHLIB_ROOT, REPL start race, ...), not a
-                    # positive finding that the ground truth is broken --
-                    # SANITY_FAILURE_VERDICTS deliberately excludes it (see
-                    # `runner.py`'s Design comment on that constant), so it
-                    # counts as deferred/unresolved here too, not a fail.
+                    # "exception" (infra failure, not evidence the ground truth is broken)
+                    # is deliberately excluded from SANITY_FAILURE_VERDICTS, so it counts as
+                    # deferred/unresolved here too, not a fail; "skipped" is a
+                    # generation-only sweep's deferred replay.
                     n_sanity_skipped += 1
                 continue
             cell_rows.append(r)
@@ -410,20 +362,16 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         c["tok_out"] += r.get("completion_tokens", 0)
         c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
 
-        # Truncation smell: a reasoning model cut off mid-<think> emits
-        # no tactic block, which otherwise looks like an ordinary
-        # `incomplete`/`given_up` verdict; counting it separately keeps
-        # a wave of truncations from reading as reasoning dead ends.
-        # `raw_response` is the field runner.py writes; `content` is a
-        # fallback for row variants using the provider SDK's key name.
+        # A reasoning model cut off mid-<think> emits no tactic block, which otherwise looks
+        # like an ordinary incomplete/given_up verdict; counted separately so a wave of
+        # truncations doesn't read as reasoning dead ends. `content` is a fallback key name
+        # for row variants using the provider SDK's naming.
         raw_text = r.get("raw_response", "") or r.get("content", "")
         unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-        # Parser-path case: under a vLLM --reasoning-parser the server
-        # splits <think> into `reasoning_content`, so a generation that
-        # died in the think channel leaves `raw_response` EMPTY rather
-        # than unclosed, and the check above reads 0. Deliberately tests
-        # `raw_response` alone, not the `content`-fallback `raw_text`,
-        # matching the row schema runner.py writes in that mode.
+        # Under a vLLM --reasoning-parser the server splits <think> into `reasoning_content`,
+        # so a death in the think channel leaves `raw_response` empty rather than unclosed.
+        # Tests `raw_response` alone, not the `content`-fallback `raw_text`, matching the row
+        # schema runner.py writes in that mode.
         died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
         if unclosed_think_in_raw or died_in_reasoning_channel:
             c["trunc"] += 1
@@ -549,29 +497,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def cmd_run_sweep(args: argparse.Namespace) -> int:
     """Run a YAML-described sweep with resumability; requires `lean_interact`.
 
-    ``--config`` is read by `runner.load_sweep_config` into `runner.sweep`'s
-    `config` — the SAME loader `notebooks/deduction/run_study.py` uses, so the
-    two spellings of this schema cannot drift apart. That loader refuses a
-    document that is not a mapping (an empty file, or a list) up front, naming
-    the file, instead of letting it fail as an `AttributeError` inside a sweep
-    that has already started. ``--out`` defaults to
-    ``results_root()/runs/<config["run_name"] or new_run_id()>``; ``--fresh``
-    passes ``resume=False``. All side effects (output layout, resume,
-    manifest/analysis writing) belong to `runner.sweep`.
-
-    Returns
-    -------
-    int
-        0 in practice — `sweep` never returns a negative count.
-
-    Raises
-    ------
-    FileNotFoundError, ValueError, yaml.YAMLError
-        Propagated from `runner.load_sweep_config` — see that function.
+    ``--config`` is read by `runner.load_sweep_config` -- the SAME loader `run_study.py`
+    uses, so the two spellings of this schema cannot drift apart, and it refuses a
+    non-mapping document up front instead of failing as an `AttributeError` mid-sweep.
+    ``--out`` defaults to ``results_root()/runs/<run_name or new_run_id()>``; ``--fresh``
+    passes ``resume=False``. Propagates `FileNotFoundError`/`ValueError`/`yaml.YAMLError`
+    from `load_sweep_config`.
     """
-    # The digest is discarded here: unlike the study driver, this subcommand
-    # has no provenance sidecar to stamp it into, and `sweep` records only the
-    # `config` mapping it is handed.
+    # Discarded: unlike the study driver, this subcommand has no provenance sidecar to
+    # stamp the digest into; `sweep` records only the `config` mapping.
     cfg, _ = load_sweep_config(args.config)
     run_name = cfg.get("run_name") or new_run_id()
     run_dir = Path(args.out) if args.out else results_root() / "runs" / run_name
@@ -582,15 +516,10 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
 def cmd_compare(args: argparse.Namespace) -> int:
     """For one model, compare two rungs cell-by-cell on a run dir.
 
-    Pure JSONL comparison over ``<run_dir>/all_rows.jsonl``: no Lean toolchain,
-    no writes. Reports regressions (rung_a ✓ → rung_b ✘) and, unless
-    ``--regressions-only``, improvements; compares only replicate
-    ``--replicate``.
-
-    Returns
-    -------
-    int
-        2 if ``all_rows.jsonl`` is missing, else 0.
+    Pure JSONL comparison over ``<run_dir>/all_rows.jsonl``: no Lean toolchain, no writes.
+    Reports regressions (rung_a ✓ → rung_b ✘) and, unless ``--regressions-only``,
+    improvements; compares only replicate ``--replicate``. Returns 2 if ``all_rows.jsonl``
+    is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     all_rows = run_dir / "all_rows.jsonl"
@@ -678,15 +607,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_show(args: argparse.Namespace) -> int:
     """Print a theorem's summary.md, or list theorems with pass counts.
 
-    Reads only ``summary.md``/``outputs/*.jsonl``; no Lean toolchain. Listing
-    mode (no ``theorem`` argument) tallies rates by re-scanning each theorem's
-    ``outputs/*.jsonl``, not its possibly-stale `summary.md`.
-
-    Returns
-    -------
-    int
-        2 if ``<run_dir>/theorems`` is missing, 1 if a named theorem has no
-        ``summary.md``, else 0.
+    No Lean toolchain. Listing mode (no ``theorem`` arg) tallies rates by re-scanning each
+    theorem's ``outputs/*.jsonl``, not its possibly-stale `summary.md`. Returns 2 if
+    ``<run_dir>/theorems`` is missing, 1 if a named theorem has no ``summary.md``, else 0.
     """
     from .runner import slug_theorem
     run_dir = Path(args.run_dir)
@@ -736,14 +659,9 @@ def cmd_show(args: argparse.Namespace) -> int:
 def cmd_report(args: argparse.Namespace) -> int:
     """Regenerate analysis.txt + per-theorem summary.md from a run dir's durable artifacts.
 
-    Delegates to `runner.regenerate_run_artifacts`, which reads only
-    `all_rows.jsonl` and each theorem's `meta.json`/`outputs/*.jsonl` (no Lean
-    toolchain) and OVERWRITES `analysis.txt` and every `theorems/*/summary.md`.
-
-    Returns
-    -------
-    int
-        2 if ``all_rows.jsonl`` is missing, else 0.
+    Delegates to `runner.regenerate_run_artifacts`, which reads only `all_rows.jsonl` and
+    each theorem's `meta.json`/`outputs/*.jsonl` (no Lean toolchain) and OVERWRITES both
+    outputs. Returns 2 if ``all_rows.jsonl`` is missing, else 0.
     """
     run_dir = Path(args.run_dir)
     if not (run_dir / "all_rows.jsonl").exists():
@@ -778,13 +696,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_replay.add_argument("-n", type=int, default=5, help="number of theorems to replay")
     p_replay.add_argument("--seed", type=int, default=0)
     p_replay.add_argument("--max-tactics", type=int, default=5)
-    # Same quantity as `run-cell`'s --timeout (both feed
-    # `verify.replay_ground_truth`/`run_cell`'s per-theorem REPL session
-    # timeout) -- use the named constant instead of a second literal `600`
-    # a few lines from it. The config/constant/CLI spelling stays
-    # `dojo_timeout`/`DEFAULT_DOJO_TIMEOUT` regardless (see that constant's
-    # Design comment in runner.py): committed sweep YAML and archived
-    # `manifest.json` config blocks already use that key.
+    # Same quantity as `run-cell`'s --timeout; named constant instead of a second literal
+    # `600`. Spelling stays `dojo_timeout`/`DEFAULT_DOJO_TIMEOUT`: committed sweep YAML and
+    # archived `manifest.json` already use that key.
     p_replay.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_replay.add_argument("--full-name", default=None, help="replay this specific theorem")
     p_replay.set_defaults(func=cmd_replay)
@@ -793,21 +707,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_filter.add_argument("--kind", choices=["random", "novel_premises"], default="random")
     p_filter.add_argument("--split", choices=["train", "val", "test"], default="val")
     p_filter.add_argument("--limit", type=int, default=0, help="cap number of theorems (0 = no cap)")
-    # Deliberately NOT `DEFAULT_DOJO_TIMEOUT`: no recorded derivation for 300
-    # specifically was found (git history back to this file's introduction
-    # carries no comment or commit-message note on this value). Left at 300
-    # rather than silently widened to match `run-cell`/`replay`, because
-    # `cmd_filter` replays EVERY theorem with traced tactics in the corpus
-    # pool (potentially hundreds), unlike `cmd_replay`'s small `-n`-sized
-    # sample or `run-cell`'s single theorem -- so a stalled-theorem timeout
-    # here is paid far more times per invocation, and widening it to 600
-    # would be a real, unreviewed increase in a full-corpus run's worst-case
-    # wall-clock. That said, this is a plausible reading of what the code
-    # does, not a recorded reason for why 300 (rather than some other value
-    # below 600) was the number originally chosen -- that specific
-    # discrepancy is unresolved. See
-    # `test_dojo_timeout_has_one_default_across_all_three_entry_points`,
-    # which pins `filter`'s default to be UNEQUAL to `DEFAULT_DOJO_TIMEOUT`.
+    # Deliberately NOT `DEFAULT_DOJO_TIMEOUT`: `cmd_filter` replays EVERY theorem in the
+    # pool (potentially hundreds), unlike `replay`'s small sample or `run-cell`'s single
+    # theorem, so a stalled-theorem timeout here is paid far more times; widening to 600
+    # would be a real, unreviewed increase in a full-corpus run's worst case. See
+    # `test_dojo_timeout_has_one_default_across_all_three_entry_points`.
     p_filter.add_argument("--timeout", type=int, default=300)
     p_filter.add_argument("--fresh", action="store_true", help="delete existing JSONL and start over")
     p_filter.set_defaults(func=cmd_filter)
@@ -830,8 +734,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_cell.add_argument("--model", default="anthropic/claude-haiku-4.5")
     p_cell.add_argument("--temperature", type=float, default=0.7)
     p_cell.add_argument("--max-tokens", type=int, default=4096)
-    # `DEFAULT_DOJO_TIMEOUT` (600s) -- see that constant's Design comment in
-    # runner.py for why this stays 600 and is not unified down to 300.
+    # DEFAULT_DOJO_TIMEOUT (600s): see runner.py's Design comment for why this stays 600,
+    # not unified down to filter's 300.
     p_cell.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_cell.add_argument(
         "--seed", type=int, default=1776,

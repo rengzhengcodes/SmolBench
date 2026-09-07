@@ -1,50 +1,13 @@
 """Audit that all 21 deduction lanes ran the SAME pinned theorems.
 
-Every cross-model claim of the family-ladder deduction study (ladder contrasts,
-paired McNemar, block bootstrap) assumes the lanes are PAIRED; nothing in the
-pipeline enforced that. Five checks run weakest to strongest, each able to pass
-while the next fails: (1) byte-identical ``theorems`` block and base ``seed``
-across the lanes' as-run ``manifest.json`` (launch config, not what came back);
-(2) the same 300 ``theorems/<slug>/`` prefixes in every spool; (3) the same 944
-``(theorem, rung)`` output cells, since a lane can hold all 300 theorems and
-still miss rungs; (4) ``prompts/<rung>.md`` present in every lane and byte-equal
-across them by S3 ETag (MD5, so no download) -- the strongest gate: equal bytes prove the same theorem
-at the same step ``k`` in the same rendered context, and catch model-dependent
-``noise:N`` padding (token-matched, so it may differ per tokenizer); and (5) the
-additive ``dojoinit_recovery_2026-08-18`` and the not-folded ``flip*``
-process-nondeterminism runs, which share this ``theorems`` block, staying inside
-the pinned 944.
-
-Layers 4-5 must slug theorem names as `runner.slug_theorem` does, or ~18 phantom
-out-of-set cells per lane are reported. A pass means the lanes were ASKED the
-same questions, not that their surviving data is identical -- the published
-analysis ran on smaller pools (707 / 828 / 833), the axis of
-``scripts/results/audit_run_completeness.py`` -- nor does it vouch for the
-corpus (mathlib4 at commit ``fe4454af``, traced 2024-03-24, predating every
-roster model's cutoff; see ``notebooks/deduction/README.md``).
-
-Read-only, with ambient AWS credentials. ``--reproduce`` also rederives the pin,
-needing the LeanDojo split and 805-theorem replay sidecar the 2026-08-25 archive
-moved out of the repo: point ``--val-json``/``--replay-jsonl`` at local or S3
-copies under ``archives/2026-08-25/``.
-
-``--offline`` skips all five S3 layers -- no ``boto3`` client is constructed and
-no AWS call is made -- so ``--emit-manifest``/``--reproduce`` can run against
-local corpus files alone (e.g. a post-cutoff corpus with no spool yet). Under
-``--offline`` the "reproduced pin == spooled set" comparison in layer "+" is
-skipped and that is stated in the printed output, not silently dropped.
-
-``--emit-manifest PATH`` writes the reproduced pin as a JSON manifest of this
-shape (this is exactly what generated the committed
-``notebooks/deduction/pinned_theorems.json``)::
-
-    {"_comment": "<what this file is and how to re-derive it>",
-     "corpus": <metadata.json, verbatim>,
-     "derivation": {"source": "replay_passing", "kind": ..., "split": ...,
-                     "pool_size": ..., "limit": ..., "seed": ..., "recipe": ...},
-     "sha256_of_sorted_full_names": "<hex>",
-     "count": <int>,
-     "full_names": [<sorted theorem names>]}
+Every cross-model claim of the family-ladder study (ladder contrasts, paired
+McNemar, block bootstrap) assumes the lanes are paired, and nothing in the
+pipeline enforces it. Five S3 checks run weakest to strongest, comparing
+rendered prompts by S3 ETag rather than downloading them, so a mismatch is
+still caught if it slips past an earlier check. A pass means the lanes were
+ASKED the same questions, not that their surviving data is identical, and it
+does not vouch for the corpus itself. Read-only, with ambient AWS
+credentials.
 """
 
 from __future__ import annotations
@@ -59,50 +22,31 @@ from pathlib import Path
 
 from smolbench.evals.study_config import load_study_config, roster_keys
 
-#: Results bucket and its region, from the committed
-#: ``smolbench/evals/study_config.toml`` -- the same file the fleet driver and
-#: the results store read, so this audit cannot end up auditing a bucket the
-#: study never wrote to. Safe to resolve at MODULE scope: `load_study_config`
-#: is pure file I/O over a committed TOML, reads no environment variable, and
-#: resolves no spool prefix, so it cannot make ``--help`` fail the way an
-#: import-time `spool_prefix()` call would (see `_default_run_prefix`).
+#: From the committed ``study_config.toml`` -- the same file the study writes
+#: to, so this can't check the wrong bucket. Safe at module scope: pure file
+#: I/O, no env vars, so it can't break ``--help`` the way an import-time
+#: `spool_prefix()` call would.
 _RESULTS = load_study_config().results
 BUCKET = _RESULTS.bucket
 REGION = _RESULTS.region
 RECOVERY_RUN = "dojoinit_recovery_2026-08-18"
 
-#: Flip-rate (process-nondeterminism) re-runs as ``(run_name, lane)``: own run
-#: prefix, NOT folded into headline pools, still gated against the pin -- a
-#: stray theorem would mean the draw was not deterministic.
+#: Flip-rate re-runs as ``(run_name, lane)``: own prefix, not folded into
+#: headline pools, but still gated against the pin.
 FLIP_RUNS = [("flip_nemotron-3-nano-4b", "nemotron-3-nano-4b"),
              ("flip2_nemotron-3-nano-4b", "nemotron-3-nano-4b")]
 
-#: The 21 lane spec keys, in roster order (7 families x 3 rungs), read from the
-#: committed ``smolbench/evals/study_config.toml``.
-#:
-#: This list used to be spelled out literally, "rather than imported from
-#: ``notebooks/induction/run_study.py`` so this audit does not depend on the
-#: driver it is auditing". That requirement is SATISFIED here, not abandoned:
-#: `study_config` is a committed data file plus its parser, not the driver, so
-#: the audit still imports nothing from the code under audit and still cannot
-#: inherit a defect from it. What changes is that the audit and the audited
-#: lanes now agree BY CONSTRUCTION -- both read the same roster -- instead of
-#: agreeing only for as long as someone remembers to hand-edit this list when
-#: the roster moves. A hand-maintained copy makes the audit pass while
-#: silently skipping a lane the study actually ran; that is the failure this
-#: replaces, and it is a different hazard from the one `slug_theorem` (below)
-#: guards against by duplicating LOGIC.
+#: The 21 lane spec keys, read from the committed study config so the audit
+#: and the audited lanes agree BY CONSTRUCTION, not via a hand-maintained
+#: copy that could silently drop a lane the study actually ran.
 LANES = list(roster_keys())
 
 def slug_theorem(name: str) -> str:
     """Filesystem-safe theorem name; mirrors `runner.slug_theorem` exactly.
 
-    Duplicated rather than imported: this audit must not inherit a bug from
-    the module under audit. That argument is about LOGIC and still stands --
-    it is not the argument ``LANES`` above used to make, which was about a
-    data list and is now better served by reading the same committed config
-    the study reads. Kept in step by
-    ``tests/deduction/test_lean_pinning_audit.py``.
+    Duplicated rather than imported, so this audit can't inherit a bug from
+    the module it audits; a mismatch here misreports ~18 phantom out-of-set
+    cells per lane. Kept in step by ``tests/deduction/test_lean_pinning_audit.py``.
     """
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
@@ -120,14 +64,10 @@ def _read(s3, key: str) -> str:
 def _default_run_prefix() -> str:
     """Resolve the fetch_* helpers' ``run_prefix`` when a caller passes none.
 
-    Lazily imports `runner.spool_prefix` -- a key prefix is CONFIGURATION,
-    not audited logic (unlike `slug_theorem`, which is duplicated above so
-    this audit cannot inherit a bug from the module under audit), so importing
-    the single source of truth for it here is not the hazard that duplication
-    rule guards against. `main()` already resolves this once (also via a lazy
-    import, for the same reason) and passes it to every fetch_* call
-    explicitly; this function only backstops a direct caller -- e.g. a test --
-    that omits ``run_prefix``.
+    A key prefix is CONFIGURATION, not audited logic, so importing it here
+    is not the duplication hazard `slug_theorem` guards against. Only
+    backstops a direct caller (e.g. a test); `main()` resolves it once and
+    passes it explicitly to every fetch_* call.
     """
     from smolbench.deduction.lean.runner import spool_prefix
 
@@ -145,14 +85,9 @@ def fetch_spool_index(
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
     """List each lane's output-cell keys and prompt ETags in one pass.
 
-    Returns
-    -------
-    tuple of (dict, dict)
-        Both keyed by lane: cell keys ``"<theorem-slug>|<rung-slug>"`` for every
-        ``outputs/`` object (presence only), then each cell's
-        ``prompts/<rung>.md`` ETag. Those are small single-part uploads, so the
-        ETag is the object MD5 and cross-lane equality is byte equality without
-        downloading ~19 MB x 21 of spool.
+    Small single-part uploads make the ETag the object's MD5, so comparing
+    ETags across lanes checks byte equality without downloading ~19 MB x 21
+    of spool.
     """
     run_prefix = run_prefix if run_prefix is not None else _default_run_prefix()
     cells: dict[str, set[str]] = {}
@@ -178,10 +113,10 @@ def fetch_spool_index(
 def _is_missing_key(exc: Exception) -> bool:
     """True only for S3's "that object does not exist".
 
-    Read off the error response rather than caught as ``s3.exceptions.NoSuchKey``
-    so a test double needs no botocore. Deliberately narrow: expired credentials,
-    a denied bucket or a throttle must NOT be recorded as "this lane recovered
-    nothing", which would silently pass layer 5.
+    Read off the error response, not ``s3.exceptions.NoSuchKey``, so a test
+    double needs no botocore. Deliberately narrow: an expired credential or
+    throttle must not read as "this lane recovered nothing", which would
+    silently pass layer 5.
     """
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
@@ -238,9 +173,9 @@ def fetch_flip_cells(s3, *, run_prefix: str | None = None) -> dict[str, set[str]
 def divergent_prompt_cells(cell_keys, prompts: dict[str, dict[str, str]]) -> set[str]:
     """Cells whose ``prompts/<rung>.md`` is not one shared ETag across `LANES`.
 
-    A lane MISSING the artifact contributes ``None``, which counts as divergent:
-    a cell no lane spooled a prompt for collapses to the single value ``{None}``
-    and would otherwise be certified byte-identical on absent evidence.
+    A missing artifact contributes ``None``, which counts as divergent --
+    otherwise a cell no lane spooled a prompt for would be certified
+    byte-identical on absent evidence.
     """
     out: set[str] = set()
     for key in cell_keys:
@@ -255,33 +190,12 @@ def reproduce_pin(
 ) -> tuple[list[str], int]:
     """Re-derive a pinned theorem set from its documented recipe.
 
-    Mirrors `runner._select_theorems` for a ``replay_passing`` spec: from the
-    split at `val_json`, keep, IN SPLIT ORDER, the theorems whose ground-truth
-    proof replays (``verdict == "success"`` in `replay_jsonl`), then sample
-    `limit` of them with ``random.Random(seed).sample`` -- but ONLY when
-    ``0 < limit < len(pool)``, exactly as `runner._select_theorems` does;
-    otherwise (``limit <= 0``, or the pool is no larger than `limit`) the
-    entire pool is kept, unsampled, in split order. Split order is
-    load-bearing -- ``rng.sample`` is order-sensitive, so a re-sorted pool
-    yields a different draw under the same seed.
-
-    Parameters
-    ----------
-    val_json : Path
-        LeanDojo split file, e.g. ``<corpus>/<kind>/val.json``.
-    replay_jsonl : Path
-        Sidecar of ``{"full_name": ..., "verdict": ...}`` replay records.
-    limit : int
-        Sample size; see the sampling rule above.
-    seed : int
-        `random.Random` seed for the sample.
-
-    Returns
-    -------
-    tuple of (list of str, int)
-        ``(names, pool_size)`` -- the selected ``full_name``s, and the pool
-        size BEFORE sampling (needed by `main` to record `derivation` and to
-        decide whether a sample actually happened).
+    Mirrors `runner._select_theorems`: keep, in split order, the theorems
+    whose ground-truth proof replays, then sample `limit` of them with
+    ``random.Random(seed).sample`` only when ``0 < limit < len(pool)`` --
+    otherwise the whole pool is kept unsampled. Split order is load-bearing,
+    since ``rng.sample`` is order-sensitive. Returns ``(names, pool_size)``,
+    with ``pool_size`` measured before sampling.
     """
     val = json.loads(val_json.read_text())
     passing = {
@@ -296,10 +210,8 @@ def reproduce_pin(
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Lazy import: a key prefix is CONFIGURATION, not audited logic, so
-    # importing `runner` here does not reintroduce the hazard
-    # `slug_theorem`'s/`LANES`'s "duplicated rather than imported" comments
-    # warn against (this audit inheriting a bug from the module under audit).
+    # Lazy import: a key prefix is CONFIGURATION, not audited logic, so this
+    # doesn't reintroduce the duplication hazard `slug_theorem`/`LANES` guard against.
     from smolbench.deduction.lean import runner
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -353,9 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     if (args.reproduce or args.emit_manifest) and args.limit is None:
         ap.error("--limit is required with --reproduce/--emit-manifest")
 
-    # The corpus root is the split file's grandparent, e.g.
-    # <corpus>/novel_premises/val.json -> <corpus>/metadata.json. Resolved
-    # AFTER parsing so an explicit --metadata always wins.
+    # Corpus root = split file's grandparent; resolved after parsing so an
+    # explicit --metadata always wins.
     if args.metadata is None:
         args.metadata = args.val_json.parent.parent / "metadata.json"
 
@@ -395,7 +306,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[3/5] cell keys   : intersection={len(cinter)} union={len(cunion)} "
               f"(expected {args.expect_cells} == {args.expect_cells})")
 
-        # Byte equality of the rendered prompt, per cell, across all 21 lanes.
         divergent = divergent_prompt_cells(cunion, prompts)
         if divergent:
             failures.append(f"{len(divergent)} cells have model-dependent or missing "

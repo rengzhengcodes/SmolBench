@@ -3,7 +3,7 @@
 Prose goes stale silently, so the load-bearing claims are pinned here: the
 Mathlib-vs-dependency filter's actual predicate, the notebooks' JSON shape (an
 edit script that stringifies `source` or drops outputs makes every later diff
-unreviewable), and the attribution of the OLD study's 300/805/944 counts.
+unreviewable), and the attribution of the old study's 300/805/944 counts.
 """
 
 import json
@@ -17,16 +17,12 @@ STATS_NB = NOTEBOOKS / "statistical_analyses.ipynb"
 LEAN_NB = NOTEBOOKS / "deduction" / "lean_eval.ipynb"
 README = NOTEBOOKS / "deduction" / "README.md"
 
-#: Counts that describe the OLD, pre-cutoff study ONLY.
-#:
-#: 13-20: ``300`` was removed from this set. It is the LIVE ``theorems.limit``
-#: in `run_study.build_config` and the live `runner.EXPECTED_THEOREMS`, so
-#: demanding a "pre-cutoff" marker beside it forced current documentation to
-#: label its own configuration as history -- and, worse, made the guard read as
-#: though 300 were settled as historical when it is the number a reader most
-#: needs to trust. 805 (the retired ``novel_premises``/``val`` pool) and 944
-#: (that pool's rendered cell count) remain: neither describes anything the
-#: post-cutoff corpus produces.
+#: Counts that describe the old, pre-cutoff study only. ``300`` is excluded:
+#: it is the live ``theorems.limit`` in `run_study.build_config` and the live
+#: `runner.EXPECTED_THEOREMS`, so demanding a "pre-cutoff" marker beside it
+#: would mislabel current configuration as history. 805 (the retired
+#: ``novel_premises``/``val`` pool) and 944 (that pool's rendered cell count)
+#: remain: neither describes anything the post-cutoff corpus produces.
 OLD_STUDY_NUMBERS = re.compile(r"\b(805|944)\b")
 
 def _paragraphs(text: str):
@@ -43,19 +39,12 @@ def _paragraphs(text: str):
 
 
 def _unmarked_lines(text: str, pattern=None, *, marker: str = "pre-cutoff") -> list[str]:
-    """Lines matching `pattern` whose enclosing PARAGRAPH lacks `marker`.
+    """Lines matching `pattern` whose enclosing paragraph lacks `marker`.
 
-    13-20: the guard this replaces exempted a WHOLE CELL whenever the marker
-    appeared anywhere in it, so a single historical aside licensed every number
-    in a long cell -- and it never looked at the README's prose or at code
-    cells at all. The paragraph is the right unit: strict enough that an
-    unrelated section cannot vouch for a number, loose enough for real writing,
-    where "300 theorems drawn from the\n`novel_premises`/`val` pool -- but 300
-    is the\npre-cutoff study's pool size" legitimately puts the marker two
-    lines below the number it qualifies.
-
-    Returns the offending LINES (not indices), so a failure names the prose
-    that has to change.
+    The paragraph is the unit: strict enough that an unrelated section cannot
+    vouch for a number, loose enough that real writing can put the marker a
+    line or two below the number it qualifies. Returns the offending lines
+    (not indices), so a failure names the prose that has to change.
     """
     pattern = pattern or OLD_STUDY_NUMBERS
     offenders = []
@@ -126,14 +115,11 @@ def test_dependency_filter_covers_every_lake_package(stats_nb):
 
 
 def test_lean_eval_attributes_the_old_counts(lean_nb):
-    """805 / 944 are the pre-cutoff study's numbers, in EVERY cell type.
-
-    13-20: this scanned ``cell_type == "markdown"`` only, so a code cell could
-    carry ``805`` freely -- and cell 4 did exactly that, calling
-    ``iter_replay_passing("novel_premises", "val")`` against a split family the
-    post-cutoff corpus does not have. It also exempted a whole cell whenever
-    "pre-cutoff" appeared anywhere in it. Now every cell is scanned and the
-    marker must sit within one line of the number.
+    """805 / 944 are the pre-cutoff study's numbers, in every cell type,
+    code included -- a code cell can call
+    ``iter_replay_passing("novel_premises", "val")`` against a split family
+    the post-cutoff corpus lacks just as easily as markdown can state the
+    count.
     """
     offenders = {
         i: bad for i, c in enumerate(lean_nb["cells"])
@@ -145,7 +131,7 @@ def test_lean_eval_attributes_the_old_counts(lean_nb):
 
 
 def test_lean_eval_does_not_ask_for_the_retired_split_family():
-    """13-14: the notebook must not name a split family the corpus lacks.
+    """The notebook must not name a split family the corpus lacks.
 
     The post-cutoff corpus has a single ``random`` family; cell 4 asked for
     ``novel_premises``, which is why running the notebook offline raised
@@ -162,12 +148,11 @@ def test_lean_eval_does_not_ask_for_the_retired_split_family():
 
 
 def test_readme_data_sections_describe_the_post_cutoff_corpus():
-    """13-14 / 13-20: the README's own prose is scanned, not exempt by construction.
+    """The README's own prose is scanned too, not just notebook markdown cells.
 
-    `test_postcutoff_docs` guarded the notebook's markdown cells and ONE README
-    section, so the Data-bootstrap / pinned-300 / not-in-scope prose -- which
-    described the Zenodo LeanDojo Benchmark 4 download that
-    `run_study.build_config` now SystemExits on -- was outside every guard.
+    The Data-bootstrap / pinned-300 / not-in-scope sections describe a Zenodo
+    LeanDojo Benchmark 4 download that `run_study.build_config` now
+    SystemExits on.
     """
     text = README.read_text()
     offenders = _unmarked_lines(text)

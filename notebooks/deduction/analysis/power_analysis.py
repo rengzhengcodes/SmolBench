@@ -1,43 +1,29 @@
-"""Power analysis for the Lean-4 deduction FAMILY-LADDER SCALING study (21 checkpoints,
+"""Power analysis for the Lean-4 deduction family-ladder scaling study (21 checkpoints,
 7 vendor families x 3 rungs).
 
-TERMINOLOGY -- the study overloads "rung", this file never does: ``ladder_pos`` is a
-model's position in its family 3-tuple (0..2), ``prompt_rung`` is a PROMPT's context
-rung (the ``"rung"`` field on every row, ``stepk:1`` .. ``hint:3``).
+The study overloads "rung"; this file does not: ``ladder_pos`` is a model's position in
+its family 3-tuple (0..2), ``prompt_rung`` is a prompt's context rung. PRIMARY = 21
+within-family ladder contrasts (Bonferroni); SECONDARY = 63 cross-family size-matched
+contrasts (Benjamini-Hochberg, exploratory), both sized by a block-bootstrap n_theorems
+curve plus a Beta-mixture pass@N advisory -- theorems, not replicates, are this
+benchmark's power lever.
 
-Unit of observation = one ``(theorem_id, k, prompt_rung)`` cell, scored 1 only for
-``verdict == "success"``; all models run the SAME cells, so pairs go through McNemar's
-exact test pooled over prompt rungs (the conservative single-stratum collapse of CMH).
-Sizing = block-bootstrap n_theorems curve + Beta-mixture pass@N advisory (theorems, not
-replicates, are this benchmark's lever). PRIMARY = 21 within-family ladder contrasts,
-Bonferroni; SECONDARY = 63 cross-family size-matched contrasts, exploratory,
-Benjamini-Hochberg (thresholds: the N_PRIMARY / N_SECONDARY constants).
-
-DATA SOURCE -- LOUD WARNING: read ``verified_rows.jsonl`` (written by
-``scripts/deduction/lean_verify_rows.py``), NEVER the generation-time ``all_rows.jsonl``:
-its verdicts are all the ``"unverified"`` placeholder, so every rate would read at or near
+Reads ``verified_rows.jsonl``, never the generation-time ``all_rows.jsonl``: the latter's
+verdicts are all the ``"unverified"`` placeholder, so every rate would read at or near
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
-the loud stderr banner `load_joint_cells` prints instead of falling back silently.
+`load_joint_cells` prints a loud stderr banner instead of falling back silently.
 
-Everything about the archive's ADDRESS and LAYOUT -- the bucket and region, the spool
-prefix, the retired-artifact guard, and the downloader itself -- lives in the sibling
-module ``rows_source.py``, shared with ``error_bars.py`` and ``hint_vs_noise.py``. The
-bucket is deliberately NOT spelled out in prose anywhere: it is committed config, read
-from ``smolbench/evals/study_config.toml`` into `S3_BUCKET`, and prose restating it
-could drift from the bucket a run actually reads. Inputs are ``--s3``
-(``s3://<S3_BUCKET>/<spool-prefix>/scaling_*/``, ``<spool-prefix>`` overridable via
-``--spool-prefix``) or ``--results-dir`` (local
-``runs/scaling_*/verified_rows.jsonl``):
+`S3_BUCKET` is read from ``smolbench/evals/study_config.toml``, never spelled out in
+prose, so this can't drift from the bucket a run actually reads.
 
     .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
 """
 
 from __future__ import annotations
 
-# Cap the BLAS/OpenMP thread pools BEFORE numpy is imported: this script often
-# runs on the shared eval container beside a lean sweep's Dojo verifiers, where
-# numpy's default 16-thread OpenBLAS pool trips RLIMIT_NPROC ("pthread_create
-# failed: Resource temporarily unavailable"). One thread suffices here.
+# Cap BLAS/OpenMP threads before numpy is imported: on the shared eval container,
+# numpy's default OpenBLAS pool trips RLIMIT_NPROC beside a lean sweep's Dojo verifiers
+# ("pthread_create failed"). One thread suffices here.
 import os
 
 for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -56,18 +42,14 @@ from pathlib import Path
 import numpy as np
 from scipy.stats import binom
 
-# notebooks/ (where _power_common.py lives) is two levels up. Anchoring the
-# import to __file__ makes it cwd-independent (repo convention).
+# notebooks/ (where _power_common.py lives) is two levels up; anchored to __file__ so
+# this is cwd-independent.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# THIS directory, for the bare-name sibling import of `rows_source` below.
-# Required, not decorative: running this file as a script puts its own
-# directory on sys.path[0] for free, but the tests (and any programmatic
-# consumer) load it via ``importlib.util.spec_from_file_location``, which does
-# NOT -- so without this line the sibling import would resolve only by
-# accident, when some other sibling happened to be loaded first in the same
-# process. `error_bars.py` and `hint_vs_noise.py` carry the identical insert
-# for the identical reason.
+# THIS directory, for the bare-name sibling import of `rows_source` below. Required:
+# tests load this file via ``importlib.util.spec_from_file_location``, which does not put
+# this dir on sys.path the way running it as a script would, so without this the sibling
+# import would resolve only by accident. `error_bars.py`/`hint_vs_noise.py` carry the same.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -92,45 +74,28 @@ from rows_source import (  # noqa: E402
 )
 
 # --------------------------------------------------------------------------- #
-# Roster: 7 vendor families x 3 parameter-count rungs (ladder positions) = 21
-# models, read from the ONE committed study config
-# (``smolbench/evals/study_config.toml``) instead of being hand-typed here.
-# The values are the EC2 spec keys this study's runs use as ``model``
-# (== ``display_name``) on every JSONL row -- see the module docstring's DATA
-# SOURCE section -- so, unlike the induction sibling analysis, this file keeps
-# the config's spec keys as-is and never passes them through
-# ``study_config.tag_for``.
+# Roster: 7 vendor families x 3 rungs = 21 models, from the committed study config
+# rather than hand-typed here. Spec keys are kept as-is (unlike the induction sibling),
+# since they're already what every JSONL row's "model" field uses.
 #
-# ORDER IS LOAD-BEARING, and this file now depends on the config to supply it:
-# each family's 3-tuple must read SMALL -> MID -> LARGE, because
-# `build_cross_family_contrasts` pairs two families BY LADDER POSITION and
+# ORDER IS LOAD-BEARING: each family's tuple must read SMALL -> MID -> LARGE, because
+# `build_cross_family_contrasts` pairs families BY LADDER POSITION and
 # `build_within_family_contrasts` names its pairs by it. The config's
-# ``[roster.families]`` declaration order already is that order and documents
-# itself as the study's canonical ladder order; reordering a family's rungs
-# there silently re-pairs all 63 secondary contrasts here.
+# ``[roster.families]`` order already is that order; reordering a family's rungs there
+# silently re-pairs all 63 secondary contrasts here.
 # --------------------------------------------------------------------------- #
 FAMILIES: dict[str, tuple[str, ...]] = {
     family: tuple(rungs) for family, rungs in _study_families().items()
 }
 MODELS = tuple(_study_roster_keys())  # 21, the FAMILIES tuples concatenated
 
-# At MODULE scope, not just inside main(), so importing this module for its
-# constants gets the guard too. `raise`, not `assert`: `assert` is stripped
-# under ``python -O``, which would silently delete a guard whose whole purpose
-# is to fire at import time.
-#
-# MODELS is ``study_config.roster_keys()``, which is the FAMILIES tuples
-# concatenated, so length and uniqueness are the only drift this design can
-# suffer; no hand-maintained flat tuple exists that could disagree.
-#
-# What these two do NOT pin, spelled out rather than left to be discovered:
-# "21 models across 7 families" does not by itself force 3 rungs per family,
-# and both contrast builders index every family's tuple by ladder position
-# 0..2. The 3-rungs-per-family property is instead pinned by these two guards
-# together: a short family raises IndexError at position 2 on the first
-# contrast build, and a long one pushes len(MODELS) past 21 (a compensating
-# 4-and-2 split still IndexErrors on the 2). That is left as a documented
-# dependency on the config rather than restated as a third guard.
+# Module scope, not just inside main(), so importing this module for its constants gets
+# the guard too. `raise`, not `assert`: `python -O` strips asserts, and this must fire at
+# import time. MODELS is the FAMILIES tuples concatenated, so length/uniqueness are the
+# only drift possible; these two checks don't by themselves pin "3 rungs per family" --
+# a short family instead IndexErrors at position 2 on the first contrast build, and a
+# long one still fails the count below -- so that shape is left implicit rather than
+# checked a third time.
 if len(MODELS) != 21:
     raise ValueError(
         f"expected 21 models (7 families x 3 rungs) from study_config, got "
@@ -163,12 +128,10 @@ N_PRIMARY = 21
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
 # SECONDARY tier: 63 cross-family, size-matched contrasts (3 ladder positions x
-# C(7,2)=21 family-pairs). Benjamini-Hochberg FDR at q=0.05. Sizing simulations
-# use the conservative rank-1 BH threshold Q_SECONDARY / N_SECONDARY as an UPPER
-# BOUND on the per-test alpha BH will really apply (why: `benjamini_hochberg`'s
-# docstring; mirrors notebooks/induction/analysis/power_analysis.py's
-# ALPHA_SECONDARY). The OBSERVED per-contrast decision uses the real procedure,
-# not this constant -- see `_print_tier_report`.
+# C(7,2)=21 family-pairs). Benjamini-Hochberg FDR at q=0.05. Sizing uses
+# Q_SECONDARY/N_SECONDARY, BH's conservative rank-1 threshold, as an upper bound on the
+# real per-contrast alpha (see `benjamini_hochberg`'s docstring); the OBSERVED decision
+# uses the actual procedure -- see `_print_tier_report`.
 N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
@@ -189,21 +152,9 @@ def _seed_of(name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Core statistics. `pass_at_n` and `benjamini_hochberg` stay hand-rolled (they
-# are a few lines of closed-form arithmetic, not worth a dependency either
-# way); `mcnemar_exact_p` below calls `scipy.stats.binom` directly, because
-# scipy is not an extra dependency here -- this file's own run environment
-# (``uv run --no-project --with numpy --with scipy``, see the
-# `_DEDUCTION_SPOOL_PREFIX` comment a few dozen lines up) already declares and
-# installs it. A hand-rolled log-space binomial CDF (previously
-# `_log_binom_cdf_half`, a `lgamma` + log-sum-exp reimplementation of exactly
-# what `scipy.stats.binom.cdf` already computes, more carefully, in C) stood
-# in here under the theory that scipy might not be present; that theory is
-# false for this file's declared environment, so the hand-rolled version is
-# deleted rather than kept as a second, unexercised implementation of the same
-# CDF (`tests/deduction/test_deduction_analysis_reports.py` pins agreement with
-# an independent `math.comb` reference to <=1e-9 across the study's discordant
-# range).
+# Core statistics. `pass_at_n` and `benjamini_hochberg` stay hand-rolled (a few lines of
+# closed-form arithmetic); `mcnemar_exact_p` uses `scipy.stats.binom` directly, since this
+# file's ``uv run --no-project --with numpy --with scipy`` environment already declares it.
 # --------------------------------------------------------------------------- #
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Probability at least one of `n` conditionally-independent replicates succeeds:
@@ -215,20 +166,9 @@ def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
 def mcnemar_exact_p(b: int, c: int) -> float:
     """McNemar's exact two-sided binomial p-value for discordant counts.
 
-    Under H0 the ``b`` cells are ``Binomial(b + c, 0.5)``, so
-    ``p = min(1, 2 * P(X <= min(b, c)))``, evaluated via
-    ``scipy.stats.binom.cdf`` (see the "Core statistics" comment above this
-    function for why depending on scipy is safe in this file specifically).
-
-    Parameters
-    ----------
-    b, c : int
-        Discordant counts, both ``>= 0``: A succeeds and B fails, and the reverse.
-
-    Returns
-    -------
-    float
-        The p-value; 1.0 when ``b + c == 0`` -- no evidence either way.
+    Under H0, ``b`` is ``Binomial(b + c, 0.5)``, so
+    ``p = min(1, 2 * P(X <= min(b, c)))`` via ``scipy.stats.binom.cdf``.
+    b, c: counts where A succeeds/B fails, and the reverse; 1.0 when ``b + c == 0``.
     """
     n = b + c
     if n == 0:
@@ -238,31 +178,14 @@ def mcnemar_exact_p(b: int, c: int) -> float:
 
 
 def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
-    """Benjamini-Hochberg (1995) step-up procedure for FDR control at level `q`.
+    """Benjamini-Hochberg (1995) step-up FDR procedure at level `q`.
 
-    Rejects ranks ``1..i`` for the LARGEST rank ``i`` whose sorted p-value satisfies
-    ``p_(i) <= i * q / m`` (nothing if no rank qualifies). The per-rank bar GROWS with
-    rank, so only the smallest p-value ever faces ``q / m`` -- which is both why sizing
-    may use ``q / m`` as a conservative UPPER BOUND on the alpha BH really applies, and
-    why the exploratory 63-test SECONDARY tier, gating no decision, uses BH rather than
-    Bonferroni.
+    Rejects ranks ``1..i`` for the largest rank ``i`` whose sorted p-value satisfies
+    ``p_(i) <= i * q / m``. The per-rank bar grows with rank, so only the smallest
+    p-value ever faces ``q / m`` -- why sizing can use that as a conservative upper
+    bound, and why the exploratory SECONDARY tier uses BH rather than Bonferroni.
 
-    Parameters
-    ----------
-    pvalues : ndarray
-        1-D, in any order.
-    q : float
-        FDR level, in ``(0, 1]``.
-
-    Returns
-    -------
-    ndarray
-        Boolean mask aligned to `pvalues`' INPUT order, not sorted order.
-
-    Raises
-    ------
-    ValueError
-        If `pvalues` is not 1-D, or `q` is outside ``(0, 1]``.
+    Returns a boolean mask in `pvalues`' input order, not sorted order.
     """
     pvalues = np.asarray(pvalues, dtype=float)
     if pvalues.ndim != 1:
@@ -321,27 +244,15 @@ UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 def reject_unverified_verdicts(rows, field, source) -> None:
     """Refuse rows that still carry the ungraded ``"unverified"`` sentinel.
 
-    A warning would not do: such a cell grades exactly like a real measurement
-    (`grade_verdicts` has no special case, and the sentinel is deliberately NOT in
-    `UNMEASURABLE_VERDICTS`, which would make this loud condition a silent drop), so
-    it scores as a failure and the report comes out complete, plausible, and wrong.
+    A warning isn't enough: the sentinel is deliberately not in `UNMEASURABLE_VERDICTS`,
+    so `grade_verdicts` would otherwise score it as a real failure, making the report
+    come out complete, plausible, and wrong.
 
-    Parameters
-    ----------
-    rows : list of dict
-        Already-parsed rows from ONE source file (this does no I/O), checked BEFORE
-        they reach `grade_verdicts`.
-    field : str
-        Verdict key to inspect; explicit because callers differ
-        (`error_bars.lane_outcomes` checks ``"verdict"`` on primary rows and
-        ``"recovered_verdict"`` on its recovery sibling, which has no ``"verdict"``).
-    source : Any
-        Named in the error message; not opened.
+    `rows` is already-parsed, from ONE source file. `field` is explicit because callers
+    differ (`error_bars.lane_outcomes` checks ``"verdict"`` on primary rows and
+    ``"recovered_verdict"`` on its recovery sibling, which has no ``"verdict"``).
 
-    Raises
-    ------
-    SystemExit
-        If any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
+    Raises SystemExit if any row has ``kind == "cell"`` and ``row[field] == "unverified"``.
     """
     count = sum(
         1 for row in rows
@@ -372,21 +283,15 @@ def reject_unverified_verdicts(rows, field, source) -> None:
 
 
 def grade_verdicts(verdicts) -> int | None:
-    """Grade ONE cell from its rows' verdicts in file order (== chronological).
+    """Grade ONE cell from its rows' verdicts in file order (chronological).
 
-    The single implementation of this study's two row rules (the measurements that
-    settled them are recorded in `load_joint_cells`): EARLIEST SURVIVING ATTEMPT WINS,
-    since a later retry is an independent draw and taking it would report pass@N as
-    pass@1; and an `UNMEASURABLE_VERDICTS` verdict is not a measurement -- it neither
-    scores 0 nor claims the cell.
+    Earliest surviving attempt wins, since a later retry is an independent draw and
+    taking it would report pass@N as pass@1; an `UNMEASURABLE_VERDICTS` verdict is not
+    a measurement, so it neither scores 0 nor claims the cell.
 
-    Returns
-    -------
-    int or None
-        1 success, 0 a real failure, ``None`` for "no surviving attempt". Callers
-        resolve ``None`` differently on purpose: this file and
-        ``hint_vs_noise.load_rungs`` leave the cell ABSENT, while
-        ``error_bars.build_pool`` may score it 0 when another lane graded it.
+    Returns 1 (success), 0 (failure), or None (no surviving attempt). Callers resolve
+    None differently: this file and ``hint_vs_noise.load_rungs`` leave the cell absent,
+    ``error_bars.build_pool`` may score it 0 when another lane graded it.
     """
     for verdict in verdicts:
         if verdict in UNMEASURABLE_VERDICTS:
@@ -400,57 +305,26 @@ def load_joint_cells(
 ) -> tuple[list[str], dict, list[str]]:
     """Load and pair per-cell joint outcomes across one or more run files.
 
-    Unions `row_files` (e.g. the 21 checkpoints' ``verified_rows.jsonl``), reading
-    only ``kind == "cell"``, ``replicate_idx == 0`` rows. This study collects R=1,
-    and that is an ASSUMPTION baked into this loader, not a no-op filter: any row
-    with ``replicate_idx > 0`` is DROPPED here, not aggregated. If a later run
-    starts writing real replicates, this function keeps reading only the first
-    attempt per cell and silently ignores the rest -- it does not average, does
-    not widen a denominator, and does not error. `N_REPLICATES_GRID` and
-    `needed_replicates` (below) size how many replicates a FUTURE experiment
-    would need to reach a target power; they do not make this loader able to
-    analyse R>1 once collected -- that is a separate follow-up. Because the drop
-    is otherwise invisible, this function prints one stderr WARNING per call
-    (naming the dropped-row count and the file(s) it came from) whenever it
-    fires. Cells are graded through `grade_verdicts`.
+    Reads only ``kind == "cell"``, ``replicate_idx == 0`` rows: this study collects
+    R=1, so a ``replicate_idx > 0`` row is dropped, not aggregated, even once a run
+    starts writing real replicates (`N_REPLICATES_GRID` only sizes a FUTURE need).
+    Prints one stderr warning per call naming the dropped-row count and file(s).
 
-    Parameters
-    ----------
-    models : tuple of str, optional
-        Restrict pairing to this set (default: every model present); a cell is kept
-        only if graded for EVERY member, so a partial run can be analyzed without
-        every contrast reporting "no data".
+    `models`: restrict pairing to this set (default: every model present); a cell is
+    kept only if graded for EVERY member.
 
-    Returns
-    -------
-    models : list of str
-        The sorted spec-keys actually paired.
-    blocks : dict
-        ``{theorem_id: {(k, prompt_rung): {model: 1 or 0}}}``, restricted to cells
-        graded for every paired model and theorems with at least one such cell; one
-        whole theorem block is `bootstrap_power`'s resample unit.
-    prompt_rungs : list of str
-        Sorted distinct ``rung`` values present (prompt rungs, NOT ladder positions).
-
-    Raises
-    ------
-    SystemExit
-        Via `reject_superseded`, before any row is read.
-
-    Notes
-    -----
-    Prints the `_warn_unverified` stderr banner if any input basename is
-    ``all_rows.jsonl`` or any loaded cell row is still ``"unverified"`` -- even if
-    those rows never reach `blocks`, which is still evidence the input is unverified.
+    Returns (models, blocks, prompt_rungs): sorted paired spec-keys;
+    ``{theorem_id: {(k, prompt_rung): {model: 1 or 0}}}`` restricted to fully-graded
+    cells; sorted distinct ``rung`` values present. Prints the `_warn_unverified`
+    banner if any input is named ``all_rows.jsonl`` or any loaded cell is still
+    ``"unverified"``.
     """
     reject_superseded(row_files)
     cell_rows: list[dict] = []
     warn_reasons: list[str] = []
     unverified_count = 0
-    # Design: dropped-replicate counts are kept PER FILE (not just a grand
-    # total) so the eventual warning can name exactly which file(s) carried
-    # R>1 rows -- a silent drop is what let this discrepancy go unnoticed
-    # before this fix, so the message needs to be specific enough to act on.
+    # Kept PER FILE, not just a grand total, so the warning can name exactly which
+    # file(s) carried R>1 rows.
     dropped_replicates: dict[Path, int] = {}
     for path in row_files:
         if path.name == "all_rows.jsonl":
@@ -494,58 +368,34 @@ def load_joint_cells(
 
     # theorem_id -> (k, prompt_rung) -> model -> outcome (1 success / 0 fail)
     #
-    # Two row rules, implemented ONCE in `grade_verdicts` (every loader in this
-    # study reads rows through it: error_bars.lane_outcomes,
-    # hint_vs_noise.load_rungs); the reasoning and its measurements stay here.
+    # Two row rules, implemented once in `grade_verdicts` (shared by
+    # error_bars.lane_outcomes and hint_vs_noise.load_rungs):
     #
-    #  * EARLIEST SURVIVING ATTEMPT WINS. A cell can own several rows, appended,
-    #    so file order is chronological. Plain per-row assignment would be
-    #    LAST-wins, and generation is not deterministic across server processes,
-    #    so each retry is a fresh draw: last-wins takes the RESAMPLED attempt,
-    #    which reports pass@N as pass@1.
+    #  * EARLIEST SURVIVING ATTEMPT WINS. A cell can own several rows in file
+    #    (chronological) order; last-wins would take a RESAMPLED retry (generation
+    #    isn't deterministic across server processes) and report pass@N as pass@1.
     #
-    #  * UNMEASURABLE verdicts must not score 0. Two kinds exist, both meaning
-    #    the model was never actually tested:
+    #  * UNMEASURABLE verdicts don't score 0. Two kinds mean the model was never
+    #    tested:
+    #      "exception" -- generation produced no answer (infra fault, e.g.
+    #          deepseek-v3.1: 415 cells, 44% of its lane), not a model failure.
+    #      "replay_failed" -- verification couldn't be set up (missing traced-cache
+    #          AST, or the ground-truth k-tactic prefix wouldn't replay), before the
+    #          candidate is even considered. Not model behaviour: a byte-identical
+    #          232-cell set (151 DojoInit + 81 prefix) across all 21 models.
+    #    Scoring replay_failed as 0 would deflate every marginal rate by up to
+    #    232/944 = 24.6% (e.g. gemma-4-e2b 0.110 -> 0.083); paired McNemar survives
+    #    it (concordant zeros cancel) but every rate would be wrong. Measurable
+    #    denominator is 944 - 232 = 712 per lane.
     #
-    #      "exception" -- generation never produced an answer (spot interruption,
-    #          idle watchdog, unreachable endpoint): an infrastructure fault, not
-    #          a model failure. deepseek-v3.1 carries 415 such cells, 44% of its
-    #          lane.
+    #    "incomplete" stays OUT of this set (cell sets differ per model: 68/30/50,
+    #    8 shared -- real behaviour). "no_answer" also stays out: it means the
+    #    request completed and the model produced nothing extractable (often
+    #    truncated inside <think>), a real miss on this study's axis, unlike
+    #    exception/replay_failed where the attempt never completed.
     #
-    #      "replay_failed" -- VERIFICATION could not be set up: LeanDojo could
-    #          not open a session for the theorem (missing *.ast.json in the
-    #          traced cache), or the GROUND-TRUTH prefix of k tactics would not
-    #          replay -- both before the candidate is considered. Proof it is not
-    #          model behaviour: the cell set is BYTE-IDENTICAL across lanes --
-    #          exactly 232 cells (151 DojoInit + 81 prefix), 100% overlap, in
-    #          every one of 21 models.
-    #
-    #    Scoring replay_failed as 0 would deflate EVERY model's marginal rate by
-    #    up to 232/944 = 24.6% (measured: gemma-4-e2b 0.110 -> 0.083,
-    #    glm-4.7-flash 0.146 -> 0.110). Paired McNemar survives it (concordant
-    #    zeros cancel), but every reported rate would be wrong. The measurable
-    #    denominator is therefore 944 - 232 = 712 per lane -- exactly the row
-    #    count on which Lean actually ran.
-    #
-    #    "incomplete" is NOT in this set: its cell sets differ per model
-    #    (68 / 30 / 50 across three lanes, 8 shared), so it is real behaviour.
-    #
-    #    "no_answer" is ALSO deliberately NOT in this set, though it sounds like
-    #    it should belong next to "exception". The two are not the same claim:
-    #    "no_answer" (smolbench.deduction.lean.verify's verdict for a candidate
-    #    tail that splits to zero tactics) means the request COMPLETED and the
-    #    model answered with nothing extractable -- most often a reasoning model
-    #    truncated at max_tokens inside an unclosed <think> block. That is a
-    #    real failure to answer, not a missing measurement: the model was asked,
-    #    had its turn, and produced nothing usable. Scoring it 0 (via
-    #    grade_verdicts's fallthrough, `1 if verdict == "success" else 0`)
-    #    correctly counts it as a miss on the axis this study measures, exactly
-    #    like "lean_error" or "given_up" -- unlike "exception"/"replay_failed",
-    #    which mean the ATTEMPT to measure the model never completed at all.
-    #
-    #    Unmeasurable cells are left ABSENT, so the paired filter below drops
-    #    them from every model's block -- what "not measured" means in a paired
-    #    design.
+    #    Unmeasurable cells are left ABSENT, so the paired filter below drops them
+    #    from every model's block -- what "not measured" means in a paired design.
     raw: dict[str, dict[tuple, dict[str, int]]] = {}
     for row in cell_rows:
         model = row["model"]
@@ -588,13 +438,11 @@ def marginal_rates(models: list[str], blocks: dict) -> dict[str, float]:
 
 
 def union_solvable_fraction(models: list[str], blocks: dict) -> float:
-    """Fraction of paired cells solved by AT LEAST ONE of `models`; NaN if `blocks`
-    is empty.
+    """Fraction of paired cells solved by at least one of `models` (NaN if empty).
 
-    The Beta-mixture advisory's (`passn_power`) "solvable at all" anchor.
-    `compute_contrast_sizing` calls it with exactly the contrast's two models, never
-    the whole roster: across 21 models "did ANY solve it" trends to 1.0 whatever the
-    compared pair does.
+    Feeds `passn_power`'s "solvable at all" anchor. Called with just a contrast's two
+    models, never the whole roster: across 21 models "did any solve it" trends to 1.0
+    regardless of the pair.
     """
     solved = tot = 0
     for cmap in blocks.values():
@@ -608,15 +456,9 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
     """Pooled McNemar discordant counts for one model pair.
 
     Pooled over every paired theorem and prompt rung, unstratified -- the conservative
-    single-stratum collapse of the rung-stratified CMH test. Both models are assumed
-    present in every cell (true for a pair from `load_joint_cells`'s `models`).
+    single-stratum collapse of the rung-stratified CMH test.
 
-    Returns
-    -------
-    b : int
-        `model_a` succeeds and `model_b` fails.
-    c : int
-        The reverse.
+    Returns (b, c): `model_a` succeeds and `model_b` fails, and the reverse.
     """
     disc_b = disc_c = 0
     for cmap in blocks.values():
@@ -635,11 +477,8 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
 def build_within_family_contrasts() -> list:
     """Build the 21 PRIMARY within-family ladder contrasts (7 families x C(3,2)).
 
-    Returns
-    -------
-    list of (label, model_a, model_b)
-        Grouped by family in `FAMILIES` order; within a family, ladder-position pairs
-        follow ``combinations(range(3), 2)`` -- (0,1), (0,2), (1,2).
+    Returns (label, model_a, model_b) tuples grouped by family in `FAMILIES` order;
+    within a family, pairs follow ``combinations(range(3), 2)`` -- (0,1), (0,2), (1,2).
     """
     contrasts: list[_Contrast] = []
     for family, ladder in FAMILIES.items():
@@ -655,14 +494,11 @@ _LADDER_POS_NAMES = ("small", "mid", "large")
 
 def build_cross_family_contrasts() -> list:
     """Build the 63 SECONDARY cross-family, size-matched contrasts (3 ladder positions
-    x C(7,2) = 21 family pairs); every label carries the literal "SECONDARY" tag so
-    this tier's output cannot be mistaken for a primary result.
+    x C(7,2) = 21 family pairs); every label carries "SECONDARY" so this tier can't be
+    mistaken for a primary result.
 
-    Returns
-    -------
-    list of (label, model_a, model_b)
-        Grouped by ladder position 0, 1, 2; within a position, family pairs follow
-        `FAMILIES` definition order.
+    Returns (label, model_a, model_b) tuples grouped by ladder position, then by
+    `FAMILIES` order.
     """
     contrasts: list[_Contrast] = []
     for ladder_pos in range(3):
@@ -691,22 +527,11 @@ def bootstrap_power(
     """Bootstrap McNemar power and the paired rate-gap CI for one model pair.
 
     Resamples `n_theorems` whole theorem blocks with replacement from `blocks`, pools
-    their cells, and computes McNemar's exact p over `sims` simulations.
+    their cells, and computes McNemar's exact p over `sims` simulations. `rng` is
+    freshly seeded by the caller (see `_seed_of`) so runs are byte-identical.
 
-    Parameters
-    ----------
-    alpha : float
-        Per-test threshold: this tier's `ALPHA_PRIMARY` or `ALPHA_SECONDARY`.
-    rng : Generator
-        Freshly seeded by the caller (see `_seed_of`) so runs are byte-identical.
-
-    Returns
-    -------
-    power : float
-        Rejection fraction at `alpha`.
-    gap_lo, gap_hi : float
-        5th/95th-percentile bootstrap CI of ``rate_a - rate_b``, used for the
-        near-tie / equivalence verdict.
+    Returns (power, gap_lo, gap_hi): rejection fraction at `alpha`, and the
+    5th/95th-percentile bootstrap CI of ``rate_a - rate_b`` (for the near-tie verdict).
     """
     thm_ids = list(blocks.keys())
     # Pre-flatten each theorem's per-cell (a, b) outcomes so the inner sim loop
@@ -748,32 +573,17 @@ def passn_power(
 ) -> float:
     """Project McNemar power for a pair at `n_replicates`, via the Beta mixture.
 
-    Each theorem is solvable with probability `frac_solvable` (shared -- the SAME
-    theorems); each solvable cell draws a per-replicate success probability from
+    Each theorem is solvable with probability `frac_solvable` (the SAME theorems for
+    both models); each solvable cell draws a per-replicate success probability from
     ``Beta(m * beta_conc, (1 - m) * beta_conc)``, ``m = rate / frac_solvable`` being the
-    model's calibrated solvable-cell mean: shared coarse difficulty plus per-model skill.
-    `pass_at_n` converts cells to pass@N; McNemar's p is computed per simulation on an
-    `n_theorems` x `n_prompt_rungs` grid (prompt rungs, NOT ladder positions).
+    model's calibrated solvable-cell mean. `pass_at_n` converts cells to pass@N;
+    McNemar's p is computed per simulation on an `n_theorems` x `n_prompt_rungs` grid.
 
-    Parameters
-    ----------
-    rate_a, rate_b : float
-        Observed marginal pass@1 rates from `marginal_rates`.
-    frac_solvable : float
-        From `union_solvable_fraction` called with just this pair; must be ``> 0``.
-    rng : Generator
-        Freshly seeded by the caller.
+    `frac_solvable`: from `union_solvable_fraction` on just this pair; must be ``> 0``.
 
-    Returns
-    -------
-    float
-        Rejection fraction at `alpha`, or ``nan`` if either model's implied
-        solvable-cell mean ``rate / frac_solvable`` falls outside ``(0, 1]``.
-
-    Notes
-    -----
-    Adding replicates re-samples the SAME theorem's difficulty, so this projection
-    saturates: theorems, not replicates, are the power lever.
+    Returns the rejection fraction at `alpha`, or ``nan`` if either model's implied
+    solvable-cell mean falls outside ``(0, 1]``. Adding replicates re-samples the SAME
+    theorem's difficulty, so this saturates: theorems, not replicates, are the lever.
     """
     ma = rate_a / frac_solvable
     mb = rate_b / frac_solvable
@@ -834,27 +644,19 @@ def needed_replicates(
 class ContrastSizing:
     """One model-pair contrast's observed statistics and sizing result.
 
-    Attributes
-    ----------
-    n_paired_theorems : int
-        ``len(blocks)``; identical across every contrast from the same `blocks`.
-    observed_gap : float
-        ``rates[model_a] - rates[model_b]`` on the current R=1 pilot.
-    observed_p : float
-        McNemar exact two-sided p, POOLED over all paired cells and prompt rungs;
-        observed, not a projection.
-    theorem_curve, r_theorems
-        Block-bootstrap power at each `N_THEOREMS_GRID` point (same order), and the
-        smallest grid point reaching each `POWER_TARGETS` level (``None`` if none).
-    ci_lo, ci_hi : float
-        Bootstrap 5th/95th-percentile CI of the paired rate gap at the LARGEST
-        `N_THEOREMS_GRID` point.
-    near_tie : bool
-        True only if `observed_gap` AND ``[ci_lo, ci_hi]`` both fall inside
+    n_paired_theorems: ``len(blocks)``, identical across every contrast from the same
+        `blocks`.
+    observed_gap: ``rates[model_a] - rates[model_b]`` on the current R=1 pilot.
+    observed_p: McNemar exact two-sided p, pooled over all paired cells and prompt
+        rungs; observed, not a projection.
+    theorem_curve, r_theorems: block-bootstrap power at each `N_THEOREMS_GRID` point,
+        and the smallest grid point reaching each `POWER_TARGETS` level (None if none).
+    ci_lo, ci_hi: bootstrap 5th/95th-percentile CI of the paired rate gap at the
+        LARGEST `N_THEOREMS_GRID` point.
+    near_tie: True only if `observed_gap` and ``[ci_lo, ci_hi]`` both fall inside
         ``+/- EQUIV_BAND`` -- a certified equivalence, not an unresolved test.
-    needed_replicates : int or None
-        Smallest `N_REPLICATES_GRID` point the Beta-mixture projects to reach
-        ``POWER_TARGETS[0]`` at the CURRENT `n_paired_theorems`.
+    needed_replicates: smallest `N_REPLICATES_GRID` point the Beta-mixture projects to
+        reach ``POWER_TARGETS[0]`` at the current `n_paired_theorems`.
     """
 
     label: str
@@ -885,22 +687,12 @@ def compute_contrast_sizing(
     """Compute one contrast's observed statistics plus its sizing projections.
 
     Reseeds two independent generators per contrast (bootstrap curve, replicate
-    projection), both derived from ``(model_a, model_b)`` via `_seed_of`, so
-    re-running produces byte-identical output.
+    projection), both derived from ``(model_a, model_b)`` via `_seed_of`, so re-running
+    produces byte-identical output. `prompt_rungs` is used only for its length (the
+    Beta-mixture's per-theorem cell count).
 
-    Parameters
-    ----------
-    prompt_rungs : list
-        Used only for its length: the Beta-mixture's per-theorem cell count.
-    alpha : float
-        Per-test threshold for every McNemar test inside `bootstrap_power` /
-        `passn_power` -- this tier's `ALPHA_PRIMARY` or `ALPHA_SECONDARY`.
-
-    Returns
-    -------
-    ContrastSizing or None
-        ``None`` if either model is absent from `rates`, so a pre-registered contrast
-        the current data does not cover is skipped, not raised on.
+    Returns None if either model is absent from `rates`, so a pre-registered contrast
+    the current data doesn't cover is skipped, not raised on.
     """
     if model_a not in rates or model_b not in rates:
         return None
@@ -980,16 +772,11 @@ def _print_tier_report(
 ) -> None:
     """Compute and print one contrast tier's observed + sizing report.
 
-    Parameters
-    ----------
-    contrasts : list
-        The tier's full pre-registered list (21 or 63); contrasts whose models are
-        absent from the loaded data are skipped with a summary line, not silently.
-    secondary : bool
-        True = the SECONDARY cross-family tier: every header and summary line labelled
-        SECONDARY, sizing at `ALPHA_SECONDARY`, observed significance decided by
-        `benjamini_hochberg` at `Q_SECONDARY`. False = PRIMARY, sized and decided at
-        the fixed `ALPHA_PRIMARY` Bonferroni threshold.
+    `contrasts`: the tier's full pre-registered list (21 or 63); contrasts whose
+    models are absent from the loaded data are skipped with a summary line, not
+    silently. `secondary`: True = SECONDARY cross-family tier (sized at
+    `ALPHA_SECONDARY`, decided by `benjamini_hochberg` at `Q_SECONDARY`); False =
+    PRIMARY, at the fixed `ALPHA_PRIMARY` Bonferroni threshold.
     """
     alpha_sizing = ALPHA_SECONDARY if secondary else ALPHA_PRIMARY
     sizings: list[ContrastSizing] = []
@@ -1146,11 +933,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Load the requested run files (S3 or local), pair joint cells, print the report.
 
-    Returns
-    -------
-    int
-        0 on a normal report; 1 if no row files, or no fully-paired cells for the
-        requested model set, were found.
+    Returns 0 on a normal report, 1 if no row files or no fully-paired cells for the
+    requested model set were found.
     """
     args = parse_args(argv)
     models_filter = (
@@ -1167,20 +951,14 @@ def main(argv: list[str] | None = None) -> int:
             f"{tmp_dir} ...",
             file=sys.stderr,
         )
-        # `download_scaling_rows`, not `rows_source.resolve_rows_dir`: this
-        # script needs the row-file LIST (it reports how many runs loaded) and
-        # must return 1 on an empty archive rather than raise, which is what
-        # the sibling scripts' shared resolver does. Both candidates are passed
-        # to preserve this script's documented all_rows.jsonl fallback -- the
-        # candidate name is also the landed basename, so `load_joint_cells`'s
-        # unverified-input banner still fires on it.
-        #
-        # The local scratch layout changed with the move, from
-        # ``<tmp>/scaling_<key>/`` to ``<tmp>/<key>/``. That is invisible to
-        # this script: `load_joint_cells` keys every model off the row's own
-        # ``model`` field and never reads a directory name. The new layout is
-        # the one `error_bars.py` and `hint_vs_noise.py` need, which is why one
-        # downloader can now serve all three.
+        # `download_scaling_rows`, not `rows_source.resolve_rows_dir`: this script
+        # needs the row-file LIST (it reports how many runs loaded) and must return 1
+        # on an empty archive rather than raise. Both candidates are passed to keep
+        # this script's documented all_rows.jsonl fallback -- the candidate name is
+        # also the landed basename, so `load_joint_cells`'s unverified-input banner
+        # still fires on it. `load_joint_cells` keys every model off the row's own
+        # ``model`` field and never reads a directory name, so this same downloader
+        # also serves `error_bars.py`/`hint_vs_noise.py`.
         row_files = download_scaling_rows(
             tmp_dir,
             prefix=deduction_prefix,

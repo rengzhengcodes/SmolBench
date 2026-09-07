@@ -1,22 +1,16 @@
 """Deduction leg of the "information or just length?" question: hint:3 vs noise:3.
 
-The rungs are byte-identical through goal, tactic state, proof so far, and the
-premises the next tactic uses; hint:3 then adds a trailing 1-hop TRANSITIVE
-premise-closure block that noise:3 replaces with token-matched padding. So this leg
-asks only whether that background helps ON TOP OF an already-complete direct-premise
-context -- NOT the induction extens-vs-noise contrast, which swaps the encoding of the
-whole evidence set; results do not carry between legs.
+hint:3 and noise:3 are byte-identical except a trailing block: hint:3 adds a
+1-hop transitive premise closure, noise:3 replaces it with token-matched
+padding. So this leg tests only whether that background helps on top of an
+already-complete direct-premise context -- not the induction extens-vs-noise
+contrast, which swaps the whole evidence encoding; results do not carry
+between legs.
 
-Cells are paired on (theorem_id, k) WITHIN one model, contributing exactly ONE cell per
-theorem: the pairs are independent, so exact McNemar is the primary test and no cluster
-correction applies (unlike the family-ladder contrasts). Holm-Bonferroni over the 21
-models at FWER 0.05 (`ALPHA`), valid under arbitrary dependence.
-
-Rows come from either the S3 archive or a local tree, through
-``rows_source.resolve_rows_dir``: ``--s3 [PREFIX]`` downloads
-``<prefix>/scaling_<key>/verified_rows.jsonl`` into a temporary
-``<dir>/<model>/verified_rows.jsonl`` tree, and ``--rows-dir`` reads such a
-tree that already exists.
+Cells pair on (theorem_id, k) within a model, one cell per theorem, so pairs
+are independent: exact McNemar is the primary test with no cluster correction
+(unlike the family-ladder contrasts), Holm-Bonferroni over the 21 models at
+FWER 0.05 (`ALPHA`).
 
 Run:
     .venv/bin/python \
@@ -55,34 +49,21 @@ def load_rungs(path: Path) -> dict:
     """Map each ``(theorem_id, k)`` cell of one model to its two rung outcomes.
 
     Reads `path` (a model's ``verified_rows.jsonl``): only ``kind == "cell"``,
-    ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded through
-    ``power_analysis.grade_verdicts``, the single implementation of this study's row
-    rules -- in particular the EARLIEST measurable row for a cell+rung wins.
+    ``replicate_idx == 0`` rows in the `RUNG_INFO` / `RUNG_NOISE` rungs, graded
+    through ``power_analysis.grade_verdicts`` (the earliest measurable row for
+    a cell+rung wins). ``replicate_idx == 0`` is an assumption that this study
+    collects R=1, not a harmless filter: any row past it is dropped, not
+    aggregated, so a future run that collects real replicates would silently
+    be graded at R=1 -- this prints one stderr warning per call naming the
+    dropped-row count when that happens.
 
-    The ``replicate_idx == 0`` restriction is an ASSUMPTION that this study
-    collects R=1, not a harmless filter: any row with ``replicate_idx > 0`` is
-    DROPPED here, not aggregated with the cell+rung's other replicate(s). If a
-    later run starts writing real replicates, this still grades only the first
-    attempt per cell+rung and discards the rest silently unless warned (see
-    below). ``power_analysis.N_REPLICATES_GRID`` / ``needed_replicates`` size
-    how many replicates a FUTURE experiment would need for a target power --
-    they do not give this function the ability to analyse replicates once
-    collected; that would be a separate follow-up. Because the drop would
-    otherwise be invisible, this function prints one stderr WARNING per call
-    naming the dropped-row count and `path` whenever it fires.
+    Returns ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``; a cell
+    with no measurable row stays absent, never scored 0.
 
-    Returns
-    -------
-    dict
-        ``{(theorem_id, k): {rung: 1 success | 0 real failure}}``; a cell with no
-        measurable row stays ABSENT, never scored 0.
-
-    Raises
-    ------
-    SystemExit
-        From `rows_source.reject_superseded`, or from `reject_unverified_verdicts`, which runs at
-        INGESTION before the rung filter -- an ungraded row in a rung this comparison
-        never reads still raises, since it proves verification did not finish.
+    Raises `SystemExit` from `rows_source.reject_superseded`, or from
+    `reject_unverified_verdicts` (which runs at ingestion, before the rung
+    filter, so an ungraded row in a rung this comparison never reads still
+    raises).
     """
     rows_source.reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
@@ -118,11 +99,9 @@ def load_rungs(path: Path) -> dict:
 def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     """Smallest pi >= 0.5 whose exact power reaches `target` at this rejection region.
 
-    The region is the two-sided exact-McNemar one, ``{b <= k_crit} U {b >= n_disc -
-    k_crit}`` for a discordant total `n_disc` (``b + c``); under a true
-    discordant-favour probability pi, b is Binomial(`n_disc`, pi), so power has a
-    CLOSED FORM. The fixed 200-step bisection over ``[0.5, 1.0]`` on it needs no
-    convergence check: no seed, no Monte Carlo error, same number every run.
+    Power has a closed form here (b is Binomial(`n_disc`, pi) under a true
+    discordant-favour probability pi), so the fixed 200-step bisection needs
+    no convergence check: deterministic, same result every run.
     """
     lo, hi = 0.5, 1.0
     for _ in range(200):
@@ -139,25 +118,14 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
 def main(argv=None) -> int:
     """Parse arguments, run the per-model hint:3 vs noise:3 comparison, print it.
 
-    The rows come from `rows_source.resolve_rows_dir`, so ``--s3`` and
-    ``--rows-dir`` are interchangeable: everything below reads ONE resolved
+    Rows come from `rows_source.resolve_rows_dir`, so ``--s3`` and
+    ``--rows-dir`` are interchangeable: everything below reads one resolved
     local directory of ``<model>/verified_rows.jsonl``, one lane per model.
 
-    Returns
-    -------
-    int
-        0; this comparison has no failure exit -- a missing or unverified lane
-        raises instead.
-
-    Raises
-    ------
-    SystemExit
-        From `rows_source.resolve_rows_dir` when an ``--s3`` download comes
-        back empty or hits a retired artifact, and from `load_rungs` (via
-        ``rows_source.reject_superseded`` /
-        ``power_analysis.reject_unverified_verdicts``) on a retired or ungraded lane. A lane
-        missing from the resolved directory raises ``FileNotFoundError`` at
-        `load_rungs`' read.
+    Always returns 0; there is no failure exit here -- a missing or
+    unverified lane raises instead (`SystemExit` from `resolve_rows_dir` or
+    `load_rungs`'s retired/ungraded checks; `FileNotFoundError` for a lane
+    missing from the resolved directory).
     """
     ap = argparse.ArgumentParser(description=__doc__)
     rows_source.add_source_args(ap)
@@ -207,13 +175,8 @@ def main(argv=None) -> int:
     print(f"  hint:3 HIGHER (information helps): {len(up)}")
     print(f"  noise:3 HIGHER:                    {len(sig) - len(up)}")
 
-    # A null means nothing without the effect it could have caught, so the report
-    # below states the MINIMUM DETECTABLE EFFECT and defines its two columns. What
-    # it does not say: boundary is the most balanced discordant split still clearing
-    # Holm's strictest threshold, and mde80 is the smallest pi = P(a discordant pair
-    # favours hint:3) whose exact binomial power reaches 0.80, converted back to
-    # accuracy points. Both condition on the observed discordant total, itself
-    # random, so an unconditional MDE would be larger still.
+    # boundary/mde80 both condition on each model's OBSERVED discordant total,
+    # itself random; an unconditional MDE would be larger still.
     print(f"\n{'-' * 78}\nMINIMUM DETECTABLE EFFECT -- what this null actually rules out")
     print(f"{'-' * 78}")
     print(f"Both columns are evaluated at each model's OBSERVED discordant "
@@ -255,13 +218,9 @@ def main(argv=None) -> int:
         print("  Provenance: mde80 is a deterministic bisection on the CLOSED-FORM binomial power,\n  so it does not move between runs.")
         print(f"Largest observed |difference|: "
               f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}.")
-        # Design: "this null rules out large effects" is only a true reading of a
-        # NULL result. Gate it on `sig` (the Holm-significant rows, computed at
-        # :149) instead of printing it unconditionally: with sig non-empty at
-        # least one model already cleared Holm, so the leg as a whole is not a
-        # null, even though the MDE numbers above are still valid sensitivity
-        # figures for the models that did not reach significance.
-        #
+        # "rules out large effects" is only true of a null result: gated on
+        # `sig` rather than printed unconditionally, since a non-empty `sig`
+        # means at least one model already cleared Holm.
         if not sig:
             print("So this null rules out LARGE effects of 1-hop transitive "
                   "premise background,\nnot small ones.")
@@ -276,14 +235,11 @@ def main(argv=None) -> int:
     print(f"\nDirection of the point estimates, ignoring significance: "
           f"{n_pos} favour hint:3,\n  {n_neg} favour noise:3, "
           f"{len(rows) - n_pos - n_neg} exactly tied.")
-    # Design: whether this split reads as "no effect" is a conclusion computed
-    # from `sig` (whether ANY model already rejects the null under Holm), not a
-    # constant string. With sig empty, no model rejects the null, so the split
-    # above -- however lopsided -- is the kind pure noise produces just as
-    # easily as a real, undetectable effect would; with sig non-empty, at least
-    # one model already demonstrates a real effect, so "no effect" would
-    # misdescribe the leg even if the unsigned point-estimate split still leans
-    # the other way.
+    # Whether this reads as "no effect" is computed from `sig`, not a constant
+    # string: with sig empty, a lopsided split is exactly what pure noise
+    # produces; with sig non-empty, at least one model already shows a real
+    # effect, so "no effect" would misdescribe the leg regardless of which
+    # way the unsigned split leans.
     if not sig:
         print("  -- consistent with no effect rather than a real effect this "
               "design cannot\n  resolve.")

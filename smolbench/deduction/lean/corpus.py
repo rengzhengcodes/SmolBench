@@ -69,10 +69,8 @@ class TracedTactic:
     state_after: str
     #: Premises referenced by name inside `tactic`, one dict per reference:
     #: ``{full_name, def_path, def_pos, def_end_pos}`` -- lighter than
-    #: ``smolbench.deduction.lean.premises.Premise`` (no ``code``/``kind``).
-    #: ``full_name`` is the join key into ``premises.lookup`` (see
-    #: ``context._render_hint_parts``). Empty for most tactics. Extracted from
-    #: the raw ``annotated_tactic`` field by ``_from_json``.
+    #: ``premises.Premise`` (no ``code``/``kind``). ``full_name`` joins into
+    #: ``premises.lookup``. Empty for most tactics.
     premises: list[dict]
 
 
@@ -90,24 +88,20 @@ class BenchmarkTheorem:
     #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
     full_name: str
     #: ``(line, column)`` of the declaration's start, as recorded in the
-    #: LeanDojo trace. Nothing here slices source with it, so its indexing
-    #: convention is untested -- unlike
-    #: ``smolbench.deduction.lean.premises.Premise.start``, whose *line* is
-    #: provably 1-indexed (``premises.slice_full_decl`` converts with an
-    #: explicit ``start_line - 1``). Treat both as opaque trace positions.
+    #: LeanDojo trace. Nothing here slices source with it, unlike
+    #: ``premises.Premise.start`` (provably 1-indexed); treat both as opaque
+    #: trace positions.
     start: tuple[int, int]
     #: ``(line, column)`` of the declaration's end. See `start`.
     end: tuple[int, int]
     #: The theorem's tactic-by-tactic trace, in proof order. Empty for
     #: theorems LeanDojo could not trace (see `has_proof`).
     traced_tactics: list[TracedTactic]
-    #: True when this theorem's declaration NAME is absent from the corpus's
-    #: `postcutoff` metadata block's ``old_commit`` trace -- i.e. it is
-    #: provably post-cutoff by name-set difference, not by any date heuristic.
-    #: Defaults False (no other field here has a default) so the ordinary
-    #: 2024-03-24 benchmark, whose rows carry no ``postcutoff`` key, still
-    #: parses. Must stay the LAST field: `BenchmarkTheorem` is frozen and every
-    #: other field is required.
+    #: True when this theorem's name is absent from the corpus's `postcutoff`
+    #: metadata block's ``old_commit`` trace -- i.e. provably post-cutoff by
+    #: name-set difference, not a date heuristic. Defaults False so ordinary
+    #: rows (no ``postcutoff`` key) still parse; must stay the LAST field
+    #: since `BenchmarkTheorem` is frozen and every other field is required.
     postcutoff: bool = False
 
     @property
@@ -157,12 +151,7 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
     Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations); the
     key excludes `data_root()`, so repointing ``SMOLBENCH_LEAN_DATA``
     mid-process keeps serving the first root until `reset_caches` runs.
-
-    Raises
-    ------
-    FileNotFoundError
-        Split file missing -- the dataset is not bootstrapped; see
-        ``notebooks/deduction/README.md``'s "Data bootstrap".
+    Raises `FileNotFoundError` naming the remedy if the split file is missing.
     """
     path = data_root() / kind / f"{split}.json"
     if not path.exists():
@@ -184,54 +173,36 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
             yield t
 
 
-#: Canonical order `eval_split_specs` reports its splits in. Fixed here rather
-#: than read from directory-listing order, which is filesystem- and
-#: machine-dependent: a holdout index built from these specs must index the same
-#: theorems in the same order everywhere, or two machines' manifests disagree
-#: over an ordering nobody chose.
+#: Canonical order `eval_split_specs` reports splits in, fixed here rather
+#: than read from directory-listing order (filesystem- and
+#: machine-dependent): a holdout index built from these specs must index the
+#: same theorems in the same order everywhere.
 _SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
 
 #: The one split family `eval_split_specs` scans. ``novel_premises`` is
-#: deliberately excluded: ``scripts/deduction/build_postcutoff_corpus.py`` writes
-#: a ``novel_premises/`` directory for the post-cutoff corpus, but it is a real
-#: COPY of ``random/``'s rows rather than an independently curated slice (see
-#: ``notebooks/deduction/README.md``, "What's not in scope"), so indexing it
-#: would re-index the same theorems for no gain. ``random`` is also the family
-#: ``notebooks/deduction/run_study.py``'s ``build_config`` defaults to and the
-#: one every sweep this study runs draws from.
+#: excluded: ``build_postcutoff_corpus.py`` writes a ``novel_premises/`` dir
+#: that COPIES ``random/``'s rows rather than an independently curated slice,
+#: so indexing it would re-index the same theorems for no gain. ``random`` is
+#: also what ``run_study.py``'s ``build_config`` defaults to.
 _EVAL_SPLIT_KIND: SplitKind = "random"
 
 
 def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
-    """The ``(kind, split)`` pairs an eval holdout should cover in the ACTIVE corpus.
+    """The ``(kind, split)`` pairs an eval holdout should cover in the active corpus.
 
-    Reports every ``<split>.json`` present under ``data_root() / "random"``, in
-    the fixed `_SPLIT_ORDER`. See `_EVAL_SPLIT_KIND` for why only the ``random``
-    family is scanned.
+    Reports every ``<split>.json`` present under ``data_root() / "random"``,
+    in the fixed `_SPLIT_ORDER` (see `_EVAL_SPLIT_KIND` for why only
+    ``random`` is scanned).
 
-    Reads the filesystem on EVERY call and memoizes nothing -- not even in a
-    module-level constant. Several callers repoint ``SMOLBENCH_LEAN_DATA``
-    mid-process and rely on the next call seeing the new root, exactly as
-    `metadata` / `postcutoff_metadata` already do; a cached result (or an
-    import-time constant) would freeze the first corpus the process ever saw.
+    Reads the filesystem on every call and memoizes nothing, not even in a
+    module-level constant: several callers repoint ``SMOLBENCH_LEAN_DATA``
+    mid-process and rely on the next call seeing the new root, as `metadata`
+    already does.
 
-    Returns
-    -------
-    tuple of (SplitKind, Split)
-        Non-empty, ordered ``train``, ``val``, ``test``, restricted to the split
-        files that actually exist. Every pair is directly usable as
-        `load_split`'s arguments.
-
-    Raises
-    ------
-    FileNotFoundError
-        ``data_root() / "random"`` does not exist -- the corpus is not
-        bootstrapped.
-    ValueError
-        The directory exists but holds none of the recognised split files.
-        Returning an empty tuple instead would be a silent no-op: a holdout
-        index built from it would decontaminate nothing while still reporting
-        success.
+    Raises `FileNotFoundError` if ``data_root() / "random"`` doesn't exist, or
+    `ValueError` if it exists but holds none of the recognised split files --
+    an empty tuple would be a silent no-op, decontaminating nothing while
+    still reporting success.
     """
     root = data_root()
     kind_dir = root / _EVAL_SPLIT_KIND
@@ -259,16 +230,9 @@ def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
 def metadata() -> dict:
     """Load the benchmark's top-level ``metadata.json``.
 
-    Returns
-    -------
-    dict
-        Keys include ``dataset_name``, ``creation_time``, ``from_repo``
-        (``{url, commit}``) and ``leandojo_version``.
-
-    Raises
-    ------
-    FileNotFoundError
-        Dataset not bootstrapped.
+    Keys include ``dataset_name``, ``creation_time``, ``from_repo``
+    (``{url, commit}``) and ``leandojo_version``. Raises `FileNotFoundError`
+    if not bootstrapped.
     """
     path = data_root() / "metadata.json"
     if not path.exists():
@@ -282,28 +246,15 @@ def metadata() -> dict:
 def postcutoff_metadata() -> dict | None:
     """The `metadata()`'s ``postcutoff`` block, or None when absent.
 
-    Reads through `metadata()` on every call rather than caching separately --
-    `metadata()` itself is deliberately uncached (several callers repoint
-    ``SMOLBENCH_LEAN_DATA`` mid-process and rely on a fresh read), and adding a
-    cache here would let a stale block survive a root switch.
+    Reads through `metadata()` on every call rather than caching separately:
+    `metadata()` is deliberately uncached (callers repoint
+    ``SMOLBENCH_LEAN_DATA`` mid-process), and a cache here would let a stale
+    block survive a root switch.
 
-    Returns
-    -------
-    dict | None
-        The block verbatim (``method``, ``new_commit``, ``new_commit_date``,
-        ``old_commit``, ``old_commit_date``, ``target_date``, ``n_new_decls``,
-        ``n_old_decls``, ``n_postcutoff_decls``), or None for an ordinary
-        (non-post-cutoff) corpus.
-
-    Raises
-    ------
-    FileNotFoundError
-        Propagated from `metadata()`: dataset not bootstrapped.
-    ValueError
-        The block is present but `metadata()`'s ``from_repo.commit`` disagrees
-        with the block's ``new_commit`` -- a corpus traced at one commit cannot
-        be a name-set difference computed at another, so the file is
-        internally incoherent and must not be trusted silently.
+    Raises `ValueError` if the block's ``new_commit`` disagrees with
+    `metadata()`'s ``from_repo.commit`` -- a corpus traced at one commit can't
+    be a name-set difference computed at another, so the file is internally
+    incoherent and must not be trusted silently.
     """
     meta = metadata()
     block = meta.get("postcutoff")
@@ -323,16 +274,8 @@ def postcutoff_metadata() -> dict | None:
 def is_postcutoff_corpus() -> bool:
     """True if the current corpus carries a `postcutoff_metadata` block.
 
-    Note this can still raise: an incoherent corpus (see `postcutoff_metadata`'s
-    ``Raises``) must not silently report False, so this function propagates
-    `postcutoff_metadata`'s `ValueError` rather than swallowing it.
-
-    Raises
-    ------
-    FileNotFoundError
-        Propagated from `postcutoff_metadata`.
-    ValueError
-        Propagated from `postcutoff_metadata`.
+    Propagates `postcutoff_metadata`'s exceptions rather than swallowing
+    them: an incoherent corpus must not silently report False.
     """
     return postcutoff_metadata() is not None
 
@@ -351,13 +294,8 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
     """Yield theorems recorded ``verdict == "success"`` in the replay sidecar.
 
     Membership comes from `replay_passing_path`; yielded in `load_split` file
-    order.
-
-    Raises
-    ------
-    FileNotFoundError
-        Sidecar missing; produce it with `python -m
-        smolbench.deduction.lean.cli filter --kind <kind> --split <split>`.
+    order. Raises `FileNotFoundError` naming the `filter` command to run if
+    the sidecar is missing.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():

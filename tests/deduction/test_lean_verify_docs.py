@@ -1,17 +1,12 @@
 """Text-only guarantees about the lean-interact verifier backend's packaging and docs.
 
-Deliberately a SEPARATE module from ``test_lean_repl_verifier.py``, and
-deliberately importing nothing from `lean_interact` or
-`smolbench.deduction.lean.verify`.
-
-That sibling module opens with ``pytest.importorskip("lean_interact")``, so the
-whole file — including any packaging check placed in it — vanishes silently the
-moment the package is missing from the venv. Which is exactly the scenario these
-tests exist to catch: ``uv.lock`` has not yet been regenerated since
-``lean-interact`` was added to pyproject's ``lean`` extra, so a
-``uv sync --all-extras`` resolves from the stale lock and prunes it. A guarantee
-that disappears under the failure it guards against is not a guarantee, so these
-run unconditionally.
+Deliberately separate from ``test_lean_repl_verifier.py`` and importing
+nothing from `lean_interact` or `smolbench.deduction.lean.verify`: that
+sibling module skips the whole file the moment the package is missing from
+the venv, which is exactly the packaging failure (a stale ``uv.lock`` pruning
+``lean-interact`` on ``uv sync --all-extras``) these tests exist to catch. A
+guarantee that disappears under the failure it guards against is not a
+guarantee, so these run unconditionally.
 """
 
 from __future__ import annotations
@@ -35,26 +30,23 @@ def test_pyproject_lean_extra_declares_lean_interact():
 
 
 def test_pyproject_lean_extra_still_declares_lean_dojo():
-    """`lean-dojo` is NOT dropped by this change.
-
-    Only VERIFICATION stopped using it; `smolbench.deduction.lean.premises`
-    still slices premise source out of a LeanDojo-traced checkout, and corpus
-    tracing still needs it. Removing it here would break those silently.
+    """`lean-dojo` is not dropped by this change: only verification stopped
+    using it. `smolbench.deduction.lean.premises` still slices premise
+    source from a LeanDojo-traced checkout, and corpus tracing still needs
+    the package; removing it here would break both silently.
     """
     assert "lean-dojo" in _lean_extra()
 
 
 def test_verify_module_has_no_lean_dojo_import():
-    """13-19: the retired backend is gone from `verify.py`'s SOURCE, checked here.
+    """The retired backend is gone from `verify.py`'s source, checked by
+    reading the file directly (not importing it), so this needs neither
+    `lean_interact` nor a Lean toolchain.
 
-    Moved out of `test_lean_repl_verifier.py`, which opens with
-    ``pytest.importorskip("lean_interact")``: the check that a `lean_dojo`
-    import has not crept back would have vanished exactly when the packaging
-    failure this module exists to catch occurs. Reads the file by PATH rather
-    than importing it, so it needs neither `lean_interact` nor a Lean
-    toolchain. The runtime half -- that a cold import does not pull `lean_dojo`
-    in transitively -- stays in that sibling module, which can actually import
-    the verifier.
+    Moved out of `test_lean_repl_verifier.py` (which skips whenever
+    `lean_interact` is missing) because that is exactly when this guard must
+    still run; the runtime check that a cold import doesn't pull in
+    `lean_dojo` transitively stays in that sibling module.
     """
     src = (REPO_ROOT / "smolbench" / "deduction" / "lean" / "verify.py").read_text()
     assert src, "verify.py not found at the expected path"
@@ -71,17 +63,10 @@ def test_readme_documents_the_mathlib_root_env_var():
 def test_readme_keeps_the_traced_cache_claim_narrow():
     """Verification stopped needing ``~/.cache/lean_dojo``; `premises.py` did not.
 
-    An over-broad "the LeanDojo cache is obsolete" would send an operator to
-    delete a tree that hint/noise context rendering still reads.
-
-    13-20: this used to assert only ``"premises" in text and
-    "~/.cache/lean_dojo/" in text``. Both substrings occur a dozen times
-    apiece across the README for unrelated reasons, so the guard passed on
-    prose saying the OPPOSITE of what it claims to protect (verified: an
-    over-broad "the cache is obsolete" sentence still gave 7 passed). It now
-    anchors on the narrowing SENTENCE itself, in one paragraph, and on the
-    named function that keeps the claim narrow, so an edit that widens the
-    claim has to delete something this test names.
+    An over-broad "the cache is obsolete" claim would send an operator to
+    delete a tree that hint/noise context rendering still reads. Anchored on
+    the narrowing sentence itself and the named function that keeps the
+    claim scoped, so widening it means deleting something this test names.
     """
     text = (NOTEBOOKS / "deduction" / "README.md").read_text()
     assert "~/.cache/lean_dojo/" in text
@@ -102,12 +87,12 @@ def test_smoke_skill_documents_the_lean_interact_backend():
 
 
 def test_smoke_skill_tier0_check_cannot_pass_vacuously():
-    """Tier 0 asserts the generation path does not PULL IN the Lean backend.
+    """Tier 0 asserts the generation path does not pull in the Lean backend.
 
-    A bare ``import smolbench.deduction.lean.runner`` would pass even if runner
-    grew a hard dependency on `lean_interact`, because `lean_interact` is
-    installed in the project venv. The check must therefore assert on
-    ``sys.modules``, not merely that the import succeeded.
+    A bare ``import smolbench.deduction.lean.runner`` would pass even if
+    runner grew a hard dependency on `lean_interact`, since the package is
+    installed in the project venv regardless; the check must assert on
+    ``sys.modules``, not just that the import succeeded.
     """
     script = (REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh").read_text()
     assert "sys.modules" in script

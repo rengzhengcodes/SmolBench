@@ -72,7 +72,7 @@ def _fake_s3(keys):
 
 
 def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(monkeypatch):
-    """`spool_prefix()` returns NO trailing "/", but this module slices by `len(prefix)`.
+    """`spool_prefix()` returns no trailing "/", but this module slices by `len(prefix)`.
 
     Forget the appended "/" and every deduction model name comes back empty
     (``"/scaling_x/f".split("/", 1)[0] == ""``) and every destination key is off

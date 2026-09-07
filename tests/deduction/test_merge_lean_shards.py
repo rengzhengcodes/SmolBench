@@ -125,18 +125,13 @@ def _cell_v(theorem, verdict, rung="stepk:1"):
 
 
 def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path):
-    """13-04: ordinary resume produces duplicate keys; merge must not abort on them.
+    """Ordinary resume produces duplicate keys; merge must not abort on them.
 
-    `runner._existing_keys` deliberately re-runs a cell whose only row is an
-    ``"exception"`` and the sweep APPENDS the retry, so any lane that resumed
-    past one exception carries two rows for one key. The old gate called that
-    "a mis-sharded/double-run lane" and exited.
-
-    Both rows are KEPT in the merged file -- superseded data is labelled, never
-    silently dropped, and `power_analysis.grade_verdicts` already applies
-    earliest-surviving-wins to them -- but the key counts ONCE against
-    ``--expect-cells``, which is the other half of the bug: 945 rows against a
-    pinned 944 aborted just as hard.
+    `runner._existing_keys` re-runs a cell whose only row is an
+    ``"exception"``, and the sweep appends the retry, so a resumed lane can
+    carry two rows for one key. Both rows are kept in the merged file --
+    `power_analysis.grade_verdicts` already applies earliest-surviving-wins
+    to them -- but the key counts once against ``--expect-cells``.
     """
     runs = tmp_path / "runs"
     _write_shard(runs, "resumed", 0, 1, [
@@ -152,7 +147,7 @@ def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path):
 
 
 def test_merge_collapses_an_exception_only_cell(tmp_path):
-    """13-04: a cell whose every row is an exception was never measured -- not an abort."""
+    """A cell whose every row is an exception was never measured -- not an abort."""
     runs = tmp_path / "runs"
     _write_shard(runs, "allexc", 0, 1, [
         _cell_v("A", "exception"),
@@ -164,12 +159,12 @@ def test_merge_collapses_an_exception_only_cell(tmp_path):
 
 
 def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path):
-    """13-04: the gate keeps its teeth for the failure it was written for.
+    """The gate keeps its teeth for the failure it was written for.
 
-    Two rows that both reached a real verdict for one cell key IS a mis-sharded
-    or double-run lane. Checked across shards (the original scenario) and with
-    two graded verdicts, so the collapse rule cannot be read as "any duplicate
-    is fine now".
+    Two rows that both reached a real verdict for one cell key is a
+    mis-sharded or double-run lane. Checked across shards and with two graded
+    verdicts, so the collapse rule cannot be read as "any duplicate is fine
+    now".
     """
     runs = tmp_path / "runs"
     _write_shard(runs, "twice", 0, 2, [_cell_v("A", "success")])

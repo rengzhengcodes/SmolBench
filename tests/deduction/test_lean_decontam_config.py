@@ -1,22 +1,10 @@
-"""The decontamination POLICY lives in a committed TOML, not in code constants.
+"""Decontamination policy (near-duplicate params + stoplist) lives in a
+committed TOML, not code constants: it decides what a run contains, not how
+it computes.
 
-`decontam.py` used to spell the near-duplicate parameters as private module
-constants (`_SHINGLE_N`, `_NUM_PERM`, `_BANDS`, `_JACCARD_THRESHOLD`,
-`_PERM_SEED`, `_MIN_GOAL_KEY_CHARS`), and `premises.py` carried `_LEAN_NOISE`,
-a hand-maintained stoplist that decides which identifiers resolve to premise
-references -- and therefore what the `hint:3` and `hint:4` rungs actually
-contain. Both are policy: they decide what a run CONTAINS, not how it is
-computed.
-
-These tests pin three things:
-
-* the parsed values still equal the ones the code carried, so moving them to a
-  file was not a re-tuning in disguise;
-* every structural defect a hand-edit of that file could introduce is REFUSED
-  at load, naming the offending value, rather than silently changing what a
-  decontamination pass drops;
-* the digest recorded in a run's manifest is the digest of the file's raw
-  bytes.
+Pins three things: parsed values match the code's prior constants (the move
+was not a re-tuning), a hand-edit's structural defects are refused at load by
+naming the bad value, and the manifest digest covers the file's raw bytes.
 """
 
 from __future__ import annotations
@@ -36,9 +24,9 @@ CONFIG_PATH = (
 )
 
 #: The values `decontam.py`/`premises.py` carried as code constants before the
-#: move. Pinned as literals HERE, on purpose: reading them back out of the file
-#: under test would make this assertion vacuous, and the point of the pin is
-#: that relocating a constant did not change it.
+#: move. Pinned as literals here, not read back from the file under test
+#: (that would be vacuous) -- the point is that relocating them didn't change
+#: them.
 EXPECTED_MINHASH = {
     "shingle_n": 5,
     "num_perm": 64,
@@ -71,20 +59,14 @@ def test_parsed_policy_equals_the_constants_it_replaced():
     assert cfg.keys.min_goal_key_chars == EXPECTED_MIN_GOAL_KEY_CHARS
 
 
-#: The 97 entries `premises._LEAN_NOISE` held as a hand-written frozenset before
-#: the move to config, FROZEN here as a literal.
+#: The 97 entries `premises._LEAN_NOISE` held before the move to config,
+#: frozen here as a literal -- not read back from the file under test
+#: (vacuous) and not recoverable from git history once the move commit
+#: lands, so freezing it here is what keeps the check live.
 #:
-#: Not read back out of the file under test (that would be vacuous) and not
-#: recovered from ``git show HEAD:...`` either: HEAD carried the pre-move
-#: literal only until the move was committed, after which such a test SKIPS
-#: forever and silently stops checking anything. This list was verified equal
-#: to that literal, by exact set comparison, at the commit immediately before
-#: the move; freezing it is what keeps the check live.
-#:
-#: This set decides which identifiers resolve to premise references and so what
-#: the `hint:3`/`hint:4` rungs CONTAIN. An entry silently dropped or added here
-#: changes prompt content across the whole study, which is why it is pinned
-#: entry-by-entry rather than by count.
+#: Pinned entry-by-entry, not by count: this set decides which identifiers
+#: resolve to premise references, so a silently dropped or added entry
+#: changes `hint:3`/`hint:4` prompt content across the whole study.
 PRE_MOVE_LEAN_NOISE = frozenset({
     'False', 'Prop', 'Set', 'Sort', 'True', 'Type', 'abbrev', 'all_goals',
     'and', 'any_goals', 'apply', 'assumption', 'attribute', 'axiom', 'by',
@@ -135,13 +117,12 @@ def test_the_config_is_loaded_once_per_resolved_path():
                  "theorem", id="duplicate-stoplist-entry"),
 ])
 def test_a_structurally_broken_config_is_refused_by_value(tmp_path, mutate, expected):
-    """Every refusal names the offending VALUE, not just the section.
+    """Every refusal names the offending value, not just the section.
 
-    A near-duplicate policy that loads with a silently corrected parameter is
-    worse than one that will not load: it keeps dropping rows, just not the
-    ones anyone reviewed. The duplicate case matters for its own reason --
-    `lean_noise` becomes a set, so set-ification would hide a bad merge unless
-    the duplicate is caught before it.
+    A silently-corrected parameter is worse than a refusal to load: it keeps
+    dropping rows, just not the reviewed ones. The duplicate case matters
+    separately -- `lean_noise` becomes a set, so set-ification would hide a
+    bad merge unless the duplicate is caught first.
     """
     with pytest.raises(ValueError, match=re.escape(expected)):
         load_decontam_config(_write_config(tmp_path, mutate))
@@ -166,11 +147,9 @@ def test_a_missing_section_or_key_is_refused_by_name(tmp_path):
 
 
 def test_the_config_module_imports_only_the_standard_library():
-    """It is a LEAF module, which is what lets `premises` import it.
-
-    `decontam` -> `context` -> `premises` already exists, so a `premises` ->
-    `decontam` edge would close a cycle. Keeping the loader stdlib-only is what
-    makes that a non-question rather than an import-order hazard.
+    """A leaf module, which is what lets `premises` import it: `decontam` ->
+    `context` -> `premises` already exists, so a `premises` -> `decontam`
+    edge would close a cycle if this loader pulled in either.
     """
     import smolbench.deduction.lean.decontam_config as module
 

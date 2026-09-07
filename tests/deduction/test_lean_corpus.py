@@ -68,9 +68,7 @@ def test_unbootstrapped_loaders_name_the_remedy(monkeypatch, tmp_path):
     corpus.reset_caches()
 
 
-# ---------------------------------------------------------------------------
 # Post-cutoff corpus contract (A1) and the traced-root commit filter (A4)
-# ---------------------------------------------------------------------------
 
 NEW_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 OLD_COMMIT = "69c8a067c87c2bb6ba583f03fbf46090564be370"
@@ -144,7 +142,7 @@ def _make_cache(home, *commits):
 def test_traced_root_picks_the_cache_dir_matching_the_corpus_commit(
     postcutoff_data, monkeypatch, tmp_path
 ):
-    """Two cached traces, and the WRONG one sorts first -- name order must not decide."""
+    """Two cached traces, and the wrong one sorts first -- name order must not decide."""
     from smolbench.deduction.lean import premises
 
     decoy = "0" * 40
@@ -182,10 +180,8 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(monkeypatch, tm
     corpus.reset_caches()
 
 
-# ---------------------------------------------------------------------------
-# eval_split_specs: the eval holdout's split list comes from the ACTIVE corpus,
+# eval_split_specs: the eval holdout's split list comes from the active corpus,
 # not from a literal in a deleted SFT-dataset builder.
-# ---------------------------------------------------------------------------
 
 
 def test_eval_split_specs_reads_the_active_corpus(lean_data):
@@ -199,7 +195,7 @@ def test_eval_split_specs_is_canonically_ordered_and_call_time(tmp_path, monkeyp
     Creation order is reversed on purpose: a filesystem-listing implementation
     would report ``test, val, train`` here and two machines' holdout manifests
     would disagree over an ordering nobody chose. The second half repoints
-    ``SMOLBENCH_LEAN_DATA`` mid-test WITHOUT re-importing anything -- a cached
+    ``SMOLBENCH_LEAN_DATA`` mid-test without re-importing anything -- a cached
     result or an import-time constant would keep reporting the first root.
     """
     first = tmp_path / "first" / "random"

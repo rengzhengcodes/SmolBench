@@ -63,19 +63,7 @@ _TWO_GOALS = (
 
 
 def test_extract_goal_only_drops_hypotheses_from_EVERY_goal():
-    """13-10: `stepk:0` is "goal only" for all goals, not just the first.
-
-    `extract_goal_only` used to delegate to `split_state`, which stops at the
-    FIRST `⊢`; everything after it -- including every later goal's
-    hypotheses -- was returned verbatim under the "## Current goal" heading.
-    At `stepk:1+` that only duplicates what the full tactic state already
-    shows, but `stepk:0` is DEFINED as the rung that withholds hypotheses, so
-    there it was a pure leak of exactly the information the rung exists to
-    remove.
-
-    Case headers and goal lines are kept (they are what makes a branched state
-    readable and carry no hypothesis content); hypothesis lines are not.
-    """
+    """stepk:0 must withhold hypotheses from every goal, not just the first (extract_goal_only used to delegate to split_state, which stops at the first ⊢ and leaked the rest)."""
     got = context.extract_goal_only(_TWO_GOALS)
     for keep in ("case inl", "case inr", "⊢ Q n", "⊢ R m"):
         assert keep in got, f"{keep!r} missing from {got!r}"
@@ -122,9 +110,8 @@ def test_is_trivial_rung_branches(thms):
     assert context.is_trivial_rung(a, 2, "hint", 1) is False
     # hint:2 -- premiseA's stored code carries a proof body its signature lacks.
     assert context.is_trivial_rung(a, 2, "hint", 2) is False
-    # hint:3 -- neither premise's body names another corpus premise, so the
-    # 1-hop closure is empty. Exercises the `_traced_root() is None` path too:
-    # the closure reads bodies through `body_with_proof`.
+    # hint:3 -- neither premise's body names another premise, so the 1-hop closure
+    # is empty; also exercises the _traced_root() is None path via body_with_proof.
     assert context.is_trivial_rung(a, 2, "hint", 3) is True
     assert context.is_trivial_rung(a, 2, "noise", 0) is True
     assert context.is_trivial_rung(a, 2, "noise", 2) is False
@@ -133,18 +120,7 @@ def test_is_trivial_rung_branches(thms):
 
 
 def test_noise_arm_invariants(thms):
-    """noise:N == hint:(N-1) plus whitespace, at EXACTLY hint:N's PROMPT token count.
-
-    13-11: this used to compare the CONTEXT texts. The model never sees a bare
-    context -- it receives `prompt.build_user_prompt(rendered)`, i.e. the
-    context plus a fixed instruction suffix -- and the suffix's token cost is
-    NOT constant: it depends on what precedes it. Measured with cl100k, the
-    suffix costs 28 tokens after most pads and 27 after a two-unit one, so a
-    context-matched noise arm could be one token short of its hint twin in the
-    only text that matters. The invariant is therefore asserted on the FULL
-    PROMPT; `test_noise_pad_is_matched_on_the_full_prompt` is the case that
-    proves the distinction is not academic.
-    """
+    """noise:N == hint:(N-1) plus whitespace, at exactly hint:N's PROMPT token count -- checked on the full prompt because the instruction suffix's own token cost depends on what precedes it."""
     pytest.importorskip("tiktoken")
     checked = padded_seen = 0
     for name, t, k, level in _noise_cases(thms):
@@ -190,33 +166,11 @@ def test_noise_rejects_impossible_targets(thms, monkeypatch):
         context.render(t, 2, "noise", 2)
 
 
-# ---------------------------------------------------------------------------
-# 13-11: the pad is matched on the PROMPT, not on the context
-# ---------------------------------------------------------------------------
+# The pad is matched on the PROMPT, not on the context.
 
 
 def test_noise_pad_is_matched_on_the_full_prompt(thms, monkeypatch):
-    """The one pad length where context-matching and prompt-matching disagree.
-
-    Constructed, not sampled, because the discrepancy needs an exact pad
-    length and the fixture corpus does not happen to produce one. With
-    cl100k_base and the pad unit `choose_whitespace_unit` picks (``" \t"``,
-    1 token), for this baseline:
-
-        pad reps r:        0    1    2    3    4
-        context tokens:   13   14   15   15   16
-        prompt tokens:    41   42   42   43   44
-
-    The hint:2 target is 15 context tokens / 43 prompt tokens. Matching on the
-    CONTEXT stops at r=2 -- 15 == 15, exact, no complaint -- and ships a
-    prompt of 42 against the hint arm's 43. That single token is a residual
-    length confound inside the arm whose entire purpose is to remove the
-    length confound. Matching on the PROMPT takes r=3 and lands on 43.
-
-    Note r=2 and r=3 give the same CONTEXT count, which is why the old
-    exactness re-check could not catch this: both spellings were "exact" on
-    the quantity being measured. Only the quantity was wrong.
-    """
+    """Constructed case (the fixture corpus never produces one) where matching on CONTEXT and matching on PROMPT disagree: context-matching stops at r=2 (15 tokens, exact) but ships a 42-token prompt against the hint arm's 43; matching on PROMPT takes r=3 and lands on 43."""
     pytest.importorskip("tiktoken")
     base = "## Current goal\n```\n⊢ Q n\n```"
     target = base + " Q m"
@@ -235,29 +189,13 @@ def test_noise_pad_is_matched_on_the_full_prompt(thms, monkeypatch):
     n_noise = _cl100k_count(prompt.build_user_prompt(noise))
     n_hint = _cl100k_count(prompt.build_user_prompt(hint))
     assert n_noise == n_hint == 43, (n_noise, n_hint)
-    # Still a pure whitespace pad appended to the baseline -- the fix changes
-    # WHAT is measured, not what the arm is made of.
+    # Still a pure whitespace pad -- the fix changes what's measured, not the arm itself.
     assert noise.text.startswith(base)
     assert noise.text[len(base):].strip() == ""
 
 
 def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback():
-    """13-21: the pad search counts with TiktokenTokenizer, never `len(s) // 4`.
-
-    `_TokenCounter` re-implemented `smolbench.evals.tokenization.TiktokenTokenizer`
-    with a bare-except char-count fallback, in a module whose own comment said
-    it must not depend on `smolbench.evals` -- while already importing it
-    lazily via the shared pad search. `tokenization.py`'s rule is NO SILENT
-    FALLBACKS, and an approximate count cannot satisfy an EXACT length control.
-
-    `_count_tokens` deliberately survives WITH its fallback, for the callers
-    where a rough count is fine and raising would be scope creep:
-    `is_trivial_rung`'s non-noise branches, plus `cli.py` and
-    `tests/deduction/test_s3_archive.py`. (`_render_hint_parts`'s hint:3+ 50k
-    budget applies the same tiktoken-or-`len(s) // 4` policy through its own
-    inline `tok()`, not by calling this function -- a pre-existing duplicate
-    that 13-21 deliberately left alone.)
-    """
+    """The pad search counts with TiktokenTokenizer, never a char-count fallback -- an approximate count can't satisfy an exact length control; `_count_tokens` keeps its fallback for callers where a rough count is fine (is_trivial_rung's non-noise branches, cli.py, test_s3_archive.py)."""
     source = (
         __import__("pathlib").Path(context.__file__).read_text()
     )
@@ -265,33 +203,21 @@ def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback():
     assert "TiktokenTokenizer" in source
     assert "def _count_tokens" in source, "the tolerant budget counter must survive"
     assert "len(s) // 4" in source, "_count_tokens keeps its graceful degrade"
-    # The instruction suffix must be obtained from prompt.build_user_prompt,
-    # never copied into this module -- a copy is the drift 13-11 closes.
+    # The instruction suffix must come from prompt.build_user_prompt, never be copied here.
     assert prompt.INSTRUCTION not in source
 
 
-# ---------------------------------------------------------------------------
-# 13-09: the hint:2 header must describe what it actually rendered
-# ---------------------------------------------------------------------------
+# The hint:2 header must describe what it actually rendered.
 
 _FULL_SOURCE_HEADING = "## Premise full source (with proof)"
 
-#: The traced-repo layout `premises._traced_root` resolves, keyed on the
-#: corpus's own `from_repo.commit`.
+#: Traced-repo commit key that premises._traced_root resolves, from the corpus's own
+#: from_repo.commit.
 _FIXTURE_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
 
 
 def test_hint2_header_says_signature_when_no_traced_source(thms):
-    """13-09: without the traced repo, hint:2 renders SIGNATURES; say so.
-
-    `premises.body_with_proof` falls back to the corpus's stored `Premise.code`
-    -- a signature, usually with no proof body -- whenever `slice_full_decl`
-    returns "" because `_traced_root()` is None. That is the CI/analysis-box
-    configuration (this fixture's `HOME` has no `~/.cache/lean_dojo`), and the
-    section was still headed "Premise full source (with proof)". The heading is
-    part of the prompt, so it was telling the model it had been given proofs it
-    had not been given.
-    """
+    """Without a traced repo, body_with_proof falls back to the corpus's stored signature; the header must say so instead of claiming full source with proof."""
     assert premises._traced_root() is None, "fixture HOME must have no traced repo"
     text = context.render(thms["Mini.theoremA"], 2, "hint", 2).text
     assert _FULL_SOURCE_HEADING not in text, text[:400]
@@ -300,19 +226,12 @@ def test_hint2_header_says_signature_when_no_traced_source(thms):
 
 def test_hint2_header_says_full_source_when_the_traced_repo_is_present(
         thms, monkeypatch, tmp_path):
-    """13-09, the other direction: a real slice still gets the full-source heading.
-
-    Without this the fix could be "always say signature", which would be just
-    as wrong in the configuration the study actually runs in. Builds the
-    traced-repo layout `premises._traced_root` resolves -- keyed on the
-    corpus's own `from_repo.commit` -- and puts a real proof body at the line
-    range the corpus records for `Mini.premiseA`.
-    """
+    """The other direction: with a real traced slice available, the header must say full source rather than always defaulting to signature."""
     repo = (tmp_path / "traced" / ".cache" / "lean_dojo"
             / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}" / "mathlib4")
     (repo / "Mini").mkdir(parents=True)
-    # premiseA is recorded at lines 10-11, premiseB at 15; pad so the slice
-    # lands on real text rather than off the end of the file.
+    # premiseA is recorded at lines 10-11, premiseB at 15; pad so the slice lands on
+    # real text, not past EOF.
     lines = [f"-- filler {i}" for i in range(1, 10)]
     lines += ["theorem Mini.premiseA {n : ℕ} (h : P n) : R n := by",
               "  exact absurd h  -- REAL PROOF BODY FROM THE TRACED REPO"]
@@ -331,25 +250,11 @@ def test_hint2_header_says_full_source_when_the_traced_repo_is_present(
         corpus.reset_caches()
 
 
-# ---------------------------------------------------------------------------
-# 13-30: the premise-reference stoplist has no unreachable entries
-# ---------------------------------------------------------------------------
+# The premise-reference stoplist has no unreachable entries.
 
 
 def test_lean_noise_stoplist_has_no_dead_entries():
-    """13-30: every stoplist entry must be able to fire.
-
-    `referenced_premises` filters with ``if tok in _LEAN_NOISE or len(tok) <= 1``
-    over tokens from ``_IDENT_RE.findall(text)``, so an entry is DEAD if it is a
-    single character (pre-empted by the length guard) or is not an `_IDENT_RE`
-    token at all (``"trivial!"`` -- ``!`` is outside the character class). 23 of
-    the original 120 entries were dead, which is 23 lines of documentation
-    asserting a filter that never ran.
-
-    Deleting them is behaviour-preserving BY CONSTRUCTION, which is why this
-    test states the property rather than pinning a count: a future entry that
-    cannot fire fails here regardless of how many there are.
-    """
+    """Every _LEAN_NOISE entry must be reachable: dead if it's a single char (pre-empted by the length guard) or doesn't match _IDENT_RE (e.g. "trivial!", since ! is outside the class)."""
     dead_short = sorted(t for t in premises._LEAN_NOISE if len(t) <= 1)
     assert not dead_short, f"pre-empted by the len(tok) <= 1 guard: {dead_short}"
     unmatchable = sorted(
@@ -363,20 +268,7 @@ def test_lean_noise_stoplist_has_no_dead_entries():
 
 
 def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path):
-    """`context` renders `noise:N` WITHOUT reaching into `smolbench.induction._common`.
-
-    The pad search (`token_matched_noise_prompt` / `choose_whitespace_unit`)
-    used to be imported across packages from another study's PRIVATE module; it
-    now lives in `smolbench.evals.tokenization` as public shared API. An
-    identity assertion cannot prove the move, because `_common` re-exports the
-    very same objects -- so this BLOCKS the private module at import time and
-    renders a real noise rung. With the old import in place the render raises
-    `ImportError`; with the new one the private module is never reached.
-
-    Run in a subprocess: a `sys.meta_path` blocker only bites on a module not
-    already in `sys.modules`, and the in-process test session may well have
-    imported `smolbench.induction._common` for an induction test already.
-    """
+    """Noise-rung rendering must not reach into smolbench.induction._common (another study's private module); run in a subprocess because a sys.meta_path blocker only bites pre-import, and this module may already be imported in-process by an induction test."""
     import subprocess
     import sys as _sys
 

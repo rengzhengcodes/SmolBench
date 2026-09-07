@@ -1,17 +1,7 @@
-"""The deduction analysis scripts' reporting contracts (13-13, 13-16, 13-26).
-
-These three scripts produce the study's published prose and numbers, and each
-finding here is about a claim the code made that the data did not support:
-
-* **13-13** -- the null-result narrative ("this null rules out LARGE effects",
-  "consistent with no effect rather than a real effect") printed unconditionally,
-  even on data where every contrast was Holm-significant, and quoted a different
-  study's effect range as a literal in its own conclusion.
-* **13-16** -- three loaders `continue` past ``replicate_idx != 0`` under a
-  docstring calling it "a filter, not an assumption ... the code stays correct if
-  a later run adds replicates". Dropped rows must be announced.
-* **13-26** -- a hand-rolled log-space binomial CDF standing in for
-  ``scipy.stats.binom`` in a file whose own run environment provides scipy.
+"""Reporting contracts for the deduction analysis scripts -- each check below guards
+a claim the code made that the data did not support: an unconditional null-narrative
+sentence, a cross-study literal in the conclusion, a silently dropped extra
+replicate, and a hand-rolled binomial CDF standing in for scipy.
 
 Loaded by file path, as the scripts themselves are: they run under
 ``uv run --no-project --with numpy --with scipy`` with no smolbench installed.
@@ -99,9 +89,7 @@ def _write_rows_dir(root: Path, models, *, n_theorems, b, c):
             "".join(json.dumps(r) + "\n" for r in rows))
 
 
-# ---------------------------------------------------------------------------
-# 13-13: the null narrative must follow the result
-# ---------------------------------------------------------------------------
+# The null narrative must follow the result.
 
 
 #: Fragments that may ONLY appear when nothing reached significance.
@@ -111,17 +99,7 @@ _CROSS_STUDY_LITERALS = ("0.155", "0.866")
 
 
 def test_null_narrative_is_suppressed_when_everything_is_significant(hvn, tmp_path, capsys):
-    """13-13: an all-significant run must not print the null-result paragraph.
-
-    Every model gets 60 cells, of which 20 are discordant and ALL favour
-    hint:3 (b=20, c=0), so exact McNemar gives
-    p = 2 * 0.5**20 and Holm rejects for all 21 models. Before the fix the
-    script printed "Significant under Holm: 21 of 21" and then, verbatim, both
-    null sentences -- the MDE interpretation sits inside `if boundaries:`,
-    which is a statement about whether the MDE was computable, not about
-    whether the result was null, and the direction sentence was ungated
-    entirely.
-    """
+    """An all-significant run (b=20, c=0 for every model, p=2*0.5**20, Holm rejects all 21) must not print the null-result paragraph."""
     _write_rows_dir(tmp_path, hvn.MODELS, n_theorems=60, b=20, c=0)
     assert hvn.main(["--rows-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -133,14 +111,7 @@ def test_null_narrative_is_suppressed_when_everything_is_significant(hvn, tmp_pa
 
 
 def test_null_narrative_still_prints_on_an_actual_null(hvn, tmp_path, capsys):
-    """13-13: the interpretation is gated, not deleted -- a real null still gets it.
-
-    b/c is 11/9 for half the models and 9/11 for the rest: 20 discordant pairs
-    per model (enough that the MDE's boundary search can clear Holm's strictest
-    step, so the paragraph is reachable at all), a two-sided p near 0.82, and a
-    sign split near even, which is what "consistent with no effect" is supposed
-    to describe.
-    """
+    """The interpretation is gated, not deleted: b/c=11/9 (and reversed) gives 20 discordant pairs, p near 0.82, and a near-even sign split -- a genuine null must still get the paragraph."""
     half = len(hvn.MODELS) // 2
     _write_rows_dir(tmp_path, hvn.MODELS[:half], n_theorems=60, b=11, c=9)
     _write_rows_dir(tmp_path, hvn.MODELS[half:], n_theorems=60, b=9, c=11)
@@ -157,13 +128,7 @@ def test_null_narrative_still_prints_on_an_actual_null(hvn, tmp_path, capsys):
 
 
 def test_no_cross_study_effect_literals_in_the_conclusion(hvn, tmp_path, capsys):
-    """13-13: the induction leg's 0.155-0.866 range is not a literal in this leg.
-
-    Checked in the SOURCE as well as the output: a conclusion that quotes
-    another study's effect sizes from a string literal cannot go stale
-    visibly. If the range is ever restored it must be read from that study's
-    report at runtime.
-    """
+    """The induction leg's 0.155-0.866 range must not be a literal here, checked in source and output: if it's ever restored it must be read from that study's report at runtime, not hardcoded."""
     source = (ANALYSIS / "hint_vs_noise.py").read_text()
     for literal in _CROSS_STUDY_LITERALS:
         assert literal not in source, (
@@ -178,22 +143,11 @@ def test_no_cross_study_effect_literals_in_the_conclusion(hvn, tmp_path, capsys)
         assert literal not in out
 
 
-# ---------------------------------------------------------------------------
-# 13-16: dropped replicates are announced
-# ---------------------------------------------------------------------------
+# Dropped replicates are announced.
 
 
 def test_extra_replicates_are_reported_as_dropped(pa, tmp_path, capsys, caplog):
-    """13-16: an R>1 row is DISCARDED, and the loader says so with a count.
-
-    The docstring used to call the ``replicate_idx == 0`` filter "a filter, not
-    an assumption ... the code stays correct if a later run adds replicates".
-    It is an assumption: replicate 1 is dropped, never aggregated, so a run
-    that bought replicates would silently be analysed at R=1. Accepts the
-    warning on either channel, since these scripts print banners to stderr in
-    some places and use `logging` in others -- what is pinned is that the
-    count is announced at all.
-    """
+    """replicate_idx != 0 rows are dropped, never aggregated; the loader must announce the count (stderr banner or logging), or a run with bought replicates would silently be analysed at R=1."""
     path = tmp_path / "verified_rows.jsonl"
     rows = [
         _cell("T1", "stepk:1", True, model="m1"),
@@ -216,9 +170,7 @@ def test_extra_replicates_are_reported_as_dropped(pa, tmp_path, capsys, caplog):
     )
 
 
-# ---------------------------------------------------------------------------
-# 13-26: exact McNemar against the library
-# ---------------------------------------------------------------------------
+# Exact McNemar against the library.
 
 
 def _reference_mcnemar(b: int, c: int) -> float:
@@ -239,12 +191,7 @@ def _reference_mcnemar(b: int, c: int) -> float:
 @pytest.mark.parametrize("b,c", [(0, 0), (0, 1), (1, 0), (3, 2), (10, 0), (20, 0),
                                  (60, 60), (120, 0), (61, 59), (120, 120)])
 def test_mcnemar_exact_p_matches_an_independent_reference(pa, b, c):
-    """13-26: the scipy-backed implementation returns the same numbers.
-
-    Includes the edge cases the hand-rolled version handled explicitly and
-    which a naive rewrite loses: ``b + c == 0`` (no discordant pairs -> p = 1,
-    not a division by zero) and the two-sided doubling clamped at 1.0.
-    """
+    """The scipy-backed implementation matches an independent reference, including b+c==0 (p=1, not division by zero) and the two-sided doubling clamped at 1.0."""
     got = pa.mcnemar_exact_p(b, c)
     want = _reference_mcnemar(b, c)
     assert got == pytest.approx(want, abs=1e-9), (b, c, got, want)
@@ -260,9 +207,7 @@ def test_mcnemar_exact_p_agrees_across_the_whole_grid(pa):
     assert worst <= 1e-9, f"max |mcnemar_exact_p - reference| = {worst:g}"
 
 
-# ---------------------------------------------------------------------------
-# 13-26 (second half): Holm delegated to statsmodels
-# ---------------------------------------------------------------------------
+# Holm delegated to statsmodels.
 
 
 @pytest.fixture(scope="module")
@@ -273,12 +218,9 @@ def eb():
 def _reference_holm(pvals, alpha):
     """Holm step-down, computed independently of the module under test.
 
-    The rule the deleted hand-rolled body implemented: sort ascending, reject
-    ranks ``1..i`` for the largest ``i`` whose ``p_(i) <= alpha / (m - i + 1)``,
-    stopping at the first rank that fails. Uses a STABLE sort, which is what
-    the old implementation used and what `multipletests` does not guarantee --
-    so an equal result here is evidence the tie-handling really is
-    order-independent, not just that two spellings agree.
+    Sorts ascending and rejects ranks 1..i for the largest i whose p_(i) <= alpha /
+    (m - i + 1), stopping at the first failing rank. Uses a stable sort, which the
+    old hand-rolled implementation used and which `multipletests` does not guarantee.
     """
     import numpy as np
 
@@ -303,16 +245,7 @@ def _reference_holm(pvals, alpha):
     [0.05 / 3, 0.05 / 2, 0.05, 0.4],            # each value on its OWN rank's threshold
 ])
 def test_holm_delegation_matches_the_step_down_rule(eb, pvals):
-    """13-26: `multipletests(method="holm")` reproduces the rule it replaced.
-
-    `error_bars.holm`'s body was byte-identical to the induction leg's
-    `paired_analysis.holm`; it now delegates to statsmodels. The risk in that
-    swap is TIE HANDLING: several contrasts in this family sit exactly on the
-    permutation test's 1/(B+1) resolution floor, so exact ties at the decision
-    boundary are routine, and `multipletests` sorts with a plain (not
-    guaranteed stable) `np.argsort`. These cases put ties on every rank's
-    threshold and in reversed input order.
-    """
+    """multipletests(method="holm") must reproduce the retired hand-rolled rule exactly, including tie-handling: several contrasts sit exactly on the decision boundary, and multipletests's argsort is not guaranteed stable."""
     import numpy as np
 
     got = eb.holm(np.array(pvals, dtype=float), 0.05)

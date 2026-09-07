@@ -1,21 +1,13 @@
 """The shared S3 row reader the three deduction analysis scripts use.
 
-Before ``rows_source.py`` existed, only ``power_analysis.py`` could read the
-archive, and it landed files as ``<tmp>/scaling_<key>/verified_rows.jsonl``.
-``error_bars.py`` and ``hint_vs_noise.py`` -- the scripts the PUBLISHED
-deduction numbers come from -- read only a local ``--rows-dir`` laid out as
-``<dir>/<model>/verified_rows.jsonl``, a layout nothing in the tree writes, so
-they could not read the archive at all.
+power_analysis.py could read the archive; error_bars.py and hint_vs_noise.py --
+the scripts the published numbers come from -- read only a local --rows-dir
+layout that nothing else writes. This module gives all three one archive layout.
 
-These tests pin the shared reader's contract with an INJECTED fake S3 client
-(no network, no credentials, no boto3 needed for the injected path) and then
-drive ``hint_vs_noise.main(["--s3", ...])`` end to end through a monkeypatched
-``boto3.client``, which is the only way to exercise the lazy import, the
-default-prefix resolution and the layout agreement together.
-
-The scripts are loaded by file path, as they are in production: they run under
-``uv run --no-project --with numpy --with scipy`` with no smolbench installed
-except through their own repo-root ``sys.path`` insert.
+Most tests inject a fake S3 client (no network, no boto3). One instead
+monkeypatches `boto3.client` and drives `hint_vs_noise.main(["--s3", ...])` end
+to end, the only way to exercise the lazy import and default-prefix resolution
+together.
 """
 
 from __future__ import annotations
@@ -31,13 +23,11 @@ from tests._paths import NOTEBOOKS
 
 ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
 
-#: Bare module names the deduction and induction analysis scripts share. These
-#: scripts import their siblings by bare name off their own ``sys.path``
-#: insert, so a cached INDUCTION sibling (left by ``tests/analysis``) would be
-#: handed to a deduction script and fail on a symbol only one of them has.
-#: Evict foreign siblings before loading. ``rows_source`` is deduction-only
-#: today and has no induction twin, but it is listed so that adding one later
-#: cannot silently reintroduce the collision this guard exists for.
+#: Bare module names the deduction and induction analysis scripts share; each
+#: imports siblings by bare name off its own sys.path insert, so a cached
+#: induction sibling would be handed to a deduction script and fail on a symbol
+#: only one of them has. Evict foreign siblings before loading; rows_source has
+#: no induction twin yet but is listed so adding one can't silently reintroduce this.
 _BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
                   "hint_vs_noise", "rows_source", "significance_report",
                   "extens_vs_noise", "multiplicity_sim")
@@ -71,10 +61,9 @@ def rows_source():
 class FakePaginator:
     """`list_objects_v2` paginator over an in-memory ``{key: body}`` bucket.
 
-    Splits its output over TWO pages regardless of size, so a single-page
-    implementation of the caller cannot pass by accident: ``ListObjectsV2``
-    caps a response at 1000 keys and continues past that, and the
-    retired-artifact scan below is only complete if the caller paginates.
+    Always splits output over two pages, so a caller that doesn't paginate can't
+    pass by accident -- real ListObjectsV2 caps a response at 1000 keys and
+    continues past that.
     """
 
     def __init__(self, objects: "dict[str, str]", calls: list):
@@ -89,8 +78,8 @@ class FakePaginator:
             for chunk in (keys[:half], keys[half:]):
                 yield {"Contents": [{"Key": k} for k in chunk]}
             return
-        # Delimiter mode: roll each key up to its first path segment past
-        # `Prefix`, exactly as S3's CommonPrefixes does.
+        # Delimiter mode: roll each key up to its first path segment past `Prefix`,
+        # exactly as S3's CommonPrefixes does.
         common = sorted({
             Prefix + k[len(Prefix):].split(Delimiter, 1)[0] + Delimiter
             for k in keys if Delimiter in k[len(Prefix):]
@@ -127,20 +116,13 @@ def _bucket(**runs: "dict[str, str]") -> "dict[str, str]":
 
 
 def test_download_lands_the_rows_dir_layout_the_report_scripts_read(rows_source, tmp_path):
-    """``scaling_<key>/`` on S3 becomes ``<key>/`` locally -- one layout, three scripts.
-
-    Stripping the ``scaling_`` prefix is the whole reason one downloader can
-    serve all three: it is exactly what `error_bars.lane_outcomes` and
-    `hint_vs_noise.main` already expect from ``--rows-dir``, while
-    `power_analysis.load_joint_cells` keys models off each row's own ``model``
-    field and never looks at the directory name.
-    """
+    """scaling_<key>/ on S3 becomes <key>/ locally, the layout error_bars.lane_outcomes and hint_vs_noise.main already expect from --rows-dir (power_analysis keys models off each row's own `model` field instead)."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": '{"kind": "cell"}\n',
                             "manifest.json": "{}"},
         "scaling_gemma-4-12b": {"verified_rows.jsonl": '{"kind": "cell"}\n'},
-        # No candidate present: silently omitted, not an error -- a partially
-        # collected study is a legitimate power_analysis input.
+        # No candidate present: silently omitted, not an error -- a partially collected
+        # study is a legitimate power_analysis input.
         "scaling_ministral-3-3b": {"manifest.json": "{}"},
         # Not a run at all.
         "corpus": {"metadata.json": "{}"},
@@ -158,13 +140,7 @@ def test_download_lands_the_rows_dir_layout_the_report_scripts_read(rows_source,
 
 
 def test_download_prefers_verified_rows_over_the_all_rows_fallback(rows_source, tmp_path):
-    """`candidates` is a PREFERENCE order; the landed basename keeps the choice visible.
-
-    `power_analysis` passes both names so its documented ``all_rows.jsonl``
-    fallback survives, and because the candidate name is also the local
-    basename, `load_joint_cells`' "this input is unverified" banner still fires
-    on the fallback. `error_bars`/`hint_vs_noise` pass only the verified name.
-    """
+    """`candidates` is a preference order; the landed basename keeps the choice visible, so power_analysis's "this input is unverified" banner still fires on the all_rows.jsonl fallback (error_bars/hint_vs_noise pass only the verified name)."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": "V\n", "all_rows.jsonl": "A\n"},
         "scaling_gemma-4-12b": {"all_rows.jsonl": "A\n"},
@@ -175,8 +151,8 @@ def test_download_prefers_verified_rows_over_the_all_rows_fallback(rows_source, 
     assert [p.relative_to(tmp_path).as_posix() for p in landed] == [
         "gemma-4-12b/all_rows.jsonl", "glm-4.7/verified_rows.jsonl"]
 
-    # With the single-element default, the fallback-only lane vanishes instead
-    # of arriving under a name that hides what it is.
+    # With the single-element default, the fallback-only lane vanishes instead of
+    # arriving under a name that hides what it is.
     other = tmp_path / "strict"
     landed = rows_source.download_scaling_rows(other, prefix=BUCKET_PREFIX, client=client)
     assert [p.relative_to(other).as_posix() for p in landed] == [
@@ -184,18 +160,7 @@ def test_download_prefers_verified_rows_over_the_all_rows_fallback(rows_source, 
 
 
 def test_a_superseded_object_in_the_bucket_refuses_before_any_download(rows_source, tmp_path):
-    """The retired-artifact guard is reachable on the S3 path, and fires FIRST.
-
-    This is the reason the reader lists a run instead of blind-downloading its
-    candidate: with a 404-probe loop an ``all_rows_SUPERSEDED-<stamp>.jsonl``
-    object sitting beside the live rows is never seen, so every ``--s3`` reader
-    silently produces the complete, plausible, WRONG report that guard exists
-    to prevent.
-
-    The teeth are the two assertions AFTER the raise: refusing only once the
-    superseded lane's rows are already on disk would leave a poisoned tree for
-    a later ``--rows-dir`` run to pick up.
-    """
+    """The retired-artifact guard fires first, on the S3 path too: a 404-probe loop would never see an all_rows_SUPERSEDED-<stamp>.jsonl sitting beside live rows, so the reader lists a run instead of blind-downloading, and must refuse before anything lands on disk."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {
             "verified_rows.jsonl": "V\n",
@@ -253,9 +218,7 @@ def test_resolve_rows_dir_names_the_uri_when_nothing_landed(rows_source):
     assert f"s3://{rows_source.S3_BUCKET}/{BUCKET_PREFIX}" in str(excinfo.value)
 
 
-# ---------------------------------------------------------------------------
 # End to end: hint_vs_noise reads the archive with no local tree at all.
-# ---------------------------------------------------------------------------
 
 
 def _lane_rows(n_theorems: int, b: int) -> str:
@@ -271,15 +234,7 @@ def _lane_rows(n_theorems: int, b: int) -> str:
 
 
 def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(tmp_path, monkeypatch, capsys):
-    """``hint_vs_noise.py --s3`` produces the report from the archive alone.
-
-    This is the issue in one test: before the shared reader, this script could
-    only ever read a local ``<model>/verified_rows.jsonl`` tree that nothing in
-    the repo writes, so reproducing a published number meant an out-of-band
-    ``aws s3 sync``. ``boto3.client`` is monkeypatched rather than a client
-    injected, so the lazy import inside `download_scaling_rows` and the
-    after-parsing default-prefix resolution are both exercised for real.
-    """
+    """hint_vs_noise.py --s3 produces the report from the archive alone: boto3.client is monkeypatched rather than a client injected, so the lazy import inside download_scaling_rows and the after-parsing default-prefix resolution are both exercised for real."""
     import boto3
 
     hvn = _load("hint_vs_noise")
