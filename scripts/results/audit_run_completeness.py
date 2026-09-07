@@ -11,7 +11,7 @@ it just resamples until the model happens to answer, inflating the numerator.
 Exits 1 on INFRA loss, a short lane, a missing sanity row, or an empty
 selection. Genuine empties are reported but never fail the run.
 
-    scripts/results/audit_run_completeness.py [--lane L] [--local] [--induction]
+    scripts/results/audit_run_completeness.py --expect-cells N [--lane L] [--local] [--induction]
 """
 
 import argparse

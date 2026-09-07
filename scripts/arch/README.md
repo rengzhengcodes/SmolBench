@@ -68,3 +68,7 @@ requires and what a divergence means.
 `tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
 pins against, on the four fields both hold; a mismatch means an upstream
 checkpoint moved under the study.
+
+There is no page builder here on purpose -- the page was a presentation
+artifact, not study tooling; its built outputs survive only in the release
+archives (see `notebooks/ARCHIVE.md`).

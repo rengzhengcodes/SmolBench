@@ -173,6 +173,7 @@ def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit):
 @pytest.mark.parametrize("path,flag,argv", [
     ("results/audit_lean_pinning.py", "--expect-theorems", []),
     ("results/audit_lean_pinning.py", "--expect-cells", []),
+    ("results/audit_run_completeness.py", "--expect-cells", ["--local"]),
     ("deduction/merge_lean_shards.py", "--expect-cells", ["k", "--n", "1"]),
     ("deduction/merge_lean_shards.py", "--expect-sanity", ["k", "--n", "1"]),
 ])
