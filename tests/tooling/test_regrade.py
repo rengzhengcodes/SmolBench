@@ -1,18 +1,11 @@
 """Offline contract for scripts/results/regrade.py; no AWS, no network.
 
-Three properties, two of them found broken by the reviewer of PR #14:
-
-* ``--write`` must round-trip every ``Marks`` field it does not re-grade. It
-  previously rebuilt ``Marks(model=, marks=, date=)`` by hand and so wrote
-  ``server_config: null`` over the serving-stack provenance of every replicate.
-* An S3-backed tree must actually be re-gradable. ``main`` used to REFUSE it
-  and print a "sync down, unset the env var, re-run" recipe, i.e. the
-  local-only regrade the guard existed to prevent; ``results_store`` has since
-  grown the store-level primitive (``ResultsStore.regrade``: a new run
-  carrying ``regraded_from``, plus a ``.superseded`` marker retiring the run
-  it replaces), so the regrade now goes THROUGH the store on either backend.
-* A regrade is a WRITER of compliance labels, so it must spell ``COMPLIANT``
-  explicitly rather than leave it null.
+Three properties: ``--write`` round-trips every ``Marks`` field it doesn't
+re-grade (a hand-rolled reconstruction once dropped ``server_config``); a
+regrade goes through ``ResultsStore.regrade`` on either backend -- local or
+S3 -- writing a new run plus a ``.superseded`` marker, rather than refusing
+S3 trees; and a regrade always writes an explicit ``COMPLIANT`` label
+instead of leaving it null.
 """
 
 import io
@@ -38,24 +31,23 @@ SERVER_CONFIG = {
 }
 #: Pinned so the assertion cannot pass by re-stamping "now".
 COLLECTED_AT = datetime(2026, 8, 16, 3, 4, 5, tzinfo=timezone.utc)
-#: The instant every regrade in this file is stamped with (``rs.utcnow`` is
-#: patched to it), distinct from `COLLECTED_AT` so a new run's key and the
-#: run it replaces can never be confused.
+#: The instant every regrade here is stamped with (``rs.utcnow`` patched to
+#: it), distinct from `COLLECTED_AT` so a new run's key and the run it
+#: replaces can never be confused.
 REGRADED_AT = datetime(2026, 8, 20, 11, 12, 13, tzinfo=timezone.utc)
 #: A roster spec key (the S3 log's key dimension) and its analysis tag (the
-#: local directory key). Read from the committed study config rather than
-#: re-typed, per #46.
+#: local directory key), read from the committed study config rather than
+#: re-typed.
 MODEL = "gemma-4-e2b"
 TAG = tag_for(MODEL)
-#: The replicate seed every test in this file collects at. A plain int, since
-#: that is what `ReplicateAddress.seed` carries and what `LocalResultsStore`
-#: renders as ``rep_<seed>.yaml``; a zero-padded spelling is addressable by
-#: neither store.
+#: The replicate seed every test here collects at. A plain int, since that is
+#: what `ReplicateAddress.seed` carries and `LocalResultsStore` renders as
+#: ``rep_<seed>.yaml``; a zero-padded spelling is addressable by neither store.
 SEED = 1776
 
 
 def _marks(model=MODEL, date=COLLECTED_AT) -> Marks:
-    """Two marks the OLD parser refused, so a regrade genuinely changes them."""
+    """Two marks the old parser refused, so a regrade genuinely changes them."""
     return Marks(
         model=model,
         marks=(
@@ -71,15 +63,10 @@ def _marks(model=MODEL, date=COLLECTED_AT) -> Marks:
 def local_study(tmp_path, monkeypatch):
     """Point regrade at a local, one-condition results tree and return its rep path.
 
-    Both module-level anchors are redirected (``REPO`` and ``STUDIES``), so the
-    real, gitignored ``notebooks/induction/results`` tree is never read or
-    written by this test.
-
-    The replicate is laid down BY ``LocalResultsStore.dump_marks`` rather than
-    by a hand-spelled path, so the fixture models exactly the layout the
-    production writer (``ReplicateHarness``) produces -- directory name,
-    ``rep_<seed>.yaml`` spelling and all -- instead of a name only this test
-    would ever create.
+    Redirects both module-level anchors (``REPO``, ``STUDIES``) so the real
+    ``notebooks/induction/results`` tree is never touched. The replicate is
+    laid down by ``LocalResultsStore.dump_marks``, matching production's file
+    layout exactly, rather than a hand-spelled path only this test would use.
     """
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
     monkeypatch.setattr(regrade, "REPO", tmp_path)
@@ -92,20 +79,20 @@ def local_study(tmp_path, monkeypatch):
 
 
 def test_write_preserves_server_config_and_date(local_study, capsys):
-    """--write re-grades the scores and leaves every other field alone (14-01)."""
+    """--write re-grades the scores and leaves every other field alone."""
     before = Marks.load(local_study)
     assert before.server_config == SERVER_CONFIG  # fixture sanity
 
     assert regrade.main(["--write"]) == 0
 
     after = Marks.load(local_study)
-    # THE regression: this was `None` before the fix, silently destroying the
-    # hardware provenance with no git safety net and nothing to re-fetch from.
+    # This was `None` before the fix, silently destroying hardware provenance
+    # with no git safety net and nothing to re-fetch from.
     assert after.server_config == SERVER_CONFIG
     assert after.date == COLLECTED_AT
     assert after.model == MODEL
-    # ...and the re-grade really did happen: both marks were invalid, both now
-    # score, and the markup violation is recorded on the second.
+    # ...and the regrade did happen: both marks were invalid, both now score,
+    # and the markup violation is recorded on the second.
     assert [m.score for m in after.marks] == [1, 1]
     assert after.marks[0].compliance == COMPLIANT
     assert after.marks[1].compliance not in (COMPLIANT, None)
@@ -115,13 +102,7 @@ def test_write_preserves_server_config_and_date(local_study, capsys):
 
 
 def test_a_local_regrade_retires_the_file_it_replaces(local_study):
-    """The replaced file survives under the SUPERSEDED name, and the new one says so.
-
-    ``LocalResultsStore.supersede`` renames rather than overwrites, so the
-    pre-regrade bytes are still on disk (the only undo this script has ever
-    had), and the replacement carries ``regraded_from`` naming the run it
-    replaces -- for a local file, the collection date it was stamped with.
-    """
+    """The replaced file survives under the SUPERSEDED name (rename, not overwrite), and the new one names it via ``regraded_from``."""
     original = local_study.read_bytes()
 
     assert regrade.main(["--write"]) == 0
@@ -130,8 +111,8 @@ def test_a_local_regrade_retires_the_file_it_replaces(local_study):
     assert len(retired) == 1, sorted(p.name for p in local_study.parent.iterdir())
     assert retired[0].read_bytes() == original, "the replaced bytes must survive verbatim"
     assert Marks.load(local_study).regraded_from == format_run_ts(COLLECTED_AT)
-    # ...and the retired file is invisible to readers, which is what makes the
-    # rename a supersede rather than a second live replicate.
+    # ...and the retired file is invisible to readers, making the rename a
+    # supersede rather than a second live replicate.
     assert rs.LocalResultsStore(local_study.parents[1]).list_seeds(
         None, TAG, "intens") == [SEED]
 
@@ -145,16 +126,15 @@ def test_dry_run_writes_nothing(local_study):
 
 
 # ---------------------------------------------------------------------------
-# 14-08: the S3-backed path
+# the S3-backed path
 # ---------------------------------------------------------------------------
 class FakeS3Client:
     """In-memory stand-in for the S3 calls `S3ResultsStore` makes.
 
-    Deliberately the same shape as ``tests/evals/test_results_store.py``'s
-    fake (one dict of key -> body, a paginator that yields one key per page),
-    so this file exercises the REAL store against a recorded call log rather
-    than a store-shaped mock: `puts` is every ``put_object`` in order, which
-    is what lets a test assert that a dry run writes nothing at all.
+    Shaped like ``tests/evals/test_results_store.py``'s fake so this exercises
+    the real store against a recorded call log; `puts` records every
+    ``put_object`` in order, which is what lets a test assert a dry run
+    writes nothing.
     """
 
     def __init__(self):
@@ -196,10 +176,9 @@ LOGGED_KEY = f"induction/{MODEL}/seed={SEED}/intens--{LOGGED_TS}.yaml"
 def s3_study(tmp_path, monkeypatch):
     """Point regrade at an S3-backed tree served by a `FakeS3Client`.
 
-    ``repo_root`` is redirected at ``tmp_path`` so ``resolve_store``'s
-    hermeticity fallback (results_dir must be under the repo root) selects the
-    S3 store without the real checkout being involved, and ``rs.utcnow`` is
-    pinned so the new run's key is deterministic.
+    ``repo_root`` redirects to ``tmp_path`` so ``resolve_store``'s hermeticity
+    fallback picks the S3 store without touching the real checkout;
+    ``rs.utcnow`` is pinned so the new run's key is deterministic.
     """
     client = FakeS3Client()
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://test-bucket")
@@ -214,12 +193,7 @@ def s3_study(tmp_path, monkeypatch):
 
 
 def test_an_s3_backed_tree_is_regraded_through_the_store(s3_study, capsys):
-    """14-08: the refusal is gone; the regrade lands in the log readers actually read.
-
-    The append-only log cannot be edited, so a regrade is TWO writes: the new
-    run naming what it replaces, and a ``.superseded`` marker retiring the old
-    run so earliest-wins stops serving it. The old run OBJECT is untouched.
-    """
+    """The refusal is gone: a regrade is two writes to the append-only log, with the old object left untouched."""
     original = s3_study.objects[LOGGED_KEY]
 
     assert regrade.main(["--write"]) == 0

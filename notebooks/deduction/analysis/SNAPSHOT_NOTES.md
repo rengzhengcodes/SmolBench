@@ -6,14 +6,10 @@
 
 ## Rules (hold for any snapshot of this study)
 
-These describe the study's data model and are not specific to one
-`--spool-prefix` or one date:
-
 - **Sources are unmodified.** This is a snapshot of an append-only experiment
   log; no source object is ever changed or deleted by taking a snapshot.
-- **`verified_rows.jsonl` is the analysis input.** `deduction/<model>/verified_rows.jsonl`
-  is what analysis reads; `deduction/<model>/all_rows.jsonl` holds the
-  pre-verification candidates and is not itself an analysis input.
+- **`verified_rows.jsonl` is the analysis input.** `deduction/<model>/all_rows.jsonl`
+  holds the pre-verification candidates and is not itself an analysis input.
 - **`exception` is infrastructure, not a model failure.** An `exception`
   verdict means the attempt never reached the model at all. Exclude these
   rows from scoring -- never count them as a score of 0.
@@ -31,9 +27,6 @@ These describe the study's data model and are not specific to one
   current data, and they should not be read as live rows.
 
 ## Measured findings (specific to the `analysis/2026-08-16` dataset)
-
-These are counts observed on this one re-collection. Re-measure them for any
-other snapshot before relying on them:
 
 - **Take the earliest surviving (non-exception) row per cell.** In this
   dataset, 74 cells across 3 lanes hold more than one surviving attempt. The

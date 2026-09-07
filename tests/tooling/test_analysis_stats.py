@@ -55,7 +55,7 @@ FLOOR_P = 2 / 2 ** 30  # the seed sign-flip test's resolution floor at S = 30
 
 @pytest.mark.parametrize("procedure, stepped", PROCEDURES)
 @pytest.mark.parametrize("pvals", [
-    # ties at the floor, and ties exactly ON a threshold (alpha/(m-i), m=6)
+    # ties at the floor, and ties exactly on a threshold (alpha/(m-i), m=6)
     [FLOOR_P, FLOOR_P, FLOOR_P, 0.02, 0.02, 0.9],
     [0.05 / 6, 0.05 / 6, 0.05 / 4, 0.05 / 4, 0.3, 0.3]],
     ids=["floor-ties", "threshold-ties"])
@@ -84,7 +84,7 @@ def test_signflip_exact_p_matches_hand_enumeration(diffs, expected):
 
 @pytest.mark.parametrize("nb, nc", [(0, 0), (1, 0), (2, 3), (3, 1), (5, 1), (4, 4), (7, 2)])
 def test_signflip_equals_mcnemar_for_every_singleton_split(nb, nc):
-    # with one item per cluster the cluster test IS exact McNemar
+    # with one item per cluster the cluster test is exact McNemar
     a = np.array([1] * nb + [0] * nc + [1, 0, 1, 0], dtype=bool)
     b = np.array([0] * nb + [1] * nc + [1, 0, 1, 0], dtype=bool)
     p = paired.signflip_exact_p(paired.seed_diffs(a, b, np.arange(a.size)))
@@ -158,7 +158,7 @@ def test_all_loaders_share_the_one_row_rule(tmp_path, monkeypatch):
     assert set(meta["own_denominator"].values()) == {2}
 
 def test_rule_cost_is_measured_per_lane_not_per_added_cell(tmp_path, monkeypatch):
-    """A lane gaining two cells reports the cost of removing BOTH; 0/0 stays None."""
+    """A lane gaining two cells reports the cost of removing both; 0/0 stays None."""
     _lane(tmp_path, "m1", ("t1", "stepk:1", "success"), ("t2", "stepk:1", "success"),
           ("t3", "stepk:1", "exception"), ("t4", "hint:2", "exception"))
     _lane(tmp_path, "m2", ("t1", "stepk:1", "success"), ("t2", "stepk:1", "failure"),

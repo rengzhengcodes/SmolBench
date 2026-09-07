@@ -44,10 +44,8 @@ RoPE fields nothing reads).
 
 ## Family facts
 
-One row per family. Only claims read from `config.json` or confirmed
-against the cited source; nothing inferred. Divergences are config fields
-the served implementation does not read, or reads differently than the
-field suggests.
+One row per family; see "Where each claim comes from" for what a claim
+requires and what a divergence means.
 
 | Family | Rungs (spec keys, params) | Token mixing | Positional encoding | FFN / sparsity | Reasoning toggle (as served) | Config-vs-implementation divergences | Primary sources |
 |---|---|---|---|---|---|---|---|

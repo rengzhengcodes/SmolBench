@@ -1,10 +1,10 @@
 """List the family-ladder scaling study's live EC2 fleet, read-only.
 
-Companion to ``scripts/fleet/run_fleet.py`` (launches and monitors) and
-``scripts/fleet/fleet_teardown.py`` (terminates); both import it, as do
-analysis notebooks. Importing needs no AWS SDK -- boto3 is imported lazily
-inside `_default_client_factory`, never at module scope -- and tests inject a
-fake through `client_factory`.
+Companion to ``run_fleet.py`` (launches and monitors) and
+``fleet_teardown.py`` (terminates); both import it, as do analysis
+notebooks. Importing needs no AWS SDK: boto3 is imported lazily inside
+`_default_client_factory`, never at module scope, and tests inject a fake
+through `client_factory`.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config():
-    # By hand, and only for `_config` itself: `load_module_by_path` is a
-    # function ON that module, and `scripts/fleet` is not a package.
+    # Bootstrapped by hand: load_module_by_path lives on _config itself,
+    # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
         spec = importlib.util.spec_from_file_location(
@@ -49,32 +49,16 @@ def fleet_rows(
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
 
-    Parameters
-    ----------
-    client_factory : Callable[[str], Any] or None, optional
-        Region name -> object exposing ``describe_instances(**kwargs)``; ``None``
-        uses `_default_client_factory`. The seam that makes this testable with no
-        AWS SDK (``tests/tooling/test_run_fleet.py`` injects a stub factory).
+    client_factory: `None` uses `_default_client_factory`, the seam tests
+    use to stub in a fake with no AWS SDK. Returns one dict per instance
+    with exactly region/experiment_tag/lane/instance_id/instance_type/
+    availability_zone/state/launch_time/age_hours -- `format_fleet_table`
+    relies on this exact set.
 
-    Returns
-    -------
-    list[dict]
-        One dict per instance, with exactly these keys: `region`,
-        `experiment_tag`, `lane` (the tag minus `tag_prefix`), `instance_id`,
-        `instance_type`, `availability_zone`, `state`, `launch_time` (raw
-        ``datetime``, or ``None`` if EC2 reported none) and `age_hours` (float,
-        against ``datetime.now(timezone.utc)`` at call time; ``0.0`` when
-        `launch_time` is ``None``).
-
-    Notes
-    -----
-    Only ``running``/``pending`` are queried -- the LIVE fleet, and what
-    ``fleet_teardown.py --terminate`` reads to decide what to kill. The
-    `tag_prefix` filter is applied SERVER-SIDE (EC2 tag filters accept a
-    trailing ``*``), so this never lists the whole account, and re-checked
-    CLIENT-SIDE so a regression there still cannot let a sibling experiment's
-    instances leak in. A region that raises (no credentials, disabled region,
-    throttle) is logged and skipped, so one bad region cannot hide the rest.
+    `tag_prefix` is applied server-side (EC2 tag filters accept a trailing
+    ``*``) and re-checked client-side, so a regression in one can't leak a
+    sibling experiment's instances in. A region that raises (no
+    credentials, disabled, throttled) is logged and skipped.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -131,8 +115,7 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
         return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"
 
     columns = ("lane", "instance_id", "instance_type", "availability_zone", "state", "age", "region")
-    # No `.get` defaults: `fleet_rows` is the only producer and its docstring
-    # guarantees exactly these keys.
+    # No `.get` defaults: fleet_rows is the only producer and guarantees these keys.
     formatted_rows = [
         {c: f"{row['age_hours']:.1f}h" if c == "age" else str(row[c]) for c in columns}
         for row in rows
@@ -151,11 +134,7 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Print the live fleet table; always returns ``0``.
-
-    No flags: `fleet_rows`'s defaults cover every region this study could have
-    provisioned in, and it logs and skips a region that fails to describe.
-    """
+    """Print the live fleet table; always returns ``0``. No flags."""
     parser = argparse.ArgumentParser(
         description="Read-only listing of the scaling study's live EC2 fleet."
     )
