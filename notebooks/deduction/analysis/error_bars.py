@@ -21,9 +21,9 @@ Denominator rule, COUNT-AS-FAILURE by default: a cell with no surviving
 measurable row in one lane scores 0 there exactly when its key is measurable in
 another lane -- the operational test for "the fault travelled with this model's
 own output". Dropping such cells instead makes denominators model-dependent
-(five lanes carry 711 cells, not 712) and rewards breaking the verifier;
-``--no-count-as-failure`` restores that drop rule for sensitivity checks. The
-232 cells unmeasurable in EVERY lane stay excluded either way. Contrasts run on
+(five lanes carry 711 cells, not 712) and rewards breaking the verifier; the drop
+rule survives as one of the printed SENSITIVITY rows. The 232 cells
+unmeasurable in EVERY lane stay excluded either way. Contrasts run on
 the 21-way paired cell set; pool size, per-lane denominators and their maximum
 disagreement are printed, never quoted as constants.
 
@@ -54,6 +54,7 @@ Run (``--mode report`` is the default; ``-B`` sets the resample count):
 """
 
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
@@ -75,7 +76,6 @@ from power_analysis import (  # noqa: E402
     build_within_family_contrasts,
     grade_verdicts,
     mcnemar_exact_p,
-    reject_superseded,
     reject_unverified_verdicts,
 )
 
@@ -101,6 +101,15 @@ CHUNK = 2_000
 #: are reported to 3 decimals, so half a thousandth on an interval endpoint is
 #: invisible.
 DRIFT_TOL = 0.0005
+
+
+def _cost(c, field):
+    """Points the count-as-failure rule removes, or None where the drop rate is undefined."""
+    return None if c[field] is None else 100 * (c[field] - c[f"{field[:-5]}_caf"])
+
+
+def _fmt(value, width):
+    return f"{value:{width}.3f}" if value is not None else f"{'n/a':>{width}}"
 
 
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
@@ -314,11 +323,10 @@ def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
         ``(nb, nc, p)``: cells where `a` succeeds and `b` fails, the reverse,
         and the exact two-sided McNemar p-value.
     """
-    ia, ib = models.index(a), models.index(b)
     nb = nc = 0
     for cells in blocks.values():
         for cellmap in cells.values():
-            va, vb = cellmap[models[ia]], cellmap[models[ib]]
+            va, vb = cellmap[a], cellmap[b]
             if va and not vb:
                 nb += 1
             elif vb and not va:
@@ -374,6 +382,7 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     return (count + 1) / (B + 1)
 
 
+@functools.lru_cache(maxsize=None)
 def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
                   ) -> tuple[dict, set]:
     """Grade one lane's cells and collect its no-survivor cells.
@@ -416,7 +425,7 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
         sources.append(
             (recovery_dir / model / "recovered_rows.jsonl", "recovered_verdict")
         )
-    reject_superseded(path for path, _field in sources)
+    rows_source.reject_superseded(path for path, _field in sources)
     for path, field in sources:
         parsed = [json.loads(line) for line in path.read_text().splitlines() if line]
         # Screened on this source's OWN field -- see reject_unverified_verdicts
@@ -475,7 +484,10 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
     """
     graded, nosurv = {}, {}
     for model in MODELS:
-        graded[model], nosurv[model] = lane_outcomes(rows_dir, model, recovery_dir)
+        # Copy: `lane_outcomes` is memoized across the 2-4 pools a report builds,
+        # and the count-as-failure rule below scores cells 0 in place.
+        lane, nosurv[model] = lane_outcomes(rows_dir, model, recovery_dir)
+        graded[model] = dict(lane)
 
     # A no-survivor cell is MODEL-DEPENDENT only when some other lane graded
     # it: the fault then travelled with this model's output, not the theorem.
@@ -607,10 +619,8 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
     print(f"The effective sample size is {n_thm} THEOREMS, not {n_cells} cells "
           f"-- see the module docstring.")
     if meta:
-        rule = ("COUNT-AS-FAILURE (default)"
-                if meta["count_as_failure"] else "DROP unmeasurable (legacy)")
         n_added = sum(len(v) for v in meta["added"].values())
-        print(f"Denominator rule: {rule}.", end=" ")
+        print("Denominator rule: COUNT-AS-FAILURE (default).", end=" ")
         if meta["count_as_failure"]:
             print(f"{n_added} model-dependent no-survivor cell(s) scored 0, in "
                   f"{len(meta['added'])} lane(s).")
@@ -618,13 +628,6 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
             # REMOVES relative to dropping the cells, never a signed delta.
             print(f"  {'lane':28s} {'rung':9s} {'+cells':>6s}  "
                   f"{'pooled pt':>10s} {'rung pt':>8s}  theorem(s)")
-            def _cost(c, field):
-                """Points the rule removes, or None where the drop rate is undefined."""
-                return None if c[field] is None else 100 * (c[field] - c[f"{field[:-5]}_caf"])
-
-            def _fmt(value, width):
-                return f"{value:{width}.3f}" if value is not None else f"{'n/a':>{width}}"
-
             for c in sorted(meta["rule_cost"],
                             key=lambda c: -(_cost(c, "rung_drop") or 0.0)):
                 print(f"  {c['model']:28s} {c['rung']:9s} {c['n_added']:6d}  "
@@ -642,9 +645,6 @@ def mode_report(succ, size, models, blocks, per_lane, B, out_json,
                       f"most {100 * worst_r:.3f} within a single prompt rung. "
                       f"Successes are\n  unchanged; only the denominator moves, "
                       f"and it moves to the SAME value in all 21 lanes.")
-        else:
-            print("no-survivor cells dropped, so per-lane denominators "
-                  "diverge.")
         if meta["recovery"]:
             print("  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
                   "configuration. The headline\n  figures are Mathlib-only.")
@@ -809,25 +809,7 @@ def main(argv=None) -> int:
         empty or hits a retired artifact.
     """
     ap = argparse.ArgumentParser(description=__doc__)
-    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
-    # argument inside a mutually-exclusive group at parser-construction time.
-    source = ap.add_mutually_exclusive_group(required=True)
-    source.add_argument("--rows-dir", type=Path, default=None,
-                        help="local directory of <model>/verified_rows.jsonl "
-                             "to analyse; the way to read a tree you already "
-                             "have, including one a previous --s3 run left "
-                             "behind")
-    source.add_argument("--s3", nargs="?", const="", default=None,
-                        metavar="PREFIX",
-                        help="download this study's rows from "
-                             "s3://<bucket>/<PREFIX>/scaling_<key>/"
-                             "verified_rows.jsonl into a temp "
-                             "<dir>/<model>/verified_rows.jsonl tree and "
-                             "analyse those. PREFIX is optional and defaults "
-                             "to this study's spool prefix (LEAN_SPOOL_PREFIX, "
-                             "or the re-collection's); the published "
-                             "pre-cutoff study is at deduction/runs. The "
-                             "default is resolved AFTER parsing, never here.")
+    rows_source.add_source_args(ap)
     ap.add_argument("--mode", choices=("sweep", "report"), default="report")
     ap.add_argument("-B", type=int, default=20_000)
     ap.add_argument("--out-json", type=Path, default=None)
@@ -840,37 +822,16 @@ def main(argv=None) -> int:
                          "no --s3 form of this option is implemented. Pooled "
                          "into the SENSITIVITY rows, never into the headline "
                          "pool.")
-    ap.add_argument("--no-count-as-failure", dest="count_as_failure",
-                    action="store_false",
-                    help="revert to the legacy rule that DROPS model-dependent "
-                         "no-survivor cells (five lanes then carry 711 cells)")
-    ap.set_defaults(count_as_failure=True)
     args = ap.parse_args(argv)
 
-    # `--s3` with no value arrives as "" (its `const`); the default prefix is
-    # resolved HERE, after parsing, never as an argparse default -- a
-    # `spool_prefix()` call at parser-build time would make
-    # `LEAN_SPOOL_PREFIX=deduction/runs --help` raise, and would deny the
-    # legacy prefix even to a reader passing it explicitly.
-    #
-    # Single-element `candidates`, unlike `power_analysis`: this script has no
-    # `all_rows.jsonl` fallback and must not acquire one. Those rows carry the
-    # ungraded "unverified" sentinel, so `reject_unverified_verdicts` would
-    # raise on them anyway -- a fallback would only convert a clear
-    # "verification never ran" condition into a confusing downstream error.
-    rows_dir = rows_source.resolve_rows_dir(
-        rows_dir=args.rows_dir,
-        s3_prefix=None if args.s3 is None else (args.s3 or rows_source.spool_prefix()),
-        candidates=("verified_rows.jsonl",),
-    )
+    rows_dir = rows_source.resolve_from_args(args)
 
     missing = [rows_dir / m / "verified_rows.jsonl" for m in MODELS]
     missing = [f for f in missing if not f.exists()]
     if missing:
         raise SystemExit(f"missing row files: {[str(f) for f in missing]}")
 
-    models, blocks, rungs, meta = build_pool(
-        rows_dir, count_as_failure=args.count_as_failure)
+    models, blocks, rungs, meta = build_pool(rows_dir)
     succ, size = block_matrix(models, blocks)
     per_lane = dict(meta["own_rate"])
 
@@ -883,7 +844,7 @@ def main(argv=None) -> int:
     sensitivity = []
     for caf in (True, False):
         for rec in ([None] + ([args.recovery_dir] if args.recovery_dir else [])):
-            if caf == args.count_as_failure and rec is None:
+            if caf and rec is None:
                 continue
             _m, _b, _r, _meta = build_pool(rows_dir, recovery_dir=rec,
                                            count_as_failure=caf)

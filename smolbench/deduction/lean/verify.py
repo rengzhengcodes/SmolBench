@@ -11,8 +11,7 @@ Two patterns:
 The session itself -- starting a Lean REPL on a mathlib4 checkout, deriving the
 theorem's statement, and turning a REPL reply into a `replbackend.StepOutcome`
 -- lives in `smolbench.deduction.lean.replbackend`. This module owns only the
-verdict policy on top of it, which is why the public contract below is unchanged
-from the retired LeanDojo-backed version.
+verdict policy on top of it.
 """
 
 from __future__ import annotations

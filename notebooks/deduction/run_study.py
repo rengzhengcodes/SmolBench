@@ -123,6 +123,7 @@ from typing import Any
 # would raise.
 from smolbench.evals.experiment import validate_experiment_tag
 from smolbench.evals.study_config import load_study_config
+from smolbench.evals.retired_markers import is_retired
 
 logging.basicConfig(level=logging.INFO)
 
@@ -167,8 +168,8 @@ SPOOL_BUCKET: str = load_study_config().results.bucket
 SPOOL_REGION: str = load_study_config().results.region
 #: The destination key prefix comes from ``runner.spool_prefix()``, resolved
 #: at CALL time inside ``spool_to_s3`` and the GUARD in ``main`` below -- not
-#: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override (or the
-#: legacy-prefix refusal) takes effect per-invocation rather than at import.
+#: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override takes
+#: effect per-invocation rather than at import.
 
 #: The latest date any served checkpoint's WEIGHTS were published: the last
 #: Hugging Face commit touching a weight file at the pinned `--revision` of
@@ -1032,7 +1033,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     for path in files:
         if path == manifest_path or path == all_rows_path:
             continue
-        if any(marker in path.name for marker in runner.RETIRED_MARKERS):
+        if is_retired(path):
             continue
         path.unlink()
 
@@ -1095,7 +1096,7 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
     5. For each surviving rung, each model entry's ``display_name``, each
        ``replicate_idx`` in ``range(n_replicates)``, filtered by the cell
        whitelist when one is active -- exactly
-       ``_run_cells_at_step[_concurrent]``'s own per-cell loop.
+       ``_run_cells_at_step_concurrent``'s own per-cell loop.
     6. Build the row key with ``runner._row_key`` (so it compares equal to
        ``runner._existing_keys``' keys) and collect it into `expected`.
 

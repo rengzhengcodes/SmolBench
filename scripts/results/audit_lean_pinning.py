@@ -296,16 +296,10 @@ def reproduce_pin(
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Lazy import, at the TOP of main(): a key prefix and the expected-shape
-    # constants are CONFIGURATION, not audited logic, so importing `runner`
-    # here does not reintroduce the hazard `slug_theorem`'s/`LANES`'s
-    # "duplicated rather than imported" comments warn against (this audit
-    # inheriting a bug from the module under audit; see `_default_run_prefix`,
-    # which every fetch_* helper falls back to for the same reason). Import
-    # must happen BEFORE the parser is built -- `runner.EXPECTED_THEOREMS`/
-    # `runner.EXPECTED_CELLS` are used as argparse defaults below, and unlike
-    # `spool_prefix()` (which can raise on the legacy prefix) they are plain
-    # ints that cannot fail, so using them straight as defaults is safe.
+    # Lazy import: a key prefix is CONFIGURATION, not audited logic, so
+    # importing `runner` here does not reintroduce the hazard
+    # `slug_theorem`'s/`LANES`'s "duplicated rather than imported" comments
+    # warn against (this audit inheriting a bug from the module under audit).
     from smolbench.deduction.lean import runner
 
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -324,8 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--emit-manifest", type=Path, default=None,
                     help="write the reproduced pin to this path as pinned_theorems.json")
     ap.add_argument(
-        "--limit", type=int, default=runner.EXPECTED_THEOREMS,
-        help="theorems to sample for --reproduce/--emit-manifest (default: %(default)s)",
+        "--limit", type=int, default=None,
+        help="theorems to sample (required with --reproduce/--emit-manifest)",
     )
     ap.add_argument(
         "--seed", type=int, default=0,
@@ -340,21 +334,24 @@ def main(argv: list[str] | None = None) -> int:
              "to compare against).",
     )
     ap.add_argument(
-        "--expect-theorems", type=int, default=runner.EXPECTED_THEOREMS,
-        help="expected theorem-set size for layer [2/5] (default: %(default)s)",
+        "--expect-theorems", type=int, default=None,
+        help="expected theorem-set size for layer [2/5] (required without --offline)",
     )
     ap.add_argument(
-        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
-        help="expected cell-set size for layer [3/5] (default: %(default)s)",
+        "--expect-cells", type=int, default=None,
+        help="expected cell-set size for layer [3/5] (required without --offline)",
     )
     ap.add_argument(
         "--spool-prefix", default=None,
         help="S3 key prefix the 21 lanes spooled under (default: the re-collection "
-             "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset). "
-             "The published pre-cutoff study lives at deduction/runs; pass that "
-             "explicitly to audit it (no env opt-in needed on this read-only path).",
+             "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args(argv)
+    # No inherited pinned shape: each mode makes the operator state its own.
+    if not args.offline and (args.expect_theorems is None or args.expect_cells is None):
+        ap.error("--expect-theorems and --expect-cells are required without --offline")
+    if (args.reproduce or args.emit_manifest) and args.limit is None:
+        ap.error("--limit is required with --reproduce/--emit-manifest")
 
     # The corpus root is the split file's grandparent, e.g.
     # <corpus>/novel_premises/val.json -> <corpus>/metadata.json. Resolved

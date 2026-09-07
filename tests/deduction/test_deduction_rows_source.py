@@ -213,6 +213,15 @@ def test_a_superseded_object_in_the_bucket_refuses_before_any_download(rows_sour
     assert list(tmp_path.iterdir()) == [], "wrote to disk before refusing"
 
 
+def test_bucket_and_region_come_from_the_config(rows_source):
+    """The archive's address is READ from study_config, never re-typed here."""
+    from smolbench.evals.study_config import load_study_config
+
+    results = load_study_config().results
+    assert (rows_source.S3_BUCKET, rows_source.S3_REGION) == (
+        results.bucket, results.region)
+
+
 def test_resolve_rows_dir_local_path_touches_no_client(rows_source, tmp_path):
     """A ``--rows-dir`` run must be usable with no S3 client and no boto3."""
     client = FakeS3({})

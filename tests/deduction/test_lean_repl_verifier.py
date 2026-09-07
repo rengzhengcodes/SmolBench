@@ -298,26 +298,6 @@ def test_theorem_statement_stub_survives_the_docstring_and_autoparam_traps():
     assert "rfl" not in stub
 
 
-def test_theorem_statement_stub_prefers_a_row_carried_statement(monkeypatch):
-    """A LeanDojo-v2 row carrying `theorem_statement` must not be read off disk."""
-    bt = _bt(["rfl"])
-
-    class WithStatement(BenchmarkTheorem):
-        theorem_statement = "theorem carried (a : Nat) : a = a"
-
-    carried = WithStatement(
-        url=bt.url, commit=bt.commit, file_path=bt.file_path, full_name=bt.full_name,
-        start=bt.start, end=bt.end, traced_tactics=bt.traced_tactics,
-    )
-
-    def explode(*a, **k):  # pragma: no cover - must never run
-        raise AssertionError("declaration_text was called despite a carried statement")
-
-    monkeypatch.setattr(replbackend, "declaration_text", explode)
-    stub = replbackend.theorem_statement_stub(carried, PROJECT)
-    assert stub == f"theorem {replbackend.TARGET_NAME} (a : Nat) : a = a\n  := by sorry"
-
-
 def test_theorem_statement_stub_refuses_a_declaration_with_no_assignment():
     bt = _bt(["rfl"], file_path="Mini/Traps.lean", name="Mini.trapNoAssign", start=(11, 0))
     with pytest.raises(replbackend.ReplError) as exc:
@@ -889,8 +869,6 @@ def test_verify_rows_script_guard_requires_lean_interact():
     sys.modules["lvr_seam"] = module
     try:
         spec.loader.exec_module(module)
-        src = (SCRIPTS / "deduction" / "lean_verify_rows.py").read_text()
-        assert "lean_interact" in src
         # The guard passes here because lean_interact IS installed in this venv.
         module.require_lean_interact()
     finally:

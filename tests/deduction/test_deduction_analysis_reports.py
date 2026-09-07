@@ -216,21 +216,6 @@ def test_extra_replicates_are_reported_as_dropped(pa, tmp_path, capsys, caplog):
     )
 
 
-def test_replicate_filter_docstrings_no_longer_claim_r_gt_1_correctness(pa):
-    """13-16: no loader still advertises that it stays correct under R>1."""
-    for path in (ANALYSIS / "power_analysis.py", ANALYSIS / "error_bars.py",
-                 ANALYSIS / "hint_vs_noise.py"):
-        text = path.read_text()
-        assert "a filter, not an assumption" not in text, path.name
-        assert "the code stays correct if a later run" not in text, path.name
-        # Each of the three loaders must instead say the rows are DROPPED.
-        if "replicate_idx" in text:
-            assert "drop" in text.lower(), (
-                f"{path.name} filters on replicate_idx without documenting that "
-                "the rows are discarded"
-            )
-
-
 # ---------------------------------------------------------------------------
 # 13-26: exact McNemar against the library
 # ---------------------------------------------------------------------------

@@ -1,9 +1,7 @@
 """Drive a Lean 4 REPL session for one theorem, via `lean_interact`.
 
 This is the Lean-side backend `smolbench.deduction.lean.verify` sits on top of.
-It replaces the deprecated LeanDojo v1 ``Dojo`` interaction layer, which cannot
-drive Lean >= v4.20 and therefore cannot reach the new corpus (mathlib4 at Lean
-v4.34.0-rc2). `lean_interact` wraps `leanprover-community/repl
+`lean_interact` wraps `leanprover-community/repl
 <https://github.com/leanprover-community/repl>`_, which tracks current Lean.
 
 The whole module exists to answer one question repeatedly: *starting from proof
@@ -615,37 +613,22 @@ def theorem_statement_stub(bt, root: Path | None = None, target_name: str = TARG
     FileNotFoundError
         The declaring source is missing (`declaration_text`).
     """
-    # Step 1: source text. LeanDojo-v2 corpora carry `theorem_statement`
-    # directly on the row; the LeanDojo v1 `BenchmarkTheorem` in this repo does
-    # not, so this branch is a forward-compatible seam rather than dead code.
-    carried = getattr(bt, "theorem_statement", None)
-    if isinstance(carried, str) and carried.strip():
-        text = carried
-        from_disk = False
-    else:
-        # Called through the module-level name (not a local alias / direct
-        # import) so tests and future backends can monkeypatch it.
-        text = declaration_text(mathlib_root(root), bt.file_path, bt.start[0])
-        from_disk = True
+    # Step 1: source text. Called through the module-level name (not a local
+    # alias / direct import) so tests and future backends can monkeypatch it.
+    text = declaration_text(mathlib_root(root), bt.file_path, bt.start[0])
 
-    # Step 2: cut the proof off. Which branch produced the text decides how a
-    # missing `:=` is read: a CARRIED statement is already statement-only, so
-    # "no `:=`" is normal there; a slice read off disk still contains its proof,
-    # so "no `:=`" means the proof is term/equation-style and unusable.
+    # Step 2: cut the proof off. The slice still contains its proof, so "no
+    # `:=`" means the proof is term/equation-style and unusable.
     end = find_statement_end(text)
     if end is None:
-        if from_disk:
-            raise StatementError(
-                f"cannot open a proof state for {bt.full_name}: its declaration has no "
-                "top-level ':=' (term-mode or equation-style proof), so there is no "
-                "statement/proof boundary to cut at"
-            )
-        statement = text
-    else:
-        statement = text[:end]
+        raise StatementError(
+            f"cannot open a proof state for {bt.full_name}: its declaration has no "
+            "top-level ':=' (term-mode or equation-style proof), so there is no "
+            "statement/proof boundary to cut at"
+        )
 
     # Step 3/4: rename (the original is already in the environment) and stub.
-    return f"{rename_declaration(statement, target_name).rstrip()}\n  := by sorry"
+    return f"{rename_declaration(text[:end], target_name).rstrip()}\n  := by sorry"
 
 
 # ---------------------------------------------------------------------------
@@ -674,8 +657,7 @@ def classify_step(response) -> StepOutcome:
     """
     # 1. REPL-level failure. `LeanError` is the REPL's own top-level channel:
     #    malformed request, unknown proof state, crashed process. It is
-    #    INFRASTRUCTURE -- the analogue of the old backend's Dojo-open failure --
-    #    NOT Lean rejecting the candidate tactic. Getting this backwards makes
+    #    INFRASTRUCTURE, NOT Lean rejecting the candidate tactic. Getting this backwards makes
     #    infra outages masquerade as broken proofs and inflates `lean_error`.
     if isinstance(response, LeanError):
         return StepOutcome("exception", None, f"REPL error: {response.message}", None)

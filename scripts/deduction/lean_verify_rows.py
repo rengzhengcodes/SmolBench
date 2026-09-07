@@ -62,8 +62,17 @@ from typing import Any, Iterator, Mapping, Optional
 import fcntl  # POSIX-only; every host this script runs on is Linux (EC2 / dev boxes).
 
 from smolbench.deduction.lean.corpus import BenchmarkTheorem, load_split
-from smolbench.deduction.lean.runner import spool_prefix
+from smolbench.deduction.lean.runner import (
+    NEVER_MEASURED_VERDICTS as _NEVER_MEASURED_VERDICTS,
+)
+from smolbench.deduction.lean.runner import (
+    _default_verifier,
+    group_cell_rows,
+    read_jsonl_tolerating_torn_tail,
+    spool_prefix,
+)
 from smolbench.evals import _aws
+from smolbench.evals.results_store import parse_s3_uri
 
 logging.basicConfig(level=logging.INFO)
 
@@ -74,11 +83,7 @@ _error_code = _aws.error_code
 # Constants
 # ---------------------------------------------------------------------------
 #: Same bucket every other deduction spool writer/reader in this study uses.
-#: The key prefix is NOT bundled in here: it comes from
-#: `smolbench.deduction.lean.runner.spool_prefix()`, resolved at ARGPARSE
-#: time (inside `main`, after `parse_args`), never at import or parser-build
-#: time -- see that function's docstring for why (the legacy-prefix refusal
-#: must stay escapable via an explicit `--s3-prefix`).
+#: The key prefix comes from `runner.spool_prefix()`, read at call time.
 SPOOL_BUCKET: str = "smolbench-results-414266451290"
 DEFAULT_RUNS_GLOB: str = "scaling_*"
 S3_REGION: str = "us-west-2"
@@ -97,52 +102,9 @@ _LOCK_FILENAME = ".smolbench_verify.lock"
 _CORPUS_KINDS: tuple[str, ...] = ("random", "novel_premises")
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 
-#: Verdicts meaning a cell's group was never actually put in front of Lean: the REPL
-#: session never opened (`_verify_one_group`'s `except Exception` around
-#: `verifier.open_at_step` fans `"replay_failed"` over the whole group), or an
-#: unanticipated bug tripped `_process_group`'s last-resort net (`"exception"`).
-#: Neither case tested a single recorded candidate.
-#:
-#: Same two verdicts, for the same reason, as
-#: `notebooks/deduction/analysis/power_analysis.UNMEASURABLE_VERDICTS`: both mark
-#: "the model was never actually tested here" rather than a real pass or fail. This
-#: script cannot import that module -- `notebooks/` has no `__init__.py` (it is not
-#: an importable package from a script under `scripts/`), and this module's own
-#: contract (see the module docstring's last bullet) is to import cleanly without
-#: any of the analysis stack's dependencies -- so the pair is duplicated here rather
-#: than shared. If the two ever drift apart, `resume_done_groups` below and the
-#: analysis loaders would disagree about what "measured" means for the exact same
-#: rows; keep them in sync by hand.
-_NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset({"exception", "replay_failed"})
-
-
 # ---------------------------------------------------------------------------
-# Pure: S3 URI / key helpers
+# Pure: S3 key helpers
 # ---------------------------------------------------------------------------
-def parse_s3_uri(uri: str) -> tuple[str, str]:
-    """Parse an ``s3://bucket[/key-prefix]`` URI into ``(bucket, key_prefix)``.
-
-    Returns
-    -------
-    tuple[str, str]
-        `key_prefix` has any trailing ``"/"`` stripped and is ``""`` for a bare
-        ``s3://bucket``.
-
-    Raises
-    ------
-    ValueError
-        Naming `uri`, if it does not start with ``"s3://"`` or its bucket segment
-        is empty.
-    """
-    if not uri.startswith("s3://"):
-        raise ValueError(f"parse_s3_uri: {uri!r} does not start with 's3://'")
-    rest = uri[len("s3://"):]
-    bucket, _, key_prefix = rest.partition("/")
-    if not bucket:
-        raise ValueError(f"parse_s3_uri: {uri!r} has an empty bucket")
-    return bucket, key_prefix.rstrip("/")
-
-
 def run_object_key(key_prefix: str, run: str, filename: str) -> str:
     """Build one run's object key ``f"{key_prefix}/{run}/{filename}"``.
 
@@ -167,10 +129,9 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
     Returns
     -------
     dict[tuple[str, int], list[int]]
-        ``(theorem_id, int(k))`` -> ascending indices into `rows` (``all_rows.jsonl``
+        ``(theorem_id, k)`` -> ascending indices into `rows` (``all_rows.jsonl``
         order), first-seen key order; only ``kind == "cell"`` AND
-        ``verdict == "unverified"`` rows. ``k`` is ``int()``-coerced to tolerate a
-        hand-edited string value.
+        ``verdict == "unverified"`` rows.
     """
     groups: dict[tuple[str, int], list[int]] = {}
     for index, row in enumerate(rows):
@@ -178,8 +139,7 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
             continue
         if row.get("verdict") != "unverified":
             continue
-        key = (row["theorem_id"], int(row["k"]))
-        groups.setdefault(key, []).append(index)
+        groups.setdefault((row["theorem_id"], row["k"]), []).append(index)
     return groups
 
 
@@ -222,26 +182,15 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
 
 
 def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict]]:
-    """Group ``kind == "cell"`` `rows` by their ``(theorem_id, int(k))`` pair.
+    """Group ``kind == "cell"`` `rows` by ``(theorem_id, k)``, in `rows` order.
 
     Shared by :func:`resume_done_groups` and :func:`verify_run`'s never-measured
-    diagnostic, so the two agree on what a "group" is by construction rather than
-    by two independently maintained loops.
-
-    Returns
-    -------
-    dict[tuple[str, int], list[dict]]
-        ``(theorem_id, int(k))`` -> its cell rows, in `rows` order; non-cell rows
-        are ignored. ``k`` is ``int()``-coerced to tolerate a hand-edited string
-        value.
+    diagnostic, so the two agree on what a "group" is by construction.
     """
-    groups: dict[tuple[str, int], list[dict]] = {}
-    for row in rows:
-        if row.get("kind") != "cell":
-            continue
-        key = (row["theorem_id"], int(row["k"]))
-        groups.setdefault(key, []).append(row)
-    return groups
+    return group_cell_rows(
+        (r for r in rows if r.get("kind") == "cell"),
+        lambda r: (r["theorem_id"], r["k"]),
+    )
 
 
 def _never_measured(cell_rows: list[dict]) -> bool:
@@ -269,10 +218,10 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     Returns
     -------
     set[tuple[str, int]]
-        Every ``(theorem_id, int(k))`` whose ``kind == "cell"`` rows (a) ALL carry a
+        Every ``(theorem_id, k)`` whose ``kind == "cell"`` rows (a) ALL carry a
         non-``"unverified"`` verdict, AND (b) are NOT all in
         :data:`_NEVER_MEASURED_VERDICTS` (:func:`_never_measured`). Non-cell rows
-        are ignored and can never make a group done. ``k`` is ``int()``-coerced.
+        are ignored and can never make a group done.
 
         (b) is what stops a never-measured group from counting as done. The OLD rule was
         (a) alone: "no cell still reads unverified", which a group of ALL
@@ -334,9 +283,7 @@ def row_identity(row: dict) -> tuple:
     ``row.get`` throughout, so a sanity row (no `model`/`k`/`rung`/`replicate_idx`)
     yields ``None`` in those slots instead of raising. The trailing five fields mirror
     ``runner._row_key`` with `kind` prepended, so a cell and a sanity row for one
-    `theorem_id` never collide. `k` is read RAW (unlike :func:`resume_done_groups`):
-    both files share a writer, and a hand-edited string `k` would merely fail to pair
-    (one orphan plus a redundant re-verification), never mis-assign a verdict.
+    `theorem_id` never collide.
     """
     return (
         row.get("kind"),
@@ -567,19 +514,8 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
 
 
 # ---------------------------------------------------------------------------
-# Lazy import seams -- this module must import without lean_dojo or boto3
+# Lazy import seams -- this module must import without lean_interact or boto3
 # ---------------------------------------------------------------------------
-def _default_verifier():
-    """Lazily import the real verifier ``smolbench.deduction.lean.verify``.
-
-    Deferred because it needs `lean_interact` (same seam as ``runner._default_verifier``);
-    its `ImportError` propagates when the ``lean`` extra is absent.
-    """
-    from smolbench.deduction.lean import verify
-
-    return verify
-
-
 def _build_s3_client() -> Any:
     """Build a fresh boto3 S3 client bound to `S3_REGION` via ``_aws.fresh_client``.
 
@@ -629,30 +565,20 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     Returns
     -------
     list[dict]
-        One dict per non-blank line, in file order, MINUS a torn FINAL line if the
-        last non-blank line fails to parse (see the loop body and Raises below);
-        ``[]`` when the object does not exist (NORMAL for a not-yet-created
-        ``verified_rows.jsonl``), detected as a ``ClientError`` with ``Error.Code``
-        ``"NoSuchKey"`` or ``"404"`` -- the shapes boto3 and
+        `runner.read_jsonl_tolerating_torn_tail`'s rows (a torn FINAL line is
+        dropped with a warning; a corrupt line anywhere else raises
+        `json.JSONDecodeError`); ``[]`` when the object does not exist (NORMAL for
+        a not-yet-created ``verified_rows.jsonl``), detected as a ``ClientError``
+        with ``Error.Code`` ``"NoSuchKey"`` or ``"404"`` -- the shapes boto3 and
         ``tests/evals/test_results_store.py``'s ``FakeS3Client`` raise. Any other S3
         failure propagates: it must never read as "nothing to verify yet".
 
-    Raises
-    ------
-    json.JSONDecodeError
-        If any line OTHER than the file's final line fails to parse. A torn final
-        line is the ONE recoverable shape (the append-only writer regenerates it on
-        resume, see below); a corrupt line anywhere else is real mid-file damage
-        this function will not silently shrink the pass's input around, since
-        nothing re-derives a lost middle row.
-
     Notes
     -----
-    `dest` is always written the full `body` bytes verbatim, exactly as
-    downloaded -- this function's job is to READ, never to "repair" the S3 object
-    or the local copy; a caller that wants a cleaned-up object re-uploads a
-    different file (:func:`upload_rows` does, from `verify_run`'s in-memory rows,
-    never from `dest`).
+    `dest` is always written the full `body` bytes verbatim -- this function's job
+    is to READ, never to "repair" the S3 object or the local copy; a caller that
+    wants a cleaned-up object re-uploads a different file (:func:`upload_rows`
+    does, from `verify_run`'s in-memory rows, never from `dest`).
     """
     from botocore.exceptions import ClientError  # lazy: importing must not need boto3
 
@@ -667,37 +593,7 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(body)
 
-    # Design: `all_rows.jsonl` is written APPEND-ONLY by an unattended, spot-priced
-    # box, so a SIGKILL (spot reclaim, OOM) mid-write leaves a half-written LAST
-    # line -- never a half-written line in the MIDDLE, since every earlier line was
-    # already flushed complete before the writer moved on. `lineno` is taken over
-    # the RAW split (including blank lines) so "final line" means the file's actual
-    # last line, matching what `merge_lean_shards.py` and
-    # `split_lean_run_into_shards.py` already do for the same artifact.
-    lines = body.decode("utf-8").splitlines()
-    rows: list[dict] = []
-    for lineno, line in enumerate(lines):
-        if not line.strip():
-            continue
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            if lineno == len(lines) - 1:
-                # Recoverable: the writer's own resume regenerates this exact row
-                # next pass, so dropping it here loses nothing -- but it must be
-                # REPORTED, not silently swallowed, since a silent drop would hide
-                # real corruption behind this same code path.
-                logging.warning(
-                    f"lean_verify_rows: s3://{bucket}/{key}: torn (truncated) final "
-                    "line dropped -- the append-only writer regenerates it on "
-                    f"resume. The local copy at {dest} still has it verbatim (this "
-                    "function never rewrites what it downloads)."
-                )
-                continue
-            # Unrecoverable: real damage in the middle of a file this pass will not
-            # re-derive. Propagate unchanged rather than shrinking the input.
-            raise
-    return rows
+    return read_jsonl_tolerating_torn_tail(dest)
 
 
 def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: Path) -> None:
@@ -1067,11 +963,10 @@ def verify_run(
         # `n_sentinel` ("count such groups as unverified"); that is wrong against
         # the study's own recorded measurement: `notebooks/deduction/analysis/
         # power_analysis.py` documents that "replay_failed" is a STABLE population
-        # across the WHOLE study -- exactly 232 cells (151 DojoInit + 81 prefix),
-        # 100% overlap, in every one of 21 models. A population that shows up
-        # identically in every healthy run is a property of the CORPUS (theorems
-        # LeanDojo cannot open a session for, or whose ground-truth prefix will not
-        # replay), not a symptom of this pass. Folding it into `n_sentinel` would
+        # across the WHOLE study, in every one of 21 models. A population that
+        # shows up identically in every healthy run is a property of the CORPUS
+        # (theorems no REPL session can open, or whose ground-truth prefix will
+        # not replay), not a symptom of this pass. Folding it into `n_sentinel` would
         # return 2 on every one of those otherwise-healthy full passes, forever --
         # and `_verify_every_run` counts any non-zero `rc` into its failed-run
         # total, so `main` would report non-zero on the documented healthy flow. A
@@ -1130,15 +1025,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--s3-prefix", default=None,
-        help=(
-            "s3://bucket/key-prefix under which every run lives (default: "
-            f"s3://{SPOOL_BUCKET}/<LEAN_SPOOL_PREFIX or deduction_postcutoff/runs>"
-            " -- resolved at parse time, not parser-build time, via "
-            "smolbench.deduction.lean.runner.spool_prefix(); pass this flag "
-            "explicitly to point at the published pre-cutoff study, "
-            f"s3://{SPOOL_BUCKET}/deduction/runs)"
-        ),
+        "--s3-prefix", default=f"s3://{SPOOL_BUCKET}/{spool_prefix()}",
+        help="s3://bucket/key-prefix under which every run lives (default: %(default)s)",
     )
     parser.add_argument(
         "--runs", default=DEFAULT_RUNS_GLOB,
@@ -1202,10 +1090,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
-    # Resolved HERE, after parse_args -- not as the argparse default -- so that
-    # `LEAN_SPOOL_PREFIX=deduction/runs --help` never raises (a legacy-prefix
-    # refusal must stay escapable by passing `--s3-prefix` explicitly).
-    s3_prefix = args.s3_prefix or f"s3://{SPOOL_BUCKET}/{spool_prefix()}"
+    s3_prefix = args.s3_prefix
 
     if not args.dry_run:
         require_lean_interact()

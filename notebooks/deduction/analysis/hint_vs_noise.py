@@ -44,7 +44,6 @@ from power_analysis import (  # noqa: E402
     MODELS,
     grade_verdicts,
     mcnemar_exact_p,
-    reject_superseded,
     reject_unverified_verdicts,
 )
 
@@ -81,11 +80,11 @@ def load_rungs(path: Path) -> dict:
     Raises
     ------
     SystemExit
-        From `reject_superseded`, or from `reject_unverified_verdicts`, which runs at
+        From `rows_source.reject_superseded`, or from `reject_unverified_verdicts`, which runs at
         INGESTION before the rung filter -- an ungraded row in a rung this comparison
         never reads still raises, since it proves verification did not finish.
     """
-    reject_superseded([path])
+    rows_source.reject_superseded([path])
     rows = [json.loads(line) for line in path.read_text().splitlines() if line]
     reject_unverified_verdicts(rows, "verdict", path)
     out: dict = defaultdict(dict)
@@ -155,49 +154,16 @@ def main(argv=None) -> int:
     SystemExit
         From `rows_source.resolve_rows_dir` when an ``--s3`` download comes
         back empty or hits a retired artifact, and from `load_rungs` (via
-        ``power_analysis.reject_superseded`` /
-        ``reject_unverified_verdicts``) on a retired or ungraded lane. A lane
+        ``rows_source.reject_superseded`` /
+        ``power_analysis.reject_unverified_verdicts``) on a retired or ungraded lane. A lane
         missing from the resolved directory raises ``FileNotFoundError`` at
         `load_rungs`' read.
     """
     ap = argparse.ArgumentParser(description=__doc__)
-    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
-    # argument inside a mutually-exclusive group at parser-construction time.
-    source = ap.add_mutually_exclusive_group(required=True)
-    source.add_argument("--rows-dir", type=Path, default=None,
-                        help="local directory of <model>/verified_rows.jsonl "
-                             "to analyse; the way to read a tree you already "
-                             "have, including one a previous --s3 run left "
-                             "behind")
-    source.add_argument("--s3", nargs="?", const="", default=None,
-                        metavar="PREFIX",
-                        help="download this study's rows from "
-                             "s3://<bucket>/<PREFIX>/scaling_<key>/"
-                             "verified_rows.jsonl into a temp "
-                             "<dir>/<model>/verified_rows.jsonl tree and "
-                             "analyse those. PREFIX is optional and defaults "
-                             "to this study's spool prefix (LEAN_SPOOL_PREFIX, "
-                             "or the re-collection's); the published "
-                             "pre-cutoff study is at deduction/runs. The "
-                             "default is resolved AFTER parsing, never here.")
+    rows_source.add_source_args(ap)
     args = ap.parse_args(argv)
 
-    # `--s3` with no value arrives as "" (its `const`); the default prefix is
-    # resolved HERE, after parsing, never as an argparse default -- a
-    # `spool_prefix()` call at parser-build time would make
-    # `LEAN_SPOOL_PREFIX=deduction/runs --help` raise, and would deny the
-    # legacy prefix even to a reader passing it explicitly.
-    #
-    # Single-element `candidates`, unlike `power_analysis`: this script has no
-    # `all_rows.jsonl` fallback and must not acquire one. Those rows carry the
-    # ungraded "unverified" sentinel, so `reject_unverified_verdicts` would
-    # raise on them anyway -- a fallback would only convert a clear
-    # "verification never ran" condition into a confusing downstream error.
-    rows_dir = rows_source.resolve_rows_dir(
-        rows_dir=args.rows_dir,
-        s3_prefix=None if args.s3 is None else (args.s3 or rows_source.spool_prefix()),
-        candidates=("verified_rows.jsonl",),
-    )
+    rows_dir = rows_source.resolve_from_args(args)
 
     rows = []
     for model in MODELS:
@@ -296,19 +262,6 @@ def main(argv=None) -> int:
         # null, even though the MDE numbers above are still valid sensitivity
         # figures for the models that did not reach significance.
         #
-        # NOTE: this paragraph used to close by quoting the induction leg's
-        # extens-vs-noise effect-size range as a for-scale comparison. That
-        # literal is deleted: it is a different manipulation (the induction
-        # contrast swaps the encoding of the WHOLE evidence set; this leg only
-        # adds a trailing block on top of an already-complete direct-premise
-        # context, see the module docstring), measured on different rows, and it
-        # was never computed by this script -- a hard-coded number copied from
-        # another study's report can go stale here with nothing to catch it. It
-        # could come back if the induction leg starts writing a machine-readable
-        # summary (e.g. a results manifest with a per-contrast effect-size field,
-        # checked at analysis time) that this script could load and cite by path;
-        # no such file exists in the repo today (checked notebooks/induction/ and
-        # smolbench/induction/ -- only analysis *scripts*, no saved results).
         if not sig:
             print("So this null rules out LARGE effects of 1-hop transitive "
                   "premise background,\nnot small ones.")

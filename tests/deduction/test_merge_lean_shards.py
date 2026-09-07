@@ -16,8 +16,17 @@ _SPEC.loader.exec_module(merge_mod)
 
 
 def _cell(theorem: str, rung: str = "stepk:1") -> dict:
+    # Non-ASCII, a U+2028 (which `str.splitlines` would split on) and a float:
+    # the merged file is rebuilt from parsed rows, so it must still come out
+    # byte-identical to what the shards wrote.
     return {"kind": "cell", "model": "m", "theorem_id": theorem, "k": 1,
-            "rung": rung, "replicate_idx": 0}
+            "rung": rung, "replicate_idx": 0, "gen_ms": 1e-05,
+            "lean_error": "\u00e9rreur\u2028line two"}
+
+
+def _lines(run_dir) -> list[str]:
+    """Records, split on "\n" only -- `splitlines` also breaks on the U+2028 above."""
+    return [x for x in (run_dir / "all_rows.jsonl").read_text().split("\n") if x]
 
 
 def _sanity(theorem: str) -> dict:
@@ -28,7 +37,8 @@ def _write_shard(runs, key, i, n, rows):
     name = f"scaling_{key}_shard{i}of{n}"
     d = runs / name
     d.mkdir(parents=True)
-    (d / "all_rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (d / "all_rows.jsonl").write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
     (d / "manifest.json").write_text(json.dumps({
         "run_name": name, "started_at": f"T{i}", "finished_at": f"T{i}b",
         "config": {"run_name": name, "theorems": {"limit": 300, "shard": f"{i}/{n}"}},
@@ -45,7 +55,11 @@ def test_merge_combines_rows_sidecars_and_manifests(tmp_path):
     _write_shard(runs, "k", 0, 2, [_cell("A"), _sanity("A")])
     _write_shard(runs, "k", 1, 2, [_cell("B"), _sanity("B")])
     out = merge_mod.merge_shards("k", 2, runs_root=runs, expect_cells=2, expect_sanity=2)
-    rows = [json.loads(x) for x in (out / "all_rows.jsonl").read_text().splitlines()]
+    merged = (out / "all_rows.jsonl").read_text()
+    assert merged == "".join(
+        (runs / f"scaling_k_shard{i}of2" / "all_rows.jsonl").read_text() for i in (0, 1)), \
+        "merged rows must be byte-identical to the shards'"
+    rows = [json.loads(x) for x in merged.split("\n") if x]
     assert [r["theorem_id"] for r in rows] == ["A", "A", "B", "B"]
     cfg = (out / "server_config.yaml").read_text()
     assert cfg == "-   instance_id: box0\n-   instance_id: box1\n"
@@ -93,7 +107,7 @@ def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path):
     with (runs / "scaling_torn_shard0of1" / "all_rows.jsonl").open("a") as f:
         f.write('{"kind": "cell", "theo')
     out = merge_mod.merge_shards("torn", 1, runs_root=runs, expect_cells=1, expect_sanity=1)
-    assert [json.loads(x)["kind"] for x in (out / "all_rows.jsonl").read_text().splitlines()] \
+    assert [json.loads(x)["kind"] for x in _lines(out)] \
         == ["cell", "sanity"]
 
     runs2 = tmp_path / "runs2"
@@ -132,7 +146,7 @@ def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path):
     ])
     out = merge_mod.merge_shards("resumed", 1, runs_root=runs,
                                  expect_cells=1, expect_sanity=1)
-    rows = [json.loads(x) for x in (out / "all_rows.jsonl").read_text().splitlines()]
+    rows = [json.loads(x) for x in _lines(out)]
     assert [r.get("verdict") for r in rows if r["kind"] == "cell"] == \
         ["exception", "success"], "both rows must survive the merge"
 
@@ -146,7 +160,7 @@ def test_merge_collapses_an_exception_only_cell(tmp_path):
     ])
     out = merge_mod.merge_shards("allexc", 1, runs_root=runs,
                                  expect_cells=1, expect_sanity=None)
-    assert len((out / "all_rows.jsonl").read_text().splitlines()) == 2
+    assert len(_lines(out)) == 2
 
 
 def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path):

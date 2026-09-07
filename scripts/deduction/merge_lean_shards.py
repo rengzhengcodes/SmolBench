@@ -19,7 +19,7 @@ row plus any number of ``"exception"`` rows is the ORDINARY resume case
 (``runner._existing_keys`` deliberately re-runs an exception-only cell and the
 sweep appends the retry) and collapses silently for the ``--expect-cells`` count
 below, though every one of its rows is still kept in the merged file (superseded
-data is labelled, never dropped -- see ``runner.SUPERSEDED_MARKER``'s comment);
+data is labelled, never dropped);
 no duplicate sanity theorem across shards; the merged DISTINCT cell-key count
 equals ``--expect-cells`` and the merged sanity-row count equals
 ``--expect-sanity``; no ``theorems/`` path collides; the canonical
@@ -45,14 +45,9 @@ RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
 def _cell_key(row: dict) -> tuple:
-    # Delegates to `runner._row_key` instead of keeping a second copy of its
-    # field order: `main()` (below) already imports `runner` unconditionally
-    # -- for the --expect-* argparse defaults, then again for
-    # `write_run_analysis` -- before `merge_shards` (and so this function) ever
-    # runs, so nothing on this call path is "a box without smolbench". The
-    # import stays function-local so a caller that never reaches this line
-    # (e.g. importing the module just for its argparse setup) does not pay for
-    # `runner`'s heavy import chain.
+    # Delegates to `runner._row_key` rather than keeping a second copy of its
+    # field order. The import stays function-local so a caller that only wants
+    # the argparse setup does not pay for `runner`'s import chain.
     from smolbench.deduction.lean import runner
     return runner._row_key(
         row.get("model"), row.get("theorem_id"), row.get("k"),
@@ -107,28 +102,17 @@ def merge_shards(
     # resume from a mis-sharded/double-run lane.
     cell_rows_by_key: dict[tuple, list[dict]] = {}
     sanity_ids: set[str] = set()
-    per_shard_rows: list[list[str]] = []
+    per_shard_rows: list[list[dict]] = []
     n_sanity = 0
+    from smolbench.deduction.lean import runner
+
     for d in shard_dirs:
-        lines = (d / "all_rows.jsonl").read_text().splitlines()
-        kept: list[str] = []
+        try:
+            kept = runner.read_jsonl_tolerating_torn_tail(d / "all_rows.jsonl")
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{d / 'all_rows.jsonl'}: {exc} -- aborting") from exc
         per_shard_rows.append(kept)
-        for lineno, line in enumerate(lines):
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                # Same rule as split_lean_run_into_shards.py: a shard killed
-                # mid-write leaves a torn FINAL line, which the driver's resume
-                # regenerates, so drop it; a corrupt line anywhere else is real
-                # damage and must not be folded into the canonical run.
-                if lineno == len(lines) - 1:
-                    logging.warning(f"{d.name}: torn final line dropped (regenerates on resume)")
-                    continue
-                raise SystemExit(
-                    f"{d / 'all_rows.jsonl'}: corrupt row mid-file at line "
-                    f"{lineno + 1} -- aborting"
-                )
-            kept.append(line)
+        for row in kept:
             if row.get("kind") == "cell":
                 cell_rows_by_key.setdefault(_cell_key(row), []).append(row)
             elif row.get("kind") == "sanity":
@@ -198,10 +182,8 @@ def merge_shards(
 
     # All gates passed. Write the canonical directory.
     canonical.mkdir(parents=True, exist_ok=True)
-    with (canonical / "all_rows.jsonl").open("w") as sink:
-        for lines in per_shard_rows:
-            for line in lines:
-                sink.write(line + "\n")
+    for rows in per_shard_rows:
+        runner.write_jsonl(rows, canonical / "all_rows.jsonl")
 
     for rel, d in sorted(seen_rel.items()):
         dst = canonical / rel
@@ -253,28 +235,16 @@ def merge_shards(
 
 
 def main(argv: list[str] | None = None) -> None:
-    # Lazy import, at the TOP of main(): the --expect-* defaults below are
-    # CONFIGURATION (the study's pinned shape), read from the single source
-    # of truth in `runner` rather than duplicated here as local constants.
-    # `main()` already imports `runner` unconditionally further down (for
-    # `write_run_analysis`), so pulling the import up front adds no new
-    # requirement.
-    from smolbench.deduction.lean import runner
-
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("key", help="spec key of the lane (e.g. ministral-3-14b)")
     parser.add_argument("--n", type=int, required=True, help="number of shards")
     parser.add_argument(
-        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
-        help="expected merged cell count (default: %(default)s)",
+        "--expect-cells", type=int, required=True,
+        help="expected merged cell count",
     )
     parser.add_argument(
-        "--expect-sanity", type=int, default=runner.EXPECTED_SANITY_ROWS,
-        help="expected merged sanity-row count (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--no-expect", action="store_true",
-        help="skip the merged-total gates (uniqueness gates always apply)",
+        "--expect-sanity", type=int, required=True,
+        help="expected merged sanity-row count",
     )
     parser.add_argument(
         "--spool", action="store_true",
@@ -287,13 +257,12 @@ def main(argv: list[str] | None = None) -> None:
         args.key,
         args.n,
         runs_root=RESULTS_RUNS,
-        expect_cells=None if args.no_expect else args.expect_cells,
-        expect_sanity=None if args.no_expect else args.expect_sanity,
+        expect_cells=args.expect_cells,
+        expect_sanity=args.expect_sanity,
     )
 
     # Per-shard analysis.txt files are partial and were not copied; regenerate.
-    # (`runner` was already imported at the top of this function, for the
-    # --expect-* argparse defaults above.)
+    from smolbench.deduction.lean import runner
     runner.write_run_analysis(canonical)
 
     if args.spool:

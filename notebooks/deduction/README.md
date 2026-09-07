@@ -64,9 +64,9 @@ the retired-artifact guard and the downloader itself live once, in
 
 | File | What it's for |
 | --- | --- |
-| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver and its refusal of the published pre-cutoff prefix, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
+| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
 | `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3` (with `--spool-prefix`) or `--results-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
-| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`, plus `--no-count-as-failure` to drop cells with no surviving rollout instead of counting them as failures. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
+| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
 | `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
 
 Note both legs ship a file named `power_analysis.py`. A process loading
@@ -299,17 +299,10 @@ tactic chain).
 
 Every lane's results are spooled to S3, never accumulated locally for the
 long term. Bucket `smolbench-results-414266451290`, region `us-west-2`,
-key layout `deduction/runs/scaling_<spec-key>/<relative path>` (e.g.
-`deduction/runs/scaling_glm-4.7/all_rows.jsonl`) -- but that prefix is the
-PUBLISHED pre-cutoff study's location and must never be written again. New
-runs against the post-cutoff corpus spool under
-`deduction_postcutoff/runs/scaling_<spec-key>/<relative path>` instead
-(`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
-by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`);
-`spool_prefix()` refuses to resolve back to `deduction/runs` unless
-`LEAN_ALLOW_LEGACY_PREFIX=1` is set, since overwriting it would silently
-destroy the unrecoverable published record. `deduction/runs` itself is
-retained read-only, for analysis of the published study only.
+key layout `deduction_postcutoff/runs/scaling_<spec-key>/<relative path>`
+(e.g. `deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl`) -- from
+`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
+by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`.
 
 `run_study.py`'s `spool_to_s3` runs exactly once, after the sweep returns:
 it uploads every file under the run directory, verifies each upload

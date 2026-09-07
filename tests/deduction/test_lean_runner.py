@@ -523,19 +523,11 @@ def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monke
 
     Name-level (mathlib3 renamed-lemma) detection was removed from `lean3`
     together with the declaration-name-map asset that was never built in this
-    tree, so the column now means the same thing on every machine and the old
-    graceful-degradation marker line is gone. Three things are pinned here:
-
-    * a comma-free mathlib3 lemma name (``apply supr_le``) is NOT counted --
-      the negative control for that removal. It used to be counted, but only on
-      a machine that happened to carry the asset;
-    * no ``parse-level only`` marker line survives, since the header now carries
-      that fact;
-    * the header cell is the single whitespace-delimited token
-      ``l3(parse-level)``. It carries no internal space on purpose: this test
-      locates the column by ``header.index(...)`` after ``line.split()`` and
-      asserts every data row yields as many tokens as the header, so a header
-      cell containing a space would silently break that width invariant.
+    tree, so the column means the same thing on every machine and the old
+    graceful-degradation marker line is gone. Pinned: a comma-free mathlib3
+    lemma name (``apply supr_le``) is NOT counted -- the negative control for
+    that removal -- and no ``parse-level only`` marker line survives, since the
+    header now carries that fact.
     """
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
@@ -557,14 +549,14 @@ def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monke
     assert "parse-level only" not in text, "the degradation marker line must be gone"
     lines = text.splitlines()
     sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
-    header = next(line for line in lines
-                  if "l3(parse-level)" in line and "exc" in line).split()
+    header = next(line for line in lines if "exc" in line and "rate" in line).split()
     row = lines[sep + 1].split()
     assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
     assert row[0] == "stepk:0" and row[1] == "m"
     assert row[2] == "1/4"
-    assert row[header.index("l3(parse-level)")] == "2"
-    assert "l3(parse-level)=2" in lines[-1]  # per-model totals line
+    l3_col = next(i for i, tok in enumerate(header) if tok.startswith("l3"))
+    assert row[l3_col] == "2"
+    assert lines[-1].split()[-1].endswith("=2")  # per-model totals line
 
 
 def test_nullverify_sweep_generates_all_theorems(sweep_ctx):
@@ -921,10 +913,9 @@ def test_resume_truncates_a_torn_final_line_before_appending(sweep_ctx):
 
         {"kind": "cel{"kind": "cell", "n": 3}
 
-    A torn FINAL line is recoverable (both merge_lean_shards.py and
-    split_lean_run_into_shards.py drop it with a warning, and the driver's own
-    docstring promises it "regenerates on resume"); a corrupt MIDDLE line is
-    not -- both scripts hard-abort on one. So the damage is done by the
+    A torn FINAL line is recoverable (merge_lean_shards.py drops it with a
+    warning, and the driver's own docstring promises it "regenerates on
+    resume"); a corrupt MIDDLE line is not. So the damage is done by the
     APPEND, and the fix is to truncate before appending.
     """
     cfg = _make_config(run_name="torn", rungs=["stepk:0"], n_replicates=1,

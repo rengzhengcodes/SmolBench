@@ -17,9 +17,8 @@ Design
 ------
 * **Stdlib only.** This script must run on the trace box, which has lean-dojo
   and nothing else installed -- so it never imports ``smolbench``.
-  ``scripts/deduction/merge_lean_shards.py`` and
-  ``split_lean_run_into_shards.py`` are NOT a precedent for that any more:
-  their ``_cell_key`` now delegates to ``runner._row_key``, which they can do
+  ``scripts/deduction/merge_lean_shards.py`` is NOT a precedent for that any
+  more: its ``_cell_key`` delegates to ``runner._row_key``, which it can do
   because every call path reaching it already imports ``runner``, and this
   script has no such path. The corpus contract it writes against is mirrored
   from ``smolbench/deduction/lean/corpus.py``, not imported.

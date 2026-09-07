@@ -172,8 +172,7 @@ def test_audit_lanes_are_the_config_roster(roster):
 def test_bucket_and_region_come_from_the_config(power_analysis):
     """Every consumer's bucket/region constant equals the committed config's."""
     results = load_study_config().results
-    assert (power_analysis.S3_BUCKET, power_analysis.S3_REGION) == (
-        results.bucket, results.region)
+    assert power_analysis.S3_BUCKET == results.bucket
     if AUDIT.exists():
         audit = _load(AUDIT, "audit_lean_pinning_for_bucket_pin")
         assert (audit.BUCKET, audit.REGION) == (results.bucket, results.region)

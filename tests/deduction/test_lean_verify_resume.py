@@ -157,7 +157,7 @@ def test_full_pass_sentinel_gate(monkeypatch, tmp_path, kwargs, verdict, prior, 
 
 
 def test_resume_done_groups_all_cells_rule():
-    """A half-graded group is not done; sanity rows never complete one; str k coerces."""
+    """A half-graded group is not done; sanity rows never complete one."""
     prior = [_cell("t1", 1, rung="stepk:1", verdict="success"),
              _cell("t1", 1, rung="hint:2", verdict="unverified"),
              _cell("t2", 1, rung="stepk:1", verdict="lean_error"),
@@ -165,17 +165,17 @@ def test_resume_done_groups_all_cells_rule():
     assert lvr.resume_done_groups(prior) == {("t2", 1)}
     assert lvr.resume_done_groups([_sanity("t9", verdict="success")]) == set()
     assert lvr.resume_done_groups(
-        [_sanity("t1", verdict="success"), _cell("t1", "1", verdict="success")]) == {("t1", 1)}
+        [_sanity("t1", verdict="success"), _cell("t1", 1, verdict="success")]) == {("t1", 1)}
 
 
 def test_group_unverified_dedups_and_fans_out():
-    """Only unverified cells group by (theorem, int k); identical candidates replay once."""
+    """Only unverified cells group by (theorem, k); identical candidates replay once."""
     rows = [_cell("T.a", 1, rung="stepk:1", proof="simp"),
             _cell("T.a", 1, rung="hint:2", proof="ring"),
             _cell("T.a", 2, rung="stepk:1", proof="simp"),
             _cell("T.b", 0, rung="stepk:1", proof="rfl"),
             _cell("T.a", 1, rung="hint:3", verdict="success", proof="aesop"),
-            _sanity("T.a"), _cell("T.a", "1", rung="hint:4", proof="simp")]
+            _sanity("T.a"), _cell("T.a", 1, rung="hint:4", proof="simp")]
     groups = lvr.group_unverified(rows)
     assert groups == {("T.a", 1): [0, 1, 6], ("T.a", 2): [2], ("T.b", 0): [3]}
     assert list(groups) == [("T.a", 1), ("T.a", 2), ("T.b", 0)]
@@ -215,19 +215,15 @@ def test_ram_cap_and_s3_path_mapping():
 
 
 def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
-    """The `--s3-prefix` DEFAULT is built after parsing; nothing else exercises it.
+    """`--s3-prefix`'s default; nothing else exercises it.
 
-    `--help` proves the parser builds and every other test passes a prefix
-    explicitly, so a missing or misordered resolution line would only surface on
-    a live run -- as `parse_s3_uri(None)` crashing, or worse, a wrong
-    bucket/prefix split writing `verified_rows.jsonl` to the wrong key.
+    Every other test passes a prefix explicitly, so a wrong default would only
+    surface on a live run -- as a wrong bucket/prefix split writing
+    `verified_rows.jsonl` to the wrong key.
     """
     from smolbench.deduction.lean.runner import DEDUCTION_SPOOL_PREFIX
 
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
-    monkeypatch.delenv("LEAN_ALLOW_LEGACY_PREFIX", raising=False)
-    args = lvr._build_arg_parser().parse_args([])
-    assert args.s3_prefix is None, "the default must NOT be resolved at parser-build time"
 
     # Drive main() itself, intercepting at list_runs, so this proves main
     # RESOLVES the default -- not merely that the expression would be correct.
@@ -246,11 +242,10 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_pa
     assert key == f"{DEDUCTION_SPOOL_PREFIX}/scaling_glm-4.7/verified_rows.jsonl"
     assert "//" not in key and not key.startswith("/")
 
-    # An explicit flag still reaches the published pre-cutoff study, with no env
-    # opt-in -- that is the read-only analysis path.
-    legacy = lvr._build_arg_parser().parse_args(
-        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/deduction/runs"])
-    assert lvr.parse_s3_uri(legacy.s3_prefix) == (lvr.SPOOL_BUCKET, "deduction/runs")
+    # An explicit flag overrides the default.
+    other = lvr._build_arg_parser().parse_args(
+        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/somewhere/else"])
+    assert lvr.parse_s3_uri(other.s3_prefix) == (lvr.SPOOL_BUCKET, "somewhere/else")
 
 
 # ---------------------------------------------------------------------------
@@ -299,12 +294,8 @@ def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path)
     """13-07: a half-written last line must not abort the whole verification pass.
 
     `all_rows.jsonl` is written by an append-only sweep on a spot box, so a
-    SIGKILL mid-write leaves a torn FINAL line. The loader called
-    `json.loads` on every line with no tolerance, so one torn tail took down
-    the run -- while `merge_lean_shards.py` and
-    `split_lean_run_into_shards.py` both already drop exactly this and say so.
-    Dropped AND reported: a silent drop would hide real mid-file corruption
-    behind the same code path.
+    SIGKILL mid-write leaves a torn FINAL line. Dropped AND reported: a silent
+    drop would hide real mid-file corruption behind the same code path.
     """
     fake = _Fake()
     good = [_cell("T", rung="stepk:1"), _sanity("T")]

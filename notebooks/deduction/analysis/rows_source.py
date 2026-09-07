@@ -40,31 +40,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The repo root is three levels up from this file
-# (notebooks/deduction/analysis/ -> repo root), added so
-# `smolbench.evals.study_config` resolves from the SOURCE TREE and not only
-# from an editable install: this module's documented run environment installs
-# no smolbench at all. That one import is affordable here because
-# study_config's whole transitive chain is pure stdlib --
-# ``smolbench/__init__.py`` is a docstring, ``smolbench/evals/__init__.py``
-# imports only ``smolbench.evals.quiz`` (os, re, datetime, dataclasses,
-# typing), and study_config itself imports functools, tomllib, dataclasses,
-# pathlib, types, typing.
-#
-# That is NOT true of ``smolbench.deduction.lean.runner``, which reaches the
-# provider and corpus stacks: it is why the spool-prefix constants and
-# `SUPERSEDED_MARKER` below stay DUPLICATED from runner.py rather than imported
-# from it. The constraint has narrowed to "stdlib-reachable smolbench only",
-# not disappeared. ``tests/deduction/test_spool_prefix.py`` keeps the copies in
-# step with runner.py's originals, which is the only thing that makes a
-# duplicate safe.
-#
-# Inserted at position 0, so `smolbench` resolves from THIS tree ahead of any
-# editable install pointing at a different checkout -- deliberate, and the same
-# __file__-anchored convention the sibling scripts follow: the bucket a report
-# reads should be the one committed beside it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from smolbench.evals.retired_markers import is_retired  # noqa: E402
 from smolbench.evals.study_config import load_study_config  # noqa: E402
 
 # --------------------------------------------------------------------------- #
@@ -87,88 +65,37 @@ from smolbench.evals.study_config import load_study_config  # noqa: E402
 S3_BUCKET = load_study_config().results.bucket
 S3_REGION = load_study_config().results.region
 
-#: The re-collection's S3 key prefix, and the published pre-cutoff study's.
-#: Duplicated from `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX` /
-#: `LEGACY_SPOOL_PREFIX` rather than imported, for the reason given in the
-#: ``sys.path`` comment block above. Kept in step by
-#: ``tests/deduction/test_spool_prefix.py``.
+#: This study's S3 key prefix; duplicated from
+#: `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX` rather than imported,
+#: because that module reaches the provider and corpus stacks.
 _DEDUCTION_SPOOL_PREFIX = "deduction_postcutoff/runs"
-_LEGACY_SPOOL_PREFIX = "deduction/runs"
 
 
 def spool_prefix() -> str:
-    """Resolve the deduction spool prefix; duplicates `runner.spool_prefix()`.
+    """The ``LEAN_SPOOL_PREFIX`` override, or `_DEDUCTION_SPOOL_PREFIX`; never trailing "/".
 
-    Not a module constant, and NEVER to be called at import time or as an
-    argparse default. Each caller resolves it once AFTER ``parse_args``
-    returns, for two reasons that both bite otherwise:
-
-    * this function RAISES for the published pre-cutoff prefix, so an eager
-      call would make ``LEAN_SPOOL_PREFIX=deduction/runs <script> --help``
-      explode -- and would deny the legacy prefix even to a reader passing it
-      explicitly on the command line, which is a legitimate read-only use;
-    * a test that imports one of these scripts via ``importlib`` executes
-      module scope, so a module-level call would trip the same refusal purely
-      as a side effect of importing.
-
-    Returns
-    -------
-    str
-        The normalized prefix (the ``LEAN_SPOOL_PREFIX`` override, or
-        `_DEDUCTION_SPOOL_PREFIX` when it is unset or empty), never ending
-        in "/".
-
-    Raises
-    ------
-    ValueError
-        If the resolved prefix is the published pre-cutoff study's
-        `_LEGACY_SPOOL_PREFIX` and ``LEAN_ALLOW_LEGACY_PREFIX`` is not
-        ``"1"`` -- see `runner.spool_prefix`'s docstring for the full
-        rationale (this duplicates its behavior, not just its literals).
-
-    Notes
-    -----
-    Deliberately no doctest example: every possible one would be a function of
-    ``LEAN_SPOOL_PREFIX`` and ``LEAN_ALLOW_LEGACY_PREFIX`` in the ambient
-    environment, so it would assert the environment rather than this function.
-    ``tests/deduction/test_spool_prefix.py`` pins all four branches with
-    ``monkeypatch`` instead.
+    Resolved per call, never at import or as an argparse default, so a late
+    override takes effect.
     """
     raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
-    resolved = raw.rstrip("/") if raw else _DEDUCTION_SPOOL_PREFIX
-    if resolved == _LEGACY_SPOOL_PREFIX and os.environ.get("LEAN_ALLOW_LEGACY_PREFIX") != "1":
-        raise ValueError(
-            f"refusing to resolve the deduction spool prefix to the published "
-            f"pre-cutoff study's prefix ({_LEGACY_SPOOL_PREFIX!r}) -- writing/reading "
-            "there again risks silently conflating it with the re-collection. Set "
-            "LEAN_ALLOW_LEGACY_PREFIX=1 to override, or pass --spool-prefix explicitly."
-        )
-    return resolved
+    return raw.rstrip("/") if raw else _DEDUCTION_SPOOL_PREFIX
 
 
 # --------------------------------------------------------------------------- #
 # The retired-artifact guard.
 # --------------------------------------------------------------------------- #
-#: Filename marker for a RETIRED row artifact: ``run_study.py`` renames a superseded
-#: ``all_rows.jsonl`` to ``all_rows_SUPERSEDED-<stamp>.jsonl`` rather than deleting it
-#: (audit trail, on purpose), and the S3 analysis snapshot copies those files too -- so
-#: a byte-identical copy of the retired MIXED-HARDWARE artifact sits one directory from
-#: live data, within reach of any wide enough glob (why that matters:
-#: `reject_superseded`).
-SUPERSEDED_MARKER = "SUPERSEDED"
-#: The snapshot writes three retirement markers for the same audit-trail class
-#: (scripts/results/snapshot_analysis_data.py). STALE/BROKEN are anchored ``_MARKER-``
-#: to avoid matching ordinary words in basenames; SUPERSEDED stays bare (historical).
-RETIRED_MARKERS = (SUPERSEDED_MARKER, "_STALE-", "_BROKEN-")
+def _banner(title: str, lines) -> str:
+    """The loud guards all print the same 78-column "!!" frame; build it once."""
+    bar = "!" * 78
+    return "\n".join([bar, f"!!  {title}", bar, *lines, bar])
 
 
 def reject_superseded(paths) -> None:
     """Refuse retired row artifacts, loudly and by name.
 
-    Raises ``SystemExit`` naming every path whose BASENAME contains a
-    `RETIRED_MARKERS` entry (basename, so a directory legitimately named after an
-    audit is not a target). A warning would not do: these files parse and their rows
-    are well-formed, so ingesting one yields a complete, plausible, WRONG report.
+    Raises ``SystemExit`` naming every path `retired_markers.is_retired` rejects.
+    A warning would not do: these files parse and their rows are well-formed, so
+    ingesting one yields a complete, plausible, WRONG report.
 
     Parameters
     ----------
@@ -178,26 +105,19 @@ def reject_superseded(paths) -> None:
         "a_SUPERSEDED-1.jsonl").name`` is still the basename, so the guard's
         semantics are unchanged while the message names the offending RUN.
     """
-    bad = [str(p) for p in paths
-           if any(m in Path(p).name for m in RETIRED_MARKERS)]
+    bad = [str(p) for p in paths if is_retired(p)]
     if not bad:
         return
-    bar = "!" * 78
-    raise SystemExit(
-        "\n".join(
-            [bar, "!!  REFUSING SUPERSEDED ROW FILE(S)", bar]
-            + [f"!!  {b}" for b in bad]
-            + [
-                "!!",
-                "!!  A *_SUPERSEDED-* file is a RETIRED artifact kept as an audit",
-                "!!  trail (see run_study.py --force-rerun). Its rows were collected",
-                "!!  on hardware that has since been superseded; pooling them with",
-                "!!  current rows re-creates the mixed-hardware confound the archive",
-                "!!  was made to remove. Point the loader at verified_rows.jsonl.",
-                bar,
-            ]
-        )
-    )
+    raise SystemExit(_banner(
+        "REFUSING SUPERSEDED ROW FILE(S)",
+        [f"!!  {b}" for b in bad] + [
+            "!!",
+            "!!  A *_SUPERSEDED-* file is a RETIRED artifact kept as an audit",
+            "!!  trail (see run_study.py --force-rerun). Its rows were collected",
+            "!!  on hardware that has since been superseded; pooling them with",
+            "!!  current rows re-creates the mixed-hardware confound the archive",
+            "!!  was made to remove. Point the loader at verified_rows.jsonl.",
+        ]))
 
 
 # --------------------------------------------------------------------------- #
@@ -249,8 +169,8 @@ def download_scaling_rows(
     prefix : str
         S3 key prefix to list under, WITH a trailing "/". Callers resolve this
         (`spool_prefix`, or a CLI value) and pass it in -- it is never a module
-        constant, so a late ``LEAN_SPOOL_PREFIX`` override, or the
-        legacy-prefix refusal, takes effect per invocation.
+        constant, so a late ``LEAN_SPOOL_PREFIX`` override takes effect per
+        invocation.
     candidates : tuple of str, optional
         Basenames to look for inside a run, in PREFERENCE order; the first one
         present wins. The default is the single verified file. `power_analysis`
@@ -279,8 +199,8 @@ def download_scaling_rows(
     Raises
     ------
     SystemExit
-        Via `reject_superseded`, if any object in a run carries a
-        `RETIRED_MARKERS` basename -- before that run is downloaded.
+        Via `reject_superseded`, if any object in a run carries a retirement
+        marker in its basename -- before that run is downloaded.
 
     Notes
     -----
@@ -363,7 +283,7 @@ def resolve_rows_dir(
         `download_scaling_rows` itself keeps the strict "with trailing /"
         contract). Callers resolve it -- from `spool_prefix` or an explicit
         command-line value -- AFTER ``parse_args``, never as an argparse
-        default; `spool_prefix`'s docstring says why.
+        default.
     candidates : tuple of str, optional
         Passed through to `download_scaling_rows`.
     client : optional
@@ -432,8 +352,42 @@ def resolve_rows_dir(
         raise SystemExit(
             f"no scaling_*/{candidates[0]} objects found under "
             f"s3://{S3_BUCKET}/{normalized} -- nothing to analyze. Check the "
-            f"prefix (--s3 <PREFIX>, or LEAN_SPOOL_PREFIX; the published "
-            f"pre-cutoff study is at {_LEGACY_SPOOL_PREFIX}) and that the "
+            f"prefix (--s3 <PREFIX>, or LEAN_SPOOL_PREFIX) and that the "
             f"verification pass has run."
         )
     return dest_dir
+
+
+def add_source_args(parser) -> None:
+    """Add the ``--rows-dir`` / ``--s3 [PREFIX]`` source group the report scripts share."""
+    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
+    # argument inside a mutually-exclusive group at parser-construction time.
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--rows-dir", type=Path, default=None,
+                        help="local directory of <model>/verified_rows.jsonl "
+                             "to analyse; the way to read a tree you already "
+                             "have, including one a previous --s3 run left "
+                             "behind")
+    source.add_argument("--s3", nargs="?", const="", default=None,
+                        metavar="PREFIX",
+                        help="download this study's rows from "
+                             "s3://<bucket>/<PREFIX>/scaling_<key>/"
+                             "verified_rows.jsonl into a temp "
+                             "<dir>/<model>/verified_rows.jsonl tree and "
+                             "analyse those. PREFIX is optional and defaults "
+                             "to this study's spool prefix (LEAN_SPOOL_PREFIX, "
+                             "or the re-collection's), resolved AFTER parsing.")
+
+
+def resolve_from_args(args) -> Path:
+    """`resolve_rows_dir` for a parser built by `add_source_args`.
+
+    ``--s3`` with no value arrives as "" (its ``const``), so the default prefix
+    is resolved here rather than as an argparse default. The single-element
+    `candidates` default stands: neither caller has an ``all_rows.jsonl``
+    fallback, and those rows carry the ungraded "unverified" sentinel.
+    """
+    return resolve_rows_dir(
+        rows_dir=args.rows_dir,
+        s3_prefix=None if args.s3 is None else (args.s3 or spool_prefix()),
+    )

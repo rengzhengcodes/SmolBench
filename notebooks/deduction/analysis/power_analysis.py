@@ -20,15 +20,13 @@ its verdicts are all the ``"unverified"`` placeholder, so every rate would read 
 the loud stderr banner `load_joint_cells` prints instead of falling back silently.
 
 Everything about the archive's ADDRESS and LAYOUT -- the bucket and region, the spool
-prefix and its legacy refusal, the retired-artifact guard, and the downloader itself --
-lives in the sibling module ``rows_source.py``, shared with ``error_bars.py`` and
-``hint_vs_noise.py``; this module re-exports the names its callers already import from
-it. The bucket is deliberately NOT spelled out in prose anywhere: it is committed
-config, read from ``smolbench/evals/study_config.toml`` into `S3_BUCKET`, and prose
-restating it could drift from the bucket a run actually reads. Inputs are ``--s3``
-(``s3://<S3_BUCKET>/<spool-prefix>/scaling_*/``, where ``<spool-prefix>`` defaults to the
-re-collection's prefix and is overridable via ``--spool-prefix`` -- the published
-pre-cutoff study lives at ``deduction/runs``) or ``--results-dir`` (local
+prefix, the retired-artifact guard, and the downloader itself -- lives in the sibling
+module ``rows_source.py``, shared with ``error_bars.py`` and ``hint_vs_noise.py``. The
+bucket is deliberately NOT spelled out in prose anywhere: it is committed config, read
+from ``smolbench/evals/study_config.toml`` into `S3_BUCKET`, and prose restating it
+could drift from the bucket a run actually reads. Inputs are ``--s3``
+(``s3://<S3_BUCKET>/<spool-prefix>/scaling_*/``, ``<spool-prefix>`` overridable via
+``--spool-prefix``) or ``--results-dir`` (local
 ``runs/scaling_*/verified_rows.jsonl``):
 
     .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
@@ -46,6 +44,7 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
     os.environ.setdefault(_v, "1")
 
 import argparse
+import functools
 import hashlib
 import json
 import sys
@@ -71,23 +70,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # for the identical reason.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# The repo root is one level further up, added so `smolbench.evals.study_config`
-# resolves from the SOURCE TREE and not only from an editable install: this
-# script's documented run environment is ``uv run --no-project --with numpy
-# --with scipy``, which installs no smolbench. That import is affordable there
-# because study_config's whole transitive chain is pure stdlib --
-# ``smolbench/__init__.py`` is a docstring, ``smolbench/evals/__init__.py``
-# imports only ``smolbench.evals.quiz`` (os, re, datetime, dataclasses,
-# typing), and study_config itself imports functools, tomllib, dataclasses,
-# pathlib, types, typing. That is NOT true of
-# ``smolbench.deduction.lean.runner`` (it reaches provider/corpus code), which
-# is why `rows_source` keeps the spool-prefix constants duplicated instead of
-# importing them from it: the constraint has narrowed, not disappeared.
-#
-# Inserted at position 0, so `smolbench` resolves from THIS tree ahead of any
-# editable install pointing at a different checkout -- deliberate, and the same
-# __file__-anchored convention the line above follows: the roster and bucket
-# this script reports on should be the ones committed beside it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from _power_common import (
@@ -99,33 +81,15 @@ from _power_common import (
 )
 
 from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import roster_keys as _study_roster_keys
 
-# The study's archive address, spool-prefix resolver, retired-artifact guard
-# and downloader all live in `rows_source` now, shared with `error_bars.py`
-# and `hint_vs_noise.py` -- which, until that module existed, could not read
-# the S3 archive at all.
-#
-# Every name is re-imported under its EXISTING spelling, including the ones
-# this module no longer uses itself, because this module is their published
-# home: `error_bars.py` and `hint_vs_noise.py` import `reject_superseded` from
-# here, and `tests/deduction/` reads `S3_BUCKET`, `S3_REGION`,
-# `SUPERSEDED_MARKER` and both spool-prefix literals off this module. Dropping
-# an "unused" one would break a caller, not tidy the file.
 from rows_source import (  # noqa: E402
-    RETIRED_MARKERS,
     S3_BUCKET,
-    S3_REGION,
-    SUPERSEDED_MARKER,
-    _DEDUCTION_SPOOL_PREFIX,
-    _LEGACY_SPOOL_PREFIX,
+    _banner,
     download_scaling_rows,
     reject_superseded,
     spool_prefix,
 )
-
-# Alias, so the private name this module's own callers and tests already use
-# keeps resolving after the definition moved to `rows_source`.
-_spool_prefix = spool_prefix
 
 # --------------------------------------------------------------------------- #
 # Roster: 7 vendor families x 3 parameter-count rungs (ladder positions) = 21
@@ -144,40 +108,25 @@ _spool_prefix = spool_prefix
 # ``[roster.families]`` declaration order already is that order and documents
 # itself as the study's canonical ladder order; reordering a family's rungs
 # there silently re-pairs all 63 secondary contrasts here.
-#
-# REPORT-OUTPUT CHANGE -- recorded here so a reader diffing two report runs
-# across this change can find out why labels moved. Adopting the config's
-# family NAMES renames three families: ``nemotron3`` -> ``nemo3``,
-# ``ministral3`` -> ``min3``, ``deepseek`` -> ``ds``. The MODEL keys, and their
-# order, are identical to the literal this replaced, so no rate, p-value, CI or
-# contrast membership changes -- only the family LABEL does. That label is
-# printed by `build_within_family_contrasts`, in each contrast's
-# ``[{family} ladder] ...`` label, and by ``error_bars.py``'s per-family ladder
-# verdict block, which iterates FAMILIES imported from here; ``error_bars.py``
-# also carries those contrast labels into its ``--out-json`` output, so the
-# three renamed strings move there too.
 # --------------------------------------------------------------------------- #
 FAMILIES: dict[str, tuple[str, ...]] = {
     family: tuple(rungs) for family, rungs in _study_families().items()
 }
-MODELS = tuple(m for rungs in FAMILIES.values() for m in rungs)  # 21
+MODELS = tuple(_study_roster_keys())  # 21, the FAMILIES tuples concatenated
 
 # At MODULE scope, not just inside main(), so importing this module for its
 # constants gets the guard too. `raise`, not `assert`: `assert` is stripped
 # under ``python -O``, which would silently delete a guard whose whole purpose
 # is to fire at import time.
 #
-# MODELS is DEFINED as a comprehension over FAMILIES -- and so is exactly
-# ``tuple(study_config.roster_keys())``, which is that same flattening -- so
-# length and uniqueness are the only drift this design can suffer; no
-# hand-maintained flat tuple exists that could disagree with FAMILIES.
+# MODELS is ``study_config.roster_keys()``, which is the FAMILIES tuples
+# concatenated, so length and uniqueness are the only drift this design can
+# suffer; no hand-maintained flat tuple exists that could disagree.
 #
 # What these two do NOT pin, spelled out rather than left to be discovered:
 # "21 models across 7 families" does not by itself force 3 rungs per family,
 # and both contrast builders index every family's tuple by ladder position
-# 0..2. Note that `main`'s contrast-count checks cannot cover this gap either
-# -- 7 x C(3,2) and 3 x C(7,2) are 21 and 63 whatever a family's length is.
-# The 3-rungs-per-family property is instead pinned by these two guards
+# 0..2. The 3-rungs-per-family property is instead pinned by these two guards
 # together: a short family raises IndexError at position 2 on the first
 # contrast build, and a long one pushes len(MODELS) past 21 (a compensating
 # 4-and-2 split still IndexErrors on the 2). That is left as a documented
@@ -187,10 +136,10 @@ if len(MODELS) != 21:
         f"expected 21 models (7 families x 3 rungs) from study_config, got "
         f"{len(MODELS)} across {len(FAMILIES)} families"
     )
-_duplicate_keys = sorted({key for key in MODELS if MODELS.count(key) > 1})
-if _duplicate_keys:
+if len(set(MODELS)) != len(MODELS):
     raise ValueError(
-        f"study_config's roster repeats model spec-key(s) {_duplicate_keys}; "
+        f"study_config's roster repeats model spec-key(s) "
+        f"{sorted(k for k in set(MODELS) if MODELS.count(k) > 1)}; "
         "each checkpoint must appear on exactly one family ladder"
     )
 
@@ -262,6 +211,7 @@ def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     return 1.0 - (1.0 - np.asarray(p, dtype=float)) ** n
 
 
+@functools.lru_cache(maxsize=None)
 def mcnemar_exact_p(b: int, c: int) -> float:
     """McNemar's exact two-sided binomial p-value for discordant counts.
 
@@ -344,11 +294,7 @@ def _warn_unverified(reasons: list[str]) -> None:
     Called by `load_joint_cells` for an ``all_rows.jsonl`` input or an
     ``"unverified"`` cell row; each `reasons` entry becomes one banner line, verbatim.
     """
-    bar = "!" * 78
-    lines = [bar, "!!  WARNING: UNVERIFIED LEAN VERDICTS IN LOADED ROWS", bar]
-    for reason in reasons:
-        lines.append(f"!!  {reason}")
-    lines += [
+    lines = [f"!!  {reason}" for reason in reasons] + [
         "!!",
         '!!  Every "success" verdict in the affected rows is a GENERATION-TIME',
         '!!  PLACEHOLDER (verdict == "unverified"), never a real Lean-checked',
@@ -361,9 +307,9 @@ def _warn_unverified(reasons: list[str]) -> None:
         "!!  Run scripts/deduction/lean_verify_rows.py (the deferred verification pass",
         '!!  that replays candidates against real Lean and writes the sibling',
         "!!  verified_rows.jsonl) before trusting ANY number below.",
-        bar,
     ]
-    print("\n".join(lines), file=sys.stderr)
+    print(_banner("WARNING: UNVERIFIED LEAN VERDICTS IN LOADED ROWS", lines),
+          file=sys.stderr)
 
 
 #: Verdicts meaning "this cell was never measured for ANY model" (reasoning and
@@ -403,11 +349,10 @@ def reject_unverified_verdicts(rows, field, source) -> None:
     )
     if count == 0:
         return
-    bar = "!" * 78
     raise SystemExit(
-        "\n".join(
-            [bar, "!!  REFUSING UNVERIFIED ROW(S)", bar,
-             f"!!  {count} cell row(s) in {source} still carry the",
+        _banner(
+            "REFUSING UNVERIFIED ROW(S)",
+            [f"!!  {count} cell row(s) in {source} still carry the",
              f'!!  generation-time placeholder "unverified" in their '
              f"{field!r} field.",
              "!!",
@@ -421,8 +366,7 @@ def reject_unverified_verdicts(rows, field, source) -> None:
              "!!  complete and plausible, not obviously wrong.",
              "!!",
              "!!  Run the verification pass to completion for this file",
-             "!!  before loading it for analysis.",
-             bar]
+             "!!  before loading it for analysis."]
         )
     )
 
@@ -774,19 +718,13 @@ def bootstrap_power(
     idx = np.arange(len(thm_ids))
     rejects = 0
     gaps = np.empty(sims)
-    cache: dict[tuple, float] = {}
     for s in range(sims):
         pick = rng.choice(idx, size=n_theorems, replace=True)
         stacked = np.concatenate([per_thm[thm_ids[i]] for i in pick])
         oa, ob = stacked[:, 0], stacked[:, 1]
         disc_b = int(np.sum((oa == 1) & (ob == 0)))
         disc_c = int(np.sum((oa == 0) & (ob == 1)))
-        key = (disc_b + disc_c, min(disc_b, disc_c))
-        p = cache.get(key)
-        if p is None:
-            p = mcnemar_exact_p(disc_b, disc_c)
-            cache[key] = p
-        if p < alpha:
+        if mcnemar_exact_p(disc_b, disc_c) < alpha:
             rejects += 1
         gaps[s] = oa.mean() - ob.mean()
     return rejects / sims, float(np.quantile(gaps, 0.05)), float(np.quantile(gaps, 0.95))
@@ -843,7 +781,6 @@ def passn_power(
         return float("nan")  # solvable fraction too small/large to host this rate
     rejects = 0
     shape = (n_theorems, n_prompt_rungs)
-    cache: dict[tuple, float] = {}
     for _ in range(sims):
         solvable = rng.random(n_theorems) < frac_solvable
         solv_cell = np.repeat(solvable[:, None], n_prompt_rungs, axis=1)
@@ -855,12 +792,7 @@ def passn_power(
         ob = rng.random(shape) < sb
         disc_b = int(np.sum(oa & ~ob))
         disc_c = int(np.sum(~oa & ob))
-        key = (disc_b + disc_c, min(disc_b, disc_c))
-        p = cache.get(key)
-        if p is None:
-            p = mcnemar_exact_p(disc_b, disc_c)
-            cache[key] = p
-        if p < alpha:
+        if mcnemar_exact_p(disc_b, disc_c) < alpha:
             rejects += 1
     return rejects / sims
 
@@ -1176,13 +1108,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--spool-prefix",
         default=None,
         help=(
-            "S3 key prefix the deduction lanes spooled under (default: the "
-            "re-collection prefix -- LEAN_SPOOL_PREFIX, or "
-            "deduction_postcutoff/runs if unset). The published pre-cutoff "
-            "study lives at deduction/runs; pass that explicitly to analyze "
-            "it (no env opt-in needed on this read-only path). Resolved "
-            "after argument parsing, not here, so LEAN_SPOOL_PREFIX="
-            "deduction/runs never breaks --help. Ignored unless --s3 is passed."
+            "S3 key prefix the deduction lanes spooled under (default: "
+            "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset). "
+            "Resolved after argument parsing, not here. Ignored unless --s3 "
+            "is passed."
         ),
     )
     p.add_argument(
@@ -1223,23 +1152,15 @@ def main(argv: list[str] | None = None) -> int:
         0 on a normal report; 1 if no row files, or no fully-paired cells for the
         requested model set, were found.
     """
-    # Drift guards, a second line of defense (module scope already checks MODELS): an
-    # edit changing a contrast family's size without updating N_PRIMARY / N_SECONDARY
-    # (and so the alphas) would silently invalidate every correction in this report.
-    assert len(MODELS) == 21 and len(set(MODELS)) == 21
-    assert len(build_within_family_contrasts()) == N_PRIMARY == 21
-    assert len(build_cross_family_contrasts()) == N_SECONDARY == 63
-
     args = parse_args(argv)
     models_filter = (
         tuple(m.strip() for m in args.models.split(",")) if args.models else None
     )
 
     if args.s3:
-        # Resolved HERE, after parse_args -- not a module constant, not an
-        # argparse default -- so LEAN_SPOOL_PREFIX=deduction/runs never
-        # breaks --help (see `rows_source.spool_prefix`'s docstring).
-        deduction_prefix = (args.spool_prefix or _spool_prefix()) + "/"
+        # Resolved HERE, after parse_args: not a module constant and not an
+        # argparse default, so a late LEAN_SPOOL_PREFIX takes effect.
+        deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
         tmp_dir = Path(tempfile.mkdtemp(prefix="smolbench_deduction_power_"))
         print(
             f"Downloading run files from s3://{S3_BUCKET}/{deduction_prefix} into "
