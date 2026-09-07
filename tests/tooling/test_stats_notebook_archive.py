@@ -23,9 +23,6 @@ def nb() -> dict:
     return load_notebook()
 
 
-_cell_source = cell_source
-
-
 def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
     """``S3Archive`` must use ``_aws.fresh_client`` and ``results_store.parse_s3_uri``.
 
@@ -44,7 +41,7 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
     from smolbench.evals import _aws
     from smolbench.evals.results_store import parse_s3_uri
 
-    src = _cell_source(nb, "class S3Archive")
+    src = cell_source(nb, "class S3Archive")
     calls: list[tuple] = []
     monkeypatch.setattr(
         _aws, "fresh_client",
@@ -69,7 +66,7 @@ def test_archive_cell_carries_no_unused_aws_surface(nb):
     They also widen what this notebook can do to the archive beyond the ruling
     it states one line above -- read the bytes, write nothing.
     """
-    src = _cell_source(nb, "class S3Archive")
+    src = cell_source(nb, "class S3Archive")
     assert "def keys(" not in src
     assert "def exists(" not in src
     for method in ("open", "read", "text", "json", "size", "sha256"):

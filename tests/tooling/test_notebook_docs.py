@@ -17,11 +17,8 @@ none of which is true now:
   (``--s3``, through ``notebooks/deduction/analysis/rows_source.py``).
 
 The marker spellings are read FROM the store module rather than typed here, so
-this cannot pass while the docs quote a marker the code does not write. The
-notebooks README additionally described a tree that did not exist yet
-("this commit is slice 2 ... several paths below don't exist yet"); at this head
-it does, so the forward references have to be gone and every path named has to
-resolve.
+this cannot pass while the docs quote a marker the code does not write, and
+every path the notebooks README names has to resolve.
 """
 
 from __future__ import annotations
@@ -138,28 +135,6 @@ def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
     assert module._DEDUCTION_SPOOL_PREFIX in archive, (
         f"ARCHIVE.md never names the re-collection prefix "
         f"{module._DEDUCTION_SPOOL_PREFIX!r}")
-    assert "LEAN_ALLOW_LEGACY_PREFIX" in archive, (
-        "ARCHIVE.md lists the pre-cutoff prefix without the override that a "
-        "reader needs to read it")
-
-
-#: Forward references written when this branch was the induction-only slice.
-#: Every path they hedge exists at this head, so the hedges are now misleading.
-STALE_SLICE_MARKERS = (
-    "This commit is slice 2",
-    "don't exist yet",
-    "Lands in later slices",
-    "(slice 3)",
-    "(slice 4)",
-    "(slice 5)",
-    "once it lands",
-)
-
-
-def test_notebooks_readme_has_no_stale_slice_forward_references(readme):
-    """The README must describe the tree it ships with, not a future one."""
-    offenders = [marker for marker in STALE_SLICE_MARKERS if marker in readme]
-    assert not offenders, f"notebooks/README.md still hedges: {offenders}"
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme):

@@ -18,9 +18,14 @@ Not named ``test_*`` on purpose -- it holds no tests and must not be collected.
 
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
 import json
+import os
+import sys
 
-from tests._paths import NOTEBOOKS
+from tests._paths import NOTEBOOKS, REPO_ROOT
 
 STATS_NB = NOTEBOOKS / "statistical_analyses.ipynb"
 
@@ -42,56 +47,40 @@ def cell_source(nb: dict, needle: str) -> str:
     return "".join(hits[0]["source"])
 
 
+def _load(name: str, rel: str):
+    """Exec ``notebooks/<rel>`` under `name`, registering it before exec."""
+    spec = importlib.util.spec_from_file_location(name, NOTEBOOKS / rel)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module          # dataclass annotations resolve early
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_analysis_modules() -> dict:
-    """Load the live analysis modules under the names the notebook binds them to.
+    """Execute the notebook's OWN loader cell and return the namespace it binds.
 
-    Mirrors the notebook's own loader: both legs ship a ``power_analysis.py``
-    that siblings import by BARE name, so each is bound as ``power_analysis``
-    only while its dependants exec, then unbound.
+    Exec'd rather than mirrored: both legs ship a ``power_analysis.py`` whose
+    siblings import it by BARE name, so the bind-and-unbind order is
+    load-bearing, and a second copy of it here would be free to drift from the
+    order the notebook actually runs.
 
-    ``rows_source`` is loaded FIRST and bound for the whole deduction leg, for
-    the same reason and one step earlier: all three deduction scripts import it
-    by bare name, so loading it after them would leave the notebook holding a
-    SECOND module object with its own ``S3_BUCKET`` -- and a test that patches
-    the one the notebook binds would leave the one the scripts actually call
-    untouched. The notebook's own loader binds it the same way.
-
-    ``notebooks/induction/run_study.py`` calls ``load_dotenv`` and parses
-    ``INDUCTION_SHARD`` at MODULE SCOPE, so loading it mutates ``os.environ``
-    for the rest of the pytest session. The whole environment is snapshotted
-    and restored around the load: ``load_dotenv`` writes keys that cannot be
-    named in advance, so a per-key monkeypatch would not cover it.
+    The cell anchors the repo on ``Path.cwd()``, prints a provenance banner,
+    inserts the repo root on ``sys.path``, and loads
+    ``notebooks/induction/run_study.py``, which calls ``load_dotenv`` and parses
+    ``INDUCTION_SHARD`` at MODULE SCOPE. So it is run from the repo root with
+    its banner swallowed, and the whole environment is snapshotted and restored
+    around it: ``load_dotenv`` writes keys that cannot be named in advance, so a
+    per-key monkeypatch would not cover it.
     """
-    import importlib.util
-    import os
-    import sys
-
-    def load(name, rel, bare=None):
-        spec = importlib.util.spec_from_file_location(name, NOTEBOOKS / rel)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module          # dataclass annotations resolve early
-        if bare:
-            sys.modules[bare] = module
-        spec.loader.exec_module(module)
-        return module
-
+    namespace: dict = {}
     saved_modules = {k: sys.modules.get(k)
                      for k in ("power_analysis", "error_bars", "rows_source")}
     saved_env = dict(os.environ)
     saved_path = list(sys.path)
     try:
-        rows_source = load("nbt_ded_rows_source", "deduction/analysis/rows_source.py",
-                           bare="rows_source")
-        ded_pa = load("nbt_ded_power_analysis", "deduction/analysis/power_analysis.py",
-                      bare="power_analysis")
-        error_bars = load("nbt_ded_error_bars", "deduction/analysis/error_bars.py",
-                          bare="error_bars")
-        hint_vs_noise = load("nbt_ded_hint_vs_noise",
-                             "deduction/analysis/hint_vs_noise.py")
-        ind_pa = load("nbt_ind_power_analysis", "induction/analysis/power_analysis.py",
-                      bare="power_analysis")
-        paired = load("nbt_ind_paired", "induction/analysis/paired_analysis.py")
-        run_study = load("nbt_ind_run_study", "induction/run_study.py")
+        source = cell_source(load_notebook(), "def _bound")
+        with contextlib.chdir(REPO_ROOT), contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(source, str(STATS_NB), "exec"), namespace)
     finally:
         for key, old in saved_modules.items():
             if old is None:
@@ -101,19 +90,9 @@ def load_analysis_modules() -> dict:
         os.environ.clear()
         os.environ.update(saved_env)
         sys.path[:] = saved_path
-    return dict(ded_pa=ded_pa, error_bars=error_bars, hint_vs_noise=hint_vs_noise,
-                rows_source=rows_source, ind_pa=ind_pa, paired=paired,
-                run_study=run_study, power_common=sys.modules["_power_common"])
+    return namespace
 
 
 def load_deduction_power_analysis():
     """Load just the deduction ``power_analysis`` the notebook binds as ``ded_pa``."""
-    import importlib.util
-    import sys
-
-    path = NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py"
-    spec = importlib.util.spec_from_file_location("nbt_ded_power_analysis_only", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["nbt_ded_power_analysis_only"] = module   # dataclass annotations
-    spec.loader.exec_module(module)
-    return module
+    return _load("nbt_ded_power_analysis_only", "deduction/analysis/power_analysis.py")

@@ -275,22 +275,18 @@ S3_ARCHIVE_TESTS = REPO_ROOT / "tests" / "deduction" / "test_s3_archive.py"
 def _s3_gated_test_count() -> int:
     """Count tests in ``test_s3_archive.py`` that depend on the ``s3_archive`` fixture.
 
-    Transitive: the module defines its own ``tracked`` fixture on top of
-    ``s3_archive``, and a test requesting only ``tracked`` skips just the same.
+    Two passes, because the module defines its own ``tracked`` fixture on top of
+    ``s3_archive`` and a test requesting only ``tracked`` skips just the same.
     """
     import ast
 
     tree = ast.parse(S3_ARCHIVE_TESTS.read_text())
-    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    gated = {"s3_archive"}
-    for _ in range(len(functions)):          # closure; the chain is short
-        for node in functions:
-            params = {a.arg for a in node.args.args}
-            if node.name.startswith("test_") or not (params & gated):
-                continue
-            gated.add(node.name)
-    return sum(1 for node in functions
-               if node.name.startswith("test_") and ({a.arg for a in node.args.args} & gated))
+    params = {node.name: {a.arg for a in node.args.args} for node in tree.body
+              if isinstance(node, ast.FunctionDef)}
+    gated = {"s3_archive"} | {name for name, args in params.items()
+                              if not name.startswith("test_") and "s3_archive" in args}
+    return sum(1 for name, args in params.items()
+               if name.startswith("test_") and (args & gated))
 
 
 def test_readme_skip_count_matches_the_gated_module():

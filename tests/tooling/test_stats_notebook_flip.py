@@ -27,15 +27,17 @@ def nb() -> dict:
     return load_notebook()
 
 
-_cell_source = cell_source
-_ded_power_analysis = load_deduction_power_analysis
+@pytest.fixture(scope="module")
+def ded_pa():
+    """The live deduction grader, loaded once for the module."""
+    return load_deduction_power_analysis()
 
 
 @pytest.fixture(scope="module")
-def flip_ns(nb) -> dict:
+def flip_ns(nb, ded_pa) -> dict:
     """The executed namespace of section 8's estimator cell."""
-    src = _cell_source(nb, "def measurable_cell_keys")
-    namespace = {"ded_pa": _ded_power_analysis()}
+    src = cell_source(nb, "def measurable_cell_keys")
+    namespace = {"ded_pa": ded_pa}
     exec(compile(src, str(STATS_NB), "exec"), namespace)
     return namespace
 
@@ -79,20 +81,17 @@ MEASURABILITY_CASES = [
 
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
-def test_measurability_follows_the_live_grader(flip_ns, verdicts, measurable):
-    keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
-    assert bool(keys) is measurable, (verdicts, keys)
-
-
-@pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
-def test_measurability_agrees_with_grade_verdicts(verdicts, measurable):
-    """The two tables must stay exact complements, so derive one from the other.
+def test_measurability_follows_the_live_grader(flip_ns, ded_pa, verdicts, measurable):
+    """The cell's answer, and the grader's rule it must be the complement of.
 
     ``grade_verdicts`` returns None exactly when nothing survived; the only
     other reason a surviving verdict is not a measurement is the ungraded
-    sentinel, which grades as a failure but was never measured.
+    sentinel, which grades as a failure but was never measured. Derived here
+    rather than restated, so the two tables cannot drift apart.
     """
-    ded_pa = _ded_power_analysis()
+    keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
+    assert bool(keys) is measurable, (verdicts, keys)
+
     graded = ded_pa.grade_verdicts(list(verdicts))
     survivor = next((v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS), None)
     assert measurable is (graded is not None and survivor != "unverified")
@@ -102,7 +101,7 @@ def test_no_positive_whitelist_survives(nb, flip_ns):
     """The complement of ``UNMEASURABLE_VERDICTS`` must not be re-declared literally."""
     import re
 
-    src = _cell_source(nb, "def measurable_cell_keys")
+    src = cell_source(nb, "def measurable_cell_keys")
     # Anchored: a bare ``"MEASURABLE_VERDICTS" in src`` also matches every
     # mention of ``UNMEASURABLE_VERDICTS``, i.e. the correct code.
     assert not re.search(r"(?<![A-Z_])MEASURABLE_VERDICTS", src), src
@@ -160,7 +159,7 @@ def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
     """
     import re
 
-    src = _cell_source(nb, "def measurable_cell_keys")
+    src = cell_source(nb, "def measurable_cell_keys")
     exec(compile(src, str(STATS_NB), "exec"), dict(flip_ns))
     printed = capsys.readouterr().out
     advertised = printed.split("ported estimators:", 1)[1].strip().split(", ")
@@ -168,14 +167,14 @@ def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
     for name in advertised:
         assert callable(flip_ns.get(name)), f"cell advertises {name!r}, which is not defined"
 
-    markdown = _cell_source(nb, "**What was ported.**")
+    markdown = cell_source(nb, "**What was ported.**")
     sentence = markdown.split("**What was ported.**", 1)[1].split(".\n", 1)[0]
     named = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", sentence))
     missing = sorted(n for n in named if n not in flip_ns)
     assert not missing, f"section-8 markdown names undefined helpers: {missing}"
 
 
-def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb):
+def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb, ded_pa):
     """The cell's own assertion loop must actually fire when a grader is bound.
 
     It is guarded on ``"ded_pa" in globals()`` so that
@@ -184,8 +183,6 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb):
     safe if it is proven to open: substituting a grader that disagrees with the
     earliest-surviving rule must raise, or the pin is decoration.
     """
-    ded_pa = _ded_power_analysis()
-
     class _WrongGrader:
         UNMEASURABLE_VERDICTS = ded_pa.UNMEASURABLE_VERDICTS
 
@@ -196,7 +193,7 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb):
             survivors = [v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS]
             return None if not survivors else int(survivors[-1] == "success")
 
-    src = _cell_source(nb, "def measurable_cell_keys")
+    src = cell_source(nb, "def measurable_cell_keys")
     with pytest.raises(AssertionError):
         exec(compile(src, str(STATS_NB), "exec"), {"ded_pa": _WrongGrader})
 

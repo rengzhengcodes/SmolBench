@@ -28,14 +28,24 @@ def nb() -> dict:
     return load_notebook()
 
 
-_cell_source = cell_source
+def _section_7_markdown(nb) -> str:
+    """The markdown span from the section-7 heading up to section 8's.
+
+    A span, not one cell: a note may live beside the cell it explains.
+    """
+    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
+               for cell in nb["cells"]]
+    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
+    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
+    assert start < end, (start, end)
+    return "\n".join(sources[start:end])
 
 
 @pytest.fixture(scope="module")
 def posterior_ns(nb) -> dict:
     """The executed namespace of section 7's classifier cell."""
     namespace = load_analysis_modules()
-    exec(compile(_cell_source(nb, "def paired_diff_ci"), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def paired_diff_ci"), str(STATS_NB), "exec"), namespace)
     return namespace
 
 
@@ -139,7 +149,7 @@ def test_synth_iid_path_draws_exactly_what_it_used_to(nb, posterior_ns):
     import numpy as np
 
     namespace = dict(posterior_ns)
-    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
     synth = namespace["synth"]
     n_harm = posterior_ns["ind_pa"].N_HARMONICS
 
@@ -162,7 +172,7 @@ def test_clustered_synth_reaches_the_target_design_effect(nb, posterior_ns):
     import numpy as np
 
     namespace = dict(posterior_ns)
-    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
     synth, paired = namespace["synth"], posterior_ns["paired"]
     cluster_sd = namespace["CLUSTER_SD"]
 
@@ -190,8 +200,8 @@ def test_clustering_inflates_the_decided_rate_on_a_true_null(nb, posterior_ns):
     whose two columns agreed would be evidence of nothing.
     """
     namespace = dict(posterior_ns)
-    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    exec(compile(_cell_source(nb, "def verdict_distribution"), str(STATS_NB), "exec"),
+    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def verdict_distribution"), str(STATS_NB), "exec"),
          namespace)
     verdict_distribution = namespace["verdict_distribution"]
 
@@ -221,7 +231,7 @@ def test_self_test_asserts_no_equivalence_under_clustering(nb):
     """
     import ast
 
-    source = _cell_source(nb, "self-test PASSED")
+    source = cell_source(nb, "self-test PASSED")
     tree = ast.parse(source)
     offenders = [
         ast.get_source_segment(source, node) for node in ast.walk(tree)
@@ -239,11 +249,7 @@ def test_section_7_markdown_names_the_recurrence(nb):
     -- so a reader can check the clustered case against the study's own numbers
     instead of taking the notebook's word for it.
     """
-    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
-               for cell in nb["cells"]]
-    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
-    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
-    joined = "\n".join(sources[start:end])
+    joined = _section_7_markdown(nb)
     for token in ("design_effect", "multiplicity_sim", "PR #12"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
 
@@ -255,7 +261,7 @@ def test_resample_sweep_reuses_error_bars_grid_and_tolerance(nb):
     grid; a private copy here would drift from the module whose convention it
     claims to mirror.
     """
-    source = _cell_source(nb, "def resample_sweep")
+    source = cell_source(nb, "def resample_sweep")
     assert "error_bars.B_GRID" in source
     assert "error_bars.DRIFT_TOL" in source
 
@@ -272,8 +278,8 @@ def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(nb, posterior_
     import numpy as np
 
     namespace = dict(posterior_ns)
-    exec(compile(_cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    exec(compile(_cell_source(nb, "def resample_sweep"), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
+    exec(compile(cell_source(nb, "def resample_sweep"), str(STATS_NB), "exec"), namespace)
 
     error_bars = posterior_ns["error_bars"]
     gen = np.random.default_rng(20260904)
@@ -293,14 +299,7 @@ def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(nb, posterior_
 
 def test_section_7_markdown_explains_the_block_count_limit(nb):
     """B buys Monte-Carlo precision only; R = 30 blocks bound what any B can say."""
-    # Every markdown cell from the section-7 heading up to section 8's, so the
-    # note may live beside the sweep instead of in the section preamble.
-    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
-               for cell in nb["cells"]]
-    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
-    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
-    assert start < end, (start, end)
-    joined = "\n".join(sources[start:end])
+    joined = _section_7_markdown(nb)
     for token in ("B_GRID", "DRIFT_TOL", "R = 30"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
 
@@ -331,7 +330,7 @@ def calibration(nb, posterior_ns) -> tuple[dict, str]:
     namespace = dict(posterior_ns)
     for needle in ("def synth(", "def verdict_distribution", "def false_decided_rate"):
         with contextlib.redirect_stdout(io.StringIO()) as sink:
-            exec(compile(_cell_source(nb, needle), str(STATS_NB), "exec"), namespace)
+            exec(compile(cell_source(nb, needle), str(STATS_NB), "exec"), namespace)
         captured = sink.getvalue()
     return namespace, captured
 
@@ -454,11 +453,7 @@ def test_section_7_markdown_states_the_validity_rule_without_a_literal(nb, calib
     prevent -- it would keep reading as authoritative after a re-run moved it.
     """
     namespace, _out = calibration
-    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
-               for cell in nb["cells"]]
-    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
-    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
-    joined = "\n".join(sources[start:end])
+    joined = _section_7_markdown(nb)
     lowered = joined.lower()
     for token in ("design effect", "calibrat", "valid"):
         assert token in lowered, f"section 7 markdown never mentions {token!r}"

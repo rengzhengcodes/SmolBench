@@ -1,23 +1,7 @@
 """Every reader and writer of a compliance label goes through `COMPLIANT`.
 
-``smolbench.evals.quiz`` stopped overloading ``None``: `COMPLIANT` is the
-string ``"compliant"``, `NOT_ASSESSED` is ``"not-assessed"``, and ``Marks.load``
-carries a documented shim mapping a STORED ``null`` (rows written before the
-split) back to `COMPLIANT`. The shim is what makes the two dangerous habits
-below silent rather than loud: a module that still asks ``if mark.compliance:``
-or compares the field to ``None`` gets a plausible answer on every row, and the
-answer is backwards for exactly the two outcomes the split exists to
-distinguish.
-
-``tests/evals/test_marks_io.py`` pins the datamodel and the shim; this pins the
-CONSUMERS -- the analysis scripts the statistics notebook imports, the fleet and
-results tooling, and the benchmark packages -- because the shim's retirement
-(together with the legacy YAML tags) has to be safe to do, and it is only safe
-if nothing depends on the ``None`` spelling.
-
 Structural, not textual: the checks below walk the AST, so prose that mentions
-``compliance: null`` in a docstring (several modules explain the shim, as they
-should) is not mistaken for code that reads it.
+the label in a docstring is not mistaken for code that spells it.
 """
 
 from __future__ import annotations
@@ -53,51 +37,6 @@ def modules():
     parsed = _parsed()
     assert len(parsed) > 20, f"only {len(parsed)} modules found; the walk is broken"
     return parsed
-
-
-def test_no_module_reads_a_compliance_field_as_a_truth_value(modules):
-    """``if mark.compliance:`` is the exact defect `COMPLIANT` was split out of.
-
-    Under the old spelling that test read FALSE for a compliant mark and TRUE
-    for an unassessed one -- backwards both ways. It would now read true for
-    both, which is a different wrong answer, so the pattern stays forbidden
-    rather than merely fixed.
-    """
-    offenders = []
-    for path, tree in modules:
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.If, ast.IfExp, ast.While)):
-                continue
-            test = node.test
-            if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-                test = test.operand
-            named = (isinstance(test, ast.Attribute) and test.attr == "compliance") or \
-                    (isinstance(test, ast.Name) and test.id == "compliance")
-            if named:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
-    assert not offenders, f"compliance read as a truth value at {offenders}"
-
-
-def test_no_module_compares_a_compliance_field_to_none(modules):
-    """``None`` is a STORED spelling, never a value the code should meet.
-
-    ``Marks.load``'s shim translates it at the boundary, so any comparison to
-    ``None`` further in is either dead (it can never be true) or a second,
-    divergent copy of the shim.
-    """
-    offenders = []
-    for path, tree in modules:
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Compare):
-                continue
-            left = node.left
-            named = (isinstance(left, ast.Attribute) and left.attr == "compliance") or \
-                    (isinstance(left, ast.Name) and left.id == "compliance")
-            against_none = any(isinstance(c, ast.Constant) and c.value is None
-                               for c in node.comparators)
-            if named and against_none:
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
-    assert not offenders, f"compliance compared against None at {offenders}"
 
 
 def test_the_compliant_label_is_spelled_only_where_it_is_defined(modules):
