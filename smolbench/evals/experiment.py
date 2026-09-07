@@ -182,8 +182,12 @@ class Experiment:
         interruption since both are idempotent and resumable. All three keyword arguments are
         forwarded to ``run_replicates`` unchanged.
 
-        model: must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
-        request_timeout: CoT archetypes raise this so the longest chain finishes on attempt 1.
+        Parameters
+        ----------
+        model : str
+            must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
+        request_timeout : int, optional
+            CoT archetypes raise this so the longest chain finishes on attempt 1.
         """
         self._apply_env()
         # Lazy by design -- see the module docstring's note on importing ec2 at module scope.
@@ -226,7 +230,10 @@ class Experiment:
         Like :meth:`summarize`, a pure ``ReplicateHarness`` delegate (no EC2/inference cost, S3
         reads only).
 
-        tag: required -- a study with no CoT archetype must not inherit another's default tag
+        Parameters
+        ----------
+        tag : str
+            required -- a study with no CoT archetype must not inherit another's default tag
             (e.g. induction's "cot"). A subclass whose study always uses one tag may override
             this method to default it.
         """
@@ -269,14 +276,17 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     box this process doesn't own. A driver calls this on its resolved ``EC2_EXPERIMENT_TAG``
     before provisioning.
 
-    lane: the suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check
-        below so a sharded lane's suffix can't defeat the exact-match guard.
-
     Raises ValueError if `tag` (or its lane-stripped base) is empty/whitespace-only, or if the
     base is the shared fleet prefix (``study_config.load_study_config().fleet.tag_prefix``)
     exactly or with its trailing ``"-"`` removed -- a bare prefix names every lane in the fleet
     at once, and fleet teardown terminates by tag. Every raised message names the full `tag`,
     lane suffix included.
+
+    Parameters
+    ----------
+    lane : str, optional
+        the suffix already appended to `tag` (e.g. ``"-s0of3"``), stripped before every check
+        below so a sharded lane's suffix can't defeat the exact-match guard.
     """
     # Strip the lane suffix first: every check below reasons about the study identity the tag
     # names, not about which lane is attached to it.

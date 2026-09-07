@@ -10,11 +10,13 @@ or noise padding trips these.
 import hashlib
 import json
 import string
+from types import ModuleType
 
 import pytest
 
 from conftest import StubTokenizer
 
+from smolbench.evals import Quiz
 from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
@@ -33,7 +35,7 @@ PERIODIC_TMPL = string.Template("CTX:\n$positive_info\nQ: How many of positions 
 PERIODIC_TOF_TMPL = string.Template("CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False.")
 
 
-def quiz_hash(quiz) -> str:
+def quiz_hash(quiz: Quiz) -> str:
     h = hashlib.sha256()
     for q in quiz:
         h.update(q.prompt.encode())
@@ -57,7 +59,7 @@ TOKENIZER = StubTokenizer()
 
 
 @pytest.mark.parametrize("seed", (1776, 1777))
-def test_periodic_golden(seed):
+def test_periodic_golden(seed: int) -> None:
     """Numeric and ToF generation reproduce golden_quizzes.json at seeds
     1776/1777, the default seed epoch's (InductionExperiment.base_seed) first two."""
     # Test-local template + 1776 epoch, not the study's production config
@@ -89,7 +91,7 @@ PRODUCTION_MODEL = "gemma-4-e2b"
 
 
 @pytest.fixture(scope="module")
-def run_study():
+def run_study() -> ModuleType:
     """Imports run_study.py under an os.environ snapshot/restore: the module
     mutates EC2_EXPERIMENT_TAG and calls load_dotenv at import time, which would
     otherwise leak into this pytest session (e.g. SMOLBENCH_RESULTS_S3)."""
@@ -113,7 +115,7 @@ def run_study():
     return module
 
 
-def production_hashes(run_study, seed: int) -> "dict[str, str]":
+def production_hashes(run_study: ModuleType, seed: int) -> "dict[str, str]":
     """Hash all four production arms for `seed`, under the offline stub tokenizer."""
     quizzes = run_study.make_quizzes(seed, PRODUCTION_MODEL)
     assert tuple(quizzes) == PRODUCTION_ARMS, tuple(quizzes)
@@ -121,14 +123,14 @@ def production_hashes(run_study, seed: int) -> "dict[str, str]":
 
 
 @pytest.fixture
-def stub_tokenizer(run_study, monkeypatch):
+def stub_tokenizer(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """Points `run_study.make_quizzes` at the offline, byte-stable stub tokenizer
     (only `noise_intens` consults it; the other three arms are tokenizer-independent)."""
     monkeypatch.setattr(run_study, "for_model", lambda model: TOKENIZER)
 
 
 @pytest.mark.parametrize("seed", (0, 1))
-def test_production_golden(run_study, stub_tokenizer, seed):
+def test_production_golden(run_study: ModuleType, stub_tokenizer: None, seed: int) -> None:
     """Hash-pins the study's own quiz bytes (seeds 0/1, all four arms) via
     `run_study.make_quizzes`, the same call `ReplicateHarness` makes."""
     assert run_study.BASE_SEED == 0
@@ -136,7 +138,7 @@ def test_production_golden(run_study, stub_tokenizer, seed):
     assert production_hashes(run_study, seed) == GOLDEN[f"production_seed_{seed}"]
 
 
-def test_the_production_pins_are_seed_sensitive(run_study, stub_tokenizer):
+def test_the_production_pins_are_seed_sensitive(run_study: ModuleType, stub_tokenizer: None) -> None:
     """The seed threads through: two pins, not one pin duplicated (a generator
     that ignored its seed argument would hash identically for both)."""
     zero, one = production_hashes(run_study, 0), production_hashes(run_study, 1)
@@ -147,9 +149,9 @@ def test_the_production_pins_are_seed_sensitive(run_study, stub_tokenizer):
     assert set(zero.values()).isdisjoint(GOLDEN["periodic_numeric_1776"].values())
 
 
-def test_the_production_pins_catch_a_one_byte_template_change(run_study,
-                                                              stub_tokenizer,
-                                                              monkeypatch):
+def test_the_production_pins_catch_a_one_byte_template_change(
+    run_study: ModuleType, stub_tokenizer: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A single byte changed in the study template moves every hash it reaches
     (including `zero`, which shares the template)."""
     baseline = production_hashes(run_study, 0)
@@ -163,7 +165,9 @@ def test_the_production_pins_catch_a_one_byte_template_change(run_study,
         assert after[arm] != baseline[arm], arm
 
 
-def test_production_arms_that_ignore_the_tokenizer(run_study, monkeypatch):
+def test_production_arms_that_ignore_the_tokenizer(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Only `noise_intens` varies with the tokenizer; the other three must not --
     the invariant that lets the offline stub stand in for a served tokenizer."""
     from smolbench.evals.tokenization import TiktokenTokenizer

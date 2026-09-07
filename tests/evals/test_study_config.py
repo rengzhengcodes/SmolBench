@@ -7,6 +7,8 @@ file fails here rather than on a billing box.
 """
 
 import tomllib
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -25,14 +27,14 @@ BUCKET = "smolbench-results-414266451290"
 
 
 @pytest.fixture(autouse=True)
-def _no_ambient_env(monkeypatch):
+def _no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The config must not depend on a developer shell's exported variables."""
     for var in ("SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION",
                 "EC2_REGIONS", "AWS_REGION"):
         monkeypatch.delenv(var, raising=False)
 
 
-def test_results_section_names_the_provisioned_bucket():
+def test_results_section_names_the_provisioned_bucket() -> None:
     """[results] carries the bucket/region the runbook actually provisioned."""
     results = sc.load_study_config().results
     assert (results.bucket, results.region) == (BUCKET, "us-west-2")
@@ -40,7 +42,7 @@ def test_results_section_names_the_provisioned_bucket():
     assert results.base_prefix == ""
 
 
-def test_fleet_section_carries_the_regions_and_the_tag_vocabulary():
+def test_fleet_section_carries_the_regions_and_the_tag_vocabulary() -> None:
     """[fleet] owns the spot-capacity regions and both experiment-tag spellings."""
     fleet = sc.load_study_config().fleet
     assert fleet.regions == ("us-east-1", "us-east-2", "us-west-2")
@@ -48,13 +50,13 @@ def test_fleet_section_carries_the_regions_and_the_tag_vocabulary():
     assert fleet.standalone_tag == "induction-scaling"
 
 
-def test_the_roster_is_exactly_the_non_smoke_deploy_specs():
+def test_the_roster_is_exactly_the_non_smoke_deploy_specs() -> None:
     """``[roster]`` and ``EC2_DEPLOY_SPECS`` name the same 21 checkpoints."""
     assert sorted(sc.roster_keys()) == sorted(set(EC2_DEPLOY_SPECS) - {SMOKE_KEY})
     assert len(sc.roster_keys()) == 21
 
 
-def test_families_partition_the_roster_in_ladder_order():
+def test_families_partition_the_roster_in_ladder_order() -> None:
     """7 families x 3 rungs, concatenating to ``roster_keys()`` in that order."""
     families = sc.families()
     assert len(families) == 7
@@ -63,7 +65,7 @@ def test_families_partition_the_roster_in_ladder_order():
     assert flat == sc.roster_keys()
 
 
-def test_tag_for_is_total_over_the_roster_and_injective():
+def test_tag_for_is_total_over_the_roster_and_injective() -> None:
     """Every roster key has its own short analysis tag; an unknown key raises."""
     tags = [sc.tag_for(key) for key in sc.roster_keys()]
     assert len(set(tags)) == len(tags)
@@ -71,12 +73,12 @@ def test_tag_for_is_total_over_the_roster_and_injective():
         sc.tag_for("not-a-checkpoint")
 
 
-def test_load_study_config_is_cached():
+def test_load_study_config_is_cached() -> None:
     """Repeated loads return the same object: no re-parse per consumer import."""
     assert sc.load_study_config() is sc.load_study_config()
 
 
-def test_the_config_reads_no_environment(monkeypatch):
+def test_the_config_reads_no_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Env precedence belongs to each consumer, not the cached config object, since ``ec2`` freezes constants at import while ``results_store`` reads at call time."""
     before = sc.load_study_config()
     monkeypatch.setenv("EC2_REGIONS", "eu-west-1")
@@ -86,7 +88,7 @@ def test_the_config_reads_no_environment(monkeypatch):
     assert after.results.bucket == before.results.bucket
 
 
-def test_ec2_default_regions_are_built_from_the_config():
+def test_ec2_default_regions_are_built_from_the_config() -> None:
     """``ec2._DEFAULT_REGIONS`` is the config's region list, not a second copy, with ``AWS_REGION`` still leading."""
     regions = sc.load_study_config().fleet.regions
     assert ec2._DEFAULT_REGIONS == ",".join(
@@ -96,7 +98,7 @@ def test_ec2_default_regions_are_built_from_the_config():
         assert region in ec2.EC2_REGIONS
 
 
-def test_the_toml_is_declared_as_package_data():
+def test_the_toml_is_declared_as_package_data() -> None:
     """A non-editable install must ship the .toml, or every consumer dies at import."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     package_data = pyproject["tool"]["setuptools"]["package-data"]
@@ -127,13 +129,13 @@ b = "b_tag"
 """
 
 
-def write_config(tmp_path, text):
+def write_config(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "study_config.toml"
     path.write_text(text)
     return path
 
 
-def test_a_well_formed_file_loads(tmp_path):
+def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     """The fixture text below is a valid config, so later rejections are for the mutation they carry, not a shared defect."""
     cfg = sc.load_study_config(write_config(tmp_path, GOOD_TOML))
     assert cfg.results.bucket == "b"
@@ -158,7 +160,9 @@ def test_a_well_formed_file_loads(tmp_path):
         (lambda t: t.replace('b = "b_tag"', 'b = "a_tag"'), "a_tag"),
     ],
 )
-def test_a_malformed_config_raises_naming_the_defect(tmp_path, mutation, expected):
+def test_a_malformed_config_raises_naming_the_defect(
+    tmp_path: Path, mutation: Callable[[str], str], expected: str,
+) -> None:
     """Every structural defect raises at load, with the offending name in the message."""
     with pytest.raises(ValueError) as exc:
         sc.load_study_config(write_config(tmp_path, mutation(GOOD_TOML)))
@@ -169,14 +173,16 @@ def test_a_malformed_config_raises_naming_the_defect(tmp_path, mutation, expecte
 # results_store consumers
 # ---------------------------------------------------------------------------
 
-def test_the_default_results_uri_is_rendered_from_the_config():
+def test_the_default_results_uri_is_rendered_from_the_config() -> None:
     """The canonical ``s3://...`` spelling has one home, not a literal per script."""
     from smolbench.evals.results_store import default_results_uri
 
     assert default_results_uri() == f"s3://{BUCKET}"
 
 
-def test_sync_down_names_the_default_uri_when_the_env_is_unset(tmp_path, monkeypatch):
+def test_sync_down_names_the_default_uri_when_the_env_is_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The "nothing to sync" error tells the operator exactly what to export."""
     from smolbench.evals.results_store import default_results_uri, sync_down
 

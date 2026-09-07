@@ -6,9 +6,13 @@ this module must not require it.
 """
 
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Dict, Mapping, Optional, Sequence, Tuple
 
 from smolbench.evals import Marks
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
 
 
 def accuracy(marks: Marks) -> float:
@@ -80,7 +84,7 @@ def plot_archetype_accuracy(
     figsize: Tuple[float, float] = (9, 6),
     ylim: Tuple[float, float] = (0, 1.1),
     out_path: Optional[Path] = None,
-):
+) -> Tuple["Figure", "Axes"]:
     """Render the grouped-bar (model x condition) accuracy figure; return ``(fig, ax)``.
 
     One group per ``models`` entry, one bar per ``conditions`` entry, in the
@@ -88,8 +92,11 @@ def plot_archetype_accuracy(
     a 0-height bar annotated "n/a": collapsed lanes are first-class results
     and must stay distinguishable from unmeasured ones.
 
-    chance: y-value of the dashed "chance" line; pass the quiz's own floor
-    (0.5 for a binary ToF quiz).
+    Parameters
+    ----------
+    chance : float, optional
+        y-value of the dashed "chance" line; pass the quiz's own floor
+        (0.5 for a binary ToF quiz).
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mtick

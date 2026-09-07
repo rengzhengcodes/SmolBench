@@ -18,8 +18,12 @@ def results_dir(file: str, up: int = 0) -> Path:
     `up` is a level count, not a study path: `results_store.experiment_name` matches
     ``notebooks/<study>/results`` exactly three components deep, so a typo in a
     caller-supplied path would mint a new S3 prefix.
-    up: levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
-    caller in a role subdirectory like ``notebooks/induction/analysis/``.
+
+    Parameters
+    ----------
+    up : int
+        levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
+        caller in a role subdirectory like ``notebooks/induction/analysis/``.
     """
     return Path(file).resolve().parents[up] / "results"
 

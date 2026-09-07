@@ -18,7 +18,10 @@ import hashlib
 import importlib.util
 import shutil
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from pathlib import Path
+from types import ModuleType
 
 import numpy as np
 import pytest
@@ -39,7 +42,7 @@ DEEP_DEPTH = 16
 N_HARMONICS = 9
 
 
-def _marks_for(rate: float, noncompliance: float, mode, rng) -> Marks:
+def _marks_for(rate: float, noncompliance: float, mode: str, rng: np.random.Generator) -> Marks:
     """Build one replicate: `N_HARMONICS` marks at accuracy `rate`.
 
     `noncompliance` is the share of marks carrying the violation label `mode`
@@ -60,7 +63,13 @@ def _marks_for(rate: float, noncompliance: float, mode, rng) -> Marks:
     )
 
 
-def build_tree(root, models, infos, profile, copies=None):
+def build_tree(
+    root: Path,
+    models: Sequence[str],
+    infos: Sequence[str],
+    profile: Callable[[str, str], tuple[float, float | Callable[[int], float], str, Sequence[int]]],
+    copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
+) -> None:
     """Write a full ``{model}_{info}/rep_{seed}.yaml`` tree under `root`.
 
     profile: ``(model, info) -> (rate, noncompliance, mode, seeds)``. `seeds`
@@ -101,7 +110,7 @@ _BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_b
                   "extens_vs_noise", "multiplicity_sim")
 
 
-def _owned_by(module, directory) -> bool:
+def _owned_by(module: ModuleType, directory: Path) -> bool:
     """Whether `module` was loaded from a file directly inside `directory`."""
     file = getattr(module, "__file__", None)
     if not file:
@@ -110,7 +119,7 @@ def _owned_by(module, directory) -> bool:
     return _P(file).resolve().parent == _P(directory).resolve()
 
 
-def load_analysis(name: str):
+def load_analysis(name: str) -> ModuleType:
     """Import one ``analysis/`` script by path, under its own bare module name.
 
     The scripts import each other by bare name off a ``sys.path`` insert they
@@ -143,31 +152,31 @@ def load_analysis(name: str):
 
 
 @pytest.fixture(scope="session")
-def power_analysis():
+def power_analysis() -> ModuleType:
     """The root of the analysis import chain; owns MODELS/INFOS/RESULTS_DIR."""
     return load_analysis("power_analysis")
 
 
 @pytest.fixture(scope="session")
-def paired_analysis(power_analysis):
+def paired_analysis(power_analysis: ModuleType) -> ModuleType:
     """The paired re-analysis module (imports ``power_analysis``)."""
     return load_analysis("paired_analysis")
 
 
 @pytest.fixture(scope="session")
-def significance_report(paired_analysis):
+def significance_report(paired_analysis: ModuleType) -> ModuleType:
     """The Holm/Hochberg report module (imports both of the above)."""
     return load_analysis("significance_report")
 
 
 @pytest.fixture(scope="session")
-def extens_vs_noise(significance_report):
+def extens_vs_noise(significance_report: ModuleType) -> ModuleType:
     """The focused extens-vs-noise report module (imports all three)."""
     return load_analysis("extens_vs_noise")
 
 
 @pytest.fixture
-def repoint(monkeypatch):
+def repoint(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
     """Return a callable repointing every loaded analysis module at `root`.
 
     ``RESULTS_DIR`` is imported by value into each sibling (``from
@@ -175,7 +184,7 @@ def repoint(monkeypatch):
     the importers reading the real tree.
     """
 
-    def _repoint(root):
+    def _repoint(root: Path) -> None:
         for name in ("power_analysis", "paired_analysis", "significance_report",
                      "extens_vs_noise"):
             module = sys.modules.get(name)

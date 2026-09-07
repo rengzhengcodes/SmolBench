@@ -20,6 +20,7 @@ Run (repo root):
 
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 
 # The analysis dir itself: needed when this module is loaded by path (only
@@ -93,7 +94,7 @@ def load_marks() -> tuple[dict, dict, dict]:
             # model=None: LocalResultsStore ignores addr.model entirely since
             # this chain never talks to S3, so the field is left unset rather
             # than filled with a value nothing would read.
-            def addr_of(seed: int, _m=model, _i=info) -> ReplicateAddress:
+            def addr_of(seed: int, _m: str = model, _i: str = info) -> ReplicateAddress:
                 """Address one replicate of the cell this iteration is on.
 
                 `_m`/`_i` are default-bound rather than closed over, so the
@@ -147,7 +148,9 @@ def load_marks() -> tuple[dict, dict, dict]:
     return correct, valid, compliance
 
 
-def aligned(correct, valid, key_a, key_b, drop_invalid: bool):
+def aligned(
+    correct: dict, valid: dict, key_a: tuple[str, str], key_b: tuple[str, str], drop_invalid: bool
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build item-matched mark vectors for one contrast: ``(a, b, seed_index)``.
 
     Intersects `key_a`'s and `key_b`'s seeds (a still-collecting lane is
@@ -190,7 +193,7 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     ]
 
 
-def signflip_exact_p(diffs) -> float:
+def signflip_exact_p(diffs: Iterable[int]) -> float:
     """Exact two-sided seed-level sign-flip p over per-seed `diffs` from `seed_diffs`.
 
     The independent unit is the replicate seed, not the mark: a seed draws

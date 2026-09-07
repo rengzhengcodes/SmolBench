@@ -7,6 +7,7 @@ Offline: nothing here touches AWS.
 
 import dataclasses
 import inspect
+from typing import Any
 
 import pytest
 
@@ -16,11 +17,11 @@ from smolbench.evals.replicates import ReplicateHarness
 from smolbench.induction.experiment import InductionExperiment
 
 
-def make_quizzes(seed: int, model: str):
+def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
     return {"a": (Numeric(prompt=f"a/{seed}/{model}", answer=1),)}
 
 
-def build(**kwargs) -> Experiment:
+def build(**kwargs: Any) -> Experiment:
     base = dict(
         notebook_dir="somewhere",
         archetype_tags={"stub-model": "decode"},
@@ -30,7 +31,7 @@ def build(**kwargs) -> Experiment:
     return Experiment(**{**base, **kwargs})
 
 
-def test_the_base_carries_the_whole_lifecycle():
+def test_the_base_carries_the_whole_lifecycle() -> None:
     """Everything a driver needs is on the neutral class, not on a subclass."""
     for name in ("provision", "run", "summarize", "cot_chain_lengths",
                  "agent_status", "teardown", "_apply_env", "seeds",
@@ -42,7 +43,7 @@ def test_the_base_carries_the_whole_lifecycle():
     assert exp.harness.info_types == ("a",)
 
 
-def test_the_base_declares_no_study_default_for_the_info_arms():
+def test_the_base_declares_no_study_default_for_the_info_arms() -> None:
     """`info_types` is required on the neutral class: a default here is how one
     study's arm names would end up spelled into a shared module."""
     with pytest.raises(TypeError):
@@ -53,7 +54,7 @@ def test_the_base_declares_no_study_default_for_the_info_arms():
     assert info_types.default_factory is dataclasses.MISSING
 
 
-def test_the_induction_subclass_only_supplies_defaults():
+def test_the_induction_subclass_only_supplies_defaults() -> None:
     """`InductionExperiment` adds induction's two defaults and no new fields:
     anything else would be study-specific prose leaking into shared inheritance."""
     assert issubclass(InductionExperiment, Experiment)
@@ -76,7 +77,7 @@ def test_the_induction_subclass_only_supplies_defaults():
 # validate_experiment_tag
 # ---------------------------------------------------------------------------
 
-def test_a_lane_tag_and_the_standalone_tag_are_accepted():
+def test_a_lane_tag_and_the_standalone_tag_are_accepted() -> None:
     """The two shapes a driver legitimately resolves to must pass."""
     fleet = study_config.load_study_config().fleet
     assert validate_experiment_tag(fleet.standalone_tag, None) is None
@@ -96,7 +97,7 @@ def test_a_lane_tag_and_the_standalone_tag_are_accepted():
     ("", None),
     ("   ", None),
 ])
-def test_an_unsafe_tag_is_refused(tag, lane):
+def test_an_unsafe_tag_is_refused(tag: str, lane: str | None) -> None:
     """Each refusal names the tag, so an operator can see what to export."""
     with pytest.raises(ValueError) as exc:
         validate_experiment_tag(tag, lane)
