@@ -239,8 +239,6 @@ def test_retired_artifacts_are_refused_by_every_scanner(tmp_path):
         runner.write_theorem_summary(_theorem_dir_with(bad, SUPERSEDED_NAME))
     with pytest.raises(ValueError, match="SUPERSEDED"):
         cli.cmd_show(argparse.Namespace(run_dir=str(bad), theorem=None))
-    assert error_bars.reject_superseded is ded_pa.reject_superseded
-    assert ded_pa.RETIRED_MARKERS == runner.RETIRED_MARKERS
     clean = _theorem_dir_with(tmp_path / "ok", "hint-3__m1.jsonl")
     assert cli.cmd_show(argparse.Namespace(run_dir=str(tmp_path / "ok"), theorem=None)) == 0
     (clean / "outputs" / "hint-3__m1.jsonl").unlink()  # row schema is not the

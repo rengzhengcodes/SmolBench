@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from smolbench.evals import Mark, Marks
+from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS, load_by_path
 
 
@@ -123,7 +124,7 @@ def test_classify_exit(tail, present, expected):
 )
 def test_reasoning_fraction(contents, expected):
     landed = {info: Marks(model="gemma-4-e2b", marks=tuple(
-        Mark(query="q", answer=1, response=resp, score=1, reasoning=trace)
+        Mark(query="q", answer=1, response=resp, score=1, reasoning=trace, compliance=COMPLIANT)
         for trace, resp in pairs)) for info, pairs in contents.items()}
     store = SimpleNamespace(exists=lambda addr: addr.info in landed,
                             load_marks=lambda addr: landed[addr.info])

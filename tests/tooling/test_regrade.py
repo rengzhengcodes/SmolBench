@@ -51,8 +51,8 @@ def _marks(model=MODEL, date=COLLECTED_AT) -> Marks:
     return Marks(
         model=model,
         marks=(
-            Mark(query="q1", answer=42, response="42", score=None),
-            Mark(query="q2", answer=7, response="**7**", score=None),
+            Mark(query="q1", answer=42, response="42", score=None, compliance=COMPLIANT),
+            Mark(query="q2", answer=7, response="**7**", score=None, compliance=COMPLIANT),
         ),
         date=date,
         server_config=SERVER_CONFIG,

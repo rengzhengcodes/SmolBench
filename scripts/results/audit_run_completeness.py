@@ -226,9 +226,6 @@ def audit_induction(
 
 
 def main() -> int:
-    # `EXPECTED_CELLS` is a plain int and safe to use straight as an argparse
-    # default, unlike `runner.spool_prefix()` below, which can raise and so is
-    # resolved only after parse_args.
     from smolbench.deduction.lean import runner
 
     ap = argparse.ArgumentParser(description=__doc__)
@@ -236,8 +233,8 @@ def main() -> int:
     ap.add_argument("--local", action="store_true", help="Audit local run dirs, not S3.")
     ap.add_argument("--induction", action="store_true", help="Also audit induction seed coverage.")
     ap.add_argument(
-        "--expect-cells", type=int, default=runner.EXPECTED_CELLS,
-        help="Cells expected per lane (default: %(default)s).",
+        "--expect-cells", type=int, required=True,
+        help="Cells expected per lane (the post-cutoff pool's size is not a constant).",
     )
     ap.add_argument(
         "--spool-prefix", default=None,
