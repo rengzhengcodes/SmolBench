@@ -7,6 +7,8 @@ the label in a docstring is not mistaken for code that spells it.
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -19,7 +21,7 @@ SOURCE_ROOTS = ("smolbench", "scripts", "notebooks")
 LABEL_HOME = REPO_ROOT / "smolbench" / "evals" / "quiz.py"
 
 
-def _source_files():
+def _source_files() -> Iterator[Path]:
     for root in SOURCE_ROOTS:
         for path in sorted((REPO_ROOT / root).rglob("*.py")):
             if "__pycache__" in path.parts:
@@ -27,18 +29,19 @@ def _source_files():
             yield path
 
 
-def _parsed():
+def _parsed() -> list[tuple[Path, ast.Module]]:
     return [(path, ast.parse(path.read_text())) for path in _source_files()]
 
 
 @pytest.fixture(scope="module")
-def modules():
+def modules() -> list[tuple[Path, ast.Module]]:
     parsed = _parsed()
     assert len(parsed) > 20, f"only {len(parsed)} modules found; the walk is broken"
     return parsed
 
 
-def test_the_compliant_label_is_spelled_only_where_it_is_defined(modules):
+def test_the_compliant_label_is_spelled_only_where_it_is_defined(
+        modules: list[tuple[Path, ast.Module]]) -> None:
     """No second literal copy of `"compliant"`: a copy would silently diverge if the label ever changes."""
     offenders = []
     for path, tree in modules:
@@ -50,7 +53,8 @@ def test_the_compliant_label_is_spelled_only_where_it_is_defined(modules):
     assert not offenders, f'the literal "compliant" is spelled at {offenders}'
 
 
-def test_the_statistics_notebook_delegates_compliance_entirely(modules):
+def test_the_statistics_notebook_delegates_compliance_entirely(
+        modules: list[tuple[Path, ast.Module]]) -> None:
     """The notebook delegates compliance entirely to `significance_report.py`; it must not grow a private census that could disagree with the published one."""
     import json
 

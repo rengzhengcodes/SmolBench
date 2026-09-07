@@ -20,7 +20,8 @@ def nb() -> dict:
     return load_notebook()
 
 
-def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
+def test_archive_cell_builds_on_the_shared_aws_primitives(
+        nb: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """``S3Archive`` must call `_aws.fresh_client` and `results_store.parse_s3_uri`, not private re-implementations that sign with stale credentials or drift from the writer's key layout."""
     from smolbench.evals import _aws
     from smolbench.evals.results_store import parse_s3_uri
@@ -46,7 +47,7 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
     assert "boto3" not in src, "notebook still builds a default-session client"
 
 
-def test_archive_cell_carries_no_unused_aws_surface(nb):
+def test_archive_cell_carries_no_unused_aws_surface(nb: dict) -> None:
     """`keys()`/`exists()` are dead code and widen the archive's read-only contract; neither may exist."""
     src = cell_source(nb, "class S3Archive")
     assert "def keys(" not in src
@@ -55,7 +56,7 @@ def test_archive_cell_carries_no_unused_aws_surface(nb):
         assert f"def {method}(" in src, f"S3Archive lost {method}()"
 
 
-def test_archive_prose_does_not_promise_removed_methods(nb):
+def test_archive_prose_does_not_promise_removed_methods(nb: dict) -> None:
     """Two cells describe this class; both named ``keys`` in its logic summary."""
     for cell in nb["cells"]:
         text = "".join(cell["source"])

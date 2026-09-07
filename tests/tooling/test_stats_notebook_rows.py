@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import sys
 import types
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -48,7 +50,7 @@ def _cell_row(model: str, theorem: str, verdict: str, rung: str) -> dict:
             "rung": rung, "replicate_idx": 0, "verdict": verdict}
 
 
-def _fake_bucket(models) -> dict[str, str]:
+def _fake_bucket(models: tuple[str, ...]) -> dict[str, str]:
     """Build ``{s3 key: body}`` for a whole study: 21 lanes plus the recovery run.
 
     Verdicts vary with the lane index so the lanes do not all agree -- an
@@ -82,11 +84,13 @@ class FakePaginator:
     single-page fake would pass here and hide a reader that truncates.
     """
 
-    def __init__(self, objects: dict[str, str], calls: list):
+    def __init__(self, objects: dict[str, str], calls: list) -> None:
         self._objects = objects
         self._calls = calls
 
-    def paginate(self, *, Bucket, Prefix, Delimiter=None):
+    def paginate(
+        self, *, Bucket: str, Prefix: str, Delimiter: str | None = None
+    ) -> Iterator[dict[str, Any]]:
         self._calls.append((Prefix, Delimiter))
         keys = sorted(k for k in self._objects if k.startswith(Prefix))
         if Delimiter is None:
@@ -106,16 +110,16 @@ class FakePaginator:
 class FakeS3:
     """Records every listing and download; `download_file` writes the body out."""
 
-    def __init__(self, objects: dict[str, str]):
+    def __init__(self, objects: dict[str, str]) -> None:
         self.objects = objects
         self.listed: list = []
         self.downloads: list[str] = []
 
-    def get_paginator(self, name):
+    def get_paginator(self, name: str) -> FakePaginator:
         assert name == "list_objects_v2", name
         return FakePaginator(self.objects, self.listed)
 
-    def download_file(self, bucket, key, dest):
+    def download_file(self, bucket: str, key: str, dest: str | Path) -> None:
         self.downloads.append(key)
         Path(dest).write_text(self.objects[key])
 
@@ -131,7 +135,9 @@ def modules() -> dict:
 
 
 @pytest.fixture
-def fake_s3(modules, monkeypatch) -> FakeS3:
+def fake_s3(
+    modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> FakeS3:
     """A fake S3 the cells reach through their own ``import boto3``.
 
     Injected as a fake ``boto3`` module, not a ``client=`` argument:
@@ -144,7 +150,9 @@ def fake_s3(modules, monkeypatch) -> FakeS3:
     return client
 
 
-def _exec_cell(nb, needle, namespace):
+def _exec_cell(
+    nb: dict[str, Any], needle: str, namespace: dict[str, Any]
+) -> dict[str, Any]:
     """Exec the one cell containing `needle` on `namespace`, and return it."""
     exec(compile(cell_source(nb, needle), str(STATS_NB), "exec"), namespace)
     return namespace
@@ -152,7 +160,7 @@ def _exec_cell(nb, needle, namespace):
 
 # --- the sync is gone ------------------------------------------------------
 
-def test_no_cell_shells_out_to_aws_s3_sync(nb):
+def test_no_cell_shells_out_to_aws_s3_sync(nb: dict[str, Any]) -> None:
     """No cell materialises the store with the AWS CLI."""
     offenders = [i for i, cell in enumerate(nb["cells"])
                  if "s3\", \"sync" in "".join(cell["source"])
@@ -160,14 +168,14 @@ def test_no_cell_shells_out_to_aws_s3_sync(nb):
     assert not offenders, f"cells {offenders} still sync the store to a local path"
 
 
-def test_the_gate_cell_declares_no_local_rows_tree(nb):
+def test_the_gate_cell_declares_no_local_rows_tree(nb: dict[str, Any]) -> None:
     """`RUN_HEAVY`'s cell must not pre-declare a scratch rows directory: dead config in a gate cell reads as the supported way in."""
     source = cell_source(nb, "RUN_HEAVY = ")
     for dead in ("ROWS_DIR", "SCRATCH", "SNAPSHOT_S3", "SNAPSHOT_REGION"):
         assert dead not in source, f"the RUN_HEAVY cell still declares {dead}"
 
 
-def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb):
+def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb: dict[str, Any]) -> None:
     """Section 5's prose must not claim the post-recovery pool is skipped: a stale disclaimer hides a row that is right there."""
     joined = "\n".join("".join(cell["source"]) for cell in nb["cells"])
     for claim in ("SENSITIVITY pool is NOT computed",
@@ -178,8 +186,10 @@ def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb):
 
 # --- the cells, executed ---------------------------------------------------
 
-def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(nb, modules, fake_s3,
-                                                             capsys):
+def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(
+    nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
     """The heavy cell must download both trees through `rows_source` and report both in one run."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
@@ -205,7 +215,9 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(nb, modules, fake_s
         assert repo not in landed.resolve().parents, landed
 
 
-def test_section_5_reads_the_prefix_the_scripts_read(nb, modules, fake_s3):
+def test_section_5_reads_the_prefix_the_scripts_read(
+    nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3
+) -> None:
     """The listing prefixes must be the study's spool prefix and its recovery run, not just "something downloaded"."""
     spool = modules["rows_source"].spool_prefix()
     namespace = dict(modules, RUN_HEAVY=True)
@@ -215,8 +227,10 @@ def test_section_5_reads_the_prefix_the_scripts_read(nb, modules, fake_s3):
     assert f"{spool}/{RECOVERY_RUN}/" in listed, listed[:5]
 
 
-def test_section_6_reuses_the_rows_section_5_already_fetched(nb, modules, fake_s3,
-                                                             capsys):
+def test_section_6_reuses_the_rows_section_5_already_fetched(
+    nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
     """hint-vs-noise must reuse section 5's directory, not re-download all 21 lanes via a second `--s3`."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
@@ -229,7 +243,10 @@ def test_section_6_reuses_the_rows_section_5_already_fetched(nb, modules, fake_s
     assert "exit code: 0" in out, out[-2000:]
 
 
-def test_the_heavy_cells_stay_gated(nb, modules, fake_s3, capsys):
+def test_the_heavy_cells_stay_gated(
+    nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
     """With `RUN_HEAVY` false, the cells must touch S3 not at all and say so: the gate must be checked before any download, not after."""
     namespace = dict(modules, RUN_HEAVY=False)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
@@ -240,7 +257,9 @@ def test_the_heavy_cells_stay_gated(nb, modules, fake_s3, capsys):
     assert out.lower().count("skipped") >= 2, out
 
 
-def test_an_incomplete_recovery_fetch_stops_the_cell_by_name(nb, modules, monkeypatch):
+def test_an_incomplete_recovery_fetch_stops_the_cell_by_name(
+    nb: dict[str, Any], modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A partial recovery tree must refuse loudly by naming the missing model, not silently compare a short pool against the full headline."""
     objects = _fake_bucket(modules["ded_pa"].MODELS)
     dropped = modules["ded_pa"].MODELS[3]

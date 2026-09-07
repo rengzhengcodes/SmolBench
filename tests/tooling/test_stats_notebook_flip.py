@@ -7,6 +7,9 @@ cannot silently drift from ``power_analysis``'s ``UNMEASURABLE_VERDICTS``.
 
 from __future__ import annotations
 
+from types import ModuleType
+from typing import Any
+
 import pytest
 
 from tests.tooling._notebook_cells import (
@@ -23,13 +26,13 @@ def nb() -> dict:
 
 
 @pytest.fixture(scope="module")
-def ded_pa():
+def ded_pa() -> ModuleType:
     """The live deduction grader, loaded once for the module."""
     return load_deduction_power_analysis()
 
 
 @pytest.fixture(scope="module")
-def flip_ns(nb, ded_pa) -> dict:
+def flip_ns(nb: dict[str, Any], ded_pa: ModuleType) -> dict:
     """The executed namespace of section 8's estimator cell."""
     src = cell_source(nb, "def measurable_cell_keys")
     namespace = {"ded_pa": ded_pa}
@@ -37,7 +40,9 @@ def flip_ns(nb, ded_pa) -> dict:
     return namespace
 
 
-def _rows(*verdicts, theorem="t1", file_path="Mathlib/Data/Nat/Defs.lean"):
+def _rows(
+    *verdicts: str, theorem: str = "t1", file_path: str = "Mathlib/Data/Nat/Defs.lean"
+) -> list[dict[str, Any]]:
     """Build one cell's rows, in file order (== chronological), from its verdicts."""
     return [{"kind": "cell", "model": "m1", "theorem_id": theorem, "k": 1,
              "rung": "stepk:1", "replicate_idx": 0, "verdict": v,
@@ -72,21 +77,27 @@ MEASURABILITY_CASES = [
 
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
-def test_measurability_follows_the_live_grader(flip_ns, verdicts, measurable):
+def test_measurability_follows_the_live_grader(
+    flip_ns: dict[str, Any], verdicts: tuple[str, ...], measurable: bool
+) -> None:
     """The cell's answer must equal the table, checked apart from the derivation below so cell drift and table drift report separately."""
     keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
     assert bool(keys) is measurable, (verdicts, keys)
 
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
-def test_measurability_agrees_with_grade_verdicts(ded_pa, verdicts, measurable):
+def test_measurability_agrees_with_grade_verdicts(
+    ded_pa: ModuleType, verdicts: tuple[str, ...], measurable: bool
+) -> None:
     """The table must be derived from the live grader rather than restated, so the two cannot drift apart."""
     graded = ded_pa.grade_verdicts(list(verdicts))
     survivor = next((v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS), None)
     assert measurable is (graded is not None and survivor != "unverified")
 
 
-def test_no_positive_whitelist_survives(nb, flip_ns):
+def test_no_positive_whitelist_survives(
+    nb: dict[str, Any], flip_ns: dict[str, Any]
+) -> None:
     """The complement of ``UNMEASURABLE_VERDICTS`` must not be re-declared literally."""
     import re
 
@@ -98,7 +109,7 @@ def test_no_positive_whitelist_survives(nb, flip_ns):
     assert "ded_pa.UNMEASURABLE_VERDICTS" in src, "the live set must be read, not copied"
 
 
-def test_every_selected_cell_is_safe_for_is_pass(flip_ns):
+def test_every_selected_cell_is_safe_for_is_pass(flip_ns: dict[str, Any]) -> None:
     """`is_pass` raises on `unverified`, so this filter must be the thing that removes it before callers reach is_pass."""
     is_pass, measurable_cell_keys = flip_ns["is_pass"], flip_ns["measurable_cell_keys"]
     with pytest.raises(ValueError, match="unverified"):
@@ -117,7 +128,7 @@ def test_every_selected_cell_is_safe_for_is_pass(flip_ns):
         is_pass(verdict)
 
 
-def test_dependency_cells_are_still_excluded(flip_ns):
+def test_dependency_cells_are_still_excluded(flip_ns: dict[str, Any]) -> None:
     """The Mathlib-only restriction is unchanged by the measurability fix."""
     rows = (_rows("exception", "success", theorem="dep",
                   file_path=".lake/packages/batteries/Batteries/Data/List.lean")
@@ -126,7 +137,7 @@ def test_dependency_cells_are_still_excluded(flip_ns):
     assert len(keys) == 1 and "mathlib" in str(keys[0]), keys
 
 
-def test_selection_is_sorted_and_order_independent(flip_ns):
+def test_selection_is_sorted_and_order_independent(flip_ns: dict[str, Any]) -> None:
     """`select_sample_keys` is only reproducible over an ALREADY-SORTED population."""
     rows = _rows("success", theorem="t3") + _rows("success", theorem="t1") \
         + _rows("success", theorem="t2")
@@ -135,7 +146,9 @@ def test_selection_is_sorted_and_order_independent(flip_ns):
     assert keys == flip_ns["measurable_cell_keys"](list(reversed(rows)))
 
 
-def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
+def test_ported_estimator_names_all_exist(
+    nb: dict[str, Any], flip_ns: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
     """Every name the section advertises (markdown "What was ported" sentence and the cell's print) must be defined; none may dangle."""
     import re
 
@@ -154,13 +167,15 @@ def test_ported_estimator_names_all_exist(nb, flip_ns, capsys):
     assert not missing, f"section-8 markdown names undefined helpers: {missing}"
 
 
-def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb, ded_pa):
+def test_the_in_cell_grader_pin_is_live_not_a_no_op(
+    nb: dict[str, Any], ded_pa: ModuleType
+) -> None:
     """The cell's own assertion loop must actually fire (not just be present) when a grader disagreeing with the earliest-surviving rule is bound."""
     class _WrongGrader:
         UNMEASURABLE_VERDICTS = ded_pa.UNMEASURABLE_VERDICTS
 
         @staticmethod
-        def grade_verdicts(verdicts):
+        def grade_verdicts(verdicts: list[str]) -> int | None:
             # Latest surviving attempt wins: pass@N dressed up as pass@1,
             # exactly what grade_verdicts exists to prevent.
             survivors = [v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS]
@@ -171,7 +186,7 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(nb, ded_pa):
         exec(compile(src, str(STATS_NB), "exec"), {"ded_pa": _WrongGrader})
 
 
-def test_a_row_with_no_verdict_is_not_a_measurement(flip_ns):
+def test_a_row_with_no_verdict_is_not_a_measurement(flip_ns: dict[str, Any]) -> None:
     """A missing verdict must be dropped, not scored 0 like `grade_verdicts` would: this chooses what to SAMPLE, and scoring it would book "never recorded" as "measured and lost"."""
     rows = _rows("success", theorem="ok")
     orphan = _rows("success", theorem="orphan")

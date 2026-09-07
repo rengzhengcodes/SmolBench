@@ -17,6 +17,7 @@ import io
 import json
 import os
 import sys
+from types import ModuleType
 
 from tests._paths import NOTEBOOKS, REPO_ROOT
 
@@ -40,7 +41,7 @@ def cell_source(nb: dict, needle: str) -> str:
     return "".join(hits[0]["source"])
 
 
-def _load(name: str, rel: str):
+def _load(name: str, rel: str) -> ModuleType:
     """Exec ``notebooks/<rel>`` under `name`, registering it before exec."""
     spec = importlib.util.spec_from_file_location(name, NOTEBOOKS / rel)
     module = importlib.util.module_from_spec(spec)
@@ -82,6 +83,6 @@ def load_analysis_modules() -> dict:
     return namespace
 
 
-def load_deduction_power_analysis():
+def load_deduction_power_analysis() -> ModuleType:
     """Load just the deduction ``power_analysis`` the notebook binds as ``ded_pa``."""
     return _load("nbt_ded_power_analysis_only", "deduction/analysis/power_analysis.py")

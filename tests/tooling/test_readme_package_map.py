@@ -16,6 +16,7 @@ text-only checks that must hold with or without the `lean` extra installed.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -77,7 +78,8 @@ MAPPED_PACKAGES = [
 
 @pytest.mark.parametrize("entry, directory, suffixes", MAPPED_PACKAGES,
                          ids=["".join(p[0]) for p in MAPPED_PACKAGES])
-def test_readme_map_names_every_module_in_a_mapped_package(entry, directory, suffixes):
+def test_readme_map_names_every_module_in_a_mapped_package(
+        entry: tuple[str, ...], directory: Path, suffixes: tuple[str, ...]) -> None:
     """Every file of a mapped package appears in its map block; `__init__.py` and one-line-indexed subdirectories are excluded on purpose."""
     block = _map_block(*entry)
     names = sorted(p.name for p in directory.iterdir()
@@ -89,7 +91,8 @@ def test_readme_map_names_every_module_in_a_mapped_package(entry, directory, suf
 
 @pytest.mark.parametrize("entry, directory, suffixes", MAPPED_PACKAGES,
                          ids=["".join(p[0]) for p in MAPPED_PACKAGES])
-def test_readme_map_names_no_file_a_mapped_package_lost(entry, directory, suffixes):
+def test_readme_map_names_no_file_a_mapped_package_lost(
+        entry: tuple[str, ...], directory: Path, suffixes: tuple[str, ...]) -> None:
     """The converse: every file named in a package's block must still exist in it, catching a deleted module left on the map."""
     block = _map_block(*entry)
     named = sorted(set(re.findall(r"[\w./-]*[\w-]+\.(?:py|toml|yaml|sh)", block)))
@@ -109,7 +112,7 @@ def test_readme_map_names_no_file_a_mapped_package_lost(entry, directory, suffix
     assert not ghosts, f"README package map names {ghosts} under {entry}, not in {directory}"
 
 
-def test_every_file_the_map_names_exists_somewhere_in_the_tree():
+def test_every_file_the_map_names_exists_somewhere_in_the_tree() -> None:
     """No line of the map may name a file the tree does not have; weaker (basename-only) but covers blocks indexed by job, not file by file."""
     tree = _package_map()
     named = sorted(set(re.findall(r"[\w.-]+\.(?:py|toml|yaml|ipynb|sh|md)", tree)))
@@ -120,7 +123,7 @@ def test_every_file_the_map_names_exists_somewhere_in_the_tree():
     assert not ghosts, f"README package map names files that do not exist: {ghosts}"
 
 
-def test_readme_map_names_every_test_group():
+def test_readme_map_names_every_test_group() -> None:
     """The `tests/` block must name every group directory the suite actually has."""
     block = _map_block("tests/")
     groups = sorted(p.name for p in (REPO_ROOT / "tests").iterdir()
@@ -136,7 +139,7 @@ def test_readme_map_names_every_test_group():
 WHERE_DO_I_GO_POINTERS = ["run_all.py", "--s3"]
 
 
-def test_where_do_i_go_points_at_the_driver_and_the_s3_readers():
+def test_where_do_i_go_points_at_the_driver_and_the_s3_readers() -> None:
     """The reproduce-a-number row must name `run_all.py` and the ``--s3`` readers."""
     text = README.read_text()
     table = text[text.index("### Where do I go?"):]
@@ -147,7 +150,7 @@ def test_where_do_i_go_points_at_the_driver_and_the_s3_readers():
     assert not missing, f"the reproduce-a-number row never mentions {missing}: {row[0]}"
 
 
-def test_map_credits_lean_interact_for_verification():
+def test_map_credits_lean_interact_for_verification() -> None:
     """The map's `verify.py` line must name `lean-interact`, the backend that actually runs, not `lean-dojo`."""
     # Token-boundary match: a bare substring would also hit `nullverify.py`.
     verify_lines = [ln for ln in _map_block("smolbench/", "deduction/lean/").splitlines()
@@ -166,14 +169,14 @@ LEAN_DOJO_VERIFICATION_CLAIMS = (
 )
 
 
-def test_readme_does_not_credit_lean_dojo_with_verification():
+def test_readme_does_not_credit_lean_dojo_with_verification() -> None:
     text = README.read_text()
     offenders = [claim for claim in LEAN_DOJO_VERIFICATION_CLAIMS if claim in text]
     assert not offenders, f"README still credits lean-dojo with verifying: {offenders}"
     assert "lean-interact" in text
 
 
-def test_pyproject_lean_comment_does_not_credit_lean_dojo_with_verification():
+def test_pyproject_lean_comment_does_not_credit_lean_dojo_with_verification() -> None:
     """The header above `lean = [` must not contradict the `lean-dojo` entry's own comment (tracing only, not imported by the verifier)."""
     text = (REPO_ROOT / "pyproject.toml").read_text()
     header = text[text.index("# Lean theorem-proving eval"): text.index("lean = [")]
@@ -205,7 +208,7 @@ def _s3_gated_test_count() -> int:
                if name.startswith("test_") and (args & gated))
 
 
-def test_readme_skip_count_matches_the_gated_module():
+def test_readme_skip_count_matches_the_gated_module() -> None:
     """README's "All N skips" must equal the count of tests actually gated; the PASS count is not pinned here since any test that pinned it would change it."""
     text = README.read_text()
     stated = re.search(r"All (\d+) skips", text)

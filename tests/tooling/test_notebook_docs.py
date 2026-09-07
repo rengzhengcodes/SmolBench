@@ -46,7 +46,7 @@ def _store_markers() -> tuple[str, str]:
     return S3_SUPERSEDED_SUFFIX, LOCAL_SUPERSEDED_INFIX
 
 
-def test_archive_documents_both_supersede_spellings(archive):
+def test_archive_documents_both_supersede_spellings(archive: str) -> None:
     """Both supersede spellings must be named: quoting only one leaves the other looking like corruption."""
     s3_suffix, local_infix = _store_markers()
     assert s3_suffix in archive, f"ARCHIVE.md never names the {s3_suffix} marker key"
@@ -55,7 +55,7 @@ def test_archive_documents_both_supersede_spellings(archive):
     assert "earliest-wins" in archive
 
 
-def test_both_docs_describe_the_regrade_path(archive, readme):
+def test_both_docs_describe_the_regrade_path(archive: str, readme: str) -> None:
     """`regraded_from` makes a regraded run traceable to the run it replaced; both docs must mention it."""
     from smolbench.evals.quiz import Marks
 
@@ -66,7 +66,7 @@ def test_both_docs_describe_the_regrade_path(archive, readme):
         assert "regraded_from" in text, f"notebooks/{name} never names regraded_from"
 
 
-def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive, readme):
+def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive: str, readme: str) -> None:
     """No sync-down instructions: report scripts read S3 directly, so a local-mirror step is wasted bandwidth and a second, divergent path in."""
     for name, text in (("ARCHIVE.md", archive), ("README.md", readme)):
         assert "aws s3 sync" not in text, f"notebooks/{name} still tells a reader to sync"
@@ -75,7 +75,7 @@ def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive, readme):
         "notebooks/README.md never names the shared row reader"
 
 
-def test_archive_locates_the_recovery_rows_the_notebook_reads(archive):
+def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> None:
     """A reader who cannot find the recovery-run prefix here cannot verify what the notebook and audit script both read."""
     from tests._paths import SCRIPTS
 
@@ -87,7 +87,7 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive):
     assert "recovered_rows.jsonl" in archive
 
 
-def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
+def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) -> None:
     """ARCHIVE.md must name the re-collection prefix `rows_source.spool_prefix()` actually defaults to, not the retired pre-cutoff one."""
     import importlib.util
     import sys
@@ -103,7 +103,7 @@ def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
         f"{module._DEDUCTION_SPOOL_PREFIX!r}")
 
 
-def test_every_file_the_notebooks_readme_names_exists(readme):
+def test_every_file_the_notebooks_readme_names_exists(readme: str) -> None:
     """No path in the README may point at a file the tree does not have (counterpart to the root README's own map check)."""
     named = sorted(set(re.findall(r"[\w./-]*[\w-]+\.(?:py|ipynb|md|yaml|toml)", readme)))
     assert named, "the README names no files at all"
