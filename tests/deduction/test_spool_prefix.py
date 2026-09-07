@@ -4,6 +4,9 @@ import importlib.util
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,7 +24,7 @@ READERS = [
 ]
 
 
-def _help(path, **env):
+def _help(path: Path, **env: str) -> subprocess.CompletedProcess[str]:
     """Run ``<path> --help`` in a clean interpreter.
 
     ``python <script>`` puts the SCRIPT's directory on ``sys.path[0]``, not the
@@ -36,13 +39,13 @@ def _help(path, **env):
                           text=True, cwd=str(REPO_ROOT), timeout=300, env=child)
 
 
-def test_the_new_prefix_is_declared_once(monkeypatch):
+def test_the_new_prefix_is_declared_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
     assert runner.DEDUCTION_SPOOL_PREFIX == NEW
     assert runner.spool_prefix() == NEW
 
 
-def test_spool_prefix_reads_the_env_at_call_time(monkeypatch):
+def test_spool_prefix_reads_the_env_at_call_time(monkeypatch: pytest.MonkeyPatch) -> None:
     """No caching: a late-set override takes effect, and trailing slashes normalize."""
     monkeypatch.setenv("LEAN_SPOOL_PREFIX", "scratch/runs")
     assert runner.spool_prefix() == "scratch/runs"
@@ -53,7 +56,7 @@ def test_spool_prefix_reads_the_env_at_call_time(monkeypatch):
 
 
 @pytest.mark.parametrize("path", READERS, ids=lambda p: p.name)
-def test_readers_expose_a_spool_prefix_flag(path):
+def test_readers_expose_a_spool_prefix_flag(path: Path) -> None:
     """The prefix stays overridable per invocation, not only through the env."""
     if not path.exists():
         pytest.skip(f"{path.name} lives in a later stack slice")
@@ -62,16 +65,20 @@ def test_readers_expose_a_spool_prefix_flag(path):
     assert "--spool-prefix" in proc.stdout, proc.stdout
 
 
-def _fake_s3(keys):
+def _fake_s3(keys: list[str]) -> Any:
     """A boto3 stand-in whose paginator serves `keys` filtered by Prefix."""
     class _Pager:
-        def paginate(self, Bucket, Prefix):  # noqa: N803 -- boto3's parameter names
+        def paginate(
+            self, Bucket: str, Prefix: str
+        ) -> Iterator[dict[str, list[dict[str, int | str]]]]:  # noqa: N803 -- boto3's parameter names
             yield {"Contents": [{"Key": k, "Size": 10} for k in keys if k.startswith(Prefix)]}
 
     return type("_S3", (), {"get_paginator": lambda self, name: _Pager()})()
 
 
-def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(monkeypatch):
+def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """`spool_prefix()` returns no trailing "/", but this module slices by `len(prefix)`.
 
     Forget the appended "/" and every deduction model name comes back empty

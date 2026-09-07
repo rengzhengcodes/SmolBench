@@ -20,6 +20,9 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -32,7 +35,7 @@ AUDIT = SCRIPTS / "results" / "audit_lean_pinning.py"
 DEDUCTION_DRIVER = NOTEBOOKS / "deduction" / "run_study.py"
 
 
-def _load(path, name):
+def _load(path: Path, name: str) -> ModuleType:
     """Exec `path` as module `name`, restoring os.environ afterwards.
 
     The induction driver reads ``LEAN_*``/``EC2_*`` at import time, so this
@@ -64,11 +67,13 @@ def roster() -> tuple[str, ...]:
 
 
 @pytest.fixture(scope="module")
-def power_analysis():
+def power_analysis() -> ModuleType:
     return _load(POWER_ANALYSIS, "deduction_power_analysis_for_roster_pin")
 
 
-def test_power_analysis_families_cover_the_roster_exactly(roster, power_analysis):
+def test_power_analysis_families_cover_the_roster_exactly(
+    roster: tuple[str, ...], power_analysis: ModuleType
+) -> None:
     """FAMILIES' 21 keys are the roster's 21 keys -- as a set and by count.
 
     Set equality, not just a count: 21-vs-21 with one key swapped for a typo is
@@ -88,7 +93,7 @@ def test_power_analysis_families_cover_the_roster_exactly(roster, power_analysis
     )
 
 
-def test_audit_lanes_cover_the_roster_exactly(roster):
+def test_audit_lanes_cover_the_roster_exactly(roster: tuple[str, ...]) -> None:
     """audit_lean_pinning.LANES is the same 21 keys, in the same order.
 
     Order matters here in a way it does not for `FAMILIES`: LANES' own comment
@@ -105,7 +110,7 @@ def test_audit_lanes_cover_the_roster_exactly(roster):
     }
 
 
-def test_flip_run_lanes_are_real_lanes(roster):
+def test_flip_run_lanes_are_real_lanes(roster: tuple[str, ...]) -> None:
     """Every FLIP_RUNS lane names a roster key, so a re-run cannot audit a ghost."""
     if not AUDIT.exists():
         pytest.skip("audit_lean_pinning.py lives in a later stack slice")
@@ -124,7 +129,7 @@ _NO_LITERALS = (POWER_ANALYSIS, AUDIT, DEDUCTION_DRIVER)
 _BUCKET_LITERAL = "smolbench-results-414266451290"
 
 
-def test_power_analysis_roster_is_the_config_roster(power_analysis):
+def test_power_analysis_roster_is_the_config_roster(power_analysis: ModuleType) -> None:
     """FAMILIES and MODELS come from study_config, family names included.
 
     Name equality is the half a "same 21 keys" check misses: before this
@@ -136,7 +141,7 @@ def test_power_analysis_roster_is_the_config_roster(power_analysis):
     assert tuple(power_analysis.MODELS) == tuple(roster_keys())
 
 
-def test_power_analysis_module_scope_guards_survive_dash_O(power_analysis):
+def test_power_analysis_module_scope_guards_survive_dash_O(power_analysis: ModuleType) -> None:
     """The drift guards are `raise`, not `assert` -- `python -O` strips asserts.
 
     Checked on the source, because a passing import proves nothing either way:
@@ -151,7 +156,7 @@ def test_power_analysis_module_scope_guards_survive_dash_O(power_analysis):
     assert "raise ValueError(" in head
 
 
-def test_audit_lanes_are_the_config_roster(roster):
+def test_audit_lanes_are_the_config_roster(roster: tuple[str, ...]) -> None:
     """LANES is study_config's roster, in order (and so still equals the driver's)."""
     if not AUDIT.exists():
         pytest.skip("audit_lean_pinning.py lives in a later stack slice")
@@ -159,7 +164,7 @@ def test_audit_lanes_are_the_config_roster(roster):
     assert list(audit.LANES) == list(roster_keys()) == list(roster)
 
 
-def test_bucket_and_region_come_from_the_config(power_analysis):
+def test_bucket_and_region_come_from_the_config(power_analysis: ModuleType) -> None:
     """Every consumer's bucket/region constant equals the committed config's."""
     results = load_study_config().results
     assert power_analysis.S3_BUCKET == results.bucket
@@ -169,7 +174,7 @@ def test_bucket_and_region_come_from_the_config(power_analysis):
 
 
 @pytest.mark.parametrize("path", _NO_LITERALS, ids=lambda p: p.name)
-def test_bucket_and_region_literals_are_gone_from_consumers(path):
+def test_bucket_and_region_literals_are_gone_from_consumers(path: Path) -> None:
     """The value must be read, not re-typed.
 
     An equality assertion alone cannot catch a hand-typed copy that is correct

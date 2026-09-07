@@ -15,6 +15,8 @@ import posixpath
 import sys
 import tarfile
 from pathlib import Path
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -27,7 +29,7 @@ CORPUS = f"{DATA}/leandojo_benchmark_4"
 
 
 @pytest.fixture(scope="module")
-def em():
+def em() -> Iterator[Any]:
     """Load scripts/results/evidence_manifest.py by path."""
     spec = importlib.util.spec_from_file_location(
         "evidence_manifest_s3", SCRIPTS / "results" / "evidence_manifest.py")
@@ -41,14 +43,14 @@ def em():
 
 
 @pytest.fixture(scope="module")
-def tracked(s3_archive) -> set[str]:
+def tracked(s3_archive: Any) -> set[str]:
     """Every archive-relative path under the results tree; guards against a vacuous pass."""
     out = set(s3_archive.keys(RESULTS))
     assert len(out) >= 30, sorted(out)
     return out
 
 
-def _sha256_of_reference(archive, manifest_dir: str, relpath: str, em) -> str:
+def _sha256_of_reference(archive: Any, manifest_dir: str, relpath: str, em: Any) -> str:
     """sha256 of a manifest reference, streamed from S3 (tarball members via BytesIO)."""
     path, member = em._split_reference(relpath)
     rel = posixpath.normpath(posixpath.join(manifest_dir, path))
@@ -64,7 +66,7 @@ def _sha256_of_reference(archive, manifest_dir: str, relpath: str, em) -> str:
         return h.hexdigest()
 
 
-def _verify_on_s3(archive, manifest_dir: str, em) -> list[str]:
+def _verify_on_s3(archive: Any, manifest_dir: str, em: Any) -> list[str]:
     """Port of ``em.verify`` over S3 objects; returns the failure list."""
     data = json.loads(archive.text(f"{manifest_dir}/{em.MANIFEST_NAME}"))
     failures: list[str] = []
@@ -99,7 +101,9 @@ def _verify_on_s3(archive, manifest_dir: str, em) -> list[str]:
     return failures
 
 
-def test_every_tracked_writeup_has_a_verified_manifest(tracked, s3_archive, em):
+def test_every_tracked_writeup_has_a_verified_manifest(
+    tracked: set[str], s3_archive: Any, em: Any,
+) -> None:
     """Every .md/.txt under results/ sits in a manifested dir and is listed."""
     writeups = sorted(p for p in tracked
                       if Path(p).suffix in em.WRITEUP_SUFFIXES
@@ -119,7 +123,9 @@ def test_every_tracked_writeup_has_a_verified_manifest(tracked, s3_archive, em):
                 f"{rel}: listed as {listed[0]['role']!r}, must be 'writeup' to be scanned"
 
 
-def test_every_tracked_manifest_verifies(tracked, s3_archive, em):
+def test_every_tracked_manifest_verifies(
+    tracked: set[str], s3_archive: Any, em: Any,
+) -> None:
     """Every EVIDENCE.json in the archive verifies against its objects."""
     manifests = sorted(p for p in tracked if Path(p).name == em.MANIFEST_NAME)
     assert manifests, "no EVIDENCE.json in the archive"
@@ -128,7 +134,9 @@ def test_every_tracked_manifest_verifies(tracked, s3_archive, em):
         assert not failures, f"{mf}:\n  " + "\n  ".join(failures)
 
 
-def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
+def test_regime_mean_interim_raw_is_marked_superseded(
+    tracked: set[str], s3_archive: Any, em: Any,
+) -> None:
     """The interim raw under a ``_final_`` name must be marked SUPERSEDED."""
     mf = f"{RESULTS}/runs/regime_mean_2026-08-21/{em.MANIFEST_NAME}"
     assert mf in tracked
@@ -151,7 +159,7 @@ def test_regime_mean_interim_raw_is_marked_superseded(tracked, s3_archive, em):
 ALIGN_ASSET_NAME = "lean3_align.json.gz"
 
 
-def test_archived_data_assets_resolve(s3_archive):
+def test_archived_data_assets_resolve(s3_archive: Any) -> None:
     """Replay-passing sidecars exist and the align asset parses from the archive."""
     import gzip
 
@@ -164,19 +172,21 @@ def test_archived_data_assets_resolve(s3_archive):
     assert pairs["ADE_inequality.A"] == "ADEInequality.A"
 
 
-def test_noise_rung_is_token_matched_to_its_hint_counterpart(s3_archive, monkeypatch):
+def test_noise_rung_is_token_matched_to_its_hint_counterpart(
+    s3_archive: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``noise:3`` matches ``hint:3``'s token count exactly, on the real corpus."""
     from smolbench.deduction.lean import context, premises
 
     corpus.reset_caches()
 
     @functools.lru_cache(maxsize=None)
-    def load_split_s3(kind="random", split="val"):
+    def load_split_s3(kind: str = "random", split: str = "val") -> list[corpus.BenchmarkTheorem]:
         raw = json.loads(s3_archive.read(f"{CORPUS}/{kind}/{split}.json"))
         return [corpus._from_json(r) for r in raw]
 
     @functools.lru_cache(maxsize=1)
-    def index_s3():
+    def index_s3() -> dict[str, premises.Premise]:
         idx: dict[str, premises.Premise] = {}
         for line in s3_archive.open(f"{CORPUS}/corpus.jsonl").iter_lines():
             rec = json.loads(line)

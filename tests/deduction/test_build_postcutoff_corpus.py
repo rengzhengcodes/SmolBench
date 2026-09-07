@@ -15,6 +15,9 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -40,7 +43,9 @@ NEW_DATE = "2026-08-30"
 OLD_DATE = "2026-04-30"
 
 
-def _build(out, export=EXPORT, names=NAMES, extra=()):
+def _build(
+    out: Path, export: Path = EXPORT, names: Path = NAMES, extra: Sequence[str] = ()
+) -> Path:
     """Run the builder's ``main`` and return ``<out>/leandojo_benchmark_4``."""
     rc = build.main([
         "--export", str(export), "--names", str(names), "--out", str(out),
@@ -50,12 +55,12 @@ def _build(out, export=EXPORT, names=NAMES, extra=()):
     return out / "leandojo_benchmark_4"
 
 
-def _json(path):
+def _json(path: Path) -> Any:
     return json.loads(path.read_text())
 
 
 @pytest.fixture
-def built(tmp_path):
+def built(tmp_path: Path) -> Path:
     """The fixture export, built once into ``tmp_path/out``."""
     return _build(tmp_path / "out")
 
@@ -63,7 +68,7 @@ def built(tmp_path):
 # Happy path
 
 
-def test_only_the_postcutoff_multi_tactic_theorem_survives(built):
+def test_only_the_postcutoff_multi_tactic_theorem_survives(built: Path) -> None:
     """Pre-cutoff and single-tactic post-cutoff rows are dropped; one row remains."""
     rows = _json(built / "random" / "val.json")
     assert [r["full_name"] for r in rows] == ["Mini.postB"]
@@ -83,7 +88,7 @@ def test_only_the_postcutoff_multi_tactic_theorem_survives(built):
     assert row["start"] == [20, 1]
 
 
-def test_local_url_is_rewritten_to_github(built):
+def test_local_url_is_rewritten_to_github(built: Path) -> None:
     """The export's LOCAL checkout path becomes the canonical GitHub URL."""
     assert _json(EXPORT / "metadata.json")["from_repo"]["url"] == "/mnt/data/mathlib4"
     (row,) = _json(built / "random" / "val.json")
@@ -91,7 +96,7 @@ def test_local_url_is_rewritten_to_github(built):
     assert _json(built / "metadata.json")["from_repo"]["url"] == GITHUB_URL
 
 
-def test_split_assignment_is_sha256_deterministic(built):
+def test_split_assignment_is_sha256_deterministic(built: Path) -> None:
     """sha256(full_name)[:8] % 100 buckets Mini.postB into val (89) though the fixture files it under random/test, proving splits are re-derived, not inherited."""
     assert int(hashlib.sha256(b"Mini.postB").hexdigest()[:8], 16) % 100 == 89
     for kind in ("random", "novel_premises"):
@@ -100,14 +105,14 @@ def test_split_assignment_is_sha256_deterministic(built):
         assert [r["full_name"] for r in _json(built / kind / "val.json")] == ["Mini.postB"]
 
 
-def test_both_split_families_carry_the_same_rows(built):
+def test_both_split_families_carry_the_same_rows(built: Path) -> None:
     """novel_premises is a copy of random so every loader path works."""
     for split in ("train", "val", "test"):
         assert _json(built / "random" / f"{split}.json") == _json(
             built / "novel_premises" / f"{split}.json")
 
 
-def test_metadata_block_matches_package_a_contract(built):
+def test_metadata_block_matches_package_a_contract(built: Path) -> None:
     """metadata.json copies the export and adds the `postcutoff` block."""
     meta = _json(built / "metadata.json")
     assert meta["dataset_name"] == DATASET_NAME
@@ -127,13 +132,13 @@ def test_metadata_block_matches_package_a_contract(built):
     }
 
 
-def test_premise_files_pass_through_byte_identical(built):
+def test_premise_files_pass_through_byte_identical(built: Path) -> None:
     """corpus.jsonl and traced_files.jsonl are copied unfiltered."""
     for name in ("corpus.jsonl", "traced_files.jsonl"):
         assert (built / name).read_bytes() == (EXPORT / name).read_bytes()
 
 
-def test_build_summary_records_every_filter_step(tmp_path, built):
+def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) -> None:
     """BUILD_SUMMARY.json sits beside the corpus with counts and the pool pin."""
     summary = _json(tmp_path / "out" / "BUILD_SUMMARY.json")
     assert summary["new_commit"] == NEW_COMMIT
@@ -162,7 +167,7 @@ def test_build_summary_records_every_filter_step(tmp_path, built):
 # Digest recipe with >1 name: a 1-name pool can't distinguish join separators.
 
 
-def _synthetic_export(root, names_and_tactics):
+def _synthetic_export(root: Path, names_and_tactics: dict[str, int]) -> Path:
     """Write a minimal v2 export carrying ``{full_name: n_traced_tactics}``."""
     rows = []
     for i, (name, ntac) in enumerate(sorted(names_and_tactics.items())):
@@ -189,7 +194,7 @@ def _synthetic_export(root, names_and_tactics):
     return root
 
 
-def _names_json(path, decls):
+def _names_json(path: Path, decls: dict[str, Any]) -> Path:
     path.write_text(json.dumps({
         "new_commit": NEW_COMMIT, "old_commit": OLD_COMMIT,
         "target_date": "2026-06-03", "method": "name-set-difference+pr-opened-after-T",
@@ -198,14 +203,14 @@ def _names_json(path, decls):
     return path
 
 
-def _decl(**over):
+def _decl(**over: Any) -> dict[str, Any]:
     d = {"file_path": "Mini/New.lean", "introduced_commit": "c" * 40,
          "pr_number": 1, "pr_created_at": "2026-06-10T09:15:00Z", "reason": "new-name"}
     d.update(over)
     return d
 
 
-def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path):
+def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path: Path) -> None:
     """sha256 over sorted full_names joined by "\\n" (audit_lean_pinning's recipe)."""
     export = _synthetic_export(tmp_path / "exp", {"Mini.postA": 2, "Mini.postB": 2})
     names = _names_json(tmp_path / "names.json",
@@ -227,13 +232,13 @@ def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path):
 # so none can pass merely because the input was unreadable.
 
 
-def _real_export_copy(tmp_path):
+def _real_export_copy(tmp_path: Path) -> Path:
     dst = tmp_path / "exp"
     shutil.copytree(EXPORT, dst)
     return dst
 
 
-def test_refuses_when_export_commit_disagrees_with_names_json(tmp_path):
+def test_refuses_when_export_commit_disagrees_with_names_json(tmp_path: Path) -> None:
     """Commit mismatch -> SystemExit naming BOTH commits."""
     export = _real_export_copy(tmp_path)
     meta = _json(export / "metadata.json")
@@ -245,7 +250,7 @@ def test_refuses_when_export_commit_disagrees_with_names_json(tmp_path):
     assert "f" * 40 in msg and NEW_COMMIT in msg
 
 
-def test_refuses_when_a_selected_row_carries_a_foreign_commit(tmp_path):
+def test_refuses_when_a_selected_row_carries_a_foreign_commit(tmp_path: Path) -> None:
     """A row traced at another commit cannot be part of this pool."""
     export = _real_export_copy(tmp_path)
     # Mini.postB occurs once per family; poison BOTH, so the refusal cannot be
@@ -259,7 +264,7 @@ def test_refuses_when_a_selected_row_carries_a_foreign_commit(tmp_path):
     assert "Mini.postB" in str(exc.value) and "e" * 40 in str(exc.value)
 
 
-def test_refuses_when_provenance_key_is_missing(tmp_path):
+def test_refuses_when_provenance_key_is_missing(tmp_path: Path) -> None:
     """Missing `introduced_commit` KEY -> SystemExit naming decl and key."""
     decls = _json(NAMES)["decls"]
     del decls["Mini.postB"]["introduced_commit"]
@@ -269,7 +274,7 @@ def test_refuses_when_provenance_key_is_missing(tmp_path):
     assert "Mini.postB" in str(exc.value) and "introduced_commit" in str(exc.value)
 
 
-def test_refuses_when_reason_is_null(tmp_path):
+def test_refuses_when_reason_is_null(tmp_path: Path) -> None:
     """`reason` must be non-null; only pr_number/pr_created_at may be null."""
     decls = _json(NAMES)["decls"]
     decls["Mini.postB"]["reason"] = None
@@ -279,7 +284,7 @@ def test_refuses_when_reason_is_null(tmp_path):
     assert "Mini.postB" in str(exc.value) and "reason" in str(exc.value)
 
 
-def test_refuses_when_the_final_pool_is_empty(tmp_path):
+def test_refuses_when_the_final_pool_is_empty(tmp_path: Path) -> None:
     """Real export, names that match nothing in it -> SystemExit."""
     names = _names_json(tmp_path / "names.json", {"Mini.notPresent": _decl()})
     with pytest.raises(SystemExit) as exc:
@@ -287,7 +292,7 @@ def test_refuses_when_the_final_pool_is_empty(tmp_path):
     assert "empty" in str(exc.value).lower()
 
 
-def test_refuses_when_the_pool_is_emptied_by_the_tactic_floor(tmp_path):
+def test_refuses_when_the_pool_is_emptied_by_the_tactic_floor(tmp_path: Path) -> None:
     """A post-cutoff name with only 1 traced tactic is not a usable theorem."""
     names = _names_json(tmp_path / "names.json", {"Mini.postA": _decl()})
     with pytest.raises(SystemExit) as exc:
@@ -295,7 +300,7 @@ def test_refuses_when_the_pool_is_emptied_by_the_tactic_floor(tmp_path):
     assert "empty" in str(exc.value).lower()
 
 
-def test_refuses_when_a_required_export_file_is_missing(tmp_path):
+def test_refuses_when_a_required_export_file_is_missing(tmp_path: Path) -> None:
     """Missing corpus.jsonl -> SystemExit naming the path."""
     export = _real_export_copy(tmp_path)
     (export / "corpus.jsonl").unlink()
@@ -307,7 +312,9 @@ def test_refuses_when_a_required_export_file_is_missing(tmp_path):
 # The built corpus loads through the real loader (Package A's API).
 
 
-def test_built_corpus_metadata_reads_through_the_corpus_module(built, monkeypatch):
+def test_built_corpus_metadata_reads_through_the_corpus_module(
+    built: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Raw metadata assertion -- independent of Package A having landed."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(built))
     corpus.reset_caches()
@@ -318,7 +325,9 @@ def test_built_corpus_metadata_reads_through_the_corpus_module(built, monkeypatc
         corpus.reset_caches()
 
 
-def test_built_corpus_satisfies_package_a_postcutoff_api(built, monkeypatch):
+def test_built_corpus_satisfies_package_a_postcutoff_api(
+    built: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`is_postcutoff_corpus` + the per-row flag (Package A, corpus.py)."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(built))
     corpus.reset_caches()
@@ -335,13 +344,13 @@ def test_built_corpus_satisfies_package_a_postcutoff_api(built, monkeypatch):
 # trace_mathlib_ec2.sh: only --dry-run is executable on this box.
 
 
-def test_runbook_parses(tmp_path):
+def test_runbook_parses(tmp_path: Path) -> None:
     """`bash -n` accepts the script."""
     r = subprocess.run(["bash", "-n", str(RUNBOOK)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
 
 
-def _dry_run(tmp_path, extra=()):
+def _dry_run(tmp_path: Path, extra: Sequence[str] = ()) -> str:
     """Run the runbook's --dry-run under a bare environment (no elan/lake/aws/python3.12/network/token/root)."""
     (tmp_path / "home").mkdir(exist_ok=True)
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(tmp_path / "home")}
@@ -351,7 +360,7 @@ def _dry_run(tmp_path, extra=()):
     return r.stdout
 
 
-def test_runbook_dry_run_prints_the_plan(tmp_path):
+def test_runbook_dry_run_prints_the_plan(tmp_path: Path) -> None:
     """The plan names the pinned commit, deps, precondition and S3 destination."""
     out = _dry_run(tmp_path)
     for needle in (
@@ -368,7 +377,7 @@ def test_runbook_dry_run_prints_the_plan(tmp_path):
         assert needle in out, f"missing {needle!r} in --dry-run plan:\n{out}"
 
 
-def test_runbook_dry_run_writes_nothing(tmp_path):
+def test_runbook_dry_run_writes_nothing(tmp_path: Path) -> None:
     """--dry-run writes nothing; --workdir is pointed inside tmp_path so this can't pass vacuously against $HOME, which the script never touches anyway."""
     workdir = tmp_path / "wd"
     _dry_run(tmp_path, ["--workdir", str(workdir)])
@@ -377,7 +386,7 @@ def test_runbook_dry_run_writes_nothing(tmp_path):
     assert list((tmp_path / "home").iterdir()) == []
 
 
-def test_runbook_shims_the_hard_imports_and_pins_deps():
+def test_runbook_shims_the_hard_imports_and_pins_deps() -> None:
     """v2's utils/__init__ hard-imports deepspeed + pytorch_lightning."""
     src = RUNBOOK.read_text()
     assert "deepspeed" in src and "pytorch_lightning" in src

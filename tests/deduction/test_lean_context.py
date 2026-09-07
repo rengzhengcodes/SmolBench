@@ -2,6 +2,9 @@
 Goldens below were checked by hand, not copied from output.
 """
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 
 import smolbench.deduction.lean.context as context
@@ -12,7 +15,8 @@ from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture
-def thms(monkeypatch, tmp_path):
+def thms(monkeypatch: pytest.MonkeyPatch,
+         tmp_path: Path) -> Iterator[dict[str, corpus.BenchmarkTheorem]]:
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
     # Empty HOME: no ~/.cache/lean_dojo traced repo, so `premises._traced_root`
     # returns None and `body_with_proof` falls back to the fixture's own code --
@@ -30,7 +34,9 @@ def _cl100k_count(text: str) -> int:
     return len(tiktoken.get_encoding("cl100k_base").encode(text))
 
 
-def _noise_cases(thms):
+def _noise_cases(
+        thms: dict[str, corpus.BenchmarkTheorem],
+) -> Iterator[tuple[str, corpus.BenchmarkTheorem, int, int]]:
     """Every (theorem, k, level) noise rung renderable on the fixture."""
     for name in sorted(thms):
         t = thms[name]
@@ -39,7 +45,7 @@ def _noise_cases(thms):
                 yield name, t, k, level
 
 
-def test_state_parsing():
+def test_state_parsing() -> None:
     """split_state/extract_goal_only separate hypotheses from goals."""
     hyps, goals = context.split_state("n : ℕ\nh : P n\n⊢ Q n")
     assert hyps == "n : ℕ\nh : P n"
@@ -62,7 +68,7 @@ _TWO_GOALS = (
 )
 
 
-def test_extract_goal_only_drops_hypotheses_from_EVERY_goal():
+def test_extract_goal_only_drops_hypotheses_from_EVERY_goal() -> None:
     """stepk:0 must withhold hypotheses from every goal, not just the first (extract_goal_only used to delegate to split_state, which stops at the first ⊢ and leaked the rest)."""
     got = context.extract_goal_only(_TWO_GOALS)
     for keep in ("case inl", "case inr", "⊢ Q n", "⊢ R m"):
@@ -71,7 +77,7 @@ def test_extract_goal_only_drops_hypotheses_from_EVERY_goal():
         assert leak not in got, f"{leak!r} leaked into stepk:0: {got!r}"
 
 
-def test_extract_goal_only_passes_through_a_state_with_no_goal_line():
+def test_extract_goal_only_passes_through_a_state_with_no_goal_line() -> None:
     """No `⊢` anywhere: return the state unchanged rather than an empty rung."""
     assert context.extract_goal_only("weird state") == "weird state"
 
@@ -88,7 +94,8 @@ def test_extract_goal_only_passes_through_a_state_with_no_goal_line():
     ("hint", 1, ["## Premise signatures", "theorem Mini.premiseA {n : ℕ} (h : P n) : R n",
                  "def Mini.premiseB (n : ℕ) : ℕ"], []),
 ])
-def test_render_ladder(thms, chain, level, required, forbidden):
+def test_render_ladder(thms: dict[str, corpus.BenchmarkTheorem], chain: str, level: int,
+                       required: list[str], forbidden: list[str]) -> None:
     """Each rung adds its own sections and nothing from higher rungs."""
     r = context.render(thms["Mini.theoremA"], 2, chain, level)
     assert r.label == f"{chain}:{level}"
@@ -96,7 +103,7 @@ def test_render_ladder(thms, chain, level, required, forbidden):
     assert not any(m in r.text for m in forbidden)
 
 
-def test_is_trivial_rung_branches(thms):
+def test_is_trivial_rung_branches(thms: dict[str, corpus.BenchmarkTheorem]) -> None:
     """stepk:1 is trivial only without hypotheses; hint rungs need premises."""
     a = thms["Mini.theoremA"]
     b = thms["Mini.theoremB"]
@@ -119,7 +126,7 @@ def test_is_trivial_rung_branches(thms):
     assert context.is_trivial_rung(a, 2, "noise", 3) is True
 
 
-def test_noise_arm_invariants(thms):
+def test_noise_arm_invariants(thms: dict[str, corpus.BenchmarkTheorem]) -> None:
     """noise:N == hint:(N-1) plus whitespace, at exactly hint:N's PROMPT token count -- checked on the full prompt because the instruction suffix's own token cost depends on what precedes it."""
     pytest.importorskip("tiktoken")
     checked = padded_seen = 0
@@ -153,13 +160,15 @@ def test_noise_arm_invariants(thms):
     assert padded_seen >= 2, f"only {padded_seen} noise rungs actually padded"
 
 
-def test_noise_rejects_impossible_targets(thms, monkeypatch):
+def test_noise_rejects_impossible_targets(
+        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch) -> None:
     """A baseline longer than its target, and noise:0, must both raise."""
     pytest.importorskip("tiktoken")
     t = thms["Mini.theoremA"]
     with pytest.raises(ValueError):
         context.render(t, 2, "noise", 0)
-    def fake_hint_parts(theorem, k, level):
+    def fake_hint_parts(theorem: corpus.BenchmarkTheorem, k: int,
+                        level: int) -> list[str]:
         return ["X " * 400] if level == 1 else ["short"]
     monkeypatch.setattr(context, "_render_hint_parts", fake_hint_parts)
     with pytest.raises(ValueError):
@@ -169,7 +178,8 @@ def test_noise_rejects_impossible_targets(thms, monkeypatch):
 # The pad is matched on the PROMPT, not on the context.
 
 
-def test_noise_pad_is_matched_on_the_full_prompt(thms, monkeypatch):
+def test_noise_pad_is_matched_on_the_full_prompt(
+        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch) -> None:
     """Constructed case (the fixture corpus never produces one) where matching on CONTEXT and matching on PROMPT disagree: context-matching stops at r=2 (15 tokens, exact) but ships a 42-token prompt against the hint arm's 43; matching on PROMPT takes r=3 and lands on 43."""
     pytest.importorskip("tiktoken")
     base = "## Current goal\n```\n⊢ Q n\n```"
@@ -178,7 +188,8 @@ def test_noise_pad_is_matched_on_the_full_prompt(thms, monkeypatch):
         "the constructed baseline drifted; recompute the table in this docstring"
     )
 
-    def fake_hint_parts(theorem, k, level):
+    def fake_hint_parts(theorem: corpus.BenchmarkTheorem, k: int,
+                        level: int) -> list[str]:
         return [target] if level == 2 else [base]
 
     monkeypatch.setattr(context, "_render_hint_parts", fake_hint_parts)
@@ -194,7 +205,7 @@ def test_noise_pad_is_matched_on_the_full_prompt(thms, monkeypatch):
     assert noise.text[len(base):].strip() == ""
 
 
-def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback():
+def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback() -> None:
     """The pad search counts with TiktokenTokenizer, never a char-count fallback -- an approximate count can't satisfy an exact length control; `_count_tokens` keeps its fallback for callers where a rough count is fine (is_trivial_rung's non-noise branches, cli.py, test_s3_archive.py)."""
     source = (
         __import__("pathlib").Path(context.__file__).read_text()
@@ -216,7 +227,8 @@ _FULL_SOURCE_HEADING = "## Premise full source (with proof)"
 _FIXTURE_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
 
 
-def test_hint2_header_says_signature_when_no_traced_source(thms):
+def test_hint2_header_says_signature_when_no_traced_source(
+        thms: dict[str, corpus.BenchmarkTheorem]) -> None:
     """Without a traced repo, body_with_proof falls back to the corpus's stored signature; the header must say so instead of claiming full source with proof."""
     assert premises._traced_root() is None, "fixture HOME must have no traced repo"
     text = context.render(thms["Mini.theoremA"], 2, "hint", 2).text
@@ -225,7 +237,8 @@ def test_hint2_header_says_signature_when_no_traced_source(thms):
 
 
 def test_hint2_header_says_full_source_when_the_traced_repo_is_present(
-        thms, monkeypatch, tmp_path):
+        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path) -> None:
     """The other direction: with a real traced slice available, the header must say full source rather than always defaulting to signature."""
     repo = (tmp_path / "traced" / ".cache" / "lean_dojo"
             / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}" / "mathlib4")
@@ -253,7 +266,7 @@ def test_hint2_header_says_full_source_when_the_traced_repo_is_present(
 # The premise-reference stoplist has no unreachable entries.
 
 
-def test_lean_noise_stoplist_has_no_dead_entries():
+def test_lean_noise_stoplist_has_no_dead_entries() -> None:
     """Every _LEAN_NOISE entry must be reachable: dead if it's a single char (pre-empted by the length guard) or doesn't match _IDENT_RE (e.g. "trivial!", since ! is outside the class)."""
     dead_short = sorted(t for t in premises._LEAN_NOISE if len(t) <= 1)
     assert not dead_short, f"pre-empted by the len(tok) <= 1 guard: {dead_short}"
@@ -267,7 +280,7 @@ def test_lean_noise_stoplist_has_no_dead_entries():
     )
 
 
-def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path):
+def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path: Path) -> None:
     """Noise-rung rendering must not reach into smolbench.induction._common (another study's private module); run in a subprocess because a sys.meta_path blocker only bites pre-import, and this module may already be imported in-process by an induction test."""
     import subprocess
     import sys as _sys

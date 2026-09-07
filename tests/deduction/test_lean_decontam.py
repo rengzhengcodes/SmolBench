@@ -4,6 +4,8 @@ Fixture (tests/fixtures/lean_mini/random/val.json): Mini.theoremA has 3 tactics
 (``intro h``, ``simp``, ``exact Mini.premiseA h (Mini.premiseB n)``); Mini.theoremB
 has 2, too short for chain/3-gram keys, so it only gives pair keys.
 """
+from collections.abc import Iterator
+
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
@@ -16,7 +18,7 @@ THEOREM_A_CHAIN = ["intro h", "simp", "exact Mini.premiseA h (Mini.premiseB n)"]
 
 
 @pytest.fixture
-def index(monkeypatch) -> HoldoutIndex:
+def index(monkeypatch: pytest.MonkeyPatch) -> Iterator[HoldoutIndex]:
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
     corpus.reset_caches()
     idx = HoldoutIndex.build([("random", "val")])
@@ -24,7 +26,7 @@ def index(monkeypatch) -> HoldoutIndex:
     corpus.reset_caches()
 
 
-def _add_fake(index, name, state):
+def _add_fake(index: HoldoutIndex, name: str, state: str) -> None:
     """Index one extra synthetic single-tactic theorem named `name` at `state`."""
     ref = corpus.load_split("random", "val")[0]
     tactic = corpus.TracedTactic(
@@ -34,7 +36,7 @@ def _add_fake(index, name, state):
         full_name=f"Mini.{name}", start=(1, 1), end=(1, 1), traced_tactics=[tactic]))
 
 
-def test_normalization_and_variants():
+def test_normalization_and_variants() -> None:
     """normalize_text collapses whitespace/NFC and per-elaboration counters."""
     assert normalize_text("  a \n\n  b\tc ") == "a b c"
     assert normalize_text("caf\u00e9") == normalize_text("cafe\u0301")  # NFC vs NFD
@@ -51,7 +53,7 @@ def test_normalization_and_variants():
     assert state_variants("⊢ 1 + 1 = 2") == ["⊢ 1 + 1 = 2"]
 
 
-def test_index_stats(index):
+def test_index_stats(index: HoldoutIndex) -> None:
     """Only theoremA (3 tactics) contributes chain/3-gram keys."""
     s = index.stats()
     assert s["names"] == 2
@@ -62,7 +64,7 @@ def test_index_stats(index):
     assert s["pairs"] > 0
 
 
-def test_planted_leaks_by_key_family(index):
+def test_planted_leaks_by_key_family(index: HoldoutIndex) -> None:
     """One planted leak per key family: K1 name, K2 statement, K3 state, K4 chain/pair."""
     assert [h.key for h in index.check(name="Mini.theoremA")] == ["name"]
     hits = index.check(statement="n : ℕ\n  hn : n > 0\n\n⊢ P n  →  Q n")
@@ -78,7 +80,7 @@ def test_planted_leaks_by_key_family(index):
     assert hits and hits[0].key == "pair" and hits[0].theorem == "Mini.theoremA"
 
 
-def test_long_and_near_duplicate_statements(index):
+def test_long_and_near_duplicate_statements(index: HoldoutIndex) -> None:
     """Long goal-only and alpha-renamed restatements hit; short generic goals do not."""
     long_goal = "⊢ ∀ (s t : Set F) (m : F ≃+* F), s ⊆ Set.range ↑m → s / t ⊆ Set.range ↑m"
     _add_fake(index, "longGoal", f"F : Type u_1\ninst : Field F\n{long_goal}")
@@ -97,7 +99,7 @@ def test_long_and_near_duplicate_statements(index):
     assert index.check(states=["⊢ 1 + 1 = 2"]) == []
 
 
-def test_clean_rows_and_mentions(index):
+def test_clean_rows_and_mentions(index: HoldoutIndex) -> None:
     """Unrelated rows, short generic chains and name mentions never drop a row."""
     assert index.check(
         name="Other.lemma",
@@ -138,7 +140,7 @@ _LSH_RNG_SEED = 20260905
 _OLD_INDEX_DETECTED, _N_ABOVE, _N_BELOW = 150, 152, 688
 
 
-def _perturbed(rng, text, n_edits):
+def _perturbed(rng: random.Random, text: str, n_edits: int) -> str:
     """`text` with `n_edits` single-character substitutions -- an alpha-rename analogue."""
     out = text
     for _ in range(n_edits):
@@ -147,7 +149,7 @@ def _perturbed(rng, text, n_edits):
     return out
 
 
-def _index_one_statement(text):
+def _index_one_statement(text: str) -> tuple[HoldoutIndex, list[frozenset[str]]]:
     """A `HoldoutIndex` holding only `text`'s K2 statement variants.
 
     Built through the real `_add_theorem`, not by poking datasketch internals
@@ -164,7 +166,7 @@ def _index_one_statement(text):
     return idx, [D._shingles(v) for v in D._index_variants(text)]
 
 
-def _decisions(idx, indexed):
+def _decisions(idx: HoldoutIndex, indexed: list[frozenset[str]]) -> list[tuple[float, bool]]:
     """Score the 840-candidate corpus: ``[(exact_jaccard, was_detected), ...]``.
 
     Ground truth is the exact shingle Jaccard maximised over every (candidate,
@@ -190,7 +192,7 @@ def _decisions(idx, indexed):
     return out
 
 
-def test_near_duplicate_decisions_are_reproduced_and_improved():
+def test_near_duplicate_decisions_are_reproduced_and_improved() -> None:
     """The datasketch index reproduces every decision the hand-rolled MinHash/LSH one made: precision is exact by construction (never reports below threshold), and recall matches at 152/152 against the old index's 150/152."""
     idx, indexed = _index_one_statement(_LSH_BASE)
     assert len(indexed) >= 1
@@ -215,7 +217,7 @@ def test_near_duplicate_decisions_are_reproduced_and_improved():
     )
 
 
-def test_the_lsh_banding_is_the_configured_one_not_an_optimised_one():
+def test_the_lsh_banding_is_the_configured_one_not_an_optimised_one() -> None:
     """MinHashLSH must be built with explicit params, or it silently re-derives (b, r) from the threshold -- e.g. (4, 15), which doesn't cover all 64 signature slots -- discarding decontam_config.toml's 8x8 banding with no error."""
     from datasketch import MinHashLSH
 
@@ -230,7 +232,7 @@ def test_the_lsh_banding_is_the_configured_one_not_an_optimised_one():
     assert (built.b, built.r) == (cfg.bands, cfg.rows)
 
 
-def test_the_shingle_set_is_the_grams_themselves():
+def test_the_shingle_set_is_the_grams_themselves() -> None:
     """Shingles are the n-grams themselves, not 64-bit blake2b hashes of them (measured: dropping the hash changed no Jaccard decision on the corpus above, max abs diff 0.0); pinned so a future "optimisation" doesn't reintroduce the collision surface."""
     grams = D._shingles("abcdefg")
     assert grams == {"abcde", "bcdef", "cdefg"}
@@ -243,7 +245,7 @@ def test_the_shingle_set_is_the_grams_themselves():
 # The holdout's default spec list comes from the corpus, not a deleted module's literal.
 
 
-def test_default_eval_specs_come_from_the_corpus(monkeypatch):
+def test_default_eval_specs_come_from_the_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
     """HoldoutIndex.build() with no args indexes corpus.eval_split_specs(), resolved from the active corpus at call time (the old sft.DEFAULT_EVAL_SPECS split family doesn't exist in the post-cutoff corpus)."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
     corpus.reset_caches()
@@ -260,7 +262,7 @@ def test_default_eval_specs_come_from_the_corpus(monkeypatch):
         corpus.reset_caches()
 
 
-def test_decontam_does_not_import_the_deleted_sft_module():
+def test_decontam_does_not_import_the_deleted_sft_module() -> None:
     """The SFT-dataset builder is gone; `decontam` must not reach for it."""
     import smolbench.deduction.lean.decontam as decontam_module
 

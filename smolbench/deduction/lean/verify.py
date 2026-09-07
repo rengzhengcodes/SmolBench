@@ -220,7 +220,9 @@ def _split_tactics(tail: str) -> list[str]:
     return [line.strip() for line in tail.splitlines() if line.strip()]
 
 
-def try_tail(session, state_at_k, tail: str, theorem_name: str) -> ProofResult:
+def try_tail(
+    session: replbackend.ReplSession, state_at_k: int, tail: str, theorem_name: str
+) -> ProofResult:
     """Apply each line of `tail` as a separate tactic from `state_at_k`.
 
     Proof states are immutable and `replbackend.ReplSession.step` returns a
