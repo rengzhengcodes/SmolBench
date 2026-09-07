@@ -15,7 +15,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -35,12 +38,12 @@ _BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_b
 BUCKET_PREFIX = "deduction_postcutoff/runs/"
 
 
-def _owned_by(module, directory: Path) -> bool:
+def _owned_by(module: Any, directory: Path) -> bool:
     file = getattr(module, "__file__", None)
     return bool(file) and Path(file).resolve().parent == directory.resolve()
 
 
-def _load(name: str):
+def _load(name: str) -> ModuleType:
     for sibling in _BARE_SIBLINGS:
         mod = sys.modules.get(sibling)
         if mod is not None and not _owned_by(mod, ANALYSIS):
@@ -54,7 +57,7 @@ def _load(name: str):
 
 
 @pytest.fixture(scope="module")
-def rows_source():
+def rows_source() -> ModuleType:
     return _load("rows_source")
 
 
@@ -66,11 +69,12 @@ class FakePaginator:
     continues past that.
     """
 
-    def __init__(self, objects: "dict[str, str]", calls: list):
+    def __init__(self, objects: "dict[str, str]", calls: list[Any]) -> None:
         self._objects = objects
         self._calls = calls
 
-    def paginate(self, *, Bucket, Prefix, Delimiter=None):
+    def paginate(self, *, Bucket: str, Prefix: str,
+                 Delimiter: str | None = None) -> Iterator[dict[str, Any]]:
         self._calls.append(("paginate", Prefix, Delimiter))
         keys = sorted(k for k in self._objects if k.startswith(Prefix))
         if Delimiter is None:
@@ -92,16 +96,16 @@ class FakePaginator:
 class FakeS3:
     """Records every call; `download_file` writes the in-memory body to disk."""
 
-    def __init__(self, objects: "dict[str, str]"):
+    def __init__(self, objects: "dict[str, str]") -> None:
         self.objects = objects
         self.calls: list = []
         self.downloads: list[str] = []
 
-    def get_paginator(self, name):
+    def get_paginator(self, name: str) -> FakePaginator:
         assert name == "list_objects_v2", name
         return FakePaginator(self.objects, self.calls)
 
-    def download_file(self, bucket, key, dest):
+    def download_file(self, bucket: str, key: str, dest: str | Path) -> None:
         self.downloads.append(key)
         Path(dest).write_text(self.objects[key])
 
@@ -115,7 +119,9 @@ def _bucket(**runs: "dict[str, str]") -> "dict[str, str]":
     return out
 
 
-def test_download_lands_the_rows_dir_layout_the_report_scripts_read(rows_source, tmp_path):
+def test_download_lands_the_rows_dir_layout_the_report_scripts_read(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """scaling_<key>/ on S3 becomes <key>/ locally, the layout error_bars.lane_outcomes and hint_vs_noise.main already expect from --rows-dir (power_analysis keys models off each row's own `model` field instead)."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": '{"kind": "cell"}\n',
@@ -139,7 +145,9 @@ def test_download_lands_the_rows_dir_layout_the_report_scripts_read(rows_source,
         "verified_rows.jsonl", "verified_rows.jsonl"]
 
 
-def test_download_prefers_verified_rows_over_the_all_rows_fallback(rows_source, tmp_path):
+def test_download_prefers_verified_rows_over_the_all_rows_fallback(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """`candidates` is a preference order; the landed basename keeps the choice visible, so power_analysis's "this input is unverified" banner still fires on the all_rows.jsonl fallback (error_bars/hint_vs_noise pass only the verified name)."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": "V\n", "all_rows.jsonl": "A\n"},
@@ -159,7 +167,9 @@ def test_download_prefers_verified_rows_over_the_all_rows_fallback(rows_source, 
         "glm-4.7/verified_rows.jsonl"]
 
 
-def test_a_superseded_object_in_the_bucket_refuses_before_any_download(rows_source, tmp_path):
+def test_a_superseded_object_in_the_bucket_refuses_before_any_download(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """The retired-artifact guard fires first, on the S3 path too: a 404-probe loop would never see an all_rows_SUPERSEDED-<stamp>.jsonl sitting beside live rows, so the reader lists a run instead of blind-downloading, and must refuse before anything lands on disk."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {
@@ -178,7 +188,7 @@ def test_a_superseded_object_in_the_bucket_refuses_before_any_download(rows_sour
     assert list(tmp_path.iterdir()) == [], "wrote to disk before refusing"
 
 
-def test_bucket_and_region_come_from_the_config(rows_source):
+def test_bucket_and_region_come_from_the_config(rows_source: ModuleType) -> None:
     """The archive's address is READ from study_config, never re-typed here."""
     from smolbench.evals.study_config import load_study_config
 
@@ -187,7 +197,9 @@ def test_bucket_and_region_come_from_the_config(rows_source):
         results.bucket, results.region)
 
 
-def test_resolve_rows_dir_local_path_touches_no_client(rows_source, tmp_path):
+def test_resolve_rows_dir_local_path_touches_no_client(
+    rows_source: ModuleType, tmp_path: Path
+) -> None:
     """A ``--rows-dir`` run must be usable with no S3 client and no boto3."""
     client = FakeS3({})
     assert rows_source.resolve_rows_dir(
@@ -199,18 +211,20 @@ def test_resolve_rows_dir_local_path_touches_no_client(rows_source, tmp_path):
     (None, None),
     (Path("/tmp/somewhere"), "deduction_postcutoff/runs"),
 ])
-def test_resolve_rows_dir_demands_exactly_one_source(rows_source, rows_dir, s3_prefix):
+def test_resolve_rows_dir_demands_exactly_one_source(
+    rows_source: ModuleType, rows_dir: Path | None, s3_prefix: str | None
+) -> None:
     with pytest.raises(ValueError, match="exactly one of"):
         rows_source.resolve_rows_dir(rows_dir=rows_dir, s3_prefix=s3_prefix)
 
 
-def test_resolve_rows_dir_refuses_an_empty_prefix(rows_source):
+def test_resolve_rows_dir_refuses_an_empty_prefix(rows_source: ModuleType) -> None:
     """An empty prefix would list the entire bucket rather than this study."""
     with pytest.raises(ValueError, match="empty key prefix"):
         rows_source.resolve_rows_dir(rows_dir=None, s3_prefix="/")
 
 
-def test_resolve_rows_dir_names_the_uri_when_nothing_landed(rows_source):
+def test_resolve_rows_dir_names_the_uri_when_nothing_landed(rows_source: ModuleType) -> None:
     client = FakeS3({})
     with pytest.raises(SystemExit) as excinfo:
         rows_source.resolve_rows_dir(
@@ -233,7 +247,10 @@ def _lane_rows(n_theorems: int, b: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(tmp_path, monkeypatch, capsys):
+def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
     """hint_vs_noise.py --s3 produces the report from the archive alone: boto3.client is monkeypatched rather than a client injected, so the lazy import inside download_scaling_rows and the after-parsing default-prefix resolution are both exercised for real."""
     import boto3
 

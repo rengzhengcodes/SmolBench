@@ -13,6 +13,8 @@ import os
 import re
 import subprocess
 import sys
+from types import ModuleType
+from typing import Any, NoReturn
 
 import pytest
 
@@ -41,12 +43,12 @@ FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
 
 
 @pytest.fixture(scope="module")
-def manifest() -> dict:
+def manifest() -> dict[str, Any]:
     return json.loads(MANIFEST.read_text())
 
 
 @pytest.fixture(scope="module")
-def emitted(tmp_path_factory, audit) -> dict:
+def emitted(tmp_path_factory: pytest.TempPathFactory, audit: ModuleType) -> dict[str, Any]:
     """A manifest freshly emitted by `--emit-manifest`, offline, from the fixture.
 
     Makes the committed manifest's claimed provenance checkable without the
@@ -83,7 +85,9 @@ MANIFEST_CASES = [
 
 
 @pytest.mark.parametrize("which,expected", MANIFEST_CASES)
-def test_pinned_manifest_identity(request, which, expected):
+def test_pinned_manifest_identity(
+    request: pytest.FixtureRequest, which: str, expected: dict[str, Any],
+) -> None:
     """Membership digest, corpus provenance, and the recorded draw recipe."""
     manifest = request.getfixturevalue(which)
     names = manifest["full_names"]
@@ -112,7 +116,7 @@ def test_pinned_manifest_identity(request, which, expected):
     assert (d["limit"], d["seed"], d["pool_size"]) == expected["shape"]
 
 
-def test_slug_theorem_maps_pinned_names_injectively():
+def test_slug_theorem_maps_pinned_names_injectively() -> None:
     """The lossy on-disk slug must not collide two distinct pinned theorems."""
     spec = importlib.util.spec_from_file_location(
         "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
@@ -129,7 +133,7 @@ def test_slug_theorem_maps_pinned_names_injectively():
 
 
 @pytest.fixture(scope="module")
-def audit():
+def audit() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
     )
@@ -138,7 +142,7 @@ def audit():
     return module
 
 
-def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit):
+def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType) -> None:
     """A cell no lane spooled a prompt for must not certify as byte-identical."""
     lanes = audit.LANES
     shared = {lane: {"thm|stepk-1": "etag-a", "thm|hint-2": "etag-b"} for lane in lanes}
@@ -150,17 +154,17 @@ def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit):
     assert audit.divergent_prompt_cells({"thm|stepk-1"}, differing) == {"thm|stepk-1"}
 
 
-def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit):
+def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit: ModuleType) -> None:
     """Only "no such key" becomes an empty lane; AccessDenied must surface."""
     class _Err(Exception):
-        def __init__(self, response):
+        def __init__(self, response: dict[str, Any]) -> None:
             self.response = response
 
     class _S3:
-        def __init__(self, response):
+        def __init__(self, response: dict[str, Any]) -> None:
             self.response = response
 
-        def get_object(self, **kwargs):
+        def get_object(self, **kwargs: Any) -> NoReturn:
             raise _Err(self.response)
 
     missing = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
@@ -177,7 +181,9 @@ def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit):
     ("deduction/merge_lean_shards.py", "--expect-cells", ["k", "--n", "1"]),
     ("deduction/merge_lean_shards.py", "--expect-sanity", ["k", "--n", "1"]),
 ])
-def test_every_consumer_requires_an_explicit_expected_shape(path, flag, argv):
+def test_every_consumer_requires_an_explicit_expected_shape(
+    path: str, flag: str, argv: list[str],
+) -> None:
     """No consumer may carry (or inherit) a default pinned shape: state it or fail.
 
     Checked through the CLI rather than by importing, so an import-time-fatal

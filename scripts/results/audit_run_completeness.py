@@ -44,7 +44,7 @@ INFRA_PATTERNS = re.compile(
 NON_DATA_LANES = {"scaling_canary"}
 
 
-def _s3():
+def _s3() -> Any:
     import boto3
 
     return boto3.client("s3")
@@ -226,6 +226,7 @@ def audit_induction(
 
 
 def main() -> int:
+    """Run the deduction and optional induction completeness audits."""
     from smolbench.deduction.lean import runner
 
     ap = argparse.ArgumentParser(description=__doc__)

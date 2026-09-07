@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -64,7 +66,9 @@ PERIODIC_MOE_TEMPLATE = (
 )
 
 
-def import_run_study(name: str, env: "dict[str, str] | None" = None):
+def import_run_study(
+    name: str, env: "dict[str, str] | None" = None
+) -> tuple[ModuleType | None, BaseException | None, dict[str, str]]:
     """Imports the driver by path under `name` with `env` applied, restoring os.environ after.
 
     The tag/state-file block at the top of run_study.py mutates os.environ at
@@ -93,7 +97,7 @@ def import_run_study(name: str, env: "dict[str, str] | None" = None):
 
 
 @pytest.fixture(scope="module")
-def run_study():
+def run_study() -> ModuleType:
     """Imports run_study.py under a unique name, without leaking its env: it
     calls load_dotenv at import, which would otherwise mutate this session's
     os.environ (including SMOLBENCH_RESULTS_S3)."""
@@ -109,14 +113,14 @@ def run_study():
     return module
 
 
-def test_roster(run_study):
+def test_roster(run_study: ModuleType) -> None:
     """MODELS is exactly the 21 study spec keys, mapped to unique locked analysis tags."""
     assert run_study.MODELS == EXPECTED_TAGS
     assert sorted(run_study.MODELS) == STUDY_KEYS
     assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
 
 
-def test_the_roster_is_built_from_the_committed_study_config(run_study):
+def test_the_roster_is_built_from_the_committed_study_config(run_study: ModuleType) -> None:
     """MODELS is the config's roster, in the config's ladder order (EXPECTED_TAGS
     is the vendored drift guard; this pins that the driver reads the file
     rather than re-declaring it)."""
@@ -128,7 +132,7 @@ def test_the_roster_is_built_from_the_committed_study_config(run_study):
     }
 
 
-def test_cot_args_is_validated_against_the_config_roster(run_study):
+def test_cot_args_is_validated_against_the_config_roster(run_study: ModuleType) -> None:
     """COT_ARGS stays a literal table (the audit surface against ec2.py's
     reasoning wiring), but its keys are checked against the config's roster, so
     a roster edit COT_ARGS misses cannot reach a billing box."""
@@ -137,7 +141,7 @@ def test_cot_args_is_validated_against_the_config_roster(run_study):
     assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
 
 
-def test_the_standalone_tag_comes_from_the_config(monkeypatch):
+def test_the_standalone_tag_comes_from_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The standalone EC2 experiment tag is the config's, not a local literal
     (only observable by re-importing with EC2_EXPERIMENT_TAG absent)."""
     from smolbench.evals import study_config
@@ -152,9 +156,9 @@ def test_the_standalone_tag_comes_from_the_config(monkeypatch):
     )
 
 
-def test_cot_args_table(run_study):
+def test_cot_args_table(run_study: ModuleType) -> None:
     """Every model carries a CoT toggle: Ministral rides its system prompt, DeepSeek's key differs."""
-    def toggle(key):
+    def toggle(key: str) -> dict[str, dict[str, bool]]:
         if key in MINISTRAL:
             return {}
         name = "thinking" if key in DEEPSEEK else "enable_thinking"
@@ -163,13 +167,13 @@ def test_cot_args_table(run_study):
     assert run_study.COT_ARGS == {key: toggle(key) for key in EXPECTED_TAGS}
 
 
-def test_template_is_byte_identical_to_periodic_moe(run_study):
+def test_template_is_byte_identical_to_periodic_moe(run_study: ModuleType) -> None:
     """The prompt template must stay byte-identical to periodic_moe's, so that
     only (model, quiz generator, harmonic set) vary between the two studies."""
     assert run_study.template.template == PERIODIC_MOE_TEMPLATE
 
 
-def test_experiment_constants(run_study):
+def test_experiment_constants(run_study: ModuleType) -> None:
     """The user-locked seeds, arms, budget cap, and S3 experiment name."""
     assert run_study.BASE_SEED == 0
     assert run_study.EXPERIMENT.n_replicates == 30
@@ -195,7 +199,7 @@ def test_experiment_constants(run_study):
 BUDGET_MODEL = "gemma-4-e2b"
 
 
-def test_completion_budget(run_study, monkeypatch):
+def test_completion_budget(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """Quizzes cover the four arms, and budget == context - worst prompt - reserve."""
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     seeds = range(0, 2)
@@ -217,7 +221,9 @@ def test_completion_budget(run_study, monkeypatch):
     assert run_study.completion_budget(BUDGET_MODEL, seeds) == 131_072 - worst - 8_000
 
 
-def test_completion_budget_exits_below_the_viability_floor(run_study, monkeypatch):
+def test_completion_budget_exits_below_the_viability_floor(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A prompt leaving <48k completion tokens must abort before provisioning."""
     from smolbench.induction._common import RenderedQuery
 
@@ -236,7 +242,9 @@ def test_completion_budget_exits_below_the_viability_floor(run_study, monkeypatc
 
 
 @pytest.mark.parametrize("length", (1, 2, 5, 6, 7, 30, 119))
-def test_probe_seeds_span_the_range_sorted_and_deduplicated(run_study, length):
+def test_probe_seeds_span_the_range_sorted_and_deduplicated(
+    run_study: ModuleType, length: int
+) -> None:
     """At most ``PROBE_SEEDS`` probes, ascending and unique, always including
     both ends of `seeds` -- what `completion_budget` relies on to size the
     worst prompt from a subsample."""
@@ -258,7 +266,9 @@ class CountingTokenizer(StubTokenizer):
         return super().count(text)
 
 
-def test_completion_budget_consumes_generations_counts(run_study, monkeypatch):
+def test_completion_budget_consumes_generations_counts(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The budget is sized from the counts generation already produced:
     `completion_budget` must make no `count` call of its own beyond what
     rendering the probe seeds costs."""
@@ -285,7 +295,9 @@ def test_completion_budget_consumes_generations_counts(run_study, monkeypatch):
     assert set(rendered[probes[0]][0].token_counts) == set(run_study.INFO_TYPES)
 
 
-def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(run_study):
+def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(
+    run_study: ModuleType,
+) -> None:
     """The zero arm's question is the study's, minus the range clause -- one
     template with one edit, not a second full copy that can drift from it."""
     assert run_study.RANGE_CLAUSE == " 1 through $seq_len"
@@ -299,7 +311,7 @@ def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(ru
     )
 
 
-def test_selected_models(run_study, monkeypatch):
+def test_selected_models(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """INDUCTION_MODELS defaults to the whole roster, filters on spec keys, rejects unknowns."""
     monkeypatch.delenv("INDUCTION_MODELS", raising=False)
     assert sorted(run_study.selected_models()) == STUDY_KEYS
@@ -314,7 +326,7 @@ def test_selected_models(run_study, monkeypatch):
 # CONTEXT_LIMIT is derived from the roster, not restated
 # ---------------------------------------------------------------------------
 
-def test_context_limit_is_derived_from_the_deploy_specs(run_study):
+def test_context_limit_is_derived_from_the_deploy_specs(run_study: ModuleType) -> None:
     """CONTEXT_LIMIT equals ec2's own max_model_len for every roster entry, so a
     spec edit on one checkpoint can't leave the study budgeting against a
     context that checkpoint isn't served with."""
@@ -324,7 +336,9 @@ def test_context_limit_is_derived_from_the_deploy_specs(run_study):
     assert served == {run_study.CONTEXT_LIMIT}
 
 
-def test_a_non_uniform_roster_context_raises(run_study, monkeypatch):
+def test_a_non_uniform_roster_context_raises(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The uniformity check raises (not an assert, not a silent max()): a scaling
     study can't let context vary with the vendor's YaRN generosity without
     confounding a family's ceiling with its context budget."""
@@ -339,7 +353,9 @@ def test_a_non_uniform_roster_context_raises(run_study, monkeypatch):
 # request_timeout derived from the per-model budget
 # ---------------------------------------------------------------------------
 
-def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(run_study):
+def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(
+    run_study: ModuleType,
+) -> None:
     """A ~100k-token CoT budget needs >=167 tok/s decode on a 397B/236B MoE to
     finish inside ec2's 600s default, which real serving doesn't hit and would
     censor the top of the CoT-length distribution; the derivation is
@@ -366,7 +382,9 @@ def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(run_study
     assert fn(1_000_000) > big
 
 
-def test_main_passes_the_derived_request_timeout(run_study, monkeypatch):
+def test_main_passes_the_derived_request_timeout(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """main() hands request_timeout to EXPERIMENT.run for every model: pins the
     wiring, not just the arithmetic."""
     monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
@@ -393,8 +411,11 @@ def test_main_passes_the_derived_request_timeout(run_study, monkeypatch):
 # nothing outstanding => never provision a spot box
 # ---------------------------------------------------------------------------
 
-def test_main_does_not_provision_when_nothing_is_outstanding(run_study, monkeypatch,
-                                                             caplog):
+def test_main_does_not_provision_when_nothing_is_outstanding(
+    run_study: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A lane re-run after completion must not boot a billing box: provision()
     has to check has_outstanding too, not just skip the serve step."""
     monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
@@ -404,7 +425,7 @@ def test_main_does_not_provision_when_nothing_is_outstanding(run_study, monkeypa
     monkeypatch.setattr(ReplicateHarness, "has_outstanding",
                         lambda self, model: False)
 
-    def explode(*a, **k):
+    def explode(*a: Any, **k: Any) -> None:
         raise AssertionError("must not provision or run with no outstanding work")
 
     monkeypatch.setattr(InductionExperiment, "provision", explode)
@@ -419,7 +440,7 @@ def test_main_does_not_provision_when_nothing_is_outstanding(run_study, monkeypa
 # every run gets an explicit, non-retired EC2 tag
 # ---------------------------------------------------------------------------
 
-def test_unsharded_runs_set_the_study_tag():
+def test_unsharded_runs_set_the_study_tag() -> None:
     """An unsharded, standalone run gets an explicit tag, not ec2's retired
     "periodic-induction" default -- a shared tag would let tag-based recovery
     reattach to another driver's box, swap its model, or tear it down."""
@@ -430,7 +451,7 @@ def test_unsharded_runs_set_the_study_tag():
 
 
 
-def test_the_shard_lane_tag_is_canonical_order_independent():
+def test_the_shard_lane_tag_is_canonical_order_independent() -> None:
     """Reordering INDUCTION_MODELS must not mint a second tag and state file:
     the lane key canonicalizes to MODELS declaration order, so two spellings of
     the same lane don't produce two boxes doing the same work."""

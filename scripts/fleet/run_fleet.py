@@ -25,6 +25,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Optional
 
 # No `logging.basicConfig` here: it lives in `lane_env.py`, which must call
@@ -35,7 +36,7 @@ from typing import Optional
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
-def _load_fleet_config():
+def _load_fleet_config() -> ModuleType:
     # Bootstrapped by hand: load_module_by_path lives on _config itself,
     # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)

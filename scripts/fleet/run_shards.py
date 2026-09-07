@@ -36,12 +36,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import ModuleType
 from typing import Dict, Optional
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
-def _load_fleet_config():
+def _load_fleet_config() -> ModuleType:
     # Bootstrapped by hand: load_module_by_path lives on _config itself,
     # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)

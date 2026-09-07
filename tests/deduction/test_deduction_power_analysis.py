@@ -24,14 +24,16 @@ def _write(tmp_path: Path, rows: list[dict]) -> Path:
     return path
 
 
-def _cell(model, theorem, verdict, k=1, rung="stepk:1"):
+def _cell(
+    model: str, theorem: str, verdict: str, k: int = 1, rung: str = "stepk:1"
+) -> dict[str, str | int]:
     return {
         "kind": "cell", "model": model, "theorem_id": theorem, "k": k,
         "rung": rung, "replicate_idx": 0, "verdict": verdict,
     }
 
 
-def test_earliest_surviving_attempt_wins(tmp_path):
+def test_earliest_surviving_attempt_wins(tmp_path: Path) -> None:
     """Rows are chronological: score the first NON-exception attempt, not the last."""
     rows = [
         _cell("m1", "thm.resampled", "lean_error"),
@@ -49,7 +51,7 @@ def test_earliest_surviving_attempt_wins(tmp_path):
     assert blocks["thm.recovered"][(1, "stepk:1")] == {"m1": 1, "m2": 0}
 
 
-def test_verdict_classification(tmp_path):
+def test_verdict_classification(tmp_path: Path) -> None:
     """exception/replay_failed are unmeasurable and excluded; incomplete is a real 0."""
     rows = [
         _cell("m1", "thm.infra", "exception"),
@@ -72,7 +74,7 @@ def test_verdict_classification(tmp_path):
     assert blocks["thm.ok"][(1, "stepk:1")] == {"m1": 1, "m2": 1}
 
 
-def test_no_answer_is_measurable_and_scores_zero(tmp_path):
+def test_no_answer_is_measurable_and_scores_zero(tmp_path: Path) -> None:
     """`no_answer` is a real 0, not an unmeasurable cell.
 
     It marks "the model was asked and returned nothing extractable" -- the

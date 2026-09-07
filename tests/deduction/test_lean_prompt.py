@@ -43,7 +43,7 @@ _THINK_NOT_AT_START = "some preamble <think>not a leading tag</think> exact h"
         ("```lean\n\n```", ""),
     ],
 )
-def test_extract_tactic_block(text, expected):
+def test_extract_tactic_block(text: str, expected: str) -> None:
     """Fence extraction, including the non-lean-fence cases.
 
     A closing ``` line only ever closes the fence currently open, so a
@@ -53,6 +53,6 @@ def test_extract_tactic_block(text, expected):
     assert prompt.extract_tactic_block(text) == expected
 
 
-def test_build_user_prompt_appends_instruction():
+def test_build_user_prompt_appends_instruction() -> None:
     rc = RenderedContext(chain="stepk", level=0, text="CONTEXT BLOCK")
     assert prompt.build_user_prompt(rc) == "CONTEXT BLOCK" + "\n\n" + prompt.INSTRUCTION

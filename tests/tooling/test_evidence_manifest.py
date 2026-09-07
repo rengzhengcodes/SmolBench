@@ -6,7 +6,10 @@ import io
 import json
 import sys
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -27,7 +30,7 @@ ALLOW = [{"name": HINT, "reason": "prompt path in prose, not an evidence artifac
 
 
 @pytest.fixture(scope="module")
-def em():
+def em() -> ModuleType:
     # @dataclass resolves KW_ONLY through sys.modules, which is None for a path exec.
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / "results" / "evidence_manifest.py")
@@ -53,7 +56,7 @@ def _pkg(tmp_path: Path, files: dict[str, bytes]) -> Path:
 
 
 @pytest.fixture
-def good(tmp_path, em):
+def good(tmp_path: Path, em: ModuleType) -> tuple[Path, dict[str, Any]]:
     """A writeup citing a plain file, a tarball member reached via '..', and an allowlisted name."""
     pkg = _pkg(tmp_path, {n: BLOBS[n] for n in ("REPORT.md", "report.json")})
     (tmp_path / "store").mkdir()
@@ -62,7 +65,7 @@ def good(tmp_path, em):
     return pkg, em.build(pkg, ENTRIES, allowlist=ALLOW)
 
 
-def test_good_package(good, em, tmp_path):
+def test_good_package(good: tuple[Path, dict[str, Any]], em: ModuleType, tmp_path: Path) -> None:
     pkg, manifest = good
     written = (pkg / em.MANIFEST_NAME).read_bytes()
     assert json.loads(written) == manifest
@@ -84,7 +87,13 @@ def test_good_package(good, em, tmp_path):
      ([{"relpath": "x.json", "role": "writup"}], (), ValueError),
      ([{"relpath": "x.json", "role": "raw", "sha256": "0" * 64}], (), ValueError),
      ([], [{"name": "x.json"}], ValueError)])
-def test_build_refuses(tmp_path, em, entries, allowlist, exc):
+def test_build_refuses(
+    tmp_path: Path,
+    em: ModuleType,
+    entries: list[dict[str, Any]],
+    allowlist: tuple[()] | list[dict[str, str]],
+    exc: type[Exception],
+) -> None:
     with pytest.raises(exc):
         em.build(_pkg(tmp_path, {"x.json": b"{}"}), entries, allowlist=allowlist)
 
@@ -99,13 +108,19 @@ def test_build_refuses(tmp_path, em, entries, allowlist, exc):
      (lambda p, s: (p / "REPORT.md").write_bytes(BLOBS["REPORT.md"] + b"\n`pool_analyze.py`\n"),
       ("cited artifact not covered", "pool_analyze.py"))],
     ids=["sha-drift", "missing-file", "missing-member", "missing-tarball", "uncovered"])
-def test_verify_fails_on(good, em, tmp_path, mutate, expected):
+def test_verify_fails_on(
+    good: tuple[Path, dict[str, Any]],
+    em: ModuleType,
+    tmp_path: Path,
+    mutate: Callable[[Path, Path], Any],
+    expected: tuple[str, str],
+) -> None:
     pkg, _ = good
     mutate(pkg, tmp_path / "store")
     assert any(all(s in f for s in expected) for f in em.verify(pkg).failures)
 
 
-def test_coverage_allowlist_and_malformed_manifest(tmp_path, em):
+def test_coverage_allowlist_and_malformed_manifest(tmp_path: Path, em: ModuleType) -> None:
     """Allowlists excuse only the name they name; coverage is by path component, not suffix."""
     pkg = _pkg(tmp_path, {"W.md": b"see `ghost.json`, `other.json`, `all_rows.jsonl`\n",
                           "originals_all_rows.jsonl": b"{}\n"})
@@ -129,7 +144,7 @@ def test_coverage_allowlist_and_malformed_manifest(tmp_path, em):
         em.verify(tmp_path / "nomanifest")
 
 
-def test_cited_artifacts_is_conservative(em):
+def test_cited_artifacts_is_conservative(em: ModuleType) -> None:
     text = ("keeps `a.json`, `b.jsonl`, `c.gz`, `d.yaml`, `e.yml`, `f.txt`, `g.md`, `h.sh`, `i.py` and `dir/j.json`; "
             "drops `sha256(pool_analyze.py) = 3824a4`, `--no-enable-prefix-caching`, `verify_run`, "
             "plain a.json outside backticks, and `s3://bucket/prefix`.\n")

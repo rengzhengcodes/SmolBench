@@ -30,12 +30,13 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Mapping, Optional
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
-def _load_fleet_config():
+def _load_fleet_config() -> ModuleType:
     # Bootstrapped by hand: load_module_by_path lives on _config itself,
     # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
@@ -236,10 +237,12 @@ class Lane:
 
     @property
     def instance_types(self) -> str:
+        """Return this lane's allowed EC2 instance types."""
         return TIER_INSTANCE_TYPES[self.tier]
 
     @property
     def regions(self) -> str:
+        """Return this lane's allowed EC2 regions."""
         return TIER_REGIONS.get(self.tier, DEFAULT_REGIONS)
 
     @property
@@ -367,15 +370,6 @@ def lane_env(
     lane: Lane, phase: str, base_env: Optional[Mapping[str, str]] = None
 ) -> dict[str, str]:
     """Build one lane's complete subprocess environment.
-
-    base_env: `None` reads `os.environ`. Returns every `PASSTHROUGH_ENV` key
-    present verbatim (missing stays absent) plus the per-lane
-    `INFERENCE_PROVIDER`/`EC2_*`/`INDUCTION_*` settings; phase
-    ``"deduction"`` also adds `LEAN_MODEL` and `LEAN_RUN_NAME` =
-    ``scaling_<key>`` -- the run-directory name
-    `supervisor._advance_finished` rebuilds to spool from, so the two must
-    stay equal (a mismatch makes that confirming re-spool a silent no-op).
-
     Reattach contract: both drivers must resolve the same state-file path
     for a lane -- induction from `INDUCTION_STATE_FILE` set below, deduction
     from its own `lane_env_defaults` derivation -- so deduction reattaches
@@ -393,6 +387,17 @@ def lane_env(
     no such export, so `ec2.py` resolves the image itself).
     `EC2_REQUIRE_GPU`/`EC2_MAX_PARALLEL_REQUESTS` are set unconditionally
     instead, deliberately excluded from `PASSTHROUGH_ENV`.
+
+    Parameters
+    ----------
+    base_env : Optional[Mapping[str, str]], optional
+        `None` reads `os.environ`. Returns every `PASSTHROUGH_ENV` key present
+        verbatim (missing stays absent) plus the per-lane
+        `INFERENCE_PROVIDER`/`EC2_*`/`INDUCTION_*` settings; phase
+        ``"deduction"`` also adds `LEAN_MODEL` and `LEAN_RUN_NAME` =
+        ``scaling_<key>`` -- the run-directory name
+        `supervisor._advance_finished` rebuilds to spool from, so the two must
+        stay equal (a mismatch makes that confirming re-spool a silent no-op).
     """
     if base_env is None:
         base_env = os.environ

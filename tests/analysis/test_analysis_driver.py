@@ -9,7 +9,12 @@ this directory has no ``conftest.py``.
 import inspect
 import io
 import contextlib
+from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
+import numpy as np
 import pytest
 
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
@@ -31,18 +36,18 @@ CHAIN = ("power_analysis", "paired_analysis", "significance_report",
 
 
 @pytest.fixture(scope="session")
-def run_all(extens_vs_noise):
+def run_all(extens_vs_noise: ModuleType) -> ModuleType:
     """The driver module (imports the whole chain, so it loads last)."""
     return load_analysis("run_all")
 
 
 @pytest.fixture(scope="session")
-def multiplicity_sim(power_analysis):
+def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
     return load_analysis("multiplicity_sim")
 
 
 @pytest.fixture(scope="session")
-def driver_tree(tmp_path_factory, power_analysis):
+def driver_tree(tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType) -> Path:
     """A complete, unremarkable tree: every arm 0.99, the zero arm at chance."""
     root = tmp_path_factory.mktemp("driver")
     build_tree(root, power_analysis.MODELS, power_analysis.INFOS,
@@ -52,7 +57,9 @@ def driver_tree(tmp_path_factory, power_analysis):
 
 
 @pytest.fixture
-def recorded(monkeypatch, run_all, multiplicity_sim):
+def recorded(
+    monkeypatch: pytest.MonkeyPatch, run_all: ModuleType, multiplicity_sim: ModuleType
+) -> list[str]:
     """Replace every script's ``main`` with a recorder; return the call list.
 
     The scripts themselves are covered by their own tests; the driver only
@@ -62,8 +69,8 @@ def recorded(monkeypatch, run_all, multiplicity_sim):
     """
     calls: list = []
 
-    def recorder(name):
-        def _main(*args, **kwargs):
+    def recorder(name: str) -> Callable[..., None]:
+        def _main(*args: Any, **kwargs: Any) -> None:
             calls.append(name)
         return _main
 
@@ -74,13 +81,13 @@ def recorded(monkeypatch, run_all, multiplicity_sim):
     return calls
 
 
-def test_the_driver_runs_the_chain_in_order(run_all, recorded):
+def test_the_driver_runs_the_chain_in_order(run_all: ModuleType, recorded: list[str]) -> None:
     """The four result-reading scripts run once each, in dependency order."""
     assert run_all.main([]) == 0
     assert recorded == list(CHAIN)
 
 
-def test_the_simulation_runs_only_behind_its_flag(run_all, recorded):
+def test_the_simulation_runs_only_behind_its_flag(run_all: ModuleType, recorded: list[str]) -> None:
     """A default run must not spend minutes on the Monte Carlo, and enabling it must not require a second script."""
     run_all.main([])
     assert "multiplicity_sim" not in recorded
@@ -89,8 +96,12 @@ def test_the_simulation_runs_only_behind_its_flag(run_all, recorded):
     assert recorded == list(CHAIN) + ["multiplicity_sim"]
 
 
-def test_the_driver_really_runs_the_chain_in_one_process(run_all, repoint,
-                                                         driver_tree, monkeypatch):
+def test_the_driver_really_runs_the_chain_in_one_process(
+    run_all: ModuleType,
+    repoint: Callable[[Path], None],
+    driver_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """End to end on a synthetic tree, with only the slow ``power_analysis.main`` stubbed (its Monte Carlo sizing takes minutes)."""
     import sys
 
@@ -111,14 +122,14 @@ def test_the_driver_really_runs_the_chain_in_one_process(run_all, repoint,
 # power_analysis: computation split from printing
 # ---------------------------------------------------------------------------
 
-def section_pairs(module):
+def section_pairs(module: ModuleType) -> list[tuple[str, str]]:
     """Return ``[(render_name, data_name)]`` for every ``render_*`` function."""
     return [(name, name[len("render_"):])
             for name in dir(module) if name.startswith("render_")
             and inspect.isfunction(getattr(module, name))]
 
 
-def test_every_printed_section_has_a_data_function_behind_it(power_analysis):
+def test_every_printed_section_has_a_data_function_behind_it(power_analysis: ModuleType) -> None:
     """Each of the 8 numbered sections keeps a data/render pair, so figures can be tested and reused without capturing stdout."""
     pairs = section_pairs(power_analysis)
     assert len(pairs) >= 8, [name for name, _ in pairs]
@@ -128,14 +139,14 @@ def test_every_printed_section_has_a_data_function_behind_it(power_analysis):
             f"{render_name} has no {data_name} data function behind it")
 
 
-def test_the_data_functions_do_not_print(power_analysis):
+def test_the_data_functions_do_not_print(power_analysis: ModuleType) -> None:
     """A section's data function returns; only its ``render_*`` twin prints."""
     for _render_name, data_name in section_pairs(power_analysis):
         source = inspect.getsource(getattr(power_analysis, data_name))
         assert "print(" not in source, f"{data_name} prints"
 
 
-def test_main_is_a_short_orchestrator(power_analysis):
+def test_main_is_a_short_orchestrator(power_analysis: ModuleType) -> None:
     """``main()`` calls the pairs above and does nothing else; the 60-line ceiling stops the split from silently regrowing."""
     lines = inspect.getsource(power_analysis.main).splitlines()
     assert len(lines) <= 60, len(lines)
@@ -145,14 +156,14 @@ def test_main_is_a_short_orchestrator(power_analysis):
 # multiplicity_sim.apply_corrections: no dead parameters, one step-up helper
 # ---------------------------------------------------------------------------
 
-def legacy_apply_corrections(pv, is_null, m, alpha):
+def legacy_apply_corrections(
+    pv: np.ndarray, is_null: np.ndarray, m: int, alpha: float
+) -> dict[str, np.ndarray]:
     """The pre-split ``apply_corrections``, vendored verbatim from HEAD.
 
     Kept so the rewrite is pinned against identical rejections, procedure
     for procedure, rather than merely something plausible.
     """
-    import numpy as np
-
     out = {}
     order = np.argsort(pv, axis=1)
     sortedp = np.take_along_axis(pv, order, axis=1)
@@ -181,16 +192,16 @@ def legacy_apply_corrections(pv, is_null, m, alpha):
     return out
 
 
-def test_apply_corrections_keeps_only_the_parameter_it_reads(multiplicity_sim):
+def test_apply_corrections_keeps_only_the_parameter_it_reads(multiplicity_sim: ModuleType) -> None:
     """Drops `is_null` (never read) and `m` (always `pv.shape[1]`), so a wrong `m` can no longer silently mis-correct p-values."""
     assert list(inspect.signature(multiplicity_sim.apply_corrections)
                 .parameters) == ["pv"]
 
 
-def test_apply_corrections_is_unchanged_procedure_for_procedure(multiplicity_sim):
+def test_apply_corrections_is_unchanged_procedure_for_procedure(
+    multiplicity_sim: ModuleType,
+) -> None:
     """Matches the vendored pre-split code across all-null, all-significant, and boundary-tie families, where an off-by-one rank is most likely."""
-    import numpy as np
-
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
     m = 12

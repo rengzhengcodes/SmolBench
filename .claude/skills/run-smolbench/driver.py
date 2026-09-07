@@ -28,17 +28,20 @@ _STAGE = {"n": 0, "total": 8}
 
 
 def stage(name: str, detail: str) -> None:
+    """Print a successful progress line for one smoke-test stage."""
     _STAGE["n"] += 1
     print(f"[{_STAGE['n']}/{_STAGE['total']}] {name}: ok — {detail}")
 
 
 def check(cond: bool, msg: str) -> None:
+    """Raise when a smoke-test condition is not met."""
     # Explicit raise, not assert: asserts vanish under `python -O`.
     if not cond:
         raise RuntimeError(msg)
 
 
 def main() -> None:
+    """Run the offline end-to-end eval-harness smoke test."""
     # Environment guard.
     check(
         sys.version_info[:2] == (3, 12),

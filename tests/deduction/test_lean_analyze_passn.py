@@ -6,13 +6,14 @@ import itertools
 import json
 from argparse import Namespace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from smolbench.deduction.lean.cli import cmd_analyze
 
 
-def _row(**kw) -> dict:
+def _row(**kw: Any) -> dict:
     """Build one synthetic ``kind: "cell"`` sweep row."""
     row = {
         "kind": "cell", "theorem_id": "Mini.theoremA", "k": 1, "rung": "stepk:0",
@@ -34,7 +35,8 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def _run_analyze(tmp_path, rows, capsys) -> tuple[int, str]:
+def _run_analyze(tmp_path: Path, rows: list[dict],
+                 capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
     """Write `rows` to all_rows.jsonl, invoke `cmd_analyze` as `cli.main` would."""
     p = tmp_path / "all_rows.jsonl"
     _write_jsonl(p, rows)
@@ -64,7 +66,8 @@ def _section_rows(out: str, marker: str) -> list[str]:
     return _rows_after(lines, idx + 1)
 
 
-def test_single_replicate_omits_passn_table(tmp_path, capsys):
+def test_single_replicate_omits_passn_table(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """One replicate per cell: no pass@N tables, and a trunc column of zeros."""
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success"),
@@ -86,7 +89,7 @@ def test_single_replicate_omits_passn_table(tmp_path, capsys):
     assert all(r.split()[-1] == "0" for r in detail)
 
 
-def test_pass_at_n_grouping(tmp_path, capsys):
+def test_pass_at_n_grouping(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """pass@N: any success in a (theorem, k) group passes; N is the max replicate count."""
     reps = {
         ("stepk:0", "T1"): ["success", "given_up", "replay_failed"],
@@ -114,7 +117,8 @@ def test_pass_at_n_grouping(tmp_path, capsys):
     assert "3/4" in rollup_row and "75.0%" in rollup_row
 
 
-def test_trunc_column_classification(tmp_path, capsys):
+def test_trunc_column_classification(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """trunc counts unclosed <think> in raw_response/content, plus reasoning-only rows."""
     rows = [
         _row(theorem_id="T1", raw_response="<think>\nreasoning that never finishes"),
@@ -131,7 +135,8 @@ def test_trunc_column_classification(tmp_path, capsys):
     assert row.split()[-1] == "3"
 
 
-def test_sanity_rows_excluded_from_passn_and_trunc(tmp_path, capsys):
+def test_sanity_rows_excluded_from_passn_and_trunc(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Sanity rows are reported separately and never enter cell counts, pass@N or trunc."""
     rows = [
         _sanity_row(model="model-a", verdict="lean_error"),
@@ -153,13 +158,14 @@ def test_sanity_rows_excluded_from_passn_and_trunc(tmp_path, capsys):
 
 
 @pytest.mark.parametrize("rows", [[], [_sanity_row()]], ids=["empty", "sanity-only"])
-def test_no_cell_rows_returns_1(tmp_path, capsys, rows):
+def test_no_cell_rows_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[str],
+                                rows: list[dict[str, Any]]) -> None:
     """A file with no cell rows is an error, not an empty report."""
     rc, _out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 1
 
 
-def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
+def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path: Path) -> None:
     """A retired artifact must fail loudly and name the file, not be summarized."""
     p = tmp_path / "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
     _write_jsonl(p, [_row()])
@@ -169,7 +175,8 @@ def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path):
     assert p.name in str(excinfo.value)
 
 
-def test_analyze_reports_no_answer_in_its_own_column(tmp_path, capsys):
+def test_analyze_reports_no_answer_in_its_own_column(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """`analyze`'s table separates `noans` from `lerr` (an empty candidate used to be recorded as `lean_error`); pins the column by name and value, and pins header/row width agreement."""
     rows = [
         _row(model="model-a", rung="stepk:0", theorem_id="T1", verdict="no_answer",
@@ -191,7 +198,8 @@ def test_analyze_reports_no_answer_in_its_own_column(tmp_path, capsys):
     assert row[2] == "1/3"
 
 
-def test_analyze_collapses_an_exception_then_retry_duplicate(tmp_path, capsys):
+def test_analyze_collapses_an_exception_then_retry_duplicate(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A resumed cell (retried after an exception) is one cell, not a 50% pass rate with a spurious N=2 pass@N table; deduping must happen before the pass@N groups are built."""
     rows = [
         _row(theorem_id="T1", verdict="exception"),
@@ -208,7 +216,8 @@ def test_analyze_collapses_an_exception_then_retry_duplicate(tmp_path, capsys):
     assert "pass@N" not in out, "N must be the replicate count, not the row count"
 
 
-def test_analyze_keeps_an_exception_only_cell_visible(tmp_path, capsys):
+def test_analyze_keeps_an_exception_only_cell_visible(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Collapsing an exception-only cell must not make it vanish: with no surviving row the first row stands in, still counted once in `exc`, not dropped from the denominator."""
     rows = [
         _row(theorem_id="T1", verdict="exception"),
@@ -224,7 +233,8 @@ def test_analyze_keeps_an_exception_only_cell_visible(tmp_path, capsys):
     assert row[header.index("exc")] == "1"
 
 
-def test_analyze_still_sees_real_replicates(tmp_path, capsys):
+def test_analyze_still_sees_real_replicates(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Dedupe is keyed on the full row key, including `replicate_idx`, so two genuine replicates of one cell remain two cells and pass@N still reports N=2."""
     rows = [
         _row(theorem_id="T1", replicate_idx=0, verdict="lean_error"),

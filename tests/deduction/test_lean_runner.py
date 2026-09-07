@@ -10,7 +10,10 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -26,12 +29,14 @@ M2 = "mini/or-model-b"       # provider: openrouter
 MARKER = "QED"
 
 
-def _proof(theorem, verdict, tail_tried, error=None, final_state_pp=None):
+def _proof(
+        theorem: Any, verdict: Any, tail_tried: Any, error: Any = None,
+        final_state_pp: Any = None) -> SimpleNamespace:
     return SimpleNamespace(theorem=theorem, verdict=verdict, tail_tried=tail_tried,
                            error=error, final_state_pp=final_state_pp)
 
 
-def _graded(theorem, tail):
+def _graded(theorem: Any, tail: str) -> SimpleNamespace:
     ok = MARKER in tail
     return _proof(theorem, "success" if ok else "lean_error", tail,
                   error=None if ok else "marker absent")
@@ -42,13 +47,13 @@ class FakeVerifier:
 
     ProofResult = staticmethod(_proof)
 
-    def __init__(self, sanity=None):
+    def __init__(self, sanity: dict[str, str] | None = None) -> None:
         self.sanity = sanity or {}
         self.replay_calls: list[str] = []
         self.tail_tokens: list[tuple[str, str]] = []
         self.open_count = 0
 
-    def replay_ground_truth(self, bt, timeout=600):
+    def replay_ground_truth(self, bt: Any, timeout: int = 600) -> SimpleNamespace:
         self.replay_calls.append(bt.full_name)
         n = len(bt.traced_tactics)
         verdict = self.sanity.get(bt.full_name, "success")
@@ -58,20 +63,26 @@ class FakeVerifier:
                                error=None if ok else "synthetic sanity failure")
 
     @contextmanager
-    def open_at_step(self, bt, k, timeout=600):
+    def open_at_step(
+            self, bt: Any, k: int, timeout: int = 600) -> Iterator[tuple[str, str]]:
         self.open_count += 1
         yield (f"dojo-{self.open_count}-{bt.full_name}-k{k}", f"state@k={k}")
 
-    def try_tail(self, dojo, state_at_k, tail, theorem_name):
+    def try_tail(
+            self, dojo: str, state_at_k: str, tail: str, theorem_name: str
+    ) -> SimpleNamespace:
         self.tail_tokens.append((theorem_name, dojo))
         return _graded(theorem_name, tail)
 
-    def verify_proof_tail(self, bt, k, tail, timeout=600):
+    def verify_proof_tail(
+            self, bt: Any, k: int, tail: str, timeout: int = 600
+    ) -> SimpleNamespace:
         return _graded(bt.full_name, tail)
 
 
 @pytest.fixture
-def sweep_ctx(monkeypatch, tmp_path):
+def sweep_ctx(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[SimpleNamespace]:
     """Two stub servers, one per provider; dataset repointed at the fixture."""
     stubs, threads = [StubServer(), StubServer()], []
     for s in stubs:
@@ -94,7 +105,7 @@ def sweep_ctx(monkeypatch, tmp_path):
         t.join(timeout=5)
 
 
-def _make_config(concurrent=False, **overrides):
+def _make_config(concurrent: bool = False, **overrides: Any) -> dict[str, Any]:
     cfg = {
         "run_name": "mini", "k": {"strategy": "last"},
         "theorems": {"source": "explicit", "kind": "random", "split": "val",
@@ -122,44 +133,47 @@ verify_ms candidate_proof raw_response reasoning_content verdict lean_error
 final_state_pp finish_reason""".split())
 
 
-def _rows(run_dir, kind=None):
+def _rows(run_dir: Path, kind: str | None = None) -> list[dict[str, Any]]:
     rows = [json.loads(l) for l in (run_dir / "all_rows.jsonl").read_text().splitlines()]
     return [r for r in rows if kind is None or r.get("kind") == kind]
 
 
-def _write_rows(run_dir, rows):
+def _write_rows(run_dir: Path, rows: list[dict[str, Any]]) -> None:
     (run_dir / "all_rows.jsonl").write_text(
         "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
 
 
-def _key(r):
+def _key(r: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
     return (r["model"], r["theorem_id"], r["k"], r["rung"], r["replicate_idx"])
 
 
-def _chat_posts(stub):
+def _chat_posts(stub: StubServer) -> list[Any]:
     """POST /chat/completions only (GET ctx-length lookups have body=None)."""
     return [req for req in stub.requests
             if req.get("body") is not None and req["path"].endswith("/chat/completions")]
 
 
-def _theorem(name="Mini.theoremA"):
+def _theorem(name: str = "Mini.theoremA") -> Any:
     return {t.full_name: t for t in corpus.load_split("random", "val")}[name]
 
 
-def _run_cell(theorem, **kw):
+def _run_cell(theorem: Any, **kw: Any) -> list[dict[str, Any]]:
     return list(runner.run_cell(**{
         "theorem": theorem, "provider": "primeintellect", "model": M1, "k": 2,
         "chain": "stepk", "level": 0, "n_replicates": 1, "seed": 1000,
         "request_timeout": 30, "max_retries": 2, "verifier": FakeVerifier(), **kw}))
 
 
-def _sweep(ctx, cfg=None, name="run", verifier=None):
+def _sweep(
+        ctx: SimpleNamespace, cfg: dict[str, Any] | None = None, name: str = "run",
+        verifier: Any = None) -> tuple[int, Path]:
     run_dir = ctx.tmp / name
     return runner.sweep(cfg or _make_config(), run_dir,
                         verifier=verifier or FakeVerifier()), run_dir
 
 
-def _force_exception(run_dir, theorem=None):
+def _force_exception(
+        run_dir: Path, theorem: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
     """Make one cell's only recorded verdict "exception" (appending can't); return key."""
     rows = _rows(run_dir)
     target = next(r for r in rows
@@ -170,15 +184,16 @@ def _force_exception(run_dir, theorem=None):
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
-def test_sweep_end_to_end(sweep_ctx, monkeypatch, concurrent):
+def test_sweep_end_to_end(
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, concurrent: bool) -> None:
     """Schema, seeds, dispatch, request kwargs, Dojo sharing, order, artifacts."""
     import smolbench.evals.providers.openrouter as orr
     import smolbench.evals.providers.primeintellect as pi
     calls: list[dict] = []
     gen_delay = 0.02  # long enough that a per-cell gen_ms is distinguishable
 
-    def _spy(real):
-        def _wrapped(*args, **kwargs):
+    def _spy(real: Callable[..., Any]) -> Callable[..., Any]:
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
             calls.append({"args": args, "kwargs": kwargs})
             time.sleep(gen_delay)
             return real(*args, **kwargs)
@@ -258,7 +273,8 @@ def test_sweep_end_to_end(sweep_ctx, monkeypatch, concurrent):
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
-def test_fully_resumed_sweep_opens_no_dojo_session(sweep_ctx, concurrent):
+def test_fully_resumed_sweep_opens_no_dojo_session(
+        sweep_ctx: SimpleNamespace, concurrent: bool) -> None:
     """With every cell already recorded, neither path pays a Dojo session to skip them."""
     cfg = _make_config(concurrent)
     assert _sweep(sweep_ctx, cfg)[0] == EXPECTED_CELLS
@@ -270,12 +286,12 @@ def test_fully_resumed_sweep_opens_no_dojo_session(sweep_ctx, concurrent):
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
-def test_generation_exception_rows_carry_the_full_cell_schema(sweep_ctx, monkeypatch,
-                                                              concurrent):
+def test_generation_exception_rows_carry_the_full_cell_schema(
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, concurrent: bool) -> None:
     """A raising provider still writes a complete cell row (reasoning_content None)."""
     import smolbench.evals.providers.primeintellect as pi
 
-    def _boom(*args, **kwargs):
+    def _boom(*args: Any, **kwargs: Any) -> None:
         raise RuntimeError("upstream died")
 
     monkeypatch.setattr(pi, "complete", _boom)
@@ -291,7 +307,7 @@ def test_generation_exception_rows_carry_the_full_cell_schema(sweep_ctx, monkeyp
     assert "RuntimeError: upstream died" in row["lean_error"]
 
 
-def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
+def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path: Path) -> None:
     """`prompt_tokens > 0` is the line between lost data and real data."""
     records = {
         "lost.never_asked": [("exception", "", 0), ("unverified", "", 0)],
@@ -313,7 +329,8 @@ def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path):
         "lost.never_asked", "rerun.only_an_exception"}
 
 
-def test_run_cell_prompt_bytes_seeds_and_reasoning_only_cap_hit(sweep_ctx):
+def test_run_cell_prompt_bytes_seeds_and_reasoning_only_cap_hit(
+        sweep_ctx: SimpleNamespace) -> None:
     """The body matches build_user_prompt(render(...)); a cap-hit is never a proof."""
     theorem = _theorem()
     k, chain, level = 2, "stepk", 1
@@ -346,7 +363,7 @@ def test_run_cell_prompt_bytes_seeds_and_reasoning_only_cap_hit(sweep_ctx):
     assert row["completion_tokens"] == 32768
 
 
-def test_cli_help_and_nullverify_import_subprocesses():
+def test_cli_help_and_nullverify_import_subprocesses() -> None:
     """`--help` works, and `nullverify` imports without `verify` (and lean_dojo)."""
     help_run = subprocess.run([sys.executable, "-m", "smolbench.deduction.lean.cli",
                                "--help"], capture_output=True, text=True)
@@ -362,7 +379,7 @@ def test_cli_help_and_nullverify_import_subprocesses():
     assert import_run.returncode == 0, import_run.stderr
 
 
-def test_sweep_skips_trivial_rungs(sweep_ctx):
+def test_sweep_skips_trivial_rungs(sweep_ctx: SimpleNamespace) -> None:
     theorems = {t.full_name: t for t in corpus.load_split("random", "val")}
     rungs = ["stepk:0", "stepk:1"]
     trivial_pairs = {
@@ -384,7 +401,8 @@ def test_sweep_skips_trivial_rungs(sweep_ctx):
 
 @pytest.mark.parametrize("verdict", ["lean_error", "incomplete", "given_up",
                                      "exception", "replay_failed", "skipped"])
-def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(sweep_ctx, verdict):
+def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(
+        sweep_ctx: SimpleNamespace, verdict: str) -> None:
     """Failure verdicts gate a theorem out; exception passes through like skipped, since
     it signals infrastructure trouble rather than an unreplayable ground truth."""
     cfg = _make_config(concurrent=False)
@@ -420,7 +438,8 @@ def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(sweep_ctx, verd
             if _key(r) == target and r["verdict"] != "exception"]
 
 
-def test_select_theorems_shards_partition_the_unsharded_selection(sweep_ctx):
+def test_select_theorems_shards_partition_the_unsharded_selection(
+        sweep_ctx: SimpleNamespace) -> None:
     """Seeded selection is deterministic; `shard: "i/n"` slices it after sampling."""
     base = {"source": "with_proof", "kind": "random", "split": "val",
             "limit": 0, "seed": 0}
@@ -440,7 +459,8 @@ def test_select_theorems_shards_partition_the_unsharded_selection(sweep_ctx):
             runner._select_theorems({**base, "shard": bad})
 
 
-def test_load_cell_whitelist_parses_dedupes_hashes_and_rejects_bad_input(tmp_path):
+def test_load_cell_whitelist_parses_dedupes_hashes_and_rejects_bad_input(
+        tmp_path: Path) -> None:
     path = tmp_path / "wl.json"
     path.write_text(json.dumps([["m", "T", 1, "stepk:1", 0],
                                 ["m", "T", 1, "stepk:1", 0],
@@ -460,7 +480,7 @@ def test_load_cell_whitelist_parses_dedupes_hashes_and_rejects_bad_input(tmp_pat
 
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(
-        sweep_ctx, monkeypatch, concurrent):
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, concurrent: bool) -> None:
     cfg = _make_config(concurrent)
     all_keys = sorted(_key(r)
                       for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
@@ -476,7 +496,8 @@ def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(
     assert {r["theorem_id"] for r in _rows(run_dir, "sanity")} == {"Mini.theoremA"}
 
 
-def test_cell_whitelist_bad_file_raises_and_writes_nothing(sweep_ctx, monkeypatch):
+def test_cell_whitelist_bad_file_raises_and_writes_nothing(
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
     """A bad LEAN_CELL_WHITELIST aborts at sweep start, never a full unfiltered run."""
     monkeypatch.setenv("LEAN_CELL_WHITELIST", str(sweep_ctx.tmp / "missing.json"))
     with pytest.raises(ValueError):
@@ -485,7 +506,8 @@ def test_cell_whitelist_bad_file_raises_and_writes_nothing(sweep_ctx, monkeypatc
 
 
 @pytest.mark.parametrize("concurrent", [False, True])
-def test_display_name_aliasing_and_per_model_semaphore(sweep_ctx, concurrent):
+def test_display_name_aliasing_and_per_model_semaphore(
+        sweep_ctx: SimpleNamespace, concurrent: bool) -> None:
     cfg = _make_config(
         concurrent=concurrent, run_name="alias", rungs=["stepk:0"], n_replicates=1,
         theorems={"source": "explicit", "kind": "random", "split": "val",
@@ -502,17 +524,18 @@ def test_display_name_aliasing_and_per_model_semaphore(sweep_ctx, concurrent):
     assert len(_rows(run_dir, "cell")) == 2
 
 
-def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure():
+def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure() -> None:
     """A catalog lookup failure widens the token guard instead of aborting the sweep."""
     class _BrokenModule:
-        def get_model_context_length(self, model):
+        def get_model_context_length(self, model: str) -> int:
             raise RuntimeError("catalog unreachable")
 
     assert runner._ctx_len_for({"model": "some-model", "provider": "primeintellect"},
                                _BrokenModule()) == 10**9
 
 
-def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monkeypatch):
+def test_l3_column_counts_parse_level_relics_and_names_its_scope(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The `l3` column counts parse-level relics only; name-level detection was removed
     since the asset it needed was never built, so the column means the same thing everywhere."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
@@ -542,7 +565,7 @@ def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monke
     assert "l3(parse-level)=2" in lines[-1]  # per-model totals line
 
 
-def test_nullverify_sweep_generates_all_theorems(sweep_ctx):
+def test_nullverify_sweep_generates_all_theorems(sweep_ctx: SimpleNamespace) -> None:
     from smolbench.deduction.lean.nullverify import NullVerifier
 
     cfg = _make_config()
@@ -569,12 +592,12 @@ def test_nullverify_sweep_generates_all_theorems(sweep_ctx):
 PC_BASE = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
 
 
-def _repoint(monkeypatch, root):
+def _repoint(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(root))
     corpus.reset_caches()
 
 
-def _demote_one_row(tmp_path, name="Mini.theoremB"):
+def _demote_one_row(tmp_path: Path, name: str = "Mini.theoremB") -> Path:
     """Copy the post-cutoff fixture, flipping one row back to ``postcutoff: false``."""
     root = tmp_path / "mixed_corpus"
     shutil.copytree(POSTCUTOFF, root)
@@ -587,7 +610,8 @@ def _demote_one_row(tmp_path, name="Mini.theoremB"):
     return root
 
 
-def test_require_postcutoff_accepts_a_postcutoff_corpus(monkeypatch, tmp_path):
+def test_require_postcutoff_accepts_a_postcutoff_corpus(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _repoint(monkeypatch, POSTCUTOFF)
     names = [t.full_name
              for t in runner._select_theorems({**PC_BASE, "require_postcutoff": True})]
@@ -595,7 +619,8 @@ def test_require_postcutoff_accepts_a_postcutoff_corpus(monkeypatch, tmp_path):
     corpus.reset_caches()
 
 
-def test_require_postcutoff_rejects_the_old_corpus_naming_it(monkeypatch):
+def test_require_postcutoff_rejects_the_old_corpus_naming_it(
+        monkeypatch: pytest.MonkeyPatch) -> None:
     """The 2024-03-24 benchmark has no post-cutoff tail; the refusal names the corpus."""
     _repoint(monkeypatch, FIXTURE)
     with pytest.raises(ValueError, match=re.escape(str(FIXTURE))):
@@ -603,7 +628,7 @@ def test_require_postcutoff_rejects_the_old_corpus_naming_it(monkeypatch):
     corpus.reset_caches()
 
 
-def test_require_postcutoff_is_opt_in(monkeypatch):
+def test_require_postcutoff_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     """Absent or False, the gate never fires -- the old corpus still selects."""
     _repoint(monkeypatch, FIXTURE)
     assert len(runner._select_theorems(PC_BASE)) == 2
@@ -611,7 +636,8 @@ def test_require_postcutoff_is_opt_in(monkeypatch):
     corpus.reset_caches()
 
 
-def test_require_postcutoff_rejects_a_pre_cutoff_row(monkeypatch, tmp_path):
+def test_require_postcutoff_rejects_a_pre_cutoff_row(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Corpus-level metadata is not enough: every selected row must carry the flag."""
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     assert corpus.is_postcutoff_corpus() is True
@@ -620,7 +646,8 @@ def test_require_postcutoff_rejects_a_pre_cutoff_row(monkeypatch, tmp_path):
     corpus.reset_caches()
 
 
-def test_require_postcutoff_checks_the_pool_before_sampling(monkeypatch, tmp_path):
+def test_require_postcutoff_checks_the_pool_before_sampling(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`shard: "0/2"` drops the offending row, so only a pre-sample check catches it."""
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     sharded = {**PC_BASE, "shard": "0/2"}
@@ -635,7 +662,7 @@ def test_require_postcutoff_checks_the_pool_before_sampling(monkeypatch, tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set():
+def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set() -> None:
     """Pins SANITY_FAILURE_VERDICTS by exact equality: exception is infrastructure and
     no_answer is unreachable here (replay_ground_truth has no candidate tail), so neither
     belongs, and an equality check forces any future addition to argue for itself."""
@@ -647,7 +674,7 @@ def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set():
     assert "skipped" not in runner.SANITY_FAILURE_VERDICTS
 
 
-def test_no_answer_has_its_own_glyph():
+def test_no_answer_has_its_own_glyph() -> None:
     """no_answer is renderable and doesn't collide: an unregistered verdict would
     silently render as given_up's glyph instead of failing loud."""
     assert "no_answer" in runner._VERDICT_GLYPH
@@ -656,7 +683,8 @@ def test_no_answer_has_its_own_glyph():
     assert len(glyphs) == len(set(glyphs)), f"duplicate glyph: {glyphs}"
 
 
-def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeypatch):
+def test_write_run_analysis_counts_no_answer_in_its_own_column(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """noans is a column separate from lerr, so a lane of truncated reasoning traces
     doesn't read as a lane of wrong Lean proofs."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
@@ -681,7 +709,7 @@ def test_write_run_analysis_counts_no_answer_in_its_own_column(tmp_path, monkeyp
 
 
 def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
-        tmp_path, monkeypatch):
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """analysis.txt counts cells, not rows: a resumed cell with a retry row must not
     read as 1/2, and a never-measured cell must still count once under exc rather than
     disappear from the denominator."""
@@ -706,10 +734,10 @@ def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
     assert row[header.index("exc")] == "1", row
 
 
-def test_dedupe_cell_rows_keys_on_the_full_row_key():
+def test_dedupe_cell_rows_keys_on_the_full_row_key() -> None:
     """replicate_idx is part of the row key, so genuine replicates survive dedup
     instead of collapsing."""
-    def row(rep, verdict):
+    def row(rep: int, verdict: str) -> dict[str, Any]:
         return {"kind": "cell", "model": "m", "theorem_id": "T", "k": 1,
                 "rung": "stepk:0", "replicate_idx": rep, "verdict": verdict}
 
@@ -727,11 +755,12 @@ def test_dedupe_cell_rows_keys_on_the_full_row_key():
 # ---------------------------------------------------------------------------
 
 
-def _manifest(run_dir):
+def _manifest(run_dir: Path) -> dict[str, Any]:
     return json.loads((run_dir / "manifest.json").read_text())
 
 
-def test_unreachable_whitelist_keys_are_reported_and_fatal(sweep_ctx, monkeypatch):
+def test_unreachable_whitelist_keys_are_reported_and_fatal(
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
     """A requested cell the sweep cannot reach must not exit 0; manifest.json's
     whitelist_missed and analysis.txt must be written before the raise, not lost with it."""
     cfg = _make_config()
@@ -753,7 +782,8 @@ def test_unreachable_whitelist_keys_are_reported_and_fatal(sweep_ctx, monkeypatc
     )
 
 
-def test_a_fully_reachable_whitelist_records_an_empty_missed_list(sweep_ctx, monkeypatch):
+def test_a_fully_reachable_whitelist_records_an_empty_missed_list(
+        sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
     """whitelist_missed is written whenever a whitelist is active, so an empty list
     (nothing missed) stays distinguishable from an absent key (no whitelist)."""
     cfg = _make_config()
@@ -767,13 +797,14 @@ def test_a_fully_reachable_whitelist_records_an_empty_missed_list(sweep_ctx, mon
     assert _manifest(run_dir)["whitelist_missed"] == []
 
 
-def test_no_whitelist_leaves_the_manifest_key_absent(sweep_ctx):
+def test_no_whitelist_leaves_the_manifest_key_absent(sweep_ctx: SimpleNamespace) -> None:
     """The reconciliation record only exists when a whitelist was in effect."""
     _, run_dir = _sweep(sweep_ctx, name="nowl")
     assert "whitelist_missed" not in _manifest(run_dir)
 
 
-def test_manifest_records_whether_the_traced_repo_was_present(sweep_ctx):
+def test_manifest_records_whether_the_traced_repo_was_present(
+        sweep_ctx: SimpleNamespace) -> None:
     """Which cells a run produces depends on whether the traced mathlib4 checkout is
     present (it changes what skip_trivial judges trivial); traced_root_present records
     that provenance unconditionally so an archived run doesn't need re-deriving it."""
@@ -781,7 +812,7 @@ def test_manifest_records_whether_the_traced_repo_was_present(sweep_ctx):
     assert isinstance(_manifest(run_dir)["traced_root_present"], bool)
 
 
-def test_dojo_timeout_has_one_default_across_all_three_entry_points():
+def test_dojo_timeout_has_one_default_across_all_three_entry_points() -> None:
     """DEFAULT_DOJO_TIMEOUT has one owner across run_cell and cli run-cell/replay,
     checked via actual signature/parser defaults so a stray literal bypassing the
     constant fails here."""
@@ -808,7 +839,7 @@ def test_dojo_timeout_has_one_default_across_all_three_entry_points():
     assert filt.default != runner.DEFAULT_DOJO_TIMEOUT
 
 
-def test_sweep_seed_default_is_zero(sweep_ctx):
+def test_sweep_seed_default_is_zero(sweep_ctx: SimpleNamespace) -> None:
     """An omitted seed must not silently disagree with the driver: theorems.seed and
     cfg.seed used to default differently (0 vs 1776); run_cell's own 1776 default is a
     separate entry point, left unchanged."""
@@ -820,7 +851,8 @@ def test_sweep_seed_default_is_zero(sweep_ctx):
     assert {r["seed"] for r in _rows(run_dir, "cell")} == {0}
 
 
-def test_resume_truncates_a_torn_final_line_before_appending(sweep_ctx):
+def test_resume_truncates_a_torn_final_line_before_appending(
+        sweep_ctx: SimpleNamespace) -> None:
     """A torn final line from a SIGKILL must be truncated before append-resume, or
     the writer welds two records into one corrupt middle line."""
     cfg = _make_config(run_name="torn", rungs=["stepk:0"], n_replicates=1,

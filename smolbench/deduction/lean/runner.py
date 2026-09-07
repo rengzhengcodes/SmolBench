@@ -29,9 +29,10 @@ import threading
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable
+from typing import Any, TextIO
 
 import smolbench
 from smolbench.evals.provider import provider_module
@@ -75,7 +76,7 @@ def results_root() -> Path:
     return Path(smolbench.__file__).resolve().parents[1] / "notebooks" / "deduction" / "results"
 
 
-def _default_verifier():
+def _default_verifier() -> Any:
     """Import `.verify` at call time; raises `ImportError` without `lean_interact`.
 
     Protocol: `open_at_step`, `try_tail`, `replay_ground_truth`,
@@ -126,7 +127,7 @@ def run_cell(
     seed: int = 1776,
     request_timeout: int = 1800,
     max_retries: int = 4,
-    verifier=None,
+    verifier: Any = None,
 ) -> Iterable[dict]:
     """Yield one JSONL-serializable row per replicate for one (theorem, k, chain, level) cell.
 
@@ -134,12 +135,18 @@ def run_cell(
     wrapped in try/except here, since this is single-shot and non-resuming, so
     a generation failure propagates instead of becoming an exception row.
 
-    dojo_timeout: kept spelled this way, not `repl_timeout` -- pinned across
-    `run_cell`, `sweep`, and `cli`'s defaults (see `DEFAULT_DOJO_TIMEOUT`).
-    seed: replicate `i` decodes at `seed + i`, so the replicate index, not
-    theorem/rung/model, is the seed-varying axis.
-    verifier: `None` resolves `_default_verifier()`; tests pass a fake.
     Rows match the sweep row schema minus `api_model` (no display name here).
+
+    Parameters
+    ----------
+    dojo_timeout : int, optional
+        kept spelled this way, not `repl_timeout` -- pinned across
+        `run_cell`, `sweep`, and `cli`'s defaults (see `DEFAULT_DOJO_TIMEOUT`).
+    seed : int, optional
+        replicate `i` decodes at `seed + i`, so the replicate index, not
+        theorem/rung/model, is the seed-varying axis.
+    verifier : Any, optional
+        `None` resolves `_default_verifier()`; tests pass a fake.
     """
     if verifier is None:
         verifier = _default_verifier()
@@ -222,6 +229,7 @@ def jsonl_line(row: dict) -> str:
 
 
 def write_jsonl(rows: Iterable[dict], path: Path) -> int:
+    """Append JSONL rows to a path and return their count."""
     path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     with path.open("a") as f:
@@ -232,6 +240,7 @@ def write_jsonl(rows: Iterable[dict], path: Path) -> int:
 
 
 def new_run_id() -> str:
+    """Return a timestamped, short-unique run identifier."""
     return time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
@@ -548,7 +557,7 @@ def _cell_key(r: dict) -> tuple:
     )
 
 
-def group_cell_rows(rows: Iterable[dict], key) -> dict:
+def group_cell_rows(rows: Iterable[dict], key: Callable[[dict], Any]) -> dict:
     """Group `rows` by ``key(row)``, first-seen key order (dicts preserve it)."""
     groups: dict = {}
     for row in rows:
@@ -726,7 +735,7 @@ def spool_prefix() -> str:
     return raw.rstrip("/") if raw else DEDUCTION_SPOOL_PREFIX
 
 
-def reject_superseded_rows(paths) -> None:
+def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     """Reject any path whose FILE NAME carries a `retired_markers.RETIRED_MARKERS` marker.
 
     Raises `ValueError` naming every offending path, rather than warning and
@@ -977,7 +986,7 @@ def regenerate_run_artifacts(run_dir: Path) -> None:
 
 def _run_cells_at_step_concurrent(
     *,
-    all_rows,
+    all_rows: TextIO,
     theorem: BenchmarkTheorem,
     k: int,
     rungs: list[str],
@@ -986,14 +995,14 @@ def _run_cells_at_step_concurrent(
     n_replicates: int,
     temperature: float,
     max_tokens: int,
-    provider_factory,
+    provider_factory: Callable[[dict], tuple[Any, int]],
     base_seed: int,
     request_timeout: int,
     max_retries: int,
     done_keys: set,
     tdir: Path,
     dojo_timeout: int,
-    verifier,
+    verifier: Any,
     max_workers: int = 12,
     write_lock: threading.Lock | None = None,
     print_lock: threading.Lock | None = None,
@@ -1076,7 +1085,13 @@ def _run_cells_at_step_concurrent(
     with verifier.open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
         executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending)))
         try:
-            def _gated_complete(p, mod, sem, *args, **kwargs):
+            def _gated_complete(
+                p: dict,
+                mod: Any,
+                sem: threading.Semaphore | None,
+                *args: Any,
+                **kwargs: Any,
+            ) -> Any:
                 # Stamped where generation begins, not at submit: at
                 # max_workers=1 a submit-time stamp bills every earlier cell's
                 # queue wait (and any semaphore wait) to this cell's gen_ms.
@@ -1211,7 +1226,7 @@ def _run_cells_at_step_concurrent(
 # ---------------------------------------------------------------------------
 
 
-def _provider_for(mc: dict):
+def _provider_for(mc: dict) -> Any:
     """Resolve the provider module for one model-config entry.
 
     Explicit, not via the env-dispatched `provider.complete`: one process-wide
@@ -1221,7 +1236,7 @@ def _provider_for(mc: dict):
     return provider_module(mc["provider"])
 
 
-def _ctx_len_for(mc: dict, mod) -> int:
+def _ctx_len_for(mc: dict, mod: Any) -> int:
     """Resolve a model's context window, tolerating catalog-lookup failures.
 
     Falls back to `10**9` on failure (timeout or unlisted model id), so
@@ -1240,7 +1255,7 @@ def _ctx_len_for(mc: dict, mod) -> int:
         return 10**9
 
 
-def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier=None) -> int:
+def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = None) -> int:
     """Run a sweep described by `config`; write per-theorem dirs under `run_dir`.
 
     Loops theorem, then k, then rung, then model, then replicate. One Lean REPL

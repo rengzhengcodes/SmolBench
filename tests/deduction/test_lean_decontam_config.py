@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -38,14 +39,14 @@ EXPECTED_MINHASH = {
 EXPECTED_MIN_GOAL_KEY_CHARS = 24
 
 
-def _write_config(tmp_path: Path, mutate) -> Path:
+def _write_config(tmp_path: Path, mutate: Callable[[str], str]) -> Path:
     """A scratch copy of the committed TOML with `mutate` applied to its text."""
     path = tmp_path / "decontam_config.toml"
     path.write_text(mutate(CONFIG_PATH.read_text()))
     return path
 
 
-def test_parsed_policy_equals_the_constants_it_replaced():
+def test_parsed_policy_equals_the_constants_it_replaced() -> None:
     cfg = load_decontam_config()
     got = {
         "shingle_n": cfg.minhash.shingle_n,
@@ -84,19 +85,19 @@ PRE_MOVE_LEAN_NOISE = frozenset({
 })
 
 
-def test_the_stoplist_is_membership_identical_to_the_one_it_replaced():
+def test_the_stoplist_is_membership_identical_to_the_one_it_replaced() -> None:
     """`lean_noise` is exactly the stoplist `premises` carried before the move."""
     assert load_decontam_config().lean_noise == PRE_MOVE_LEAN_NOISE
     assert premises._LEAN_NOISE == PRE_MOVE_LEAN_NOISE
 
 
-def test_the_digest_is_over_the_files_raw_bytes():
+def test_the_digest_is_over_the_files_raw_bytes() -> None:
     """Comments included: they are part of what a run's provenance record claims."""
     assert load_decontam_config().sha256 == hashlib.sha256(
         CONFIG_PATH.read_bytes()).hexdigest()
 
 
-def test_the_config_is_loaded_once_per_resolved_path():
+def test_the_config_is_loaded_once_per_resolved_path() -> None:
     """Memoized: `lean_noise` is consulted per token inside `referenced_premises`."""
     assert load_decontam_config() is load_decontam_config()
     assert load_decontam_config(CONFIG_PATH) is load_decontam_config()
@@ -116,7 +117,9 @@ def test_the_config_is_loaded_once_per_resolved_path():
     pytest.param(lambda s: s.replace('"theorem", "lemma"', '"theorem", "theorem"'),
                  "theorem", id="duplicate-stoplist-entry"),
 ])
-def test_a_structurally_broken_config_is_refused_by_value(tmp_path, mutate, expected):
+def test_a_structurally_broken_config_is_refused_by_value(
+    tmp_path: Path, mutate: Callable[[str], str], expected: str
+) -> None:
     """Every refusal names the offending value, not just the section.
 
     A silently-corrected parameter is worse than a refusal to load: it keeps
@@ -128,7 +131,7 @@ def test_a_structurally_broken_config_is_refused_by_value(tmp_path, mutate, expe
         load_decontam_config(_write_config(tmp_path, mutate))
 
 
-def test_an_empty_stoplist_is_refused(tmp_path):
+def test_an_empty_stoplist_is_refused(tmp_path: Path) -> None:
     """An empty stoplist would let every Lean keyword resolve as a premise."""
     def _empty(source: str) -> str:
         return re.sub(r"lean_noise = \[.*?\n\]", "lean_noise = []", source, flags=re.S)
@@ -137,7 +140,7 @@ def test_an_empty_stoplist_is_refused(tmp_path):
         load_decontam_config(_write_config(tmp_path, _empty))
 
 
-def test_a_missing_section_or_key_is_refused_by_name(tmp_path):
+def test_a_missing_section_or_key_is_refused_by_name(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"\[minhash\]"):
         load_decontam_config(
             _write_config(tmp_path, lambda s: s.replace("[minhash]", "[nothash]")))
@@ -146,7 +149,7 @@ def test_a_missing_section_or_key_is_refused_by_name(tmp_path):
             _write_config(tmp_path, lambda s: s.replace("perm_seed = 1776", "")))
 
 
-def test_the_config_module_imports_only_the_standard_library():
+def test_the_config_module_imports_only_the_standard_library() -> None:
     """A leaf module, which is what lets `premises` import it: `decontam` ->
     `context` -> `premises` already exists, so a `premises` -> `decontam`
     edge would close a cycle if this loader pulled in either.
@@ -167,7 +170,9 @@ def test_the_config_module_imports_only_the_standard_library():
     ("trivial!", "not an _IDENT_RE token: `!` is outside its character class"),
     ("3foo", "not an _IDENT_RE token: an identifier cannot start with a digit"),
 ])
-def test_a_provably_dead_stoplist_entry_is_refused(tmp_path, entry, why):
+def test_a_provably_dead_stoplist_entry_is_refused(
+    tmp_path: Path, entry: str, why: str
+) -> None:
     """`premises` refuses a stoplist entry that could never change an outcome.
 
     `referenced_premises` skips a token on ``tok in _LEAN_NOISE or len(tok) <= 1``
@@ -194,7 +199,7 @@ def test_a_provably_dead_stoplist_entry_is_refused(tmp_path, entry, why):
         premises._validate_lean_noise(entries)
 
 
-def test_the_committed_stoplist_passes_its_own_validation():
+def test_the_committed_stoplist_passes_its_own_validation() -> None:
     """The control: every committed entry is a real, reachable `_IDENT_RE` token."""
     entries = load_decontam_config().lean_noise
     assert premises._validate_lean_noise(entries) is entries

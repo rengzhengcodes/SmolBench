@@ -27,7 +27,7 @@ from typing import Mapping
 from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
 
 
-def load_module_by_path(name: str, path) -> ModuleType:
+def load_module_by_path(name: str, path: Path) -> ModuleType:
     """Execute `path` as a module under `name`, cached in ``sys.modules``.
 
     A cache hit returns the same object to every caller, so e.g. both

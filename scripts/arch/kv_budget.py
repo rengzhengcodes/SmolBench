@@ -143,12 +143,16 @@ def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
 def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) -> int:
     """Total KV-cache bytes for one sequence of `ctx` tokens, over all layers and tp shards.
 
-    tp: for models that are neither MLA nor shared-latent, KV heads replicate
+    Parameters
+    ----------
+    tp : int, optional
+        for models that are neither MLA nor shared-latent, KV heads replicate
         when ``tp > n_kv``, applied per layer since Gemma-4's two blocks hold
         different KV-head counts (see `_is_shared_latent`); this only ever
         raises the total above the tp=1 figure.
-    naive: assume every layer holds full-context GQA KV at the model-level
-        head geometry -- the uncorrected comparison column.
+    naive : bool, optional
+        assume every layer holds full-context GQA KV at the model-level head
+        geometry -- the uncorrected comparison column.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]
@@ -196,6 +200,7 @@ def _replication(cfg: Dict[str, Any], tp: int) -> float:
 
 
 def main() -> None:
+    """Print the roster's naive and corrected KV-cache budgets."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ctx", type=int, default=DEFAULT_CTX)
     args = parser.parse_args()

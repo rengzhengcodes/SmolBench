@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from smolbench.evals.results_store import resolve_results_location
@@ -173,7 +174,7 @@ class _ProvisionAccessDenied(Exception):
     """Raised by `_run_step` on a denied call, so `main` exits 1 with no traceback."""
 
 
-def _run_step(label: str, operation: str, call):
+def _run_step(label: str, operation: str, call: Callable[[], Any]) -> Any:
     """Run one provisioning step with a progress line and AccessDenied handling.
 
     Raises `_ProvisionAccessDenied` (after printing the denial) if `call`

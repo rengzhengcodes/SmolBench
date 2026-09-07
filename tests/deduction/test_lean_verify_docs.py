@@ -24,12 +24,12 @@ def _lean_extra() -> str:
     return match.group(1)
 
 
-def test_pyproject_lean_extra_declares_lean_interact():
+def test_pyproject_lean_extra_declares_lean_interact() -> None:
     """Without this declaration, ``uv sync --all-extras`` prunes the verifier's backend."""
     assert "lean-interact" in _lean_extra()
 
 
-def test_pyproject_lean_extra_still_declares_lean_dojo():
+def test_pyproject_lean_extra_still_declares_lean_dojo() -> None:
     """`lean-dojo` is not dropped by this change: only verification stopped
     using it. `smolbench.deduction.lean.premises` still slices premise
     source from a LeanDojo-traced checkout, and corpus tracing still needs
@@ -38,7 +38,7 @@ def test_pyproject_lean_extra_still_declares_lean_dojo():
     assert "lean-dojo" in _lean_extra()
 
 
-def test_verify_module_has_no_lean_dojo_import():
+def test_verify_module_has_no_lean_dojo_import() -> None:
     """The retired backend is gone from `verify.py`'s source, checked by
     reading the file directly (not importing it), so this needs neither
     `lean_interact` nor a Lean toolchain.
@@ -54,13 +54,13 @@ def test_verify_module_has_no_lean_dojo_import():
     assert "from lean_dojo" not in src
 
 
-def test_readme_documents_the_mathlib_root_env_var():
+def test_readme_documents_the_mathlib_root_env_var() -> None:
     text = (NOTEBOOKS / "deduction" / "README.md").read_text()
     assert "SMOLBENCH_MATHLIB_ROOT" in text
     assert "lean-interact" in text
 
 
-def test_readme_keeps_the_traced_cache_claim_narrow():
+def test_readme_keeps_the_traced_cache_claim_narrow() -> None:
     """Verification stopped needing ``~/.cache/lean_dojo``; `premises.py` did not.
 
     An over-broad "the cache is obsolete" claim would send an operator to
@@ -80,13 +80,13 @@ def test_readme_keeps_the_traced_cache_claim_narrow():
         )
 
 
-def test_smoke_skill_documents_the_lean_interact_backend():
+def test_smoke_skill_documents_the_lean_interact_backend() -> None:
     skill = REPO_ROOT / ".claude" / "skills" / "run-smolbench"
     assert "lean-interact" in (skill / "SKILL.md").read_text()
     assert "lean_interact" in (skill / "lean_smoke.sh").read_text()
 
 
-def test_smoke_skill_tier0_check_cannot_pass_vacuously():
+def test_smoke_skill_tier0_check_cannot_pass_vacuously() -> None:
     """Tier 0 asserts the generation path does not pull in the Lean backend.
 
     A bare ``import smolbench.deduction.lean.runner`` would pass even if
@@ -99,7 +99,7 @@ def test_smoke_skill_tier0_check_cannot_pass_vacuously():
     assert "'lean_interact' not in sys.modules" in script
 
 
-def test_smoke_skill_replay_tier_refuses_without_a_mathlib_root():
+def test_smoke_skill_replay_tier_refuses_without_a_mathlib_root() -> None:
     script = (REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh").read_text()
     assert "SMOLBENCH_MATHLIB_ROOT" in script
     assert "need_mathlib_root" in script

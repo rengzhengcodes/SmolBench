@@ -48,12 +48,12 @@ _GOLDEN = "USER TURN\n\n## Previous attempt\n```lean\nATTEMPT LINE\n```\n"
     pytest.param("intros f,", {"trailing-comma"}, id="trailing-comma-only"),
     pytest.param("begin\n  simp\nend", {"begin-end"}, id="begin-end-block"),
 ])
-def test_find_relics(text, expected_kinds):
+def test_find_relics(text: str, expected_kinds: set[str]) -> None:
     assert {r.kind for r in find_relics(text)} == expected_kinds
     assert has_relics(text) is bool(expected_kinds)
 
 
-def test_relic_fixes_and_dedup():
+def test_relic_fixes_and_dedup() -> None:
     assert [r.fix for r in find_relics("refl") if r.kind == "refl"] == ["rfl"]
     assert [r.fix for r in find_relics("existsi z") if r.kind == "existsi"] == ["use"]
     # One relic per line, not one per occurrence.
@@ -67,7 +67,7 @@ def test_relic_fixes_and_dedup():
 @pytest.mark.parametrize(
     "tail", ["exact ⟨z, sq z⟩", "simp [iSup_le]\nrfl", "use z\nrfl", "exact rfl", "rfl"]
 )
-def test_corrupt_tail_invariants(tail):
+def test_corrupt_tail_invariants(tail: str) -> None:
     """The shared-vocabulary invariant: every injected kind is re-detected."""
     seen = set()
     for seed in range(20):
@@ -89,7 +89,7 @@ def test_corrupt_tail_invariants(tail):
     assert fixed is not None and fixed == corrupt_tail(tail, random.Random(1776))
 
 
-def test_corrupt_tail_single_seed_cases():
+def test_corrupt_tail_single_seed_cases() -> None:
     """Seed pins: an unannounced change to `_TRANSFORMS`' membership or order
     silently re-shuffles every repair dataset built from this module.
     """
@@ -105,11 +105,11 @@ def test_corrupt_tail_single_seed_cases():
     (Relic(kind="binder-comma", text="λ x,", fix=None, line=0), _UNEXPECTED_COMMA),
     (Relic(kind="trailing-comma", text="apply foo,", fix="apply foo", line=0), _UNEXPECTED_COMMA),
 ])
-def test_synth_error_per_kind(relic, expected):
+def test_synth_error_per_kind(relic: Relic, expected: str) -> None:
     assert synth_error([relic]) == expected
 
 
-def test_synth_error_first_relic_only_empty_and_unknown_kind_raise():
+def test_synth_error_first_relic_only_empty_and_unknown_kind_raise() -> None:
     relics = [Relic(kind="binder-comma", text="λ x,", fix=None, line=0),
               Relic(kind="refl", text="refl", fix="rfl", line=1)]
     assert synth_error(relics) == _UNEXPECTED_COMMA
@@ -121,7 +121,7 @@ def test_synth_error_first_relic_only_empty_and_unknown_kind_raise():
         synth_error([Relic(kind="lean3-name", text="supr_le", fix="iSup_le", line=0)])
 
 
-def test_build_repair_user_golden():
+def test_build_repair_user_golden() -> None:
     assert build_repair_user("USER TURN", "ATTEMPT LINE") == _GOLDEN + _COORDINATION
     assert build_repair_user("USER TURN", "ATTEMPT LINE", error="unknown identifier 'supr_le'") == (
         _GOLDEN + "Lean reported:\n```\nunknown identifier 'supr_le'\n```\n\n" + _COORDINATION)

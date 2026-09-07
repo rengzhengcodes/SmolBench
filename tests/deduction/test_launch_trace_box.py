@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +37,7 @@ SENTINEL = "ghp_SENTINEL_TOKEN_MUST_NOT_LEAK_0123456789"
 
 
 @pytest.fixture
-def fake_aws(tmp_path):
+def fake_aws(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
     """Put a recording ``aws`` stub first on PATH; yield the call-log directory.
 
     The stub logs each invocation's subcommand (for ordering) and dumps its
@@ -61,7 +63,9 @@ def fake_aws(tmp_path):
     yield tmp_path, bindir
 
 
-def _run(bindir, *args, env_extra=None):
+def _run(
+    bindir: Path, *args: str, env_extra: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PATH"] = f"{bindir}:{env['PATH']}"
     env["GITHUB_ACCESS_TOKEN"] = SENTINEL
@@ -70,7 +74,7 @@ def _run(bindir, *args, env_extra=None):
                           text=True, timeout=120, env=env)
 
 
-def _user_data(workdir):
+def _user_data(workdir: Path) -> str:
     """The ``--user-data`` value from the recorded ``run-instances`` argv."""
     for path in sorted(workdir.glob("argv.*")):
         argv = path.read_text().split("\0")
@@ -79,14 +83,14 @@ def _user_data(workdir):
     raise AssertionError(f"no run-instances call recorded in {workdir}")
 
 
-def test_script_parses():
+def test_script_parses() -> None:
     """`bash -n` on both the launcher and the runbook it ships."""
     for path in (SCRIPT, SCRIPTS / "deduction" / "trace_mathlib_ec2.sh"):
         proc = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
         assert proc.returncode == 0, f"{path.name}: {proc.stderr}"
 
 
-def test_dry_run_needs_no_aws_at_all(tmp_path):
+def test_dry_run_needs_no_aws_at_all(tmp_path: Path) -> None:
     """The plan prints with an empty environment and no `aws` binary on PATH,
     proving the dry-run makes no AWS call at all (the AMI lookup is skipped
     and printed unresolved) -- reviewable without an account.
@@ -101,7 +105,7 @@ def test_dry_run_needs_no_aws_at_all(tmp_path):
     assert SENTINEL not in proc.stdout + proc.stderr
 
 
-def test_token_value_never_reaches_the_user_data(fake_aws):
+def test_token_value_never_reaches_the_user_data(fake_aws: tuple[Path, Path]) -> None:
     """The emitted user-data carries the SSM parameter name, never a token
     value -- the box resolves the token itself, through its instance role.
     """
@@ -126,7 +130,7 @@ def test_token_value_never_reaches_the_user_data(fake_aws):
     assert "exit 1" in user_data
 
 
-def test_launcher_env_token_is_not_required(fake_aws):
+def test_launcher_env_token_is_not_required(fake_aws: tuple[Path, Path]) -> None:
     """The launcher no longer needs the token in its own environment: the
     point of moving to SSM is that nothing but the instance ever holds it.
     """
@@ -140,7 +144,7 @@ def test_launcher_env_token_is_not_required(fake_aws):
     assert "i-fake0123" in proc.stdout
 
 
-def test_describe_instances_guards_run_instances(fake_aws):
+def test_describe_instances_guards_run_instances(fake_aws: tuple[Path, Path]) -> None:
     """An in-flight box for this commit's tag stops a second launch.
 
     Three properties, because only the combination is the fix: the check runs
@@ -162,7 +166,7 @@ def test_describe_instances_guards_run_instances(fake_aws):
     assert "Name=instance-state-name,Values=pending,running" in filters, filters
 
 
-def test_force_skips_the_idempotency_check(fake_aws):
+def test_force_skips_the_idempotency_check(fake_aws: tuple[Path, Path]) -> None:
     """`--force` launches without asking, for a manually-killed stuck box."""
     workdir, bindir = fake_aws
     proc = _run(bindir, "--force")
@@ -172,7 +176,9 @@ def test_force_skips_the_idempotency_check(fake_aws):
     assert "run-instances" in calls
 
 
-def test_an_in_flight_instance_stops_the_launch(fake_aws, tmp_path):
+def test_an_in_flight_instance_stops_the_launch(
+    fake_aws: tuple[Path, Path], tmp_path: Path
+) -> None:
     """A pending/running match short-circuits: id printed, nothing launched."""
     workdir, bindir = fake_aws
     (bindir / "aws").write_text(

@@ -15,12 +15,13 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Callable, Optional, Sequence
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
-def _load_fleet_config():
+def _load_fleet_config() -> ModuleType:
     # Bootstrapped by hand: load_module_by_path lives on _config itself,
     # and scripts/fleet isn't a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
@@ -48,17 +49,19 @@ def fleet_rows(
     client_factory: Optional[Callable[[str], Any]] = None,
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
-
-    client_factory: `None` uses `_default_client_factory`, the seam tests
-    use to stub in a fake with no AWS SDK. Returns one dict per instance
-    with exactly region/experiment_tag/lane/instance_id/instance_type/
-    availability_zone/state/launch_time/age_hours -- `format_fleet_table`
-    relies on this exact set.
-
     `tag_prefix` is applied server-side (EC2 tag filters accept a trailing
     ``*``) and re-checked client-side, so a regression in one can't leak a
     sibling experiment's instances in. A region that raises (no
     credentials, disabled, throttled) is logged and skipped.
+
+    Parameters
+    ----------
+    client_factory : Optional[Callable[[str], Any]], optional
+        `None` uses `_default_client_factory`, the seam tests use to stub in a
+        fake with no AWS SDK. Returns one dict per instance with exactly
+        region/experiment_tag/lane/instance_id/instance_type/availability_zone/
+        state/launch_time/age_hours -- `format_fleet_table` relies on this exact
+        set.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)

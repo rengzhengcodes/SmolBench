@@ -78,7 +78,7 @@ def main() -> None:
     correct, valid, compliance = load_marks()
     census = compliance_census(compliance)
 
-    def nc(key) -> float:
+    def nc(key: tuple[str, str]) -> float:
         # Indexed, not `.get`: `aligned` above already exits on a cell with no marks.
         return census[key]["rate"]
 

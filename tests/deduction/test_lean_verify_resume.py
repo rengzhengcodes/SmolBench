@@ -10,6 +10,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Iterator
 
 import pytest
 from botocore.exceptions import ClientError
@@ -26,63 +27,69 @@ _IDENTITY = ("kind", "model", "theorem_id", "k", "rung", "replicate_idx")
 _WORKDIRS = itertools.count()
 
 
-def _cell(theorem, k=1, *, rung="stepk:1", rep=0, model="m", verdict="unverified",
-          proof="tac", **extra):
+def _cell(theorem: str, k: int = 1, *, rung: str = "stepk:1", rep: int = 0,
+          model: str = "m", verdict: str = "unverified", proof: str = "tac",
+          **extra: Any) -> dict[str, Any]:
     return {"kind": "cell", "model": model, "theorem_id": theorem, "k": k, "rung": rung,
             "replicate_idx": rep, "verdict": verdict, "candidate_proof": proof,
             "lean_error": None, "final_state_pp": None, "verify_ms": 0, "seed": 0, **extra}
 
 
-def _sanity(theorem, *, verdict="skipped", applied=0, total=1, ms=0):
+def _sanity(theorem: str, *, verdict: str = "skipped", applied: int = 0,
+            total: int = 1, ms: int = 0) -> dict[str, Any]:
     return {"kind": "sanity", "theorem_id": theorem, "verdict": verdict, "error": None,
             "tactics_applied": applied, "tactics_total": total, "ms": ms}
 
 
-def _dump(rows):
+def _dump(rows: list[dict[str, Any]]) -> bytes:
     return "".join(json.dumps(r) + "\n" for r in rows).encode()
 
 
-def _cells(rows):
+def _cells(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in rows if r.get("kind") == "cell"]
 
 
-def _proj(rows, *fields):
+def _proj(rows: list[dict[str, Any]], *fields: str) -> list[tuple[Any, ...]]:
     return [tuple(r.get(f) for f in fields) for r in rows]
 
 
-def _ids(rows):  # identity tuples, spelled out independently of the module under test
+def _ids(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:  # identity tuples, spelled out independently of the module under test
     return _proj(rows, *_IDENTITY)
 
 
 class _Fake:
     """S3 client and verifier in one recording fake; `verdict` is what try_tail returns."""
 
-    def __init__(self, verdict="lean_error"):
+    def __init__(self, verdict: str = "lean_error") -> None:
         self.verdict, self.n_uploads = verdict, 0
         self.objects, self.tried = {}, []
 
-    def get_object(self, Bucket, Key):
+    def get_object(self, Bucket: str, Key: str) -> dict[str, io.BytesIO]:
         if Key not in self.objects:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def upload_file(self, filename, bucket, key):
+    def upload_file(self, filename: str | Path, bucket: str, key: str) -> None:
         self.objects[key] = Path(filename).read_bytes()
         self.n_uploads += 1
 
     @contextlib.contextmanager
-    def open_at_step(self, bt, k):
+    def open_at_step(self, bt: Any, k: int) -> Iterator[tuple[str, str]]:
         yield ("dojo", f"state@{k}")
 
-    def try_tail(self, dojo, state_at_k, candidate_text, theorem_id):
+    def try_tail(self, dojo: str, state_at_k: str, candidate_text: str,
+                 theorem_id: str) -> SimpleNamespace:
         self.tried.append((theorem_id, candidate_text))
         return SimpleNamespace(verdict=self.verdict, error=None, final_state_pp=None)
 
-    def replay_ground_truth(self, bt):
+    def replay_ground_truth(self, bt: Any) -> SimpleNamespace:
         return SimpleNamespace(verdict="success", tactics_applied=5, tactics_total=5, error=None)
 
 
-def _run(monkeypatch, tmp_path, all_rows, prior=None, *, fake=None, **kw):
+def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+         all_rows: list[dict[str, Any]], prior: list[dict[str, Any]] | None = None,
+         *, fake: _Fake | None = None,
+         **kw: Any) -> tuple[int, list[dict[str, Any]] | None]:
     """Drive `verify_run` end-to-end against the fake; return (rc, uploaded rows or None)."""
     monkeypatch.setattr(lvr, "_lookup_theorem", lambda tid: SimpleNamespace(full_name=tid))
     fake = fake or _Fake()
@@ -97,7 +104,9 @@ def _run(monkeypatch, tmp_path, all_rows, prior=None, *, fake=None, **kw):
     return rc, ([json.loads(l) for l in body.decode().splitlines() if l.strip()] if body else None)
 
 
-def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(monkeypatch, tmp_path):
+def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Graded cells and prior sanity verdicts survive verbatim; new and REGROWN groups verify."""
     all_rows = [_sanity("t1"), _cell("t1", 1, rung="stepk:1"), _cell("t1", 1, rung="hint:2"),
                 _cell("t2", 2, rung="stepk:1"), _cell("t2", 2, rung="hint:2"), _sanity("t2"),
@@ -138,7 +147,9 @@ def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(monkeypat
      ({"dry_run": True}, "unverified", None, 0), ({}, "unverified", "done_t1", 2),
      ({}, "success", "orphan", 2)],
 )
-def test_full_pass_sentinel_gate(monkeypatch, tmp_path, kwargs, verdict, prior, expected_rc):
+def test_full_pass_sentinel_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                 kwargs: dict[str, Any], verdict: str, prior: str | None,
+                                 expected_rc: int) -> None:
     """A limit-free pass that leaves a sentinel exits non-zero; requested partials do not."""
     prior_rows = None if prior is None else [_cell("t1", 1, verdict="success")]
     if prior == "orphan":
@@ -156,7 +167,7 @@ def test_full_pass_sentinel_gate(monkeypatch, tmp_path, kwargs, verdict, prior, 
             assert {"success", "unverified"} <= set(verdicts)
 
 
-def test_resume_done_groups_all_cells_rule():
+def test_resume_done_groups_all_cells_rule() -> None:
     """A half-graded group is not done; sanity rows never complete one."""
     prior = [_cell("t1", 1, rung="stepk:1", verdict="success"),
              _cell("t1", 1, rung="hint:2", verdict="unverified"),
@@ -168,7 +179,7 @@ def test_resume_done_groups_all_cells_rule():
         [_sanity("t1", verdict="success"), _cell("t1", 1, verdict="success")]) == {("t1", 1)}
 
 
-def test_group_unverified_dedups_and_fans_out():
+def test_group_unverified_dedups_and_fans_out() -> None:
     """Only unverified cells group by (theorem, k); identical candidates replay once."""
     rows = [_cell("T.a", 1, rung="stepk:1", proof="simp"),
             _cell("T.a", 1, rung="hint:2", proof="ring"),
@@ -192,7 +203,7 @@ def test_group_unverified_dedups_and_fans_out():
     assert list(lvr.unique_candidates([row], [0])) == [""]
 
 
-def test_ram_cap_and_s3_path_mapping():
+def test_ram_cap_and_s3_path_mapping() -> None:
     """RAM/worker budget reads a supplied meminfo; the run key layout is a fleet contract."""
     meminfo = "MemTotal:       65788432 kB\nMemAvailable:   12582912 kB\nSwapFree: 0 kB\n"
     assert lvr.available_ram_gb(meminfo) == pytest.approx(12.0)
@@ -214,7 +225,9 @@ def test_ram_cap_and_s3_path_mapping():
     assert "//" not in key and not key.startswith("/")
 
 
-def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_path):
+def test_default_s3_prefix_resolves_to_the_recollection_keys(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """--s3-prefix's default; every other test passes a prefix explicitly, so a wrong default would only surface on a live run."""
     from smolbench.deduction.lean.runner import DEDUCTION_SPOOL_PREFIX
 
@@ -224,7 +237,7 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_pa
     # the default rather than merely computing it correctly.
     seen = {}
 
-    def _list_runs(client, bucket, key_prefix, pattern):
+    def _list_runs(client: Any, bucket: str, key_prefix: str, pattern: str) -> list[str]:
         seen.update(bucket=bucket, key_prefix=key_prefix)
         return []
 
@@ -246,7 +259,7 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(monkeypatch, tmp_pa
 # A group of only replay_failed/exception cells is not done.
 
 
-def test_resume_treats_an_all_replay_failed_group_as_pending():
+def test_resume_treats_an_all_replay_failed_group_as_pending() -> None:
     """A group where every cell reads replay_failed/exception was never measured and must stay pending; resume_done_groups used to treat "no unverified cell" as done, disagreeing with error_bars, which scores those same cells as failures."""
     unmeasured = [_cell("T", rung="stepk:1", verdict="replay_failed"),
                   _cell("T", rung="hint:2", verdict="exception")]
@@ -266,7 +279,9 @@ def test_resume_treats_an_all_replay_failed_group_as_pending():
 # A torn final line, and per-run isolation.
 
 
-def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path):
+def test_download_rows_tolerates_and_reports_a_torn_final_line(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
     """A half-written last line (SIGKILL mid-write on a spot box) must be dropped AND reported, not silently swallowed alongside real corruption."""
     fake = _Fake()
     good = [_cell("T", rung="stepk:1"), _sanity("T")]
@@ -281,7 +296,7 @@ def test_download_rows_tolerates_and_reports_a_torn_final_line(caplog, tmp_path)
     )
 
 
-def test_download_rows_still_refuses_mid_file_corruption(tmp_path):
+def test_download_rows_still_refuses_mid_file_corruption(tmp_path: Path) -> None:
     """Only the final line is recoverable; a corrupt line elsewhere is real damage that must propagate, since resume can't re-derive a row from the middle of a file."""
     fake = _Fake()
     fake.objects["k"] = b'{"kind": "cell", "theo\n' + _dump([_cell("T")])
@@ -290,11 +305,13 @@ def test_download_rows_still_refuses_mid_file_corruption(tmp_path):
         lvr.download_rows(fake, "b", "k", tmp_path / "rows.jsonl")
 
 
-def test_one_run_failing_does_not_abort_the_others(monkeypatch, tmp_path):
+def test_one_run_failing_does_not_abort_the_others(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """One bad run must not abort the rest of _verify_every_run's loop; each run is isolated and counted as failed instead of dying mid-pass."""
     seen = []
 
-    def _verify_run(*, run, **kw):
+    def _verify_run(*, run: str, **kw: Any) -> int:
         seen.append(run)
         if run == "scaling_bad":
             raise RuntimeError("REPL exploded on this lane")

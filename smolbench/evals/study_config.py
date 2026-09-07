@@ -15,7 +15,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 #: Resolved relative to this module's own file, not the caller's cwd.
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("study_config.toml")
@@ -70,7 +70,7 @@ class StudyConfig:
     roster: RosterConfig
 
 
-def _require(mapping: dict, name: str, within: str = ""):
+def _require(mapping: dict, name: str, within: str = "") -> Any:
     """Return ``mapping[name]``, raising ``ValueError`` naming it if absent.
 
     A ``"[table]"``-spelled `name` reads as its unbracketed key but reports as

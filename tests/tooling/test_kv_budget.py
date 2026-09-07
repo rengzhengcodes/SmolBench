@@ -116,7 +116,7 @@ AUDIT_TABLE = {
 
 
 @pytest.mark.parametrize("model,expected", AUDIT_TABLE.items())
-def test_kv_matches_the_audit(model, expected):
+def test_kv_matches_the_audit(model: str, expected: tuple[float, float]) -> None:
     """Corrected and naive figures both, so the layer mix stays pinned."""
     naive_gb, actual_gb = expected
     assert _kv_gb(model) == pytest.approx(actual_gb, abs=0.02)
@@ -131,7 +131,9 @@ def test_kv_matches_the_audit(model, expected):
         ("nemotron-3-super-120b-a12b", 8),
     ],
 )
-def test_hybrid_pattern_bills_only_attention_layers(model, attention_layers):
+def test_hybrid_pattern_bills_only_attention_layers(
+    model: str, attention_layers: int
+) -> None:
     """Mamba-2 and MLP/MoE layers of the NemotronH stack hold no KV."""
     cfg = _text_config(RAW[model])
     pattern = cfg["hybrid_override_pattern"]
@@ -145,7 +147,7 @@ def test_hybrid_pattern_bills_only_attention_layers(model, attention_layers):
     )
 
 
-def test_gemma_global_layers_use_their_own_head_geometry():
+def test_gemma_global_layers_use_their_own_head_geometry() -> None:
     """Global layers cache global_head_dim rows over num_global_key_value_heads."""
     cfg = _text_config(RAW["gemma-4-12b"])
     assert _layer_kv_shape(cfg, "sliding") == (8, 256)
@@ -160,14 +162,14 @@ def test_gemma_global_layers_use_their_own_head_geometry():
     assert _kv_layers(e2b).count("full") == 3
 
 
-def test_replication_is_per_layer():
+def test_replication_is_per_layer() -> None:
     """tp=4 replicates Gemma-4-12B's 1-head global layers, not its 8-head sliding ones."""
     sliding = 40 * 2 * 8 * 256 * 2 * 1024 / GB  # 0.336 GB, n_kv 8 >= tp
     global_ = 8 * 2 * 1 * 512 * 2 * CTX / GB  # 2.147 GB, n_kv 1 -> x4
     assert _kv_gb("gemma-4-12b", tp=4) == pytest.approx(sliding + 4 * global_, rel=1e-6)
 
 
-def test_tp_and_attention_kind():
+def test_tp_and_attention_kind() -> None:
     """Neither one-row-per-token mechanism replicates across tp; asserted on the mechanism, not a re-tuned number."""
     pro = _text_config(RAW["deepseek-v4-pro"])
     # V4 is detected as a shared latent by both readings the tool accepts.
@@ -195,7 +197,7 @@ def test_tp_and_attention_kind():
     assert len(_kv_layers(pro)) == pro["num_hidden_layers"] == 61
 
 
-def test_shared_latent_predicate_does_not_steal_mla_or_gqa():
+def test_shared_latent_predicate_does_not_steal_mla_or_gqa() -> None:
     """The predicate must claim exactly the two V4 rungs across the whole roster."""
     claimed = {m for m in RAW if _is_shared_latent(_text_config(RAW[m]))}
     assert claimed == {"deepseek-v4-pro", "deepseek-v4-flash"}

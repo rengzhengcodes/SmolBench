@@ -17,6 +17,7 @@ gate: a dry run's tally table is exactly what ``--write`` would apply.
 import argparse
 import sys
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -29,7 +30,7 @@ from smolbench.evals import Marks  # noqa: E402
 # "now" seam, and a `from ... import utcnow` binding would freeze the real
 # clock into every regraded run's key instead of honoring a repointed clock.
 from smolbench.evals import results_store as rs  # noqa: E402
-from smolbench.evals.parsing import parse_numeric  # noqa: E402
+from smolbench.evals.parsing import ParseResult, parse_numeric  # noqa: E402
 from smolbench.evals.quiz import COMPLIANT  # noqa: E402
 from smolbench.evals.study_config import roster_keys, tag_for  # noqa: E402
 from smolbench.induction.periodic import CONDITIONS  # noqa: E402
@@ -188,7 +189,7 @@ def load_for_regrade(
     return marks, rs.format_run_ts(marks.date)
 
 
-def regrade_marks(marks: Marks, parse) -> Dict:
+def regrade_marks(marks: Marks, parse: Callable[[str], ParseResult]) -> Dict:
     """Re-parse one replicate's marks with `parse` (e.g. `parse_numeric`).
 
     Nothing is written; the caller decides whether to hand the new `Marks` to

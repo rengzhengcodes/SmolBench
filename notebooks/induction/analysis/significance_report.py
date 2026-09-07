@@ -17,6 +17,7 @@ Run:
 
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -103,7 +104,7 @@ def compliance_census(compliance: dict) -> dict:
     return out
 
 
-def common_seed_rate(cell: dict, seeds) -> float | None:
+def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
     """Non-compliance rate of one census `cell` (from `compliance_census`), restricted to `seeds`.
 
     Pools the counts before dividing -- ``sum(noncompliant) / sum(marks)`` --
@@ -119,7 +120,7 @@ def common_seed_rate(cell: dict, seeds) -> float | None:
     return sum(nc for nc, _t in counts) / total
 
 
-def collapse_note(key, census: dict) -> str:
+def collapse_note(key: tuple[str, str], census: dict) -> str:
     """One-line mechanism annotation for a cell; ``""`` below `COLLAPSE_THRESHOLD`.
 
     Carries the measured rate and dominant failure mode -- "99.6%
@@ -134,7 +135,7 @@ def collapse_note(key, census: dict) -> str:
     return f"{key[0]}/{key[1]} {cell['rate']:.1%} non-compliant{mode}"
 
 
-def classify(key_a, key_b) -> str:
+def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     """Bucket a contrast from its two ``(model, info)`` keys.
 
     ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
@@ -435,7 +436,7 @@ def main() -> None:
               f"not padding-specific.")
 
     # ---- the findings ------------------------------------------------------
-    def tag(r):
+    def tag(r: dict) -> str:
         hits = [h for h in (collapse_note(r["key_a"], census),
                             collapse_note(r["key_b"], census)) if h]
         return ("   [COLLAPSE: " + "; ".join(hits) + "]") if hits else ""

@@ -8,6 +8,9 @@ unreviewable), and the attribution of the old study's 300/805/944 counts.
 
 import json
 import re
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,7 +28,7 @@ README = NOTEBOOKS / "deduction" / "README.md"
 #: remain: neither describes anything the post-cutoff corpus produces.
 OLD_STUDY_NUMBERS = re.compile(r"\b(805|944)\b")
 
-def _paragraphs(text: str):
+def _paragraphs(text: str) -> Iterator[tuple[str, list[str]]]:
     """Yield ``(paragraph_text, [lines])`` for each blank-line-delimited block."""
     block: list[str] = []
     for line in text.splitlines():
@@ -38,7 +41,9 @@ def _paragraphs(text: str):
         yield "\n".join(block), block
 
 
-def _unmarked_lines(text: str, pattern=None, *, marker: str = "pre-cutoff") -> list[str]:
+def _unmarked_lines(
+    text: str, pattern: re.Pattern[str] | None = None, *, marker: str = "pre-cutoff"
+) -> list[str]:
     """Lines matching `pattern` whose enclosing paragraph lacks `marker`.
 
     The paragraph is the unit: strict enough that an unrelated section cannot
@@ -56,25 +61,25 @@ def _unmarked_lines(text: str, pattern=None, *, marker: str = "pre-cutoff") -> l
 
 
 @pytest.fixture(scope="module")
-def stats_nb() -> dict:
+def stats_nb() -> dict[str, Any]:
     if not STATS_NB.exists():
         pytest.skip("statistical_analyses.ipynb lives in the top stack slice")
     return json.loads(STATS_NB.read_text())
 
 
 @pytest.fixture(scope="module")
-def lean_nb() -> dict:
+def lean_nb() -> dict[str, Any]:
     return json.loads(LEAN_NB.read_text())
 
 
-def _cell_source(nb: dict, needle: str) -> str:
+def _cell_source(nb: dict[str, Any], needle: str) -> str:
     hits = [c for c in nb["cells"] if needle in "".join(c["source"])]
     assert len(hits) == 1, f"expected exactly one cell containing {needle!r}, got {len(hits)}"
     return "".join(hits[0]["source"])
 
 
 @pytest.mark.parametrize("path", [STATS_NB, LEAN_NB], ids=lambda p: p.name)
-def test_notebook_json_shape_survives_editing(path):
+def test_notebook_json_shape_survives_editing(path: Path) -> None:
     """Round-trips byte-for-byte at indent=1, keeps list-of-lines `source`, no outputs.
 
     This is the recipe any edit script must use. A whole-file renormalization
@@ -91,7 +96,7 @@ def test_notebook_json_shape_survives_editing(path):
         assert cell.get("execution_count") is None, f"cell {i} gained an execution_count"
 
 
-def test_dependency_filter_covers_every_lake_package(stats_nb):
+def test_dependency_filter_covers_every_lake_package(stats_nb: dict[str, Any]) -> None:
     """Std was renamed Batteries; the filter must key on `.lake/packages/`, not one name.
 
     A marker naming only `std` silently reclassified every Batteries theorem as
@@ -114,7 +119,7 @@ def test_dependency_filter_covers_every_lake_package(stats_nb):
     assert is_mathlib_cell({"file_path": None}) is True
 
 
-def test_lean_eval_attributes_the_old_counts(lean_nb):
+def test_lean_eval_attributes_the_old_counts(lean_nb: dict[str, Any]) -> None:
     """805 / 944 are the pre-cutoff study's numbers, in every cell type,
     code included -- a code cell can call
     ``iter_replay_passing("novel_premises", "val")`` against a split family
@@ -130,7 +135,7 @@ def test_lean_eval_attributes_the_old_counts(lean_nb):
         f"numbers: {offenders}")
 
 
-def test_lean_eval_does_not_ask_for_the_retired_split_family():
+def test_lean_eval_does_not_ask_for_the_retired_split_family() -> None:
     """The notebook must not name a split family the corpus lacks.
 
     The post-cutoff corpus has a single ``random`` family; cell 4 asked for
@@ -147,7 +152,7 @@ def test_lean_eval_does_not_ask_for_the_retired_split_family():
         f"cells name novel_premises outside a pre-cutoff paragraph: {offenders}")
 
 
-def test_readme_data_sections_describe_the_post_cutoff_corpus():
+def test_readme_data_sections_describe_the_post_cutoff_corpus() -> None:
     """The README's own prose is scanned too, not just notebook markdown cells.
 
     The Data-bootstrap / pinned-300 / not-in-scope sections describe a Zenodo
@@ -172,7 +177,7 @@ def test_readme_data_sections_describe_the_post_cutoff_corpus():
     assert "build_postcutoff_corpus.py" in text
 
 
-def test_readme_states_what_the_code_now_enforces():
+def test_readme_states_what_the_code_now_enforces() -> None:
     """The cutoff section must describe the enforced contract and point at Package B."""
     text = README.read_text()
     start = text.index("### Corpus date vs. model cutoffs")

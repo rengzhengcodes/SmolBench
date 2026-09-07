@@ -13,7 +13,11 @@ and for why this directory has no ``conftest.py``.
 import inspect
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import numpy as np
 import pytest
@@ -38,7 +42,7 @@ NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 
 
 @pytest.fixture(scope="session")
-def multiplicity_sim(power_analysis):
+def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
     """The standalone Monte Carlo module."""
     return load_analysis("multiplicity_sim")
 
@@ -47,7 +51,7 @@ def multiplicity_sim(power_analysis):
 # The roster is read from the committed study config, not re-declared here
 # ===========================================================================
 
-def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
+def test_power_analysis_roster_comes_from_the_study_config(power_analysis: ModuleType) -> None:
     """MODELS/FAMILIES are the config's roster rendered into analysis tags, with one owner (``study_config.toml``)."""
     from smolbench.evals import study_config
 
@@ -64,7 +68,7 @@ def test_power_analysis_roster_comes_from_the_study_config(power_analysis):
 # Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
 # ===========================================================================
 
-def _legacy_holm(pvals, alpha):
+def _legacy_holm(pvals: np.ndarray, alpha: float) -> np.ndarray:
     """The pre-swap ``paired_analysis.holm``, vendored verbatim."""
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -77,7 +81,7 @@ def _legacy_holm(pvals, alpha):
     return reject
 
 
-def _legacy_hochberg(pvals, alpha):
+def _legacy_hochberg(pvals: np.ndarray, alpha: float) -> np.ndarray:
     """The pre-swap ``significance_report.hochberg``, vendored verbatim."""
     m = pvals.size
     order = np.argsort(pvals, kind="stable")
@@ -90,7 +94,7 @@ def _legacy_hochberg(pvals, alpha):
     return reject
 
 
-def _legacy_bh(p, q):
+def _legacy_bh(p: np.ndarray, q: float) -> np.ndarray:
     """The pre-swap nested ``bh()`` closure from ``paired_analysis.main``."""
     m = p.size
     order = np.argsort(p)
@@ -102,7 +106,7 @@ def _legacy_bh(p, q):
     return rej
 
 
-def _tie_heavy_vectors(n=200):
+def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
     """Yield `n` p-value vectors dominated by exact ties.
 
     Ties are pervasive here, not incidental: ``signflip_exact_p`` has a hard
@@ -122,9 +126,9 @@ def _tie_heavy_vectors(n=200):
 
 
 @pytest.mark.parametrize("alpha", (0.05, 0.05 / 210))
-def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis,
-                                                          significance_report,
-                                                          alpha):
+def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis: ModuleType,
+                                                          significance_report: ModuleType,
+                                                          alpha: float) -> None:
     """The statsmodels swap is drop-in on tie-heavy p-vectors, at both alphas."""
     for pvals in _tie_heavy_vectors():
         assert np.array_equal(paired_analysis.holm(pvals, alpha),
@@ -133,7 +137,9 @@ def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis,
                               _legacy_hochberg(pvals, alpha)), pvals
 
 
-def test_bh_is_a_module_level_function_matching_the_old_closure(paired_analysis):
+def test_bh_is_a_module_level_function_matching_the_old_closure(
+    paired_analysis: ModuleType,
+) -> None:
     """BH moves out of ``main``'s body and keeps its rejection set."""
     assert callable(getattr(paired_analysis, "bh", None)), \
         "bh must be importable, not buried in main()"
@@ -143,9 +149,9 @@ def test_bh_is_a_module_level_function_matching_the_old_closure(paired_analysis)
 
 
 @pytest.mark.parametrize("name", ("holm", "hochberg", "bh"))
-def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis,
-                                                              significance_report,
-                                                              name):
+def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis: ModuleType,
+                                                              significance_report: ModuleType,
+                                                              name: str) -> None:
     """Permuting the inputs permutes the mask exactly, because each procedure's per-rank threshold is monotone increasing in rank, so tie order cannot move the decision."""
     fn = getattr(significance_report if name == "hochberg" else paired_analysis, name)
     rng = np.random.default_rng(7)
@@ -156,8 +162,8 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(paired_analysis,
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
-def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
-                                 multiplicity_sim):
+def test_mcnemar_is_defined_once(power_analysis: ModuleType, paired_analysis: ModuleType,
+                                 multiplicity_sim: ModuleType) -> None:
     """One broadcasting implementation serves the scalar and batched call sites."""
     assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
     assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
@@ -175,7 +181,9 @@ def test_mcnemar_is_defined_once(power_analysis, paired_analysis,
 # pre-registration gates were bare asserts, stripped by python -O
 # ===========================================================================
 
-def test_design_invariants_are_checked_at_module_scope_and_raise(power_analysis):
+def test_design_invariants_are_checked_at_module_scope_and_raise(
+    power_analysis: ModuleType,
+) -> None:
     """The family-size gates run on import and raise, not assert in ``main()``, since a drift between the hand-written counts and ``build_*_contrasts()`` would silently invalidate every correction."""
     check = getattr(power_analysis, "check_design_invariants", None)
     assert callable(check), "the gate must be a callable run at module scope"
@@ -190,7 +198,7 @@ def test_design_invariants_are_checked_at_module_scope_and_raise(power_analysis)
         power_analysis.N_PRIMARY = original
 
 
-def test_design_invariants_survive_python_dash_o():
+def test_design_invariants_survive_python_dash_o() -> None:
     """Under ``python -O`` the gate still fires -- the whole point of a raise."""
     code = (
         "import sys;"
@@ -220,7 +228,7 @@ def test_design_invariants_survive_python_dash_o():
 
 
 @pytest.mark.parametrize("module", ("power_analysis", "paired_analysis"))
-def test_no_bare_assert_gates_remain(module):
+def test_no_bare_assert_gates_remain(module: str) -> None:
     """No ``assert`` survives as a gate in either module; a bare assert vanishes under ``python -O``."""
     source = (ANALYSIS_DIR / f"{module}.py").read_text()
     offenders = [ln for ln in source.splitlines()
@@ -233,7 +241,7 @@ def test_no_bare_assert_gates_remain(module):
 # ===========================================================================
 
 @pytest.fixture
-def small_tree(tmp_path, power_analysis):
+def small_tree(tmp_path: Path, power_analysis: ModuleType) -> tuple[Path, tuple[str, str]]:
     """A 6-seed tree with one unparsable replicate filename."""
     build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS,
                lambda m, i: ((0.10 if i == "zero" else 0.90), 0.0, "empty",
@@ -252,9 +260,12 @@ def small_tree(tmp_path, power_analysis):
     return tmp_path, cell
 
 
-def test_walkers_skip_an_unparsable_replicate_filename(repoint, paired_analysis,
-                                                        significance_report,
-                                                        small_tree):
+def test_walkers_skip_an_unparsable_replicate_filename(
+    repoint: Callable[[Path], None],
+    paired_analysis: ModuleType,
+    significance_report: ModuleType,
+    small_tree: tuple[Path, tuple[str, str]],
+) -> None:
     """A non-replicate file in the tree is skipped, by both the loader and the census."""
     root, cell = small_tree
     repoint(root)
@@ -268,7 +279,12 @@ def test_walkers_skip_an_unparsable_replicate_filename(repoint, paired_analysis,
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
-        repoint, paired_analysis, significance_report, small_tree, monkeypatch):
+    repoint: Callable[[Path], None],
+    paired_analysis: ModuleType,
+    significance_report: ModuleType,
+    small_tree: tuple[Path, tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Each replicate is opened once for both the contrasts and the census."""
     root, _cell = small_tree
     repoint(root)
@@ -293,7 +309,12 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
-        repoint, extens_vs_noise, power_analysis, small_tree, monkeypatch):
+    repoint: Callable[[Path], None],
+    extens_vs_noise: ModuleType,
+    power_analysis: ModuleType,
+    small_tree: tuple[Path, tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The 21 focused contrasts read their p-values off the 210-contrast pass, instead of recomputing them."""
     root, _cell = small_tree
     repoint(root)
@@ -316,8 +337,8 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
 # multiplicity_sim constants, alphas, path, cost
 # ===========================================================================
 
-def test_design_constants_are_imported_not_re_declared(multiplicity_sim,
-                                                       power_analysis):
+def test_design_constants_are_imported_not_re_declared(multiplicity_sim: ModuleType,
+                                                       power_analysis: ModuleType) -> None:
     """``multiplicity_sim`` imports its four design constants instead of copying them."""
     import _power_common
 
@@ -333,7 +354,7 @@ def test_design_constants_are_imported_not_re_declared(multiplicity_sim,
         assert redeclared not in source, redeclared
 
 
-def test_no_bare_replicate_count_literals_survive(multiplicity_sim):
+def test_no_bare_replicate_count_literals_survive(multiplicity_sim: ModuleType) -> None:
     """``part2`` spells the replicate count only as ``R_DEFAULT``, so a re-sizing cannot apply to half a report."""
     source = inspect.getsource(multiplicity_sim.part2)
     assert "30" not in source.replace("R_DEFAULT", ""), source
@@ -351,7 +372,7 @@ def test_no_bare_replicate_count_literals_survive(multiplicity_sim):
             == multiplicity_sim.EQ_R_GRID[-1])
 
 
-def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim):
+def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim: ModuleType) -> None:
     """``main`` derives every part's RNG from ``_power_common.SEED`` rather than a per-part literal."""
     import _power_common
 
@@ -363,7 +384,7 @@ def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim):
     assert _power_common.SEED == 0
 
 
-def test_monte_carlo_output_lands_in_the_results_dir(multiplicity_sim):
+def test_monte_carlo_output_lands_in_the_results_dir(multiplicity_sim: ModuleType) -> None:
     """The checkpoint JSON goes under ``results/``, covered by the general ``.gitignore`` rule instead of a one-off literal."""
     import _power_common
 
@@ -377,8 +398,9 @@ def test_monte_carlo_output_lands_in_the_results_dir(multiplicity_sim):
     assert "notebooks/*/results/" in gitignore
 
 
-def test_dump_creates_its_own_results_directory(multiplicity_sim, tmp_path,
-                                                monkeypatch, capsys):
+def test_dump_creates_its_own_results_directory(multiplicity_sim: ModuleType, tmp_path: Path,
+                                                monkeypatch: pytest.MonkeyPatch,
+                                                capsys: pytest.CaptureFixture[str]) -> None:
     """Moving ``OUT_PATH`` into ``results/`` requires ``dump()`` to mkdir, since that directory is gitignored and absent from a fresh checkout."""
     target = tmp_path / "results" / "multiplicity_sim_results.json"
     assert not target.parent.exists()
@@ -392,7 +414,9 @@ def test_dump_creates_its_own_results_directory(multiplicity_sim, tmp_path,
     assert json.loads(target.read_text()) == {"probe": 1}
 
 
-def test_part5_prices_the_trend_test_in_the_same_family_as_part4(multiplicity_sim):
+def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
+    multiplicity_sim: ModuleType,
+) -> None:
     """One trend test cannot cost `ALPHA/28` in part 5 and `ALPHA/154` in part 4 of the same family."""
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
@@ -412,7 +436,7 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(multiplicity_si
     assert "pre-registered" not in source.lower().replace("not pre-registered", "")
 
 
-def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
+def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis: ModuleType) -> None:
     """The fixed-seed sizing scan is cached on rate values and alpha, since only 10 distinct rate vectors repeat across 273 contrasts."""
     fn = power_analysis.replicates_needed
     assert hasattr(fn, "cache_info") and hasattr(fn, "cache_clear"), \
@@ -429,7 +453,7 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(power_analysis):
     assert info.hits == 1 and info.misses == 1, info
 
 
-def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim):
+def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) -> None:
     """``part2``'s grid search discards 3 of 4 returns yet paid for all of them (the discarded ``phi`` upcast cost 1.55 GB)."""
     params = inspect.signature(multiplicity_sim._paired_powers).parameters
     assert "stats" in params and params["stats"].default is True
@@ -444,7 +468,7 @@ def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim):
     assert fast[2] is None and fast[3] is None
 
 
-def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis):
+def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis: ModuleType) -> None:
     """4,000 GLM fits (~380 s per call) is too expensive a default for an explicit non-gate."""
     default = inspect.signature(
         power_analysis.omnibus_interaction_power).parameters["n_sims"].default
@@ -458,9 +482,9 @@ def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis):
 # assumes: an arm-specific per-replicate latent shared by a replicate's items
 # ===========================================================================
 
-def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim):
+def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim: ModuleType) -> None:
     """`icc=0.0` must draw exactly what the un-clustered simulation drew, including RNG call order."""
-    def draw(**kwargs):
+    def draw(**kwargs: Any) -> Any:
         return multiplicity_sim.paired_marks(
             0.9, 0.8, 0.5, 64, 30, np.random.default_rng(7), **kwargs)
 
@@ -470,7 +494,7 @@ def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim):
     assert np.array_equal(plain_b, zero_b)
 
 
-def within_replicate_phi(marks) -> float:
+def within_replicate_phi(marks: np.ndarray) -> float:
     """Mean correlation between two items of the same replicate.
 
     The clustering the study's design effect measures: with `K_HARM` items per
@@ -487,7 +511,7 @@ def within_replicate_phi(marks) -> float:
 
 
 def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
-        multiplicity_sim):
+        multiplicity_sim: ModuleType) -> None:
     """The latent is a within-replicate effect, not a change of difficulty: marginal rates must stay at `p_a`/`p_b`."""
     args = (0.9, 0.8, 0.5, 400, 30)
     flat_a, flat_b = multiplicity_sim.paired_marks(
@@ -502,7 +526,7 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
         assert abs(clustered.mean() - rate) < 0.01
 
 
-def test_the_replicate_latent_is_arm_specific_not_shared(multiplicity_sim):
+def test_the_replicate_latent_is_arm_specific_not_shared(multiplicity_sim: ModuleType) -> None:
     """Each arm draws its own per-replicate offset, so at rho=0 the two arms' replicate means stay uncorrelated."""
     marks_a, marks_b = multiplicity_sim.paired_marks(
         0.9, 0.9, 0.0, 400, 30, np.random.default_rng(13), icc=0.4)
@@ -513,9 +537,11 @@ def test_the_replicate_latent_is_arm_specific_not_shared(multiplicity_sim):
     assert within_replicate_phi(marks_a) > 0.10
 
 
-def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_sim):
+def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
+    multiplicity_sim: ModuleType,
+) -> None:
     """Item-level McNemar treats a replicate's 9 marks as 9 independent pairs, so a per-replicate latent inflates its Type I error above nominal."""
-    def type_i(icc):
+    def type_i(icc: float) -> float:
         _unpaired, mcnemar, _phi, _agree = multiplicity_sim._paired_powers(
             0.90, 0.0, 0.5, multiplicity_sim.R_DEFAULT, 4000,
             np.random.default_rng(17), stats=False, icc=icc)
@@ -526,7 +552,7 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(multiplicity_si
     assert clustered > multiplicity_sim.ALPHA_BONF
 
 
-def test_part2_reports_every_icc(multiplicity_sim):
+def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     """One block and one printed table per icc, each labelled with its icc."""
     import contextlib
     import io
@@ -548,7 +574,7 @@ def test_part2_reports_every_icc(multiplicity_sim):
 
 
 def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
-        multiplicity_sim):
+        multiplicity_sim: ModuleType) -> None:
     """A reader must be able to tell which icc row describes this study, from the module docstring naming the measured design effect (or "unknown")."""
     doc = multiplicity_sim.__doc__
     assert "design effect" in doc.lower()
@@ -560,7 +586,9 @@ def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
     assert multiplicity_sim.study_design_effect() is None
 
 
-def test_each_icc_block_reports_the_design_effect_it_produces(multiplicity_sim):
+def test_each_icc_block_reports_the_design_effect_it_produces(
+    multiplicity_sim: ModuleType,
+) -> None:
     """Each icc block reports the design effect its own marks produce, since the textbook ``1 + (k-1)*icc`` formula would compare the wrong scales."""
     import contextlib
     import io

@@ -60,6 +60,7 @@ import math
 import os
 import secrets
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
@@ -1116,7 +1117,7 @@ _CAPACITY_ERROR_CODES = frozenset(
 )
 
 
-def _ec2_client(region: str):
+def _ec2_client(region: str) -> Any:
     """Return ``_aws.fresh_client("ec2", region)``.
 
     Every EC2 call site in this module goes through this local name, never
@@ -2211,7 +2212,9 @@ def _wait_model_ready(
 
 
 @contextlib.contextmanager
-def serve_model(model: str, timeout_min: Optional[int] = None, force: bool = False):
+def serve_model(
+    model: str, timeout_min: Optional[int] = None, force: bool = False
+) -> Iterator[str]:
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
     Swaps the serving container (removing the previous model's), waits until

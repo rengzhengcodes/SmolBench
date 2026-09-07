@@ -31,7 +31,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import smolbench
 from smolbench.evals import Marks
@@ -255,7 +255,11 @@ class ResultsStore(abc.ABC):
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
         No existence check; a caller wanting resume-skip calls :meth:`exists` first.
-        run_ts: collection instant; `ReplicateHarness.run_replicates` captures :func:`utcnow`
+
+        Parameters
+        ----------
+        run_ts : datetime
+            collection instant; `ReplicateHarness.run_replicates` captures :func:`utcnow`
             once per seed so a pooled `evaluate()` is one run.
         """
 
@@ -270,12 +274,15 @@ class ResultsStore(abc.ABC):
     @abc.abstractmethod
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
         """List every seed with at least one stored/logged replicate.
-
-        model: the S3 key dimension; None yields [].
-        tag: the local key dimension.
-
         Returns a sorted, distinct list (a seed re-collected many times counts once); empty
         when nothing is stored yet, which is not an error.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            the S3 key dimension; None yields [].
+        tag : str
+            the local key dimension.
         """
 
     @abc.abstractmethod
@@ -288,11 +295,14 @@ class ResultsStore(abc.ABC):
         precisely so an append-only log never has an object edited or deleted to void it; the
         call shape is identical on both backends so a caller never branches.
 
-        reason: freeform operator-facing text naming why the retirement happened; recorded in
-            each S3 marker's body, only logged on the local store (nowhere durable to put it).
-
         Returns how many runs were retired; 0 (nothing was stored/logged at `addr`) is normal,
         not an error.
+
+        Parameters
+        ----------
+        reason : str
+            freeform operator-facing text naming why the retirement happened; recorded in
+            each S3 marker's body, only logged on the local store (nowhere durable to put it).
         """
 
     def regrade(
@@ -303,19 +313,24 @@ class ResultsStore(abc.ABC):
         Concrete on the ABC, built from :meth:`supersede_all` and :meth:`dump_marks` so there is
         exactly one regrade policy shared by both stores.
 
-        marks: must carry `marks.regraded_from` (the `run_ts` of the run this replaces) -- a
-            replacement that doesn't name what it replaced would defeat the point of a regrade
-            in a log where nothing can be rewritten. Raises ValueError before touching the store
-            if it's None.
-        run_ts: stamp for the new run; forwarded to :meth:`dump_marks`.
-        reason: forwarded to :meth:`supersede_all`, naming why the prior run(s) were retired.
-
         Supersedes before dumping, not after: a crash between the two steps leaves `addr` with
         no surviving run (`exists()` still reports it present, marker-blind, but `load_marks`
         refuses loudly, naming how many runs were superseded). The reverse order fails silently
         instead -- a crash after dumping but before superseding would leave two survivors, and
         earliest-wins would keep serving the old, un-regraded run with no sign anything was
         wrong.
+
+        Parameters
+        ----------
+        marks : Marks
+            must carry `marks.regraded_from` (the `run_ts` of the run this replaces) -- a
+            replacement that doesn't name what it replaced would defeat the point of a regrade
+            in a log where nothing can be rewritten. Raises ValueError before touching the store
+            if it's None.
+        run_ts : datetime
+            stamp for the new run; forwarded to :meth:`dump_marks`.
+        reason : str
+            forwarded to :meth:`supersede_all`, naming why the prior run(s) were retired.
         """
         if marks.regraded_from is None:
             raise ValueError(
@@ -399,13 +414,16 @@ class LocalResultsStore(ResultsStore):
         bytes survive on disk (an operator can restore them by renaming back); nothing reads
         them again on its own.
 
-        reason: logged only, at INFO level -- unlike the S3 marker, the local layout has no
-            per-file side channel to persist it in.
-
         Returns the renamed file's new path, or None when nothing was stored at `addr` (a no-op,
         not an error). Backed by ``os.replace``; two supersedes of the same address within the
         same second produce the identical name, and the second silently overwrites the first
         retired file -- the same one-file-per-address property the live path already has.
+
+        Parameters
+        ----------
+        reason : str
+            logged only, at INFO level -- unlike the S3 marker, the local layout has no
+            per-file side channel to persist it in.
         """
         path = self._path(addr)
         if not path.exists():
@@ -518,7 +536,7 @@ class S3ResultsStore(ResultsStore):
         """Return the prefix every logged run of this replicate shares."""
         return self._seed_prefix(model, seed) + f"{info}--"
 
-    def _client(self):
+    def _client(self) -> Any:
         """Return a fresh boto3 S3 client for `self.region` (boto3 resolves `None`).
 
         Never cached: `_aws.fresh_client` builds a new Session per call so rotated credentials
@@ -629,16 +647,20 @@ class S3ResultsStore(ResultsStore):
         The log is append-only, so a run can never be edited or deleted to void it -- a sibling
         key is written instead, the run object itself untouched, byte for byte.
 
-        run_ts: the fixed-width stamp exactly as it appears in the run's key, not a `datetime`;
-            this method never lists to find the run, it trusts the caller's stamp and writes the
-            marker key directly.
-        reason: freeform operator-facing text stored in the marker body; not interpreted by this
-            module.
-
         Raises ValueError if `addr.model` is None: a model-less address is a read-only shape and
         nothing is ever logged there to supersede. Does not check whether `run_ts` actually names
         a logged run: a marker for a stamp nothing was ever logged under is harmless (nothing
         will ever match its prefix) and cheaper than an existence probe first.
+
+        Parameters
+        ----------
+        run_ts : str
+            the fixed-width stamp exactly as it appears in the run's key, not a `datetime`;
+            this method never lists to find the run, it trusts the caller's stamp and writes the
+            marker key directly.
+        reason : str
+            freeform operator-facing text stored in the marker body; not interpreted by this
+            module.
         """
         if addr.model is None:
             raise ValueError(
@@ -709,9 +731,13 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     URI naming a different bucket must keep resolving through boto3, since that bucket may live
     in any region.
 
-    results_dir: need not exist -- resolved non-strictly, since an S3-first run may never create
+    Parameters
+    ----------
+    results_dir : Path
+        need not exist -- resolved non-strictly, since an S3-first run may never create
         its local results directory.
-    prefix: becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+    prefix : str, optional
+        becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -748,7 +774,7 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     )
 
 
-def _etag_md5(etag) -> Optional[str]:
+def _etag_md5(etag: Optional[str]) -> Optional[str]:
     """Extract a whole-object MD5 hex digest from an S3 ``ETag`` value.
 
     Returns the unquoted hex digest iff `etag` is a single-part upload's whole-object MD5; None
@@ -788,10 +814,6 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     One-way and destructive: overwrites local files and never touches the log, so a local-only
     regrade is silently destroyed.
 
-    tags: ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
-        supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
-    prefix: forwarded to :func:`experiment_name`, and used in each local directory name.
-
     Returns the count of objects actually downloaded, excluding those skipped as identical.
     Raises RuntimeError if `results_dir` resolves to a `LocalResultsStore` (no log to sync), or
     ValueError if a destination resolves outside `results_dir`.
@@ -806,6 +828,14 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     local file is skipped only when it exists and the listing ETag decodes to a single-part MD5
     equal to the local bytes' hash; size-only would be unsound (a regrade's 1 -> 0 flip preserves
     length). A multipart ETag never matches, so such an object re-downloads every call.
+
+    Parameters
+    ----------
+    tags : Mapping[str, str]
+        ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
+        supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
+    prefix : str, optional
+        forwarded to :func:`experiment_name`, and used in each local directory name.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):
