@@ -295,7 +295,7 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
         solved = np.linalg.solve(sigma, t_vec[:, :, None])[:, :, 0]
         stat = np.einsum("sd,sd->s", t_vec, solved)
     except np.linalg.LinAlgError:
-        # Singular-Sigma fallback: see this function's Notes section.
+        # Singular-Sigma fallback: Sigma == 0 forces T == 0, so Q = 0 (see docstring).
         sigma_inv = np.linalg.pinv(sigma)  # batched SVD pseudo-inverse
         stat = np.einsum("sd,sde,se->s", t_vec, sigma_inv, t_vec)
 

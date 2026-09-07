@@ -442,8 +442,8 @@ COT_ARGS: dict[str, dict] = {
 # would otherwise surface as a KeyError on a billing box. A `raise`, not an
 # `assert`: asserts are stripped under `python -O`, which would delete this
 # gate on exactly the automated invocations that most need it.
-if tuple(COT_ARGS) != tuple(MODELS):
-    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(MODELS))
+if tuple(COT_ARGS) != roster_keys():
+    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
     raise RuntimeError(
         "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
         "the same ladder order. "

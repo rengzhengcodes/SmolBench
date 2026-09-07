@@ -192,11 +192,8 @@ def main() -> None:
         rows.append(dict(
             label=label, key_a=key_a, key_b=key_b,
             acc_a=a.mean(), acc_b=b.mean(), n=a.size,
-            # The discordance counts are KEPT, under `paired_analysis`'s row
-            # spelling (`b`/`c`), not consumed and dropped. The NOT-significant
-            # section reports how many ceiling pairs have ZERO discordant items
-            # -- a number that was previously asserted as the adjective "many"
-            # precisely because these two counts were thrown away here.
+            # Discordance counts kept under `paired_analysis`'s row spelling (`b`/`c`):
+            # the NOT-significant section counts ceiling pairs with zero discordant items.
             b=nb, c=nc,
             n_seeds=int(np.unique(sidx).size),
             p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),

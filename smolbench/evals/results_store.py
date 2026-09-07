@@ -828,6 +828,8 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             if (
                 local_path.exists()
                 and etag_md5 is not None
+                # usedforsecurity=False: this hash is a cache check, not security -- the flag
+                # is what keeps md5 legal on a FIPS build.
                 and etag_md5
                 == hashlib.md5(local_path.read_bytes(), usedforsecurity=False).hexdigest()
             ):
