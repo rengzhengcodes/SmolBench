@@ -35,11 +35,7 @@ from typing import Iterable
 
 import smolbench
 from smolbench.evals.provider import provider_module
-from smolbench.evals.retired_markers import (  # re-exported: run_study/cli read them off runner
-    RETIRED_MARKERS,
-    SUPERSEDED_MARKER,
-    is_retired,
-)
+from smolbench.evals.retired_markers import is_retired
 
 from . import lean3
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
@@ -619,8 +615,7 @@ def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     infra hiccup on a past run must not permanently blank a theorem out of the
     study -- the caller's gate check, not this function, lets it through.
     Never triggers a re-replay for an existing row of any verdict; a second
-    sanity row per theorem would break `merge_lean_shards.py`'s count gate
-    against `EXPECTED_SANITY_ROWS`.
+    sanity row per theorem would break `merge_lean_shards.py`'s `--expect-sanity` count gate.
     """
     return {r.get("theorem_id", ""): r.get("verdict", "")
             for r in read_jsonl_tolerating_torn_tail(jsonl_path)
@@ -732,7 +727,7 @@ def spool_prefix() -> str:
 
 
 def reject_superseded_rows(paths) -> None:
-    """Reject any path whose FILE NAME carries a `RETIRED_MARKERS` marker.
+    """Reject any path whose FILE NAME carries a `retired_markers.RETIRED_MARKERS` marker.
 
     Raises `ValueError` naming every offending path, rather than warning and
     skipping: these files parse perfectly and would otherwise yield a
@@ -1081,19 +1076,26 @@ def _run_cells_at_step_concurrent(
     with verifier.open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
         executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending)))
         try:
-            def _gated_complete(mod, sem, *args, **kwargs):
+            def _gated_complete(p, mod, sem, *args, **kwargs):
+                # Stamped where generation begins, not at submit: at
+                # max_workers=1 a submit-time stamp bills every earlier cell's
+                # queue wait (and any semaphore wait) to this cell's gen_ms.
                 if sem is None:
+                    p["t_gen_start"] = time.monotonic()
                     return mod.complete(*args, **kwargs)
                 with sem:
+                    p["t_gen_start"] = time.monotonic()
                     return mod.complete(*args, **kwargs)
 
             future_to_pending = {}
             for p in pending:
                 mod, ctx_len = provider_factory(p["mc"])
+                # Fallback only: read if the future raises before
+                # `_gated_complete` restamps, so `gen_ms` can never KeyError.
                 p["t_gen_start"] = time.monotonic()
                 sem = (model_semaphores or {}).get(p["display_name"])
                 fut = executor.submit(
-                    _gated_complete, mod, sem, p["user_prompt"], p["model"], p["seed"],
+                    _gated_complete, p, mod, sem, p["user_prompt"], p["model"], p["seed"],
                     system=SYSTEM,
                     context_length=ctx_len,
                     extra_args={
@@ -1112,7 +1114,6 @@ def _run_cells_at_step_concurrent(
                         else as_completed(future_to_pending))
             for fut in arrivals:
                 p = future_to_pending[fut]
-                gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
 
                 base_row = {
                     "kind": "cell",
@@ -1135,6 +1136,10 @@ def _run_cells_at_step_concurrent(
                 try:
                     rsp = fut.result()
                 except Exception as exc:  # noqa: BLE001
+                    # Read after the wait, never before: at max_workers=1
+                    # `arrivals` is submission order, so the worker may not
+                    # have restamped `t_gen_start` yet at loop entry.
+                    gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
                     row = {
                         **base_row,
                         "prompt_tokens": 0, "completion_tokens": 0,
@@ -1151,6 +1156,7 @@ def _run_cells_at_step_concurrent(
                         "final_state_pp": None,
                     }
                 else:
+                    gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
                     candidate = extract_tactic_block(rsp.content)
                     t_ver = time.monotonic()
                     try:

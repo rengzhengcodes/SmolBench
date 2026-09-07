@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -174,10 +175,12 @@ def test_sweep_end_to_end(sweep_ctx, monkeypatch, concurrent):
     import smolbench.evals.providers.openrouter as orr
     import smolbench.evals.providers.primeintellect as pi
     calls: list[dict] = []
+    gen_delay = 0.02  # long enough that a per-cell gen_ms is distinguishable
 
     def _spy(real):
         def _wrapped(*args, **kwargs):
             calls.append({"args": args, "kwargs": kwargs})
+            time.sleep(gen_delay)
             return real(*args, **kwargs)
         return _wrapped
 
@@ -237,6 +240,10 @@ def test_sweep_end_to_end(sweep_ctx, monkeypatch, concurrent):
         assert (tdir / "summary.md").exists()
         assert (tdir / "meta.json").exists()
     if not concurrent:
+        # gen_ms times the generation call, not the wait for it: at
+        # max_workers=1 a submit-time stamp would bill each of the 8 cells per
+        # (theorem, k) the queue wait of every cell submitted before it.
+        assert max(r["gen_ms"] for r in cells) < 4 * gen_delay * 1000
         assert [(r["theorem_id"], r["rung"], r["model"], r["replicate_idx"])
                 for r in cells] == [
             (t.full_name, rung, mc.get("display_name", mc["model"]), replicate_idx)
@@ -531,9 +538,8 @@ def test_l3_column_counts_parse_level_relics_and_names_its_scope(tmp_path, monke
     assert len(row) == len(header), f"header/row width mismatch\n{header}\n{row}"
     assert row[0] == "stepk:0" and row[1] == "m"
     assert row[2] == "1/4"
-    l3_col = next(i for i, tok in enumerate(header) if tok.startswith("l3"))
-    assert row[l3_col] == "2"
-    assert lines[-1].split()[-1].endswith("=2")  # per-model totals line
+    assert row[header.index("l3(parse-level)")] == "2"
+    assert "l3(parse-level)=2" in lines[-1]  # per-model totals line
 
 
 def test_nullverify_sweep_generates_all_theorems(sweep_ctx):

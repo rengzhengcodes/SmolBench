@@ -142,17 +142,16 @@ if _RAW_LEAN_MODEL:
     # lanes end up sharing one tag.
     #
     # Two checks, and the order is load-bearing: `validate_experiment_tag`
-    # (shared with induction) refuses an empty/whitespace tag, a retired
-    # study's tag, or the bare shared fleet prefix, but it cannot do the
-    # exact per-lane compare below since it does not know this lane's model
+    # (shared with induction) refuses an empty/whitespace tag or the bare
+    # shared fleet prefix, but it cannot do the exact per-lane compare
+    # below since it does not know this lane's model
     # key. It must run first because the bare-prefix case would otherwise be
     # misdiagnosed by the exact compare as "wrong lane" when the real danger
     # is that the tag names the WHOLE fleet -- fleet teardown terminates by
     # tag.
     #
     # lane=None: shard support lives in `run_name`, never in
-    # EC2_EXPERIMENT_TAG, so there is no suffix to strip. No `retired=`
-    # override: that would only re-admit a tag the default list refuses.
+    # EC2_EXPERIMENT_TAG, so there is no suffix to strip.
     _TAG = os.environ.get("EC2_EXPERIMENT_TAG", "")
     try:
         validate_experiment_tag(_TAG, None)
@@ -277,8 +276,7 @@ SWEEP_CONFIG_PATH: Path = REPO_ROOT / "notebooks" / "deduction" / "sweep.yaml"
 #: lives in `SWEEP_CONFIG_PATH`. `build_config` refuses a sweep file missing
 #: any of these, because an absent key would fall through to
 #: ``runner.sweep``'s own library default -- the silent drift these explicit
-#: values exist to prevent (see ``runner.DEFAULT_DOJO_TIMEOUT``'s Design
-#: comment for the worked example).
+#: values exist to prevent.
 REQUIRED_SWEEP_KEYS: frozenset[str] = frozenset(
     {
         "temperature",
@@ -452,8 +450,7 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
             f"{config_path}: missing required key(s) {', '.join(missing)}.\n"
             "Every knob this study pins must be stated explicitly: an absent key "
             "falls through to runner.sweep's own library default instead of this "
-            "study's value, silently and with nothing recorded (see "
-            "runner.DEFAULT_DOJO_TIMEOUT's Design comment for the worked example)."
+            "study's value, silently and with nothing recorded."
         )
 
     # Sharding suffixes the default run_name so two concurrent shards don't
@@ -568,7 +565,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     have already deleted an unconfirmed upload.
 
     Pruning keeps ``manifest.json``, ``all_rows.jsonl`` and any
-    ``runner.RETIRED_MARKERS``-named sibling (the
+    ``retired_markers.RETIRED_MARKERS``-named sibling (the
     ``all_rows_SUPERSEDED-<stamp>.jsonl`` files ``--force-rerun`` creates).
     ``all_rows.jsonl`` must survive: a relaunch's resume path
     (``runner._existing_keys``/``runner._sanity_done``) reads only that file
@@ -842,7 +839,8 @@ def main(argv: list[str] | None = None) -> None:
             f"s3://{SPOOL_BUCKET}/{runner.spool_prefix()}/scaling_{key}/ objects "
             "with its partial rows.\n"
             "Fix: re-run this shard with --no-s3, then merge and spool with "
-            "`scripts/deduction/merge_lean_shards.py <key> --n <n> --spool`."
+            "`scripts/deduction/merge_lean_shards.py <key> --n <n> "
+            "--expect-cells <N> --expect-sanity <N> --spool`."
         )
 
     # Resolved -- and any SystemExit raised -- before provisioning.

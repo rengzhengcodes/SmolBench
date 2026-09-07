@@ -162,6 +162,8 @@ def _count_tokens(s: str) -> int:
     For BUDGET-style measurements only, where an approximate count is an acceptable price
     for never raising because `tiktoken` is missing. The `noise` chain needs an EXACT length
     control instead, so it uses `TiktokenTokenizer` directly rather than this fallback.
+    `_render_hint_parts`'s hint:3+ budget re-implements this same policy inline as a local
+    ``tok()`` (not a call here); change both together.
     """
     try:
         import tiktoken
@@ -265,7 +267,8 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     suffix_len = len(base_prompt) - len(base_text)
     pad = padded_prompt[len(base_text): len(padded_prompt) - suffix_len]
 
-    # Re-verify the slice rather than trust it.
+    # A future PREFIX in build_user_prompt would make the suffix_len slice
+    # mis-locate the pad silently; only re-rendering catches that.
     reconstructed = _as_full_prompt(level, base_text + pad)
     if reconstructed != padded_prompt:
         raise ValueError(
