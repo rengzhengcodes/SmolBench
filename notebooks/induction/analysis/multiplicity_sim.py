@@ -98,7 +98,7 @@ def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
     succ : np.ndarray
         Success counts across rungs and strata.
     n : int
-        Must be identical across every rung and stratum -- the equal-n.
+        Must be identical across every rung and stratum -- the equal-n
         precondition behind the covariance collapse used in
         ``power_analysis.gcmh_reject``.
 
@@ -172,7 +172,7 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     rng : np.random.Generator
         Random generator for latent draws.
     icc : float, optional
-        Share of each arm's latent variance from a per-replicate latent.
+        Share of each arm's latent variance from a per-replicate latent
         shared by that replicate's `K_HARM` items, modelling a replicate's shared
         seed (PART 3's "independent" variant). Must be in ``[0.0, 1.0)`` -- 1.0
         would make every item in a replicate identical, collapsing the `K_HARM`
@@ -427,7 +427,7 @@ def _paired_powers(
     Returns
     -------
     tuple
-        ``(power_unpaired, power_paired, phi_binary, agreement)``; the last.
+        ``(power_unpaired, power_paired, phi_binary, agreement)``; the last
         two are `None` when ``stats=False``.
     """
     p_b = p_a - delta
