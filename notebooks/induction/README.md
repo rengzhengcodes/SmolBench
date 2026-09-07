@@ -1,13 +1,13 @@
 # Induction: family-ladder scaling study
 
-This is the INDUCTION side of the family-ladder scaling study (periodic
-quizzes). See `smolbench/induction/README.md` for the task design
-and the shared experiment API these scripts drive, and `notebooks/README.md`
-for what is anchored where across both studies.
+The INDUCTION side of the family-ladder scaling study (periodic quizzes).
+`smolbench/induction/README.md` has the task design and the shared experiment
+API these scripts drive; `notebooks/README.md` has the path anchors that hold
+across both studies.
 
 ```
 induction/
-  run_study.py            the driver          <- pinned here; see "Layout" below
+  run_study.py            the driver          <- launched by literal path
   induction_eval.ipynb    the exploration notebook
   keys.env                the driver's own sibling (untracked)
   results/                S3-mirrored replicate YAMLs; archived out of the tree
@@ -16,69 +16,38 @@ induction/
 
 ## Layout
 
-`run_study.py`, `induction_eval.ipynb` and `keys.env` stay at this study
-root because things outside this directory will reach them by literal path:
-`scripts/fleet/run_fleet.py` (slice 4) will build a lane's argv from
-`notebooks/induction/run_study.py`, `scripts/fleet/run_shards.py` (slice 4)
-will find running shards with `pgrep -f` on that same string, and
-`notebooks/deduction/run_study.py` (slice 3) will load this driver by file
-path for the shared roster once it lands. The driver itself already does
-`load_dotenv(__file__.parent / "keys.env")`.
+`run_study.py`, `induction_eval.ipynb` and `keys.env` stay at this study root,
+and `results/` stays directly beneath it, for the two reasons
+`notebooks/README.md` gives. `keys.env` carries the driver's AWS credentials
+plus any `EC2_*` / `INDUCTION_*` overrides (catalogued in `run_study.py`'s
+module docstring); it is untracked with no committed example, because
+credential-shaped files never enter the tree.
 
-`results/` stays directly beneath this directory because
-`notebooks/induction/results` is what `results_store.experiment_name`
-matches to derive the short S3 experiment prefix `induction`.
-
-`keys.env` carries the driver's AWS credentials plus any `EC2_*` /
-`INDUCTION_*` overrides (catalogued in `run_study.py`'s module docstring;
-`EC2_*` is read at `ec2` import time -- see "keys.env first, then import" in
-`smolbench/induction/README.md`). Untracked by design, with no committed
-example: credential-shaped files never enter the tree.
-
-Everything else is free to be grouped, and is. The write-side S3 key comes
-from the literal `notebook_dir="induction"` argument to
-`InductionExperiment` (`run_study.py`), not from any script's `__file__`,
-and nothing under `analysis/` writes to the store -- they are
-read-only consumers of a synced-down local tree. Their depth affects only
-where they READ from, so the ones that need `results/` anchor it explicitly
-(`_power_common.results_dir(__file__, up=1)`) rather than
-assuming a sibling. `tests/tooling/test_analysis_stats.py` (slice 4)
-(`test_shared_scaffolding_wiring`) will pin that.
+Everything else is free to be grouped, and is: nothing under `analysis/` writes
+to the store, so a script's depth affects only where it reads from.
 
 ## Study driver
 
-- `run_study.py` -- headless driver for the family-ladder scaling study.
-  Defines the roster (`MODELS`, `COT_ARGS`) and sweep config.
-  `notebooks/deduction/run_study.py` (slice 3) will load it by file path
-  once it lands. The analysis scripts do NOT -- they take their own
-  `MODELS` from `analysis/power_analysis.py`.
+- `run_study.py` -- headless driver for the study; defines the roster
+  (`MODELS`, `COT_ARGS`) and sweep config. `notebooks/deduction/run_study.py`
+  loads it by file path for the shared roster; the analysis scripts do NOT --
+  they take their own `MODELS` from `analysis/power_analysis.py`.
 - `induction_eval.ipynb` -- the fleet-aware notebook for exploring and
-  validating the study; framing cells document the as-served roster,
-  config epochs, and the earliest-wins selection rule.
+  validating the study; framing cells document the as-served roster, config
+  epochs, and the earliest-wins selection rule.
 
 ## analysis/ -- the published numbers
 
-Each of the four chained scripts inserts a `__file__`-anchored directory on
-`sys.path` -- its own (`extens_vs_noise.py`, `significance_report.py`,
-`paired_analysis.py`) or `notebooks/` (`power_analysis.py`, which imports
-`_power_common` from there) -- and imports its siblings by bare name;
-`power_analysis.py` is the root of that chain and the only one that resolves
-`results/`. `multiplicity_sim.py` inserts BOTH (its own directory and
-`notebooks/`) and imports its design constants from `_power_common` and
-`power_analysis` instead of re-declaring them, but it remains the only script
-in `analysis/` that reads no results tree. All four
-read marks through ``Marks.load`` (never scraped), so they run under the
-project venv; `power_analysis.py` warns when the checkout it reads is not the
-one the installed package's `sync_down()` writes.
+Each chained script inserts a `__file__`-anchored directory on `sys.path` --
+its own, or `notebooks/` for the ones importing `_power_common` -- and imports
+its siblings by bare name. `power_analysis.py` roots that chain and owns
+`RESULTS_DIR` for it; it warns when the checkout it reads is not the one the
+installed package's `sync_down()` writes. All read marks through
+`Marks.load`, never scraped.
 
-`run_all.py` is the one driver over the four-script chain: it follows the
-same `__file__`-anchored `sys.path` convention to reach its siblings, then
-calls each one's `main()` in process, in dependency order, printing a banner
-before each so a long combined log says whose numbers are whose. It runs
-`multiplicity_sim.main()` too, LAST, but only behind `--with-sim` (default
-off) -- unlike the four report scripts, `multiplicity_sim` reads no results
-tree, and its Monte Carlo takes far longer than the rest of the chain
-combined.
+`run_all.py` prints a banner before each script so a long combined log says
+whose numbers are whose, and keeps `multiplicity_sim` behind `--with-sim`
+because its Monte Carlo takes longer than the rest of the chain combined.
 
 | File | What it's for |
 | --- | --- |
@@ -89,11 +58,8 @@ combined.
 | `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `power_analysis`; reads no results tree. |
 | `run_all.py` | The one driver over the chain above: runs the four report scripts in process, in order, plus `multiplicity_sim.py` behind `--with-sim`. |
 
-## audits/ -- archived
+## audits/ and results/ -- archived
 
-The three concluded one-off probes (`check_currency.py`, `verify_survivorship.py`,
-`response_audit.py`) left the tree on 2026-08-30; see `notebooks/ARCHIVE.md`.
-
-## results/
-
-S3-mirrored and not in this tree; see `notebooks/ARCHIVE.md`.
+The three concluded probes (`check_currency.py`, `verify_survivorship.py`,
+`response_audit.py`) left the tree on 2026-08-30, and `results/` is S3-mirrored
+rather than tracked; `notebooks/ARCHIVE.md` says where both live.
