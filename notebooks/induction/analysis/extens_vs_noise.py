@@ -60,6 +60,18 @@ def direction(acc_e: float, acc_n: float) -> str:
     (`paired_analysis.aligned` intersects seeds first), so item-for-item agreement is exact. A
     two-way `>` branch would silently award every tie to `extens`, disagreeing with the RAW
     DIRECTION block below, which counts ties as their own category.
+
+    Parameters
+    ----------
+    acc_e : float
+        Accuracy for the extens arm.
+    acc_n : float
+        Accuracy for the noise arm.
+
+    Returns
+    -------
+    str
+        Label for the higher-scoring arm or an exact tie.
     """
     if acc_n > acc_e:
         return "noise HIGHER"

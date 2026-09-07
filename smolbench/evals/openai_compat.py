@@ -54,12 +54,23 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
 
     Parameters
     ----------
+    url : str
+        Metadata endpoint URL.
+    api_key : str
+        Bearer token for the request.
     check_status : bool
-        True raises before parsing (``list_models``: AWS, EC2); False parses
+        True raises before parsing (``list_models``: AWS, EC2); False parses.
         regardless of status (``get_model_context_length``: OpenRouter, Prime
         Intellect, where an error body instead raises in the caller's own
         indexing). Keyword-only with NO default, so the split can never be
         silently unified -- do not collapse it.
+    timeout : float, optional
+        Request timeout in seconds.
+
+    Returns
+    -------
+    Any
+        Parsed JSON response body.
 
     Raises
     ------
@@ -85,6 +96,16 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
 
     HTTP 429 and 5xx are transient, as is any non-HTTP failure (connection
     reset, timeout, DNS); other 4xx are permanent auth/validation errors.
+
+    Parameters
+    ----------
+    err : requests.exceptions.RequestException
+        Request failure to classify.
+
+    Returns
+    -------
+    bool
+        Whether the request should be retried.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -112,7 +133,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Returns
     -------
     dict
-        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":
+        ``{"choices": [{"message": {...}, "finish_reason": ...}], "usage":.
         {...}, "model": ...}``. ``reasoning_content`` is present only if the
         server sent reasoning deltas; ``usage`` only if the request sent
         ``stream_options: {"include_usage": true}``, else empty (tolerated
@@ -121,7 +142,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
-        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or
+        A malformed SSE chunk, or a stream that ended without ``[DONE]`` or.
         any ``finish_reason`` (truncated body) -- retryable, like the
         non-streamed transport's parse failure on a truncated body.
     """
@@ -228,8 +249,19 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
 
     Parameters
     ----------
+    quiz : Quiz
+        Questions whose responses are graded.
+    responses : List[Tuple[str, Optional[str]]]
+        Content and reasoning responses in quiz order.
+    model : str
+        Model whose response parser is selected.
     log_invalid : bool
         Log unparseable responses at INFO.
+
+    Returns
+    -------
+    Marks
+        Marks for the quiz responses.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -281,6 +313,17 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
 
     Driven by joblib's as-completed generator, so the bar advances as responses
     land, not as tasks dispatch. Emits a trailing newline once ``done >= total``.
+
+    Parameters
+    ----------
+    done : int
+        Number of completed prompts.
+    total : int
+        Total prompts being evaluated.
+    model : str
+        Model name shown in the bar.
+    width : int, optional
+        Bar width in characters.
     """
     filled: int = width if total == 0 else int(width * done / total)
     bar: str = "#" * filled + "-" * (width - filled)
@@ -389,6 +432,16 @@ class ChatClient:
 
         Accepts the common boolean spellings; anything else raises naming the
         variable, instead of a bare ``int()`` ValueError deep in the hot path.
+
+        Parameters
+        ----------
+        suffix : str
+            Suffix appended to ``env_prefix`` to form the environment-variable name.
+
+        Returns
+        -------
+        bool
+            The parsed flag value.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()
@@ -422,6 +475,10 @@ class ChatClient:
 
         Parameters
         ----------
+        prompt : str
+            User prompt to send.
+        model : str
+            Model to query.
         seed : int
             Decoding seed, sent with every request; this repo requires seeded,
             reproducible generations, so never drop it to dodge an error.
@@ -454,6 +511,11 @@ class ChatClient:
             (the Lean sweep's 4 vs EC2's 10), so a vanished self-managed
             endpoint is diagnosed rather than surfaced as a generic connection
             error.
+
+        Returns
+        -------
+        ChatResult
+            Full chat-completion result.
 
         Raises
         ------
@@ -666,6 +728,30 @@ class ChatClient:
 
         A thin wrapper over ``complete()`` -- see it for the parameter docs and
         the ``ChatResult`` fields this discards.
+
+        Parameters
+        ----------
+        prompt : str
+            User prompt sent to the model.
+        model : str
+            Model to query.
+        seed : int
+            Decoding seed.
+        context_length : int, optional
+            Token-budget guard passed to ``complete()``.
+        extra_args : Optional[Dict[str, Any]], optional
+            Extra request-body arguments passed to ``complete()``.
+        request_timeout : Optional[int], optional
+            Per-request read timeout passed to ``complete()``.
+        system : Optional[str], optional
+            Extra system message passed to ``complete()``.
+        max_retries : Optional[int], optional
+            Retry cap passed to ``complete()``.
+
+        Returns
+        -------
+        Tuple[str, Optional[str]]
+            content and reasoning.
         """
         result = self.complete(
             prompt,
@@ -684,6 +770,20 @@ class ChatClient:
 
         Results stream back out of order (``return_as="generator_unordered"``);
         the index lets ``evaluate`` restore quiz order before grading.
+
+        Parameters
+        ----------
+        index : int
+            Question's quiz position.
+        *args : Any
+            Positional arguments forwarded to ``query()``.
+        **kwargs : Any
+            Keyword arguments forwarded to ``query()``.
+
+        Returns
+        -------
+        Tuple[int, Tuple[str, Optional[str]]]
+            the quiz position and ``query()`` result.
         """
         return index, self.query(*args, **kwargs)
 
@@ -704,6 +804,12 @@ class ChatClient:
 
         Parameters
         ----------
+        quiz : Quiz
+            Questions to evaluate.
+        model : str
+            Model to query and grade.
+        seed : int
+            Shared decoding seed.
         extra_args : dict, optional
             Forwarded to every ``query``, as is ``request_timeout``.
         max_parallel : int, optional
@@ -712,8 +818,15 @@ class ChatClient:
             longest chain finishes on attempt 1; otherwise long generations
             time out under contention and censor the measured CoT-length
             distribution from the top.
+        request_timeout : Optional[int], optional
+            Per-request timeout forwarded to ``query``.
         show_progress : bool
             Print a live "N/total prompted" bar (default True).
+
+        Returns
+        -------
+        Marks
+            Marks for every quiz question.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)

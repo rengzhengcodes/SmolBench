@@ -95,8 +95,19 @@ def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, s
     The single merge point for all three renderings, so precedence is
     uniform: `positive_info` wins any collision with `query`, since every arm
     must control it -- a ``query_gen`` that emitted its own ``positive_info``
-    key would otherwise silently collapse the three arms into one. Returns a
-    fresh dict, so callers may mutate it further.
+    key would otherwise silently collapse the three arms into one.
+
+    Parameters
+    ----------
+    query : Dict[str, str]
+        Query substitutions to merge.
+    positive_info : str
+        Arm-specific positive-information context.
+
+    Returns
+    -------
+    Dict[str, str]
+        A fresh dict, so callers may mutate it further.
     """
     return query | {"positive_info": positive_info}
 
@@ -111,6 +122,20 @@ def context_renderer(
     :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` needs
     the rendering as a reusable callable. ``template`` defaults to
     ``prompter.template``.
+
+    Parameters
+    ----------
+    prompter : Prompter
+        Prompter supplying the default template.
+    query : Dict[str, str]
+        Query substitutions for each rendering.
+    template : Optional[string.Template], optional
+        Template to render.
+
+    Returns
+    -------
+    Callable[[str], str]
+        Function mapping context to a rendered prompt.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -131,8 +156,28 @@ def random_unique_strings(
     Samples integers in ``[0, base**length)`` without replacement and
     base-expands each, so uniqueness is exact regardless of how densely the
     space is sampled. ``charset`` must exclude any separator in use
-    downstream. Raises ``ValueError`` if ``length`` is too small a space for
-    ``n`` unique strings.
+    downstream.
+
+    Parameters
+    ----------
+    n : int
+        Number of unique strings to generate.
+    length : int
+        Length of each generated string.
+    rng : np.random.Generator
+        Random generator supplying samples.
+    charset : Collection[str]
+        Characters from which to build strings.
+
+    Returns
+    -------
+    OrderedSet[str]
+        Generated unique strings in draw order.
+
+    Raises
+    ------
+    ValueError
+        If ``length`` is too small a space for ``n`` unique strings.
     """
     charset = tuple(charset)
     base: int = len(charset)
@@ -178,6 +223,22 @@ def random_labels(
     ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``.
     A fresh ``np.random.default_rng(seed)`` feeds one
     :func:`random_unique_strings` call, so a seed always yields the same set.
+
+    Parameters
+    ----------
+    count : int
+        Number of labels to generate.
+    seed : int
+        Seed for the random generator.
+    charset : Collection[str]
+        Characters from which to build labels.
+    min_length : int, optional
+        Minimum label length.
+
+    Returns
+    -------
+    Tuple[str, ...]
+        Generated labels.
     """
     # Floor of 1: at count=1, min_length=0 the information-theoretic minimum
     # is 0 and the "label" would be the empty string.
@@ -203,11 +264,20 @@ def quizzes_from_prompts(
 
     Parameters
     ----------
+    prompts : Iterable[RenderedQuery]
+        Rendered prompts to group by condition.
+    qna_cls : type[QnA]
+        Question-and-answer class for each rendered prompt.
     conditions : Iterable[str]
-        typed structurally (any string iterable) rather than as
+        Typed structurally (any string iterable) rather than as.
         ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
         would be a cycle; passing the mapping directly still works since
         iterating it yields its keys in the wanted order.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     condition_names = tuple(conditions)
     quizzes: Dict[str, list] = {name: [] for name in condition_names}

@@ -21,10 +21,20 @@ def accuracy(marks: Marks) -> float:
     Invalids count against the model: an unparseable response stays in the
     denominator and scores as a miss.
 
+    Parameters
+    ----------
+    marks : Marks
+        Graded quiz marks.
+
+    Returns
+    -------
+    float
+        Fraction of marks that are correct.
+
     Raises
     ------
     ValueError
-        If ``correct + incorrect + invalid == 0``: the ``Marks`` graded
+        If ``correct + incorrect + invalid == 0``: the ``Marks`` graded.
         nothing. A genuine 0% and an ungraded replicate are different results,
         so this refuses rather than returning ``0.0`` for both; table builders
         map the refusal to their own "not a measurement" value (see
@@ -54,6 +64,18 @@ def load_condition_accuracies(
     measurement", printed to stdout under a distinct prefix for a missing
     file vs. one that graded nothing, so an operator can tell them apart;
     :func:`plot_archetype_accuracy` renders both as "n/a".
+
+    Parameters
+    ----------
+    results_dir : Path
+        Directory containing result YAMLs.
+    files : Mapping[Tuple[str, str], str]
+        Mapping from model-condition keys to relative filenames.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], Optional[float]]
+        Model-condition accuracy table.
     """
     data: Dict[Tuple[str, str], Optional[float]] = {}
     for (model_key, cond_key), fname in files.items():
@@ -94,9 +116,30 @@ def plot_archetype_accuracy(
 
     Parameters
     ----------
+    data : Mapping[Tuple[str, str], Optional[float]]
+        Accuracy values keyed by model and condition.
+    models : Sequence[Tuple[str, str]]
+        Model keys and display labels.
+    conditions : Sequence[Tuple[str, str, str]]
+        Condition keys, labels, and colors.
+    title : str
+        Figure title.
     chance : float, optional
-        y-value of the dashed "chance" line; pass the quiz's own floor
+        Y-value of the dashed "chance" line; pass the quiz's own floor.
         (0.5 for a binary ToF quiz).
+    bar_width : float, optional
+        Width allocated to each condition bar.
+    figsize : Tuple[float, float], optional
+        Figure dimensions in inches.
+    ylim : Tuple[float, float], optional
+        Y-axis limits.
+    out_path : Optional[Path], optional
+        Output path for the saved figure.
+
+    Returns
+    -------
+    Tuple["Figure", "Axes"]
+        Created figure and axes.
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mtick

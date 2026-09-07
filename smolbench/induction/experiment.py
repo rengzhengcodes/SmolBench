@@ -32,5 +32,10 @@ class InductionExperiment(Experiment):
         Thin override of :meth:`Experiment.cot_chain_lengths` that only
         defaults ``tag``: every induction CoT archetype is tagged "cot", so a
         caller need not repeat it at every call site.
+
+        Parameters
+        ----------
+        tag : str, optional
+            CoT replicate tag.
         """
         super().cot_chain_lengths(tag)
