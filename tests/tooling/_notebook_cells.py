@@ -56,10 +56,10 @@ def load_analysis_modules() -> dict:
     bind order the notebook actually runs, and siblings import
     ``power_analysis`` by bare name so that order is load-bearing.
 
-    Run from the repo root (the cell's ``run_study`` import parses
-    ``INDUCTION_SHARD`` at module scope) with sys.modules/os.environ/sys.path
-    snapshotted and restored: ``load_dotenv`` writes keys that cannot be named
-    in advance, so a per-key monkeypatch would not cover them.
+    Run from the repo root -- the cell's ``find_repo()`` anchors the tree by
+    walking up from cwd -- with os.environ and sys.path snapshotted and
+    restored: ``load_dotenv`` writes keys that cannot be named in advance, so
+    a per-key monkeypatch would not cover them.
     """
     namespace: dict = {}
     saved_modules = {k: sys.modules.get(k)

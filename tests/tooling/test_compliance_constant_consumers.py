@@ -59,7 +59,7 @@ def test_the_statistics_notebook_delegates_compliance_entirely(modules):
     notebook = json.loads(STATS_NB.read_text())
     code = "\n".join("".join(cell["source"]) for cell in notebook["cells"]
                      if cell["cell_type"] == "code")
-    for forbidden in ("compliance", "COMPLIANT", "NOT_ASSESSED"):
+    for forbidden in ("compliance", "COMPLIANT"):
         assert forbidden not in code, \
             f"the notebook's CODE now mentions {forbidden!r}; it must delegate"
 

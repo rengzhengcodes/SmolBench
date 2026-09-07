@@ -125,8 +125,8 @@ def test_no_hardcoded_resample_count_survives(nb):
             assert "n_boot=4000" not in source, source[:200]
 
 
-def test_synth_iid_path_draws_exactly_what_it_used_to(nb, posterior_ns):
-    """`cluster_sd=0` must consume the same RNG stream as before: an extra draw would shift every later case and could flip an EQUIVALENT assertion."""
+def test_synth_iid_path_takes_exactly_one_draw(nb, posterior_ns):
+    """`cluster_sd=0` must take exactly one `random((n_seeds, n_harm))` draw and leave the generator there: an extra draw would shift every later case in the shared stream and could flip an EQUIVALENT assertion."""
     import numpy as np
 
     namespace = dict(posterior_ns)

@@ -72,11 +72,15 @@ MEASURABILITY_CASES = [
 
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
-def test_measurability_follows_the_live_grader(flip_ns, ded_pa, verdicts, measurable):
-    """The cell's answer must equal the grader's rule, derived here rather than restated so the two cannot drift apart."""
+def test_measurability_follows_the_live_grader(flip_ns, verdicts, measurable):
+    """The cell's answer must equal the table, checked apart from the derivation below so cell drift and table drift report separately."""
     keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
     assert bool(keys) is measurable, (verdicts, keys)
 
+
+@pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
+def test_measurability_agrees_with_grade_verdicts(ded_pa, verdicts, measurable):
+    """The table must be derived from the live grader rather than restated, so the two cannot drift apart."""
     graded = ded_pa.grade_verdicts(list(verdicts))
     survivor = next((v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS), None)
     assert measurable is (graded is not None and survivor != "unverified")

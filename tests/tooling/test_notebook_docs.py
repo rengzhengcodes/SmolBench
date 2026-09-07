@@ -88,7 +88,7 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive):
 
 
 def test_archive_names_the_prefix_the_readers_actually_default_to(archive):
-    """Must name the re-collection prefix, not the pre-cutoff one every reader refuses by default (`LEAN_ALLOW_LEGACY_PREFIX` opts back in)."""
+    """ARCHIVE.md must name the re-collection prefix `rows_source.spool_prefix()` actually defaults to, not the retired pre-cutoff one."""
     import importlib.util
     import sys
 

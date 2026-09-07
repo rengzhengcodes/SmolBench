@@ -27,6 +27,8 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(nb, monkeypatch):
 
     src = cell_source(nb, "class S3Archive")
     calls: list[tuple] = []
+    # Stubbed on the module `_aws`, where the cell resolves the client: a stub
+    # bound to a local name here is never reached by the exec'd cell.
     monkeypatch.setattr(
         _aws, "fresh_client",
         lambda service, region=None: calls.append((service, region)) or object())
