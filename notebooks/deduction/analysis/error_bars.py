@@ -457,7 +457,7 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
     Returns
     -------
     tuple
-        Sorted model names; blocks as ``{theorem_id: {(k, prompt_rung): {model: 0 or
+        ``(models, blocks, prompt_rungs, meta)``: sorted model names; blocks as ``{theorem_id: {(k, prompt_rung): {model: 0 or
         1}}}``; sorted distinct prompt rungs; and `meta`, recording what the rule
         actually did (cells added per lane, each lane's own-denominator rate) so the
         report can print its cost rather than assert it's negligible.

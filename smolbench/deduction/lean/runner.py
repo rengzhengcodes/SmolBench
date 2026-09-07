@@ -144,9 +144,9 @@ def run_cell(
     model : str
         Model identifier for model completion.
     theorem : BenchmarkTheorem
-        Theorem to prove.
+        Theorem whose proof tail from step `k` is attempted.
     k : int
-        Theorem context index.
+        Index of the tactic step.
     chain : Chain
         Prompt chain for rendering the theorem.
     level : int
