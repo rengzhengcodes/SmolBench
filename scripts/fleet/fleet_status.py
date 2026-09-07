@@ -113,6 +113,16 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
 
     Never empty: empty `rows` render an explicit "no scaling-* instances found"
     line, so an empty fleet and a broken query read differently to the operator.
+
+    Parameters
+    ----------
+    rows : Sequence[dict]
+        Fleet rows returned by `fleet_rows`.
+
+    Returns
+    -------
+    str
+        Fixed-width text table.
     """
     if not rows:
         return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"

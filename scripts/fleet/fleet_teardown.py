@@ -63,7 +63,15 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
 def main(argv: Optional[list[str]] = None) -> int:
     """Run the CLI: print the fleet listing, and with ``--terminate`` kill it.
 
-    Returns ``1`` only if the ``--terminate`` confirmation is declined.
+    Parameters
+    ----------
+    argv : Optional[list[str]], optional
+        Command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        ``1`` only if the ``--terminate`` confirmation is declined.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."

@@ -56,7 +56,16 @@ def split_condition_dirname(name: str) -> Optional[Tuple[str, str]]:
     Both halves may themselves contain ``_`` (``gemma4_e2b``; also the
     ``noise_intens`` arm), so this matches against the known arm names as a
     ``_<info>`` suffix, longest arm first, instead of splitting positionally.
-    Returns ``None`` when no arm matches, which the caller reports.
+    
+    Parameters
+    ----------
+    name : str
+        condition directory name to split.
+
+    Returns
+    -------
+    Optional[Tuple[str, str]]
+        ``None`` when no arm matches, which the caller reports.
     """
     for arm in ARMS_LONGEST_FIRST:
         suffix = f"_{arm}"
@@ -89,6 +98,18 @@ def roster_conditions(
     prefix once and sorting keys with the private
     `results_store._parse_log_entry`, which would duplicate the log's key
     format in a second place.
+
+    Parameters
+    ----------
+    store : rs.ResultsStore
+        S3-backed results store to enumerate.
+    arms : Optional[List[str]]
+        suffixes that limit the enumerated conditions.
+
+    Returns
+    -------
+    List[Tuple[str, str, List["rs.ReplicateAddress"]]]
+        conditions with their replicate addresses.
     """
     conditions = []
     for key in roster_keys():
@@ -120,6 +141,20 @@ def tree_conditions(
     are exactly the results most needing a regrade. A directory matching no
     known arm is skipped with a printed warning, not silently, since only an
     operator can tell a stale scratch directory from a renamed-arm condition.
+
+    Parameters
+    ----------
+    store : rs.ResultsStore
+        local results store to enumerate.
+    tree : Path
+        results tree to walk.
+    arms : Optional[List[str]]
+        suffixes that limit the enumerated conditions.
+
+    Returns
+    -------
+    List[Tuple[str, str, List["rs.ReplicateAddress"]]]
+        conditions with their replicate addresses.
     """
     conditions = []
     # Derived once: the roster is fixed for the whole walk.
@@ -159,6 +194,20 @@ def enumerate_conditions(
     Dispatches to :func:`roster_conditions` (S3) or :func:`tree_conditions`
     (local); see each for why the two backends enumerate from different
     authorities.
+
+    Parameters
+    ----------
+    store : rs.ResultsStore
+        results store that determines the enumeration route.
+    tree : Path
+        local results tree for local stores.
+    arms : Optional[List[str]]
+        suffixes that limit the enumerated conditions.
+
+    Returns
+    -------
+    List[Tuple[str, str, List["rs.ReplicateAddress"]]]
+        conditions with their replicate addresses.
     """
     if isinstance(store, rs.S3ResultsStore):
         return roster_conditions(store, arms)
@@ -172,13 +221,25 @@ def load_for_regrade(
 
     ``ResultsStore.regrade`` refuses a replacement that does not name what it
     replaces, and the stamp is not recoverable from `Marks` alone, which carries
-    no ``run_ts`` field. Returns ``None`` when nothing survives at `addr`.
+    no ``run_ts`` field.
 
     S3 uses the earliest surviving run, the one earliest-wins makes
     `load_marks` return; an empty listing means nothing to replace, checked
     before calling `load_marks`, which would otherwise raise. A local tree has
     no ``run_ts`` (one file per address, overwritten in place), so the file's
     collection date names the replacement instead.
+
+    Parameters
+    ----------
+    store : rs.ResultsStore
+        results store from which to load the replicate.
+    addr : rs.ReplicateAddress
+        replicate address to load.
+
+    Returns
+    -------
+    Optional[Tuple[Marks, str]]
+        ``None`` when nothing survives at `addr`.
     """
     if isinstance(store, rs.S3ResultsStore):
         survivors = store.list_runs(addr)
@@ -193,9 +254,21 @@ def regrade_marks(marks: Marks, parse: Callable[[str], ParseResult]) -> Dict:
     """Re-parse one replicate's marks with `parse` (e.g. `parse_numeric`).
 
     Nothing is written; the caller decides whether to hand the new `Marks` to
-    ``ResultsStore.regrade``. Returns a dict: the re-scored ``marks``, plus
-    tallies (``n``, ``before_correct``, ``before_invalid``, ``changed``,
-    ``recovered`` invalid->real, ``broke`` real->invalid, ``violations``).
+    ``ResultsStore.regrade``.
+
+    Parameters
+    ----------
+    marks : Marks
+        replicate marks to re-parse.
+    parse : Callable[[str], ParseResult]
+        parser applied to each mark response.
+
+    Returns
+    -------
+    Dict
+        dict: the re-scored ``marks``, plus tallies (``n``, ``before_correct``,
+        ``before_invalid``, ``changed``, ``recovered`` invalid->real, ``broke``
+        real->invalid, ``violations``).
     """
     new_marks = []
     changed = recovered = broke = 0
@@ -239,8 +312,7 @@ def regrade_marks(marks: Marks, parse: Callable[[str], ParseResult]) -> Dict:
 def main(argv: Optional[List[str]] = None) -> int:
     """Re-grade every requested study and return a process exit code.
 
-    Returns 1 if any mark regressed from a real verdict to invalid, 0
-    otherwise, regardless of backend. Addresses are enumerated for the whole
+    Addresses are enumerated for the whole
     study up front, before any write, so a seed listing can never observe the
     runs this same pass just appended.
 
@@ -248,6 +320,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     instant falls in the same whole second as the run it replaces, the new
     run's key collides with the superseded one's; not guarded against, since
     in practice a regrade always follows its collection by more than a second.
+
+    Parameters
+    ----------
+    argv : Optional[List[str]], optional
+        command-line arguments to parse.
+
+    Returns
+    -------
+    int
+        1 if any mark regressed from a real verdict to invalid, 0 otherwise,
+        regardless of backend.
     """
     argp = argparse.ArgumentParser(description=__doc__)
     argp.add_argument("--study", choices=sorted(STUDIES), action="append")

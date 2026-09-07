@@ -36,6 +36,18 @@ def load_module_by_path(name: str, path: Path) -> ModuleType:
     ``exec_module``: PEP 563 ``@dataclass`` resolves its module through
     ``sys.modules[cls.__module__]``, so an unregistered module would raise
     ``AttributeError`` on ``policy.Decision``/``shards.Shard``'s own class body.
+
+    Parameters
+    ----------
+    name : str
+        Module name for the cache.
+    path : Path
+        File to execute as the module.
+
+    Returns
+    -------
+    ModuleType
+        Cached or newly executed module.
     """
     module = sys.modules.get(name)
     if module is not None:

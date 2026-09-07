@@ -39,6 +39,16 @@ def policy_document(bucket: str) -> dict:
     ``s3:ListBucket`` needs the bucket ARN with no trailing ``/*``; object
     actions need the ``/*`` wildcard. Key order is pinned: a reviewer diffs
     the rendered ``json.dumps`` against this shape.
+
+    Parameters
+    ----------
+    bucket : str
+        bucket whose ARN the policy grants access to.
+
+    Returns
+    -------
+    dict
+        IAM policy document granting read/write on ``bucket``.
     """
     return {
         "Version": "2012-10-17",
@@ -77,6 +87,15 @@ def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
 
     ``CreateBucketConfiguration`` is required: without it ``create_bucket``
     always targets ``us-east-1`` regardless of the client's region binding.
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client that creates the bucket.
+    bucket : str
+        bucket to create.
+    region : str, optional
+        region for the bucket's location constraint.
     """
     from botocore.exceptions import ClientError
 
@@ -96,6 +115,13 @@ def put_public_access_block(s3: Any, bucket: str) -> None:
     """Block all public access on ``bucket``, setting all four flags to True.
 
     A PUT (replace), so re-running is idempotent with no error-code handling.
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client that sets the access block.
+    bucket : str
+        bucket whose public access is blocked.
     """
     s3.put_public_access_block(
         Bucket=bucket,
@@ -114,6 +140,13 @@ def enable_versioning(s3: Any, bucket: str) -> None:
     Replicates are written exactly once and never mutated, so versions cost
     almost nothing while making a racing overwrite or a destructive
     ``aws s3 sync --delete`` recoverable.
+
+    Parameters
+    ----------
+    s3 : Any
+        S3 client that enables versioning.
+    bucket : str
+        bucket on which to enable versioning.
     """
     s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
 
@@ -124,6 +157,20 @@ def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
     Create-or-reuse, not create-or-update: refreshing on every run would burn
     IAM's 5-version budget per managed policy, so a real change is a
     deliberate manual ``aws iam create-policy-version``.
+
+    Parameters
+    ----------
+    iam : Any
+        IAM client that creates or lists policies.
+    bucket : str
+        bucket the policy grants access to.
+    name : str, optional
+        managed policy name.
+
+    Returns
+    -------
+    str
+        ARN of the created or existing managed policy.
     """
     from botocore.exceptions import ClientError
 
@@ -163,6 +210,15 @@ def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -
 
     No "already attached" handling needed: ``attach_group_policy`` is
     idempotent server-side.
+
+    Parameters
+    ----------
+    iam : Any
+        IAM client that attaches the policy.
+    policy_arn : str
+        ARN of the managed policy to attach.
+    group : str, optional
+        IAM group that receives the policy.
     """
     iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
 
@@ -177,9 +233,27 @@ class _ProvisionAccessDenied(Exception):
 def _run_step(label: str, operation: str, call: Callable[[], Any]) -> Any:
     """Run one provisioning step with a progress line and AccessDenied handling.
 
-    Raises `_ProvisionAccessDenied` (after printing the denial) if `call`
-    raises a ``ClientError`` in `_ACCESS_DENIED_CODES`; other exceptions
-    propagate.
+    other exceptions propagate.
+
+    Parameters
+    ----------
+    label : str
+        progress label to print.
+    operation : str
+        AWS operation named in an access-denied message.
+    call : Callable[[], Any]
+        provisioning operation to invoke.
+
+    Returns
+    -------
+    Any
+        value returned by `call`.
+
+    Raises
+    ------
+    _ProvisionAccessDenied
+        after printing the denial if `call` raises a ``ClientError`` in
+        `_ACCESS_DENIED_CODES`.
     """
     from botocore.exceptions import ClientError
 
