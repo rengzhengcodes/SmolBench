@@ -72,6 +72,8 @@ class HFTokenizer:
 
         Parameters
         ----------
+        name : str
+            Name of the wrapped tokenizer.
         tokenizer : Any
             duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
@@ -352,12 +354,21 @@ def token_matched_noise_prompt(
     ----------
     render : Callable[[str], str]
         called repeatedly, so it must be cheap and deterministic.
+    context : str
+        Context to pad with whitespace.
+    target_tokens : int
+        Exact token count for the rendered prompt.
     tokenizer : Tokenizer
         must be the model under test's, or the control de-calibrates by however much the
         two tokenizers disagree.
     unit : str | None
         defaults to :func:`choose_whitespace_unit`'s pick; pass it to skip the probe when
         padding many prompts with one tokenizer.
+
+    Returns
+    -------
+    str
+        Rendered prompt with exact target token count.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

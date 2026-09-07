@@ -159,12 +159,29 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
 
     Parameters
     ----------
+    p_a : float
+        Marginal mark rate for arm A.
+    p_b : float
+        Marginal mark rate for arm B.
+    rho : float
+        Tetrachoric correlation between matched marks.
+    n_sims : int
+        Number of simulated experiments.
+    reps : int
+        Number of replicates per experiment.
+    rng : np.random.Generator
+        Random generator for latent draws.
     icc : float, optional
         share of each arm's latent variance from a per-replicate latent
         shared by that replicate's `K_HARM` items, modelling a replicate's shared
         seed (PART 3's "independent" variant). Must be in ``[0.0, 1.0)`` -- 1.0
         would make every item in a replicate identical, collapsing the `K_HARM`
         axis.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Simulated Boolean marks for arms A and B.
     """
     if not (0.0 <= icc < 1.0):
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")

@@ -533,10 +533,19 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
 
     Parameters
     ----------
+    model : str
+        Model whose attention-head count is considered.
+    instance_type : str
+        Landed EC2 instance type whose GPU count is considered.
     spec : Dict[str, Any]
         Deploy spec; its ``"tp"`` is the fallback when `model` is absent from
         ``MODEL_ATTENTION_HEADS`` or `instance_type` from
         ``_INSTANCE_GPU_COUNTS``.
+
+    Returns
+    -------
+    int
+        Tensor-parallel degree for the landed instance.
     """
     heads = MODEL_ATTENTION_HEADS.get(model)
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
@@ -1022,6 +1031,11 @@ def list_models(model: str = "") -> List[str]:
         Accepted and IGNORED; it exists only for signature parity with
         ``smolbench.evals.providers.aws.list_models`` so
         ``smolbench.evals.provider`` can dispatch uniformly.
+
+    Returns
+    -------
+    List[str]
+        Served model identifiers.
     """
     response = metadata_get(f"{_base_url()}/models", _api_key(), check_status=True)
     return [m["id"] for m in response.get("data", [])]
@@ -1637,6 +1651,16 @@ def _agent(
 
     Parameters
     ----------
+    state : Dict[str, Any]
+        Control-agent connection state.
+    method : str
+        HTTP method for the agent request.
+    path : str
+        Agent endpoint path.
+    payload : Optional[Dict[str, Any]], optional
+        JSON request body.
+    timeout : int, optional
+        Request timeout in seconds.
     connect_retries : int
         Extra attempts, 15s apart, on CONNECT-level failures only
         (``requests.ConnectionError``, which covers ConnectTimeout): the
@@ -1644,6 +1668,11 @@ def _agent(
         ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint is
         idempotent, so connect patience is always safe; the polling loops and
         the best-effort graceful shutdown pass 0 to keep their own cadence.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Parsed JSON response body.
     """
     for attempt in range(connect_retries + 1):
         try:
@@ -1676,6 +1705,8 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     ----------
     state : Dict[str, Any]
         Needs ``public_ip``, ``control_token``, ``region``, ``instance_id``.
+    timeout_min : int, optional
+        Agent readiness deadline in minutes.
 
     Raises
     ------
@@ -1914,8 +1945,16 @@ def _run_instances_kwargs(
 
     Parameters
     ----------
+    ami : str
+        AMI for the launched instance.
+    instance_type : str
+        EC2 instance type to launch.
     subnet_id : str
         Pins the AZ for this attempt.
+    group_id : str
+        Security group for the instance network interface.
+    root_device : str
+        Root block-device name.
     volume_gb : int
         Root volume size, in GiB.
     user_data : bytes
@@ -1938,6 +1977,11 @@ def _run_instances_kwargs(
         ``describe_spot_price_history`` medians because price-blind defaults
         paid 1.29-1.48x each type's cheapest AZ (see
         ``EC2_SPOT_BID_MULTIPLIER``).
+
+    Returns
+    -------
+    Dict[str, Any]
+        Keyword arguments for ``run_instances``.
     """
     kwargs: Dict[str, Any] = {
         "ImageId": ami,
@@ -2030,10 +2074,16 @@ def _launch_fresh(
 
     Parameters
     ----------
+    instance_types : Tuple[str, ...]
+        Instance types to try in priority order.
+    regions : Tuple[str, ...]
+        Regions to search for capacity.
     volume_gb : int
         Root volume size, in GiB.
-    idle_timeout_min, max_lifetime_min : int
-        Watchdog and boot-scheduled-halt budgets, in minutes.
+    idle_timeout_min : int
+        Watchdog budget in minutes.
+    max_lifetime_min : int
+        Boot-scheduled-halt budget in minutes.
     my_ip : str
         Caller's public IP, resolved ONCE by the caller (one
         ``checkip.amazonaws.com`` round trip, not one per region).
@@ -2445,12 +2495,19 @@ def serve_model(
 
     Parameters
     ----------
+    model : str
+        Model to serve for the context body.
     timeout_min : Optional[int]
         Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
     force : bool
         Swap even when the box is already healthy on ``model`` with the same
         launch payload. The default fast path skips the swap, so re-running a
         section cell after an interruption costs seconds, not a reload.
+
+    Yields
+    ------
+    str
+        Served model identifier.
 
     Raises
     ------

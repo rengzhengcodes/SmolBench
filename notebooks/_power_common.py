@@ -21,9 +21,16 @@ def results_dir(file: str, up: int = 0) -> Path:
 
     Parameters
     ----------
+    file : str
+        Caller file path anchoring the results directory.
     up : int
         levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
         caller in a role subdirectory like ``notebooks/induction/analysis/``.
+
+    Returns
+    -------
+    Path
+        Resolved study results directory.
     """
     return Path(file).resolve().parents[up] / "results"
 

@@ -347,6 +347,8 @@ class ResultsStore(abc.ABC):
             replacement that doesn't name what it replaced would defeat the point of a regrade
             in a log where nothing can be rewritten. Raises ValueError before touching the store
             if it's None.
+        addr : ReplicateAddress
+            Address of the run to replace.
         run_ts : datetime
             stamp for the new run; forwarded to :meth:`dump_marks`.
         reason : str
@@ -479,16 +481,23 @@ class LocalResultsStore(ResultsStore):
         bytes survive on disk (an operator can restore them by renaming back); nothing reads
         them again on its own.
 
-        Returns the renamed file's new path, or None when nothing was stored at `addr` (a no-op,
-        not an error). Backed by ``os.replace``; two supersedes of the same address within the
+        Backed by ``os.replace``; two supersedes of the same address within the
         same second produce the identical name, and the second silently overwrites the first
         retired file -- the same one-file-per-address property the live path already has.
 
         Parameters
         ----------
+        addr : ReplicateAddress
+            Address of the stored run to retire.
         reason : str
             logged only, at INFO level -- unlike the S3 marker, the local layout has no
             per-file side channel to persist it in.
+
+        Returns
+        -------
+        Optional[Path]
+            Renamed file's new path, or None when nothing was stored at `addr` (a no-op, not an
+            error).
         """
         path = self._path(addr)
         if not path.exists():
@@ -790,6 +799,8 @@ class S3ResultsStore(ResultsStore):
 
         Parameters
         ----------
+        addr : ReplicateAddress
+            Address of the logged run to retire.
         run_ts : str
             the fixed-width stamp exactly as it appears in the run's key, not a `datetime`;
             this method never lists to find the run, it trusts the caller's stamp and writes the
@@ -797,6 +808,11 @@ class S3ResultsStore(ResultsStore):
         reason : str
             freeform operator-facing text stored in the marker body; not interpreted by this
             module.
+
+        Returns
+        -------
+        str
+            Key of the written supersession marker.
         """
         if addr.model is None:
             raise ValueError(
@@ -900,6 +916,11 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
         its local results directory.
     prefix : str, optional
         becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+
+    Returns
+    -------
+    ResultsStore
+        Local or S3 results store for the experiment.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -1002,7 +1023,6 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     One-way and destructive: overwrites local files and never touches the log, so a local-only
     regrade is silently destroyed.
 
-    Returns the count of objects actually downloaded, excluding those skipped as identical.
     Raises RuntimeError if `results_dir` resolves to a `LocalResultsStore` (no log to sync), or
     ValueError if a destination resolves outside `results_dir`.
 
@@ -1019,11 +1039,18 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
 
     Parameters
     ----------
+    results_dir : Path
+        Local directory receiving downloaded logs.
     tags : Mapping[str, str]
         ``{model: tag}`` (an experiment's `archetype_tags`), the one thing the log can't
         supply; `ReplicateHarness.sync_down()` holds it and is the primary caller.
     prefix : str, optional
         forwarded to :func:`experiment_name`, and used in each local directory name.
+
+    Returns
+    -------
+    int
+        Count of objects downloaded.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):

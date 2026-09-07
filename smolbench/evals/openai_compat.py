@@ -54,12 +54,23 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
 
     Parameters
     ----------
+    url : str
+        Metadata endpoint URL.
+    api_key : str
+        Bearer token for the request.
     check_status : bool
         True raises before parsing (``list_models``: AWS, EC2); False parses
         regardless of status (``get_model_context_length``: OpenRouter, Prime
         Intellect, where an error body instead raises in the caller's own
         indexing). Keyword-only with NO default, so the split can never be
         silently unified -- do not collapse it.
+    timeout : float, optional
+        Request timeout in seconds.
+
+    Returns
+    -------
+    Any
+        Parsed JSON response body.
 
     Raises
     ------
@@ -238,8 +249,19 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
 
     Parameters
     ----------
+    quiz : Quiz
+        Questions whose responses are graded.
+    responses : List[Tuple[str, Optional[str]]]
+        Content and reasoning responses in quiz order.
+    model : str
+        Model whose response parser is selected.
     log_invalid : bool
         Log unparseable responses at INFO.
+
+    Returns
+    -------
+    Marks
+        Marks for the quiz responses.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -453,6 +475,10 @@ class ChatClient:
 
         Parameters
         ----------
+        prompt : str
+            User prompt to send.
+        model : str
+            Model to query.
         seed : int
             Decoding seed, sent with every request; this repo requires seeded,
             reproducible generations, so never drop it to dodge an error.
@@ -485,6 +511,11 @@ class ChatClient:
             (the Lean sweep's 4 vs EC2's 10), so a vanished self-managed
             endpoint is diagnosed rather than surfaced as a generic connection
             error.
+
+        Returns
+        -------
+        ChatResult
+            Full chat-completion result.
 
         Raises
         ------
@@ -773,6 +804,12 @@ class ChatClient:
 
         Parameters
         ----------
+        quiz : Quiz
+            Questions to evaluate.
+        model : str
+            Model to query and grade.
+        seed : int
+            Shared decoding seed.
         extra_args : dict, optional
             Forwarded to every ``query``, as is ``request_timeout``.
         max_parallel : int, optional
@@ -781,8 +818,15 @@ class ChatClient:
             longest chain finishes on attempt 1; otherwise long generations
             time out under contention and censor the measured CoT-length
             distribution from the top.
+        request_timeout : Optional[int], optional
+            Per-request timeout forwarded to ``query``.
         show_progress : bool
             Print a live "N/total prompted" bar (default True).
+
+        Returns
+        -------
+        Marks
+            Marks for every quiz question.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)

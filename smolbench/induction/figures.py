@@ -116,9 +116,30 @@ def plot_archetype_accuracy(
 
     Parameters
     ----------
+    data : Mapping[Tuple[str, str], Optional[float]]
+        Accuracy values keyed by model and condition.
+    models : Sequence[Tuple[str, str]]
+        Model keys and display labels.
+    conditions : Sequence[Tuple[str, str, str]]
+        Condition keys, labels, and colors.
+    title : str
+        Figure title.
     chance : float, optional
         Y-value of the dashed "chance" line; pass the quiz's own floor
         (0.5 for a binary ToF quiz).
+    bar_width : float, optional
+        Width allocated to each condition bar.
+    figsize : Tuple[float, float], optional
+        Figure dimensions in inches.
+    ylim : Tuple[float, float], optional
+        Y-axis limits.
+    out_path : Optional[Path], optional
+        Output path for the saved figure.
+
+    Returns
+    -------
+    Tuple["Figure", "Axes"]
+        Created figure and axes.
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mtick
