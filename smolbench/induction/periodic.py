@@ -425,26 +425,10 @@ def get_periodic_prompts(
     For each query :func:`generate_sequence` (via ``prompter.query_gen``)
     produces, renders every entry of `conditions` and yields one
     :class:`~smolbench.induction._common.RenderedQuery` carrying all of them.
-    `tokenizer` must be the model under test's own, since it defines every
-    padded arm's token target.
-
     Rendering happens in two stages per query: first every condition without
     ``match_tokens_to`` (recording its rendered prompt and token count), then
     every condition with one, padded against the already-recorded target
     condition's count.
-
-    Raises ``ValueError``:
-    once, before any query is rendered, if some condition's
-    ``match_tokens_to`` names a condition absent from `conditions` or one
-    that is itself padded (a padded arm's own count isn't available yet to
-    pad against); propagated from
-    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` when the
-    noise arm's precondition fails for some query (its extensional prompt is
-    not strictly longer, in tokens, than its intensional one -- deliberately
-    not caught here, so the confound stays out of collected data rather than
-    silently shipping a control identical to the arm it controls for); or
-    from :func:`_resolve_arm_template`/:func:`_verify_no_range_leak` for an
-    ``omit_range`` condition missing its template or leaking a range key.
 
     Parameters
     ----------
@@ -453,7 +437,8 @@ def get_periodic_prompts(
     prompter : Prompter
         Prompt templates and query generator.
     tokenizer : Tokenizer
-        Model under test's tokenizer, defining every padded arm's token target.
+        Must be the model under test's own, since it defines every padded arm's token
+        target.
     conditions : Mapping[str, Condition], optional
         Information conditions to render.
 

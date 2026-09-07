@@ -121,7 +121,7 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     Raises
     ------
     SystemExit
-        on an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``,
+        On an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``,
         rather than silently running unsharded.
     """
     raw = os.environ.get(var, "").strip()
@@ -157,7 +157,7 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
     Raises
     ------
     SystemExit
-        on an unparseable value or an out-of-range subrange, never a silent no-op.
+        On an unparseable value or an out-of-range subrange, never a silent no-op.
     """
     raw = raw.strip()
     if not raw:
@@ -275,7 +275,6 @@ from smolbench.induction.periodic import (  # noqa: E402
 def derive_context_limit(lengths: "dict[str, int]") -> int:
     """Return the single context window that every model in `lengths` shares.
 
-    
     Parameters
     ----------
     lengths : dict[str, int]
@@ -289,7 +288,7 @@ def derive_context_limit(lengths: "dict[str, int]") -> int:
     Raises
     ------
     SystemExit
-        if `lengths` is empty or holds more than one distinct value (message names the
+        If `lengths` is empty or holds more than one distinct value (message names the
         offending keys), rather than papering over non-uniformity with a
         ``min()``/``max()``: a scaling study cannot let context vary with the vendor's
         own YaRN generosity, or a family's ceiling is confounded with its context budget
@@ -526,8 +525,8 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     seed : int
         Replicate seed.
     model : str
-        Model whose tokenizer pads ``noise_intens``; the other three arms stay
-        byte-identical across checkpoints.
+        Needed because ``noise_intens`` is padded under this model's tokenizer; the
+        other three arms stay byte-identical across checkpoints.
 
     Returns
     -------
@@ -605,10 +604,6 @@ def completion_budget(model: str, seeds: range) -> int:
     pure CPU plus a tokenizer fetch, so it runs before anything is
     provisioned and billing.
 
-    Returns one number per model, not a per-vendor dict: a tighter cap on one
-    family would make its accuracy gap inseparable from "it had less room to
-    reason," the confound a scaling study exists to avoid.
-
     Parameters
     ----------
     model : str
@@ -619,13 +614,14 @@ def completion_budget(model: str, seeds: range) -> int:
     Returns
     -------
     int
-        ``CONTEXT_LIMIT - worst - TEMPLATE_RESERVE``, where ``worst`` is the largest
-        prompt token count over every info type of every probed seed.
+        One number per model, not a per-vendor dict: a tighter cap on one family would
+        make its accuracy gap inseparable from "it had less room to reason," the
+        confound a scaling study exists to avoid.
 
     Raises
     ------
     SystemExit
-        below ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
+        Below ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
     """
     worst = 0
     for seed in probe_seeds(seeds):
@@ -741,7 +737,7 @@ def main(argv: "list[str] | None" = None) -> None:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Argument vector so a test or notebook cell can call this without a subprocess.
+        A parameter so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."

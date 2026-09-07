@@ -95,8 +95,7 @@ def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, s
     The single merge point for all three renderings, so precedence is
     uniform: `positive_info` wins any collision with `query`, since every arm
     must control it -- a ``query_gen`` that emitted its own ``positive_info``
-    key would otherwise silently collapse the three arms into one. Returns a
-    fresh dict, so callers may mutate it further.
+    key would otherwise silently collapse the three arms into one.
 
     Parameters
     ----------
@@ -108,7 +107,7 @@ def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, s
     Returns
     -------
     Dict[str, str]
-        fresh merged substitutions.
+        A fresh dict, so callers may mutate it further.
     """
     return query | {"positive_info": positive_info}
 
@@ -136,7 +135,7 @@ def context_renderer(
     Returns
     -------
     Callable[[str], str]
-        function mapping context to a rendered prompt.
+        Function mapping context to a rendered prompt.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -157,8 +156,7 @@ def random_unique_strings(
     Samples integers in ``[0, base**length)`` without replacement and
     base-expands each, so uniqueness is exact regardless of how densely the
     space is sampled. ``charset`` must exclude any separator in use
-    downstream. Raises ``ValueError`` if ``length`` is too small a space for
-    ``n`` unique strings.
+    downstream.
 
     Parameters
     ----------
@@ -174,7 +172,7 @@ def random_unique_strings(
     Returns
     -------
     OrderedSet[str]
-        generated unique strings in draw order.
+        Generated unique strings in draw order.
 
     Raises
     ------
@@ -240,7 +238,7 @@ def random_labels(
     Returns
     -------
     Tuple[str, ...]
-        generated labels.
+        Generated labels.
     """
     # Floor of 1: at count=1, min_length=0 the information-theoretic minimum
     # is 0 and the "label" would be the empty string.
@@ -267,7 +265,7 @@ def quizzes_from_prompts(
     Parameters
     ----------
     conditions : Iterable[str]
-        typed structurally (any string iterable) rather than as
+        Typed structurally (any string iterable) rather than as
         ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
         would be a cycle; passing the mapping directly still works since
         iterating it yields its keys in the wanted order.

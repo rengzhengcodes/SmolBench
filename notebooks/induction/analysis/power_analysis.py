@@ -283,8 +283,7 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     stratum, one scalar applied uniformly to every rung and stratum -- this
     holds n_rj/N_j == 1/3 constant, collapsing the per-stratum covariances
     exactly to Sigma = (sum_j w_j) * C0 with fixed C0, the shortcut the code
-    takes; unequal per-rung or per-stratum counts break it. Raises
-    ``ValueError`` if the rung axis is not length 3, or `n_per_stratum` < 1.
+    takes; unequal per-rung or per-stratum counts break it.
 
     Sigma is exactly singular when every stratum has zero cross-rung
     variance, and one singular matrix aborts the whole batched
@@ -418,11 +417,7 @@ def replicates_needed(
     """Find the smallest replicate count R reaching each `POWER_TARGETS` entry.
 
     Scans R = 1, 2, ... up to `MAX_REPLICATES`, stopping once every target is
-    met. Returns ``(needed, curve)``: `needed` maps power target -> smallest R
-    reaching it (`None` if no R within `MAX_REPLICATES` does); `curve` maps
-    each scanned R -> its simulated power, freshly copied per call so a
-    caller mutating it cannot corrupt the memo. Raises ``ValueError`` if
-    `rates_a` and `rates_b` differ in shape.
+    met.
 
     Memoized on the rate VALUES, not array identity (`_compute_sizing_results`
     builds a new array object per contrast). Each scan seeds its own
@@ -447,7 +442,10 @@ def replicates_needed(
     Returns
     -------
     _SizingScan
-        ``(needed, curve)`` mapping targets and scanned counts to power.
+        ``(needed, curve)``: `needed` maps power target -> smallest R reaching it
+        (`None` if no R within `MAX_REPLICATES` does); `curve` maps each scanned R ->
+        its simulated power, freshly copied per call so a caller mutating it cannot
+        corrupt the memo.
 
     Raises
     ------
@@ -476,7 +474,6 @@ def fisher_check(
 ) -> float:
     """Cross-check power with a pooled (unstratified) two-sided Fisher exact test.
 
-    Returns the fraction of `N_SIMS` simulations rejecting at `alpha`.
     Memoizes on the discrete success counts, so the scipy call count stays
     small despite `N_SIMS` simulations.
 
@@ -496,7 +493,7 @@ def fisher_check(
     Returns
     -------
     float
-        Fraction of simulations rejecting at `alpha`.
+        The fraction of `N_SIMS` simulations rejecting at `alpha`.
     """
     from scipy.stats import fisher_exact
 
@@ -529,9 +526,7 @@ def equivalence_replicates(
     (1 - 2*alpha) Wald CI for the pooled accuracy difference lies inside
     (-`delta`, +`delta`) -- two one-sided tests at `alpha` each. Pooling is
     deliberate: under exact equality the stratified and pooled risk
-    differences coincide. Returns the smallest R in
-    ``range(1, MAX_REPLICATES + 1)`` reaching 80% equivalence power, else
-    `None`.
+    differences coincide.
 
     Parameters
     ----------
@@ -551,7 +546,8 @@ def equivalence_replicates(
     Returns
     -------
     int | None
-        Smallest replicate count reaching 80% equivalence power, if any.
+        The smallest R in ``range(1, MAX_REPLICATES + 1)`` reaching 80% equivalence
+        power, else `None`.
     """
     from scipy.stats import norm
 
@@ -641,9 +637,8 @@ def omnibus_interaction_power(
 
     `n_sims` defaults to `N_SIMS_OMNIBUS_DIAGNOSTIC`, not the study-wide
     `N_SIMS`, since this is a diagnostic rather than a sizing input; pass a
-    larger value for a one-off precise read. Returns the rejection fraction
-    over `n_sims`; fits that fail (perfect separation at a tiny `n_reps`)
-    count as non-rejections, so power can be understated there.
+    larger value for a one-off precise read. Fits that fail (perfect separation
+    at a tiny `n_reps`) count as non-rejections, so power can be understated there.
 
     Parameters
     ----------

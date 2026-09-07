@@ -88,7 +88,7 @@ def _require(mapping: dict, name: str, within: str = "") -> Any:
     Returns
     -------
     Any
-        value associated with `name`.
+        Value associated with `name`.
     """
     key = name.strip("[]")
     if key not in mapping:
@@ -114,7 +114,7 @@ def _parse_study_config(data: dict) -> StudyConfig:
     Returns
     -------
     StudyConfig
-        validated study configuration.
+        Validated study configuration.
     """
     # Presence checked before content, so a missing key surfaces as a
     # ValueError naming it rather than a KeyError three functions downstream.
@@ -201,7 +201,7 @@ def _load_cached(resolved_path: Path) -> StudyConfig:
     Returns
     -------
     StudyConfig
-        parsed and validated study configuration.
+        Parsed and validated study configuration.
     """
     with resolved_path.open("rb") as fh:
         data = tomllib.load(fh)
@@ -224,7 +224,7 @@ def load_study_config(path: "Optional[Path]" = None) -> StudyConfig:
     Returns
     -------
     StudyConfig
-        loaded and validated study configuration.
+        Loaded and validated study configuration.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)
@@ -249,8 +249,6 @@ def families() -> "Mapping[str, tuple[str, ...]]":
 def tag_for(key: str) -> str:
     """Return the short analysis tag for roster checkpoint `key`.
 
-    Raises ``KeyError`` if `key` is not in the roster.
-
     Parameters
     ----------
     key : str
@@ -259,7 +257,7 @@ def tag_for(key: str) -> str:
     Returns
     -------
     str
-        short analysis tag for `key`.
+        Short analysis tag for `key`.
 
     Raises
     ------

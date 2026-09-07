@@ -29,7 +29,7 @@ def accuracy(marks: Marks) -> float:
     Returns
     -------
     float
-        fraction of marks that are correct.
+        Fraction of marks that are correct.
 
     Raises
     ------
@@ -75,7 +75,7 @@ def load_condition_accuracies(
     Returns
     -------
     Dict[Tuple[str, str], Optional[float]]
-        model-condition accuracy table.
+        Model-condition accuracy table.
     """
     data: Dict[Tuple[str, str], Optional[float]] = {}
     for (model_key, cond_key), fname in files.items():
@@ -117,7 +117,7 @@ def plot_archetype_accuracy(
     Parameters
     ----------
     chance : float, optional
-        y-value of the dashed "chance" line; pass the quiz's own floor
+        Y-value of the dashed "chance" line; pass the quiz's own floor
         (0.5 for a binary ToF quiz).
     """
     import matplotlib.pyplot as plt

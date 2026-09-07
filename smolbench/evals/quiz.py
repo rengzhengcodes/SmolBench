@@ -27,18 +27,7 @@ class QnA:
 
     @staticmethod
     def condition(ans: str) -> Answer:
-        """Convert a raw model response to this question's answer type; subclasses parse and validate.
-
-        Parameters
-        ----------
-        ans : str
-            Raw model response.
-
-        Returns
-        -------
-        Answer
-            unmodified response.
-        """
+        """Convert a raw model response to this question's answer type; subclasses parse and validate."""
         return ans
 
     def score(self, ans: Answer) -> bool:
