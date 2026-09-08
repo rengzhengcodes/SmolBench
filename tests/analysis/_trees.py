@@ -130,6 +130,12 @@ def power_analysis() -> ModuleType:
 
 
 @pytest.fixture(scope="session")
+def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
+    """The standalone Monte Carlo module."""
+    return load_analysis("multiplicity_sim")
+
+
+@pytest.fixture(scope="session")
 def paired_analysis(power_analysis: ModuleType) -> ModuleType:
     """The paired re-analysis module (imports ``power_analysis``)."""
     return load_analysis("paired_analysis")

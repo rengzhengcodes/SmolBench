@@ -11,7 +11,7 @@ below instead of re-declaring it.
 Info arms match ``periodic_moe``'s: ``intens``, ``extens``, ``noise_intens``
 (``intens`` padded to ``extens``'s token count under the served model's own
 tokenizer -- a length control, not a content control) and ``zero`` (rendered
-from ``zero_template``, the range-free counterpart of ``template`` below, so
+from ``_zero_template(template)``, the range-free counterpart of ``template`` below, so
 the prompt cannot leak ``seq_len``). CoT is on for all 21 checkpoints.
 ``request_timeout_seconds`` derives each model's per-request read timeout from
 its completion budget rather than the provider's 600 s default, since a
@@ -258,12 +258,11 @@ _DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
 from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.evals import Numeric  # noqa: E402
 from smolbench.evals.tokenization import for_model  # noqa: E402
-from smolbench.induction._common import RenderedQuery, quizzes_from_prompts  # noqa: E402
+from smolbench.induction._common import Prompter, RenderedQuery, quizzes_from_prompts  # noqa: E402
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
 from smolbench.induction.periodic import (  # noqa: E402
     CONDITIONS,
     PeriodicConfig,
-    Prompter,
     get_periodic_prompts,
     numeric_count_query_gen,
 )
@@ -403,7 +402,7 @@ template = string.Template(
     "How many of the positions 1 through $seq_len include '$label'?"
 )
 
-#: The position-range clause `zero_template` strips out of `template`. Named
+#: The position-range clause `_zero_template` strips out of `template`. Named
 #: as its own constant rather than inlined into the `.replace()` call below,
 #: so the substring being removed is documented at its own definition.
 RANGE_CLAUSE: str = " 1 through $seq_len"
@@ -411,12 +410,12 @@ RANGE_CLAUSE: str = " 1 through $seq_len"
 if RANGE_CLAUSE not in template.template:
     # Fails loudly at import: `.replace()` on a missing substring is a no-op,
     # so a future rewording of `template` would otherwise leave
-    # `zero_template` silently byte-identical to `template` -- `zero` leaking
+    # the derived template silently byte-identical to `template` -- `zero` leaking
     # `seq_len` again.
     raise RuntimeError(
         f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template; "
         "the study template's range clause was edited without updating "
-        "RANGE_CLAUSE, which would silently make zero_template leak seq_len."
+        "RANGE_CLAUSE, which would silently make the zero arm leak seq_len."
     )
 
 def _zero_template(base: string.Template) -> string.Template:
@@ -427,8 +426,7 @@ def _zero_template(base: string.Template) -> string.Template:
     sync with it. Takes `base` as a parameter rather than closing over the
     module-level `template` directly, so a caller computes it fresh against
     whichever `string.Template` is currently bound to `template` -- see
-    `rendered_queries`, which calls this on every invocation instead of
-    reusing the frozen `zero_template` below.
+    `rendered_queries`, which calls this on every invocation.
 
     Parameters
     ----------
@@ -442,13 +440,6 @@ def _zero_template(base: string.Template) -> string.Template:
     """
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
-
-#: The zero condition's question at import time, against the module's own
-#: `template` -- exposed as a plain attribute so a caller (or a test) can
-#: inspect the production range-free template directly. `rendered_queries`
-#: does not read this frozen value; see `_zero_template`'s docstring for why
-#: it recomputes instead.
-zero_template = _zero_template(template)
 
 # Per-request extra args that turn CoT on for each of the 21 checkpoints.
 # Total over MODELS by construction (written out literally, not built from a
@@ -534,9 +525,7 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
         Queries for all four ``CONDITIONS`` arms of the replicate.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
-    # `_zero_template(template)`, not the frozen `zero_template` global: see
-    # that helper's docstring for why this must read the current `template`
-    # fresh on every call.
+    # Derive at call time so a caller rebinding `template` is followed.
     prompter = Prompter(
         template, numeric_count_query_gen, range_free_template=_zero_template(template)
     )

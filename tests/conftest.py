@@ -11,21 +11,73 @@ generators would otherwise download.
 """
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
 import posixpath
 import re
 import threading
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import ModuleType
+from typing import Any, Iterator
 
 import pytest
+
+from tests._paths import NOTEBOOKS
+
+
+def import_run_study(
+    name: str, env: dict[str, str] | None = None
+) -> tuple[ModuleType | None, BaseException | None, dict[str, str]]:
+    """Import the induction driver under a controlled environment.
+
+    The driver mutates environment variables before importing its provider;
+    isolating that mutation lets both driver suites load the production path
+    without leaking state into the pytest process.
+
+    Parameters
+    ----------
+    name : str
+        Unique module name for the import.
+    env : dict[str, str] or None, optional
+        Environment entries to overlay during the import.
+
+    Returns
+    -------
+    tuple[ModuleType or None, BaseException or None, dict[str, str]]
+        Imported module, any import exception, and the environment snapshot
+        taken before restoring the caller's environment.
+    """
+    saved = dict(os.environ)
+    module: ModuleType | None = None
+    exc: BaseException | None = None
+    try:
+        os.environ.update(env or {})
+        spec = importlib.util.spec_from_file_location(
+            name, NOTEBOOKS / "induction" / "run_study.py"
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("could not create run_study module spec")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException as err:
+            module, exc = None, err
+        env_after = dict(os.environ)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+        sys.modules.pop(name, None)
+    return module, exc, env_after
 
 
 class _StubHandler(BaseHTTPRequestHandler):
     """Replays the server's scripted response and records request bodies."""
 
-    def _reply(self, obj, code=200):
+    def _reply(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -33,7 +85,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _reply_sse(self, obj):
+    def _reply_sse(self, obj: Any) -> None:
         """Re-emit a chat-completions body as an SSE stream.
 
         The stream sends one character per delta, on both channels. This
@@ -50,7 +102,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
 
-        def frame(chunk):
+        def frame(chunk: Any) -> None:
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
 
         for key in ("reasoning_content", "reasoning"):
@@ -66,7 +118,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             frame({"choices": [], "usage": obj["usage"]})
         self.wfile.write(b"data: [DONE]\n\n")
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
         # Record the headers with the body. Tests can then check auth and
@@ -83,7 +135,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         else:
             self._reply(response)
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         # Record headers for the same reason as in do_POST, for example to
         # check metadata_get's Authorization bearer header.
         self.server.requests.append(
@@ -99,7 +151,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             # Generic /models listing (aws/ec2 list_models).
             self._reply({"data": [{"id": "stub-model"}]})
 
-    def log_message(self, *args):
+    def log_message(self, *args: Any) -> None:
         pass  # keep pytest output clean
 
 
@@ -112,10 +164,10 @@ class StubServer(ThreadingHTTPServer):
         self._responses: list = []
         self.default_response = chat_completion("42")
 
-    def queue_response(self, obj) -> None:
+    def queue_response(self, obj: Any) -> None:
         self._responses.append(obj)
 
-    def next_response(self):
+    def next_response(self) -> Any:
         return self._responses.pop(0) if self._responses else self.default_response
 
     @property
@@ -123,7 +175,12 @@ class StubServer(ThreadingHTTPServer):
         return f"http://127.0.0.1:{self.server_address[1]}/v1"
 
 
-def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
+def chat_completion(
+    content: Any,
+    reasoning_content: Any = None,
+    reasoning: Any = None,
+    usage: Any = ...,
+) -> dict[str, Any]:
     """Builds a minimal chat-completions response body."""
     message = {"content": content}
     if reasoning_content is not None:
@@ -235,7 +292,7 @@ class MergeEverythingTokenizer:
 
 
 @pytest.fixture
-def stub_server():
+def stub_server() -> Iterator[StubServer]:
     server = StubServer()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -245,7 +302,7 @@ def stub_server():
 
 
 @pytest.fixture(autouse=True)
-def _clear_provider_context_length_caches():
+def _clear_provider_context_length_caches() -> Iterator[None]:
     """Clear the openrouter and primeintellect `get_model_context_length` caches.
 
     This fixture is autouse. It clears both `lru_cache` caches before and
@@ -330,7 +387,7 @@ class S3Archive:
         except self._client.exceptions.ClientError:
             return False
 
-    def open(self, rel: str):
+    def open(self, rel: str) -> Any:
         """Return a streaming body for one object (read it, do not save it)."""
         try:
             return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))["Body"]

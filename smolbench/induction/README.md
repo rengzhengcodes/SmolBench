@@ -81,16 +81,3 @@ they cost nothing beyond S3 requests against an S3-backed store. `.provision()`,
 against a self-provisioned EC2 spot instance, billed while it is up;
 `smolbench/evals/providers/ec2.py` carries the per-hour rate and the
 idle-watchdog / max-lifetime safety nets.
-
-### Figures
-
-`figures.py` is layout-agnostic: `load_condition_accuracies` takes a flat
-`{(model, condition): filename}` mapping and resolves each filename against a
-`results_dir` you pass, walking no directory tree of its own.
-
-`accuracy` RAISES on a `Marks` that graded nothing rather than scoring it 0.0,
-because a genuine 0% and an ungraded replicate are different results;
-`load_condition_accuracies` maps that raise to `None` (its missing-file value,
-rendered "n/a") but prints a distinct line per case so the two stay
-distinguishable. Matplotlib imports lazily inside `plot_archetype_accuracy`,
-so importing the package does not require the `notebook` extra.

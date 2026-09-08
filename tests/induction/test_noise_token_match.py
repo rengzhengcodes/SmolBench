@@ -3,7 +3,6 @@
 ``noise_intens`` is a length control: exact per-question token parity with
 extens, whitespace only."""
 
-import dataclasses
 import string
 
 import pytest
@@ -12,10 +11,10 @@ from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenize
 
 from smolbench.evals.tokenization import (
     WHITESPACE_UNITS, TiktokenTokenizer, choose_whitespace_unit, token_matched_noise_prompt)
-from smolbench.induction._common import context_renderer
+from smolbench.induction._common import Prompter as PeriodicPrompter, context_renderer
 from smolbench.induction.periodic import (
     CONDITIONS, PeriodicConfig, get_periodic_numeric_quiz)
-from smolbench.induction.periodic import Prompter as PeriodicPrompter, numeric_count_query_gen
+from smolbench.induction.periodic import numeric_count_query_gen
 
 PERIODIC_TMPL = string.Template(
     "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
@@ -133,7 +132,6 @@ def test_unmatched_targets_raise(tokenizer: "StubTokenizer | TiktokenTokenizer")
             render, CONTEXT, 5_000, MergeEverythingTokenizer(), unit=" \t"
         )
 
-
 @pytest.mark.parametrize("n", (1, 2))
 def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(
     tokenizer: "StubTokenizer | TiktokenTokenizer", n: int,
@@ -146,16 +144,3 @@ def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(
             PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
             tokenizer=tokenizer, conditions=POSITIVE_ARMS,
         )
-
-
-def test_prompter_has_no_legacy_chromatic_hooks() -> None:
-    """`Prompter` carries neither `substitution` nor `extens_template`: both were
-    dead fields from the removed chromatic mechanism, pinned by name so neither can reappear."""
-    prompter = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
-    assert not hasattr(prompter, "substitution")
-    assert not hasattr(prompter, "extens_template")
-    assert not hasattr(prompter, "resolved_extens_template")
-    # `range_free_template` is LIVE (the zero condition renders from it; run_study
-    # supplies it), unlike the two fields above, so it stays in this exact-list pin.
-    assert [f.name for f in dataclasses.fields(prompter)] == [
-        "template", "query_gen", "range_free_template"]

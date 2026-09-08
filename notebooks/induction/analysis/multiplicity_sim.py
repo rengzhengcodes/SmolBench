@@ -34,7 +34,7 @@ from scipy.stats import chi2
 
 from _power_common import ALPHA, SEED, results_dir
 from power_analysis import (ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY, cmh_p,
-                            cmh_stat, mcnemar_exact_p)
+                            cmh_stat, gcmh_stat, mcnemar_exact_p)
 
 # Local names for two imported constants, kept as aliases rather than renamed
 # at every call site -- the values still have exactly one owner: power_analysis.
@@ -90,38 +90,6 @@ def dump(tag: str) -> None:
 
 
 # ------------------------------------------------------------------------- statistics
-def gcmh_stat(succ: np.ndarray, n: int) -> np.ndarray:
-    """Generalized CMH "general association" statistic across 3 rungs (chi2, df=2).
-
-    Parameters
-    ----------
-    succ : np.ndarray
-        Success counts across rungs and strata.
-    n : int
-        Must be identical across every rung and stratum -- the equal-n
-        precondition behind the covariance collapse used in
-        ``power_analysis.gcmh_reject``.
-
-    Returns
-    -------
-    np.ndarray
-        Generalized CMH statistics.
-    """
-    n_rungs = succ.shape[-2]
-    total_n = float(n_rungs * n)
-    total_succ = succ.sum(axis=-2)                       # (..., K)
-    resid = succ - (total_succ / n_rungs)[..., None, :]
-    t_vec = resid[..., :2, :].sum(axis=-1)               # (..., 2)
-    p = n / total_n
-    common = total_succ * (total_n - total_succ) / (total_n - 1.0)
-    shape = np.full((2, 2), -p * p)
-    np.fill_diagonal(shape, p * (1.0 - p))
-    w = common.sum(axis=-1)
-    sigma = w[..., None, None] * shape
-    sigma_inv = np.linalg.pinv(sigma)
-    return np.einsum("...d,...de,...e->...", t_vec, sigma_inv, t_vec)
-
-
 def trend_stat(
     succ: np.ndarray, n: int, scores: tuple[float, ...] = (1.0, 2.0, 3.0)
 ) -> np.ndarray:
@@ -483,7 +451,6 @@ def study_design_effect() -> float | None:
 
 def part2(
     rng: np.random.Generator, n_sims: int = 20000, search_sims: int = 8000,
-    cap: int = EQ_R_GRID[-1],
 ) -> None:
     """Measure the power gain from pairing (matched items) over unpaired testing.
 
@@ -491,8 +458,7 @@ def part2(
     compares unpaired CMH against paired exact McNemar on the same matched
     marks. Where pairing helps, searches `EQ_R_GRID` for the smallest
     unpaired replicate count matching the paired test's power at
-    `R_DEFAULT`; `cap` defaults to the grid's own last rung so the two
-    ceilings cannot silently disagree. Also reports null-calibration Type I
+    `R_DEFAULT`. Also reports null-calibration Type I
     error for both tests.
 
     Run once per `icc` in `ICC_GRID`, simulating the within-replicate
@@ -509,8 +475,6 @@ def part2(
         Number of simulations for the main power calculations.
     search_sims : int, optional
         Number of simulations at each equivalent-R search rung.
-    cap : int, optional
-        Upper replicate-count bound recorded with each result.
     """
     # Imported here, not at module scope, for the same reason as
     # study_design_effect: the simulation must not gain a results-reading
@@ -556,7 +520,7 @@ def part2(
                     rows.append(dict(p_a=p_a, delta=delta, rho=rho,
                                      power_unpaired=unp, power_paired=pair,
                                      eq_R=eq_r, eq_searched=pair > unp + 0.005,
-                                     cap=cap, phi_binary=phi, agreement=agree,
+                                     cap=EQ_R_GRID[-1], phi_binary=phi, agreement=agree,
                                      eq_ratio=(None if eq_r is None
                                                else eq_r / R_DEFAULT),
                                      icc=icc))

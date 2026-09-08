@@ -27,15 +27,14 @@ from typing import Callable, Collection, Dict, Iterable, Mapping, Optional, Tupl
 
 import numpy as np
 
-from smolbench.evals import Quiz, ToF, Numeric
+from smolbench.evals import Numeric, QnA, Quiz, ToF
 from smolbench.evals.tokenization import (
-    TiktokenTokenizer,
     Tokenizer,
     choose_whitespace_unit,
     token_matched_noise_prompt,
 )
 from smolbench.induction._common import (
-    Prompter,
+    Prompter as _Prompter,
     RenderedQuery,
     build_substitution,
     context_renderer,
@@ -43,11 +42,8 @@ from smolbench.induction._common import (
     random_labels,
 )
 
-# Prompter is re-exported for callers configuring the benchmark; the class
-# itself lives in ``_common`` with the rest of the generation machinery.
 __all__ = [
     "PeriodicConfig",
-    "Prompter",
     "Contexts",
     "Condition",
     "CONDITIONS",
@@ -217,11 +213,6 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
     return tuple(sorted(config.periods))
 
 
-def _seq_len_of(config: PeriodicConfig) -> int:
-    """Return the sequence length: the lcm of the config's harmonic periods."""
-    return lcm(*_periods_of(config))
-
-
 def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
     """Generate the period-to-label and position-to-compound mappings.
 
@@ -243,7 +234,7 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     period_to_label: PeriodToLabel = {
         k: config.labels[i] for i, k in enumerate(periods)
     }
-    seq_len = _seq_len_of(config)
+    seq_len = lcm(*periods)
     pos_to_compound: PosToCompound = {
         pos: config.sep.join(
             period_to_label[k] for k in periods if pos % k == 0
@@ -346,7 +337,7 @@ RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
 # Core prompt generation
 # ---------------------------------------------------------------------------
 
-def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -> string.Template:
+def _resolve_arm_template(name: str, condition: Condition, prompter: _Prompter) -> string.Template:
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` conditions render from ``prompter.range_free_template``;
@@ -415,7 +406,7 @@ def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> No
 
 def get_periodic_prompts(
     config: PeriodicConfig,
-    prompter: Prompter,
+    prompter: _Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
@@ -488,13 +479,11 @@ def get_periodic_prompts(
         extensional=_render_extensional(pos_to_compound),
     )
 
-    # Probe the pad atom once, not per query: it depends only on the tokenizer.
-    unit: str = choose_whitespace_unit(tokenizer)
-
     # Split once: stage membership depends only on `match_tokens_to`, not on
     # where an entry sits in `conditions`.
     unpadded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is None]
     padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
+    unit: str | None = choose_whitespace_unit(tokenizer) if padded else None
 
     for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
         prompts: Dict[str, str] = {}
@@ -546,9 +535,45 @@ def get_periodic_prompts(
 # Quiz wrappers
 # ---------------------------------------------------------------------------
 
+def _get_periodic_quizzes(
+    config: PeriodicConfig,
+    prompter: _Prompter,
+    tokenizer: Tokenizer,
+    conditions: Mapping[str, Condition],
+    qna_cls: type[QnA],
+) -> Dict[str, Quiz]:
+    """Wrap periodic prompts in the requested question type.
+
+    The two public quiz constructors differ only in question class; keeping
+    that choice here prevents their shared plumbing from drifting.
+
+    Parameters
+    ----------
+    config : PeriodicConfig
+        Configuration for the periodic prompt sequence.
+    prompter : Prompter
+        Prompter that generates the periodic prompts.
+    tokenizer : Tokenizer
+        Tokenizer for rendering prompts.
+    conditions : Mapping[str, Condition]
+        Named experimental conditions.
+    qna_cls : type[QnA]
+        Question type used to wrap each rendered prompt.
+
+    Returns
+    -------
+    Dict[str, Quiz]
+        Quizzes keyed by condition name.
+    """
+    return quizzes_from_prompts(
+        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
+        qna_cls,
+        conditions,
+    )
+
 def get_periodic_quiz(
     config: PeriodicConfig,
-    prompter: Prompter,
+    prompter: _Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
@@ -575,16 +600,12 @@ def get_periodic_quiz(
     Dict[str, Quiz]
         Quizzes keyed by condition name.
     """
-    return quizzes_from_prompts(
-        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
-        ToF,
-        conditions,
-    )
+    return _get_periodic_quizzes(config, prompter, tokenizer, conditions, ToF)
 
 
 def get_periodic_numeric_quiz(
     config: PeriodicConfig,
-    prompter: Prompter,
+    prompter: _Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
@@ -610,11 +631,7 @@ def get_periodic_numeric_quiz(
     Dict[str, Quiz]
         Quizzes keyed by condition name.
     """
-    return quizzes_from_prompts(
-        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
-        Numeric,
-        conditions,
-    )
+    return _get_periodic_quizzes(config, prompter, tokenizer, conditions, Numeric)
 
 
 # ---------------------------------------------------------------------------
@@ -712,57 +729,3 @@ def numeric_count_query_gen(
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
         yield {"label": label, "seq_len": str(seq_len)}, seq_len // period
-
-
-# ---------------------------------------------------------------------------
-# Demo
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    template = string.Template(
-        "Context:\n"
-        "---\n"
-        "There is a counting game. Count positions starting from 1. "
-        "At each position write down words according to the following rules:\n"
-        "$positive_info\n"
-        "Query:\n"
-        "How many of the positions 1 through $seq_len include '$label'? "
-        "Answer with a single integer."
-    )
-
-    # The `zero` condition's range-free counterpart of `template` above (see
-    # `CONDITIONS`'s "zero" entry for why it needs this rather than `template`
-    # itself).
-    range_free_template = string.Template(
-        template.template.replace(" 1 through $seq_len", "")
-    )
-
-    cfg = PeriodicConfig(
-        n=3,
-        labels=["fizz", "buzz", "gerbil"],
-        seed=42,
-    )
-
-    # No served model here, so measure with a fixed tiktoken encoding; a real
-    # run passes the model under test's own tokenizer.
-    demo_tokenizer = TiktokenTokenizer("cl100k_base")
-
-    for rendered in get_periodic_prompts(
-        cfg,
-        Prompter(template, numeric_count_query_gen, range_free_template=range_free_template),
-        tokenizer=demo_tokenizer,
-    ):
-        print("-- intensional --")
-        print(rendered.prompts["intens"])
-        print("-- extensional --")
-        print(rendered.prompts["extens"])
-        print("-- zero --")
-        print(rendered.prompts["zero"])
-        print("answer:", rendered.answer)
-        print(
-            "token counts -- intens:", rendered.token_counts["intens"],
-            "extens:", rendered.token_counts["extens"],
-            "noise_intens:", rendered.token_counts["noise_intens"],
-            "zero:", rendered.token_counts["zero"],
-        )
-        print()

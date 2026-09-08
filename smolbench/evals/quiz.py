@@ -149,15 +149,10 @@ class Marks:
     date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     #: Serving-stack snapshot (instance type, GPUs, tensor-parallel degree,
     #: image, ...) so a result file is self-describing about its hardware.
-    #: A plain default, not a default_factory, so a file predating this
-    #: field falls back to the class attribute on access.
     server_config: Optional[dict] = None
     #: The ``run_ts`` of the run this one RE-GRADES, or ``None`` for an
     #: original collection. The append-only S3 log can't be edited in place,
     #: so a re-graded row carries its own provenance instead of a side table.
-    #: LAST field: a pure tail addition, so the document shape is unchanged
-    #: for stored files predating it (same plain-default reasoning as
-    #: `server_config`).
     regraded_from: Optional[str] = None
 
     @property
@@ -230,9 +225,8 @@ class Marks:
             model=data["model"],
             marks=tuple(Mark(**m) for m in data["marks"]),
             date=data["date"],
-            # .get: a file written before the field existed has no key.
-            server_config=data.get("server_config"),
-            regraded_from=data.get("regraded_from"),
+            server_config=data["server_config"],
+            regraded_from=data["regraded_from"],
         )
 
     @classmethod

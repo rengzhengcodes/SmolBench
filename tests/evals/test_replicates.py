@@ -138,7 +138,7 @@ def test_cot_chain_lengths(
         )
         addr = ReplicateAddress(tag="cot", info="intens", seed=seed, model=None)
         harness.store.dump_marks(Marks(model="stub-model", marks=marks), addr, RUN_TS)
-    harness.cot_chain_lengths()
+    harness.cot_chain_lengths("cot")
     out = re.sub(r"\s+", "", capsys.readouterr().out)
     assert "cot/intens:n=3min=2max=4mean=3median=3words" in out
     assert "cot/extens:noreasoningchainsfound" in out

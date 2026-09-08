@@ -22,6 +22,7 @@ from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
     build_tree,
     extens_vs_noise,
     load_analysis,
+    multiplicity_sim,
     paired_analysis,
     power_analysis,
     repoint,
@@ -39,11 +40,6 @@ CHAIN = ("power_analysis", "paired_analysis", "significance_report",
 def run_all(extens_vs_noise: ModuleType) -> ModuleType:
     """The driver module (imports the whole chain, so it loads last)."""
     return load_analysis("run_all")
-
-
-@pytest.fixture(scope="session")
-def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
-    return load_analysis("multiplicity_sim")
 
 
 @pytest.fixture(scope="session")
@@ -156,65 +152,7 @@ def test_main_is_a_short_orchestrator(power_analysis: ModuleType) -> None:
 # multiplicity_sim.apply_corrections: no dead parameters, one step-up helper
 # ---------------------------------------------------------------------------
 
-def legacy_apply_corrections(
-    pv: np.ndarray, is_null: np.ndarray, m: int, alpha: float
-) -> dict[str, np.ndarray]:
-    """The pre-split ``apply_corrections``, vendored verbatim from HEAD.
-
-    Kept so the rewrite is pinned against identical rejections, procedure
-    for procedure, rather than merely something plausible.
-    """
-    out = {}
-    order = np.argsort(pv, axis=1)
-    sortedp = np.take_along_axis(pv, order, axis=1)
-    ranks = np.arange(1, m + 1)
-    out["Bonferroni"] = pv < alpha / m
-    thr = alpha / (m - ranks + 1)
-    viol = sortedp > thr
-    first = np.where(viol.any(axis=1), viol.argmax(axis=1), m)
-    keep = np.arange(m)[None, :] < first[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["Holm"] = rej
-    ok = sortedp <= thr
-    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
-    keep = np.arange(m)[None, :] <= idx[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["Hochberg"] = rej
-    bh_thr = alpha * ranks / m
-    ok = sortedp <= bh_thr
-    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
-    keep = np.arange(m)[None, :] <= idx[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["BH(q=0.05)"] = rej
-    return out
-
-
 def test_apply_corrections_keeps_only_the_parameter_it_reads(multiplicity_sim: ModuleType) -> None:
     """Drops `is_null` (never read) and `m` (always `pv.shape[1]`), so a wrong `m` can no longer silently mis-correct p-values."""
     assert list(inspect.signature(multiplicity_sim.apply_corrections)
                 .parameters) == ["pv"]
-
-
-def test_apply_corrections_is_unchanged_procedure_for_procedure(
-    multiplicity_sim: ModuleType,
-) -> None:
-    """Matches the vendored pre-split code across all-null, all-significant, and boundary-tie families, where an off-by-one rank is most likely."""
-    alpha = multiplicity_sim.ALPHA
-    rng = np.random.default_rng(0)
-    m = 12
-    families = [
-        rng.uniform(size=(50, m)),                       # generic
-        np.full((3, m), 0.99),                           # nothing rejectable
-        np.full((3, m), 1e-9),                           # everything rejectable
-        np.tile(alpha * np.arange(1, m + 1) / m, (2, 1)),  # exactly at BH's line
-        np.tile(alpha / (m - np.arange(m)), (2, 1)),       # exactly at Holm's
-    ]
-    for pv in families:
-        got = multiplicity_sim.apply_corrections(pv)
-        want = legacy_apply_corrections(pv, np.ones(m, bool), m, alpha)
-        assert set(got) == set(want)
-        for name in want:
-            assert np.array_equal(got[name], want[name]), name

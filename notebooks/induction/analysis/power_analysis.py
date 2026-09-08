@@ -223,14 +223,16 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     return p[()] if p.ndim == 0 else p
 
 
-def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
+def cmh_stat(
+    succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray
+) -> np.ndarray:
     """The repo's continuity-corrected 2 x 2 x K CMH statistic (chi2, df=1).
 
     Stratified by harmonic only (K = N_HARMONICS); `gcmh_reject` is a distinct
     statistic (3 categories, harmonic x info strata, no continuity correction).
     `succ_a`/`succ_b` are success counts out of `n` trials per stratum, shape
-    (..., K), the same trial count for both conditions; returns one statistic
-    per leading batch index.
+    (..., K), with the same trial count for both conditions. `n` may be a
+    scalar or per-stratum counts broadcastable to that shape.
 
     Parameters
     ----------
@@ -238,14 +240,15 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
         Success counts for the first condition, shaped ``(..., K)``.
     succ_b : np.ndarray
         Success counts for the second condition, shaped ``(..., K)``.
-    n : int
-        Trial count per condition and stratum.
+    n : int or np.ndarray
+        Trial count per condition, scalar or per stratum.
 
     Returns
     -------
     np.ndarray
         One statistic per leading batch index.
     """
+    n = np.asarray(n)
     big_n = 2 * n  # total per stratum
     m1 = succ_a + succ_b  # successes per stratum
     m0 = big_n - m1
@@ -263,15 +266,8 @@ def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
     return chi2.sf(cmh_stat(succ_a, succ_b, n), df=1)
 
 
-def cmh_reject(
-    succ_a: np.ndarray, succ_b: np.ndarray, n_per_stratum: int, alpha: float
-) -> np.ndarray:
-    """`cmh_stat` rejections at `alpha` -- the Tier-2/3 pairwise test."""
-    return cmh_stat(succ_a, succ_b, n_per_stratum) > chi2.isf(alpha, df=1)
-
-
-def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarray:
-    """Vectorized generalized CMH ("general association") test, 3 rungs -- the Tier-1 gate.
+def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
+    """Return batched generalized-CMH statistics for three-rung families.
 
     Tests whether a family's 3 rungs differ at all, stratified by
     K = N_HARMONICS * len(INFOS) = 36 harmonic x info strata. Standard
@@ -285,11 +281,8 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     exactly to Sigma = (sum_j w_j) * C0 with fixed C0, the shortcut the code
     takes; unequal per-rung or per-stratum counts break it.
 
-    Sigma is exactly singular when every stratum has zero cross-rung
-    variance, and one singular matrix aborts the whole batched
-    ``numpy.linalg.solve``, hence the `LinAlgError` pseudo-inverse fallback:
-    Sigma == 0 also forces T == 0, so the fallback's Q = 0 is the correct
-    "no evidence against the null," not an artifact.
+    A pseudo-inverse handles singular batches: Sigma == 0 also forces T == 0,
+    so Q = 0 is the correct "no evidence against the null."
 
     Parameters
     ----------
@@ -297,13 +290,11 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
         Success counts with shape ``(n_sims, 3, K)``.
     n_per_stratum : int
         Trials per rung per stratum.
-    alpha : float
-        Test significance threshold.
 
     Returns
     -------
     np.ndarray
-        Whether each simulation rejects.
+        One generalized-CMH statistic per leading batch index.
 
     Raises
     ------
@@ -313,7 +304,7 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     _, n_rungs, _ = succ.shape
     if n_rungs != 3:
         raise ValueError(
-            f"gcmh_reject assumes 3 rungs (ladder-of-3 families); got axis-1 "
+            f"gcmh_stat assumes 3 rungs (ladder-of-3 families); got axis-1 "
             f"size {n_rungs}"
         )
     if n_per_stratum < 1:
@@ -337,15 +328,38 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     w = common.sum(axis=1)  # (S,) == sum_j w_j
     sigma = w[:, None, None] * shape[None, :, :]  # (S, df, df)
 
-    try:
-        solved = np.linalg.solve(sigma, t_vec[:, :, None])[:, :, 0]
-        stat = np.einsum("sd,sd->s", t_vec, solved)
-    except np.linalg.LinAlgError:
-        # Singular-Sigma fallback: Sigma == 0 forces T == 0, so Q = 0 (see docstring).
-        sigma_inv = np.linalg.pinv(sigma)  # batched SVD pseudo-inverse
-        stat = np.einsum("sd,sde,se->s", t_vec, sigma_inv, t_vec)
+    sigma_inv = np.linalg.pinv(sigma)
+    return np.einsum("sd,sde,se->s", t_vec, sigma_inv, t_vec)
 
-    return stat > chi2.isf(alpha, df=df)
+
+def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarray:
+    """Return generalized-CMH rejection decisions for three-rung families.
+
+    This thin thresholding layer keeps simulation callers focused on the
+    decision while :func:`gcmh_stat` owns the shared statistic calculation.
+
+    Parameters
+    ----------
+    succ : np.ndarray
+        Success counts with shape ``(n_sims, 3, K)``.
+    n_per_stratum : int
+        Trials per rung per stratum.
+    alpha : float
+        Test significance threshold.
+
+    Returns
+    -------
+    np.ndarray
+        Whether each simulation rejects.
+
+    Raises
+    ------
+    ValueError
+        If the rung axis is not length 3, or `n_per_stratum` < 1.
+    """
+    stat = gcmh_stat(succ, n_per_stratum)
+
+    return stat > chi2.isf(alpha, df=2)
 
 
 def simulated_power(
@@ -385,7 +399,7 @@ def simulated_power(
     """
     succ_a = rng.binomial(n_reps, rates_a, size=(n_sims, rates_a.size))
     succ_b = rng.binomial(n_reps, rates_b, size=(n_sims, rates_b.size))
-    return cmh_reject(succ_a, succ_b, n_reps, alpha).mean()
+    return (cmh_stat(succ_a, succ_b, n_reps) > chi2.isf(alpha, df=1)).mean()
 
 
 _SizingScan = tuple[dict[float, int | None], dict[int, float]]

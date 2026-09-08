@@ -12,11 +12,11 @@ from typing import Any
 import pytest
 
 from conftest import StubTokenizer
+from smolbench.induction._common import Prompter
 
 from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
-    Prompter,
     generate_sequence,
     get_periodic_numeric_quiz,
     get_periodic_quiz,

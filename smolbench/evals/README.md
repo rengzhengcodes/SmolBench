@@ -166,8 +166,3 @@ attaches it to the `smolbench-ec2-operators` group. This needs ADMIN
 credentials: the scoped operator key the eval drivers use day-to-day is
 EC2-only and cannot manage S3 or IAM. See the script's module docstring for
 the runbook and its exit-status contract.
-
-The bucket holds no pre-migration results and none should be seeded into it.
-Any import of historical results must go THROUGH `results_store.py` so it
-enters the log layout above, never bulk-synced in a repo-mirroring layout,
-which nothing reads.

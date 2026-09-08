@@ -1,6 +1,6 @@
 """Paired re-analysis of the family-ladder induction study (no new data).
 
-``power_analysis.py::cmh_reject`` treats the arms as independent binomials,
+``power_analysis.py::cmh_stat`` treats the arms as independent binomials,
 but every model answers the same seeds with byte-identical prompts and the
 four info arms at a seed reuse one query/answer set, so all 210 PRIMARY
 contrasts are matched item-for-item. Each is recomputed three ways -- unpaired
@@ -43,6 +43,7 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     RESULTS_DIR,
     build_primary_contrasts,
     build_secondary_contrasts,
+    cmh_stat,
     # DESCRIPTIVE only (it treats the 270 marks as 270 independent pairs, which
     # they are not); `signflip_exact_p` carries the inference and collapses
     # onto this test at singleton clusters.
@@ -54,19 +55,6 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
 #: otherwise leave no lane looking "short" relative to its neighbours while
 #: silently raising the sign-flip floor (2/2^S) above every Holm threshold.
 EXPECTED_R = 30
-
-
-def results_store() -> LocalResultsStore:
-    """Return a store over the CURRENT `RESULTS_DIR`, rooted at this module's global.
-
-    A fresh store on every call, reading `RESULTS_DIR` at call time rather
-    than a module-level singleton -- `RESULTS_DIR` is rebindable (tests
-    repoint it per fixture tree), and a store built at import would keep
-    reading the tree it captured regardless of later rebinding. Constructing
-    one is free (a frozen dataclass holding a `Path`), so the per-call
-    rebuild costs nothing next to the YAML parsing.
-    """
-    return LocalResultsStore(RESULTS_DIR)
 
 
 def load_marks() -> tuple[dict, dict, dict]:
@@ -87,7 +75,7 @@ def load_marks() -> tuple[dict, dict, dict]:
     correct: dict = {}
     valid: dict = {}
     compliance: dict = {}
-    store = results_store()
+    store = LocalResultsStore(RESULTS_DIR)
     for model in MODELS:
         for info in INFOS:
             # tag=model: this study's local directory key is the model id.
@@ -278,7 +266,7 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
 def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
     """p-value of the repo's continuity-corrected 2x2xK CMH, strata = harmonic.
 
-    Mirrors ``power_analysis.py::cmh_reject`` (same continuity correction,
+    Reuses ``power_analysis.py::cmh_stat`` (same continuity correction,
     same hypergeometric variance), so the paired-vs-unpaired comparison
     isolates the pairing. Rebuilt from `aligned`'s flat item arrays, the
     harmonic index recovered as position-within-seed.
@@ -302,26 +290,14 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
     # stay in ascending harmonic order within a replicate. Under drop_invalid
     # a short replicate shifts later offsets, mislabeling the stratum an item
     # lands in, but leaves the pairing untouched.
-    num_terms, den_terms = [], []
     order = np.concatenate([np.arange((seed_idx == s).sum()) for s in np.unique(seed_idx)])
-    for k in np.unique(order):
-        sel = order == k
-        na, nb = sel.sum(), sel.sum()
-        sa, sb = a[sel].sum(), b[sel].sum()
-        big_n = na + nb
-        if big_n < 2:
-            continue
-        m1 = sa + sb
-        m0 = big_n - m1
-        num_terms.append(sa - m1 * na / big_n)
-        den_terms.append((na * nb * m1 * m0) / (big_n * big_n * (big_n - 1)))
-    if not den_terms:
+    strata = np.unique(order)
+    if strata.size == 0:
         return 1.0
-    den = float(np.sum(den_terms))
-    if den <= 0:
-        return 1.0
-    num = max(abs(float(np.sum(num_terms))) - 0.5, 0.0) ** 2
-    return float(chi2.sf(num / den, df=1))
+    counts = np.array([(order == k).sum() for k in strata])
+    succ_a = np.array([a[order == k].sum() for k in strata])
+    succ_b = np.array([b[order == k].sum() for k in strata])
+    return float(chi2.sf(cmh_stat(succ_a, succ_b, counts), df=1))
 
 
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:

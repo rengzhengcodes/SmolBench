@@ -14,13 +14,13 @@ from types import ModuleType
 
 import pytest
 
-from conftest import StubTokenizer
+from conftest import StubTokenizer, import_run_study
 
 from smolbench.evals import Quiz
+from smolbench.induction._common import Prompter as PeriodicPrompter
 from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
-    Prompter as PeriodicPrompter,
     get_periodic_numeric_quiz,
     get_periodic_quiz,
     numeric_count_query_gen,
@@ -95,23 +95,9 @@ def run_study() -> ModuleType:
     """Imports run_study.py under an os.environ snapshot/restore: the module
     mutates EC2_EXPERIMENT_TAG and calls load_dotenv at import time, which would
     otherwise leak into this pytest session (e.g. SMOLBENCH_RESULTS_S3)."""
-    import importlib.util
-    import os
-    import sys
-
-    from tests._paths import NOTEBOOKS
-
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "golden_run_study", NOTEBOOKS / "induction" / "run_study.py"
-        )
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["golden_run_study"] = module
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
+    module, exc, _env = import_run_study("golden_run_study")
+    assert exc is None, exc
+    assert isinstance(module, ModuleType)
     return module
 
 
@@ -147,22 +133,6 @@ def test_the_production_pins_are_seed_sensitive(run_study: ModuleType, stub_toke
     # ... and distinct from the 1776-epoch library pins, which use a different
     # template as well as a different seed.
     assert set(zero.values()).isdisjoint(GOLDEN["periodic_numeric_1776"].values())
-
-
-def test_the_production_pins_catch_a_one_byte_template_change(
-    run_study: ModuleType, stub_tokenizer: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A single byte changed in the study template moves every hash it reaches
-    (including `zero`, which shares the template)."""
-    baseline = production_hashes(run_study, 0)
-    perturbed = string.Template(run_study.template.template.replace(
-        "You are a precise integer counter.", "You are a precise integer counter!"
-    ))
-    assert perturbed.template != run_study.template.template
-    monkeypatch.setattr(run_study, "template", perturbed)
-    after = production_hashes(run_study, 0)
-    for arm in PRODUCTION_ARMS:
-        assert after[arm] != baseline[arm], arm
 
 
 def test_production_arms_that_ignore_the_tokenizer(

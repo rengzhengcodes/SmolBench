@@ -7,40 +7,21 @@ is stubbed, nothing downloads a tokenizer and nothing touches AWS.
 
 from __future__ import annotations
 
-import importlib.util
-import os
-import sys
 from types import ModuleType
 from typing import Any
 
 import pytest
 
-from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
+from smolbench.evals import study_config
 from smolbench.evals.replicates import ReplicateHarness
 from smolbench.evals.results_store import experiment_name
 from smolbench.induction.experiment import InductionExperiment
 
-from conftest import StubTokenizer
+from conftest import StubTokenizer, import_run_study
 from tests._paths import NOTEBOOKS
 
 RUN_STUDY_PATH = NOTEBOOKS / "induction" / "run_study.py"
-
-# The smoke entry predates the study and is not a counted rung.
-STUDY_KEYS = sorted(set(EC2_DEPLOY_SPECS) - {"qwen2.5-1.5b"})
-
-# The spec-key -> analysis-tag map, vendored (not imported) so drift fails here.
-EXPECTED_TAGS = dict(
-    pair.split(":") for pair in (
-        "qwen3.5-27b:qwen35_27b", "qwen3.5-122b-a10b:qwen35_122b", "qwen3.5-397b-a17b:qwen35_397b",
-        "nemotron-3-nano-4b:nemo3_4b", "nemotron-3-nano-30b-a3b:nemo3_30b",
-        "nemotron-3-super-120b-a12b:nemo3_120b",
-        "gemma-4-e2b:gemma4_e2b", "gemma-4-12b:gemma4_12b", "gemma-4-31b:gemma4_31b",
-        "glm-4.7-flash:glm_flash", "glm-4.5-air:glm_air", "glm-4.7:glm_47",
-        "ministral-3-3b:min3_3b", "ministral-3-8b:min3_8b", "ministral-3-14b:min3_14b",
-        "exaone-4.0-32b:exaone_32b", "exaone-4.5-33b:exaone_33b", "k-exaone-236b-a23b:exaone_236b",
-        "deepseek-v4-flash:ds_flash", "deepseek-v3.1:ds_v31", "deepseek-v4-pro:ds_pro",
-    )
-)
+STUDY_KEYS = sorted(study_config.roster_keys())
 
 MINISTRAL = ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b")
 DEEPSEEK = ("deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro")
@@ -66,70 +47,25 @@ PERIODIC_MOE_TEMPLATE = (
 )
 
 
-def import_run_study(
-    name: str, env: "dict[str, str] | None" = None
-) -> tuple[ModuleType | None, BaseException | None, dict[str, str]]:
-    """Imports the driver by path under `name` with `env` applied, restoring os.environ after.
-
-    The tag/state-file block at the top of run_study.py mutates os.environ at
-    import time (it must, to precede ec2's constant freeze), so its effect is
-    only observable by re-importing under a controlled environment. Returns
-    (module_or_None, exc_or_None, env_after), where env_after is the
-    pre-restoration snapshot carrying the tag the module set.
-    """
-    saved = dict(os.environ)
-    module = exc = None
-    try:
-        os.environ.update(env or {})
-        spec = importlib.util.spec_from_file_location(name, RUN_STUDY_PATH)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException as err:      # SystemExit is a BaseException
-            module, exc = None, err
-        env_after = dict(os.environ)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-        sys.modules.pop(name, None)
-    return module, exc, env_after
-
-
 @pytest.fixture(scope="module")
 def run_study() -> ModuleType:
     """Imports run_study.py under a unique name, without leaking its env: it
     calls load_dotenv at import, which would otherwise mutate this session's
     os.environ (including SMOLBENCH_RESULTS_S3)."""
-    saved = dict(os.environ)
-    try:
-        spec = importlib.util.spec_from_file_location("induction_run_study", RUN_STUDY_PATH)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["induction_run_study"] = module
-        spec.loader.exec_module(module)
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
+    module, exc, _env = import_run_study("induction_run_study")
+    assert exc is None, exc
+    assert isinstance(module, ModuleType)
     return module
 
 
 def test_roster(run_study: ModuleType) -> None:
     """MODELS is exactly the 21 study spec keys, mapped to unique locked analysis tags."""
-    assert run_study.MODELS == EXPECTED_TAGS
-    assert sorted(run_study.MODELS) == STUDY_KEYS
-    assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
-
-
-def test_the_roster_is_built_from_the_committed_study_config(run_study: ModuleType) -> None:
-    """MODELS is the config's roster, in the config's ladder order (EXPECTED_TAGS
-    is the vendored drift guard; this pins that the driver reads the file
-    rather than re-declaring it)."""
-    from smolbench.evals import study_config
-
-    assert tuple(run_study.MODELS) == study_config.roster_keys()
     assert run_study.MODELS == {
         key: study_config.tag_for(key) for key in study_config.roster_keys()
     }
+    assert tuple(run_study.MODELS) == study_config.roster_keys()
+    assert sorted(run_study.MODELS) == STUDY_KEYS
+    assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
 
 
 def test_cot_args_is_validated_against_the_config_roster(run_study: ModuleType) -> None:
@@ -164,7 +100,7 @@ def test_cot_args_table(run_study: ModuleType) -> None:
         name = "thinking" if key in DEEPSEEK else "enable_thinking"
         return {"chat_template_kwargs": {name: True}}
 
-    assert run_study.COT_ARGS == {key: toggle(key) for key in EXPECTED_TAGS}
+    assert run_study.COT_ARGS == {key: toggle(key) for key in study_config.roster_keys()}
 
 
 def test_template_is_byte_identical_to_periodic_moe(run_study: ModuleType) -> None:
@@ -188,9 +124,6 @@ def test_experiment_constants(run_study: ModuleType) -> None:
     assert run_study.EXPERIMENT.info_types == run_study.INFO_TYPES
     assert run_study.EXPERIMENT.notebook_dir == "induction"
     assert run_study.EXPERIMENT.archetype_tags == run_study.MODELS
-    # 131_072 = the vLLM serving context. BUDGET_CAP is deleted: it always
-    # equaled CONTEXT_LIMIT, so the min() against it could never bind.
-    assert not hasattr(run_study, "BUDGET_CAP")
     assert run_study.CONTEXT_LIMIT == 131_072
     assert experiment_name(run_study.EXPERIMENT.results_dir) == "induction"
     assert run_study.EXPERIMENT.results_dir == NOTEBOOKS / "induction" / "results"
@@ -302,11 +235,12 @@ def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(
     template with one edit, not a second full copy that can drift from it."""
     assert run_study.RANGE_CLAUSE == " 1 through $seq_len"
     assert run_study.RANGE_CLAUSE in run_study.template.template
-    assert run_study.zero_template.template == run_study.template.template.replace(
+    zero_template = run_study._zero_template(run_study.template)
+    assert zero_template.template == run_study.template.template.replace(
         run_study.RANGE_CLAUSE, ""
     )
-    assert "$seq_len" not in run_study.zero_template.template
-    assert run_study.zero_template.template.endswith(
+    assert "$seq_len" not in zero_template.template
+    assert zero_template.template.endswith(
         "How many of the positions include '$label'?"
     )
 

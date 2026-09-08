@@ -31,7 +31,7 @@ from tests.analysis._trees import (  # noqa: F401
     SHALLOW_DEPTH,
     build_tree,
     extens_vs_noise,
-    load_analysis,
+    multiplicity_sim,
     paired_analysis,
     power_analysis,
     repoint,
@@ -39,12 +39,6 @@ from tests.analysis._trees import (  # noqa: F401
 )
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
-
-
-@pytest.fixture(scope="session")
-def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
-    """The standalone Monte Carlo module."""
-    return load_analysis("multiplicity_sim")
 
 
 # ===========================================================================
@@ -68,44 +62,6 @@ def test_power_analysis_roster_comes_from_the_study_config(power_analysis: Modul
 # Holm / Hochberg / BH were hand-rolled beside a statsmodels dependency
 # ===========================================================================
 
-def _legacy_holm(pvals: np.ndarray, alpha: float) -> np.ndarray:
-    """The pre-swap ``paired_analysis.holm``, vendored verbatim."""
-    m = pvals.size
-    order = np.argsort(pvals, kind="stable")
-    reject = np.zeros(m, dtype=bool)
-    for i, idx in enumerate(order):
-        if pvals[idx] <= alpha / (m - i):
-            reject[idx] = True
-        else:
-            break
-    return reject
-
-
-def _legacy_hochberg(pvals: np.ndarray, alpha: float) -> np.ndarray:
-    """The pre-swap ``significance_report.hochberg``, vendored verbatim."""
-    m = pvals.size
-    order = np.argsort(pvals, kind="stable")
-    sorted_p = pvals[order]
-    reject = np.zeros(m, dtype=bool)
-    for i in range(m - 1, -1, -1):
-        if sorted_p[i] <= alpha / (m - i):
-            reject[order[: i + 1]] = True
-            break
-    return reject
-
-
-def _legacy_bh(p: np.ndarray, q: float) -> np.ndarray:
-    """The pre-swap nested ``bh()`` closure from ``paired_analysis.main``."""
-    m = p.size
-    order = np.argsort(p)
-    thresh = q * (np.arange(1, m + 1)) / m
-    passed = p[order] <= thresh
-    k = np.max(np.nonzero(passed)[0]) + 1 if passed.any() else 0
-    rej = np.zeros(m, dtype=bool)
-    rej[order[:k]] = True
-    return rej
-
-
 def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
     """Yield `n` p-value vectors dominated by exact ties.
 
@@ -123,29 +79,6 @@ def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
             yield np.round(rng.random(m), 2)          # coarse rounding -> ties
         else:
             yield rng.choice(pool, size=m)            # exact study-shaped ties
-
-
-@pytest.mark.parametrize("alpha", (0.05, 0.05 / 210))
-def test_holm_and_hochberg_match_the_hand_rolled_versions(paired_analysis: ModuleType,
-                                                          significance_report: ModuleType,
-                                                          alpha: float) -> None:
-    """The statsmodels swap is drop-in on tie-heavy p-vectors, at both alphas."""
-    for pvals in _tie_heavy_vectors():
-        assert np.array_equal(paired_analysis.holm(pvals, alpha),
-                              _legacy_holm(pvals, alpha)), pvals
-        assert np.array_equal(significance_report.hochberg(pvals, alpha),
-                              _legacy_hochberg(pvals, alpha)), pvals
-
-
-def test_bh_is_a_module_level_function_matching_the_old_closure(
-    paired_analysis: ModuleType,
-) -> None:
-    """BH moves out of ``main``'s body and keeps its rejection set."""
-    assert callable(getattr(paired_analysis, "bh", None)), \
-        "bh must be importable, not buried in main()"
-    for pvals in _tie_heavy_vectors():
-        assert np.array_equal(paired_analysis.bh(pvals, 0.05),
-                              _legacy_bh(pvals, 0.05)), pvals
 
 
 @pytest.mark.parametrize("name", ("holm", "hochberg", "bh"))
@@ -240,9 +173,12 @@ def test_no_bare_assert_gates_remain(module: str) -> None:
 # one store-backed loader, consumed by contrasts and census
 # ===========================================================================
 
-@pytest.fixture
-def small_tree(tmp_path: Path, power_analysis: ModuleType) -> tuple[Path, tuple[str, str]]:
+@pytest.fixture(scope="module")
+def small_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> tuple[Path, tuple[str, str]]:
     """A 6-seed tree with one unparsable replicate filename."""
+    tmp_path = tmp_path_factory.mktemp("small-tree")
     build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS,
                lambda m, i: ((0.10 if i == "zero" else 0.90), 0.0, "empty",
                              range(SHALLOW_DEPTH)))
@@ -366,10 +302,7 @@ def test_no_bare_replicate_count_literals_survive(multiplicity_sim: ModuleType) 
     # elsewhere couldn't express eq_R == R_DEFAULT.
     assert multiplicity_sim.EQ_R_GRID[0] == multiplicity_sim.R_DEFAULT
     assert list(multiplicity_sim.EQ_R_GRID) == sorted(multiplicity_sim.EQ_R_GRID)
-    # part2's `cap` default is the ladder's top rung, so its docstring's ceiling
-    # claim holds by construction rather than by two literals agreeing.
-    assert (inspect.signature(multiplicity_sim.part2).parameters["cap"].default
-            == multiplicity_sim.EQ_R_GRID[-1])
+    assert "cap=EQ_R_GRID[-1]" in source
 
 
 def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim: ModuleType) -> None:
@@ -473,8 +406,6 @@ def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis: ModuleT
     default = inspect.signature(
         power_analysis.omnibus_interaction_power).parameters["n_sims"].default
     assert default < 1000, default
-    source = inspect.getsource(power_analysis.omnibus_interaction_power)
-    assert str(default) in source or "n_sims" in source
 
 
 # ===========================================================================

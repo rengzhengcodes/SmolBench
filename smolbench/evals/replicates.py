@@ -241,7 +241,7 @@ class ReplicateHarness:
                 f"acc={acc}"
             )
 
-    def cot_chain_lengths(self, tag: str = "cot") -> None:
+    def cot_chain_lengths(self, tag: str) -> None:
         """Print reasoning-chain word-count stats from the stored CoT replicates.
 
         Word count proxies token count; a top-truncated distribution flags a
@@ -254,7 +254,7 @@ class ReplicateHarness:
 
         Parameters
         ----------
-        tag : str, optional
+        tag : str
             Archetype tag whose stored CoT replicates are analyzed.
         """
         model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
