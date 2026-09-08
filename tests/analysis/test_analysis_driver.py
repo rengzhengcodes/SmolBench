@@ -1,6 +1,8 @@
 """Pin analysis-driver order and its computation/render split."""
 
 import inspect
+
+import numpy as np
 import io
 import contextlib
 from collections.abc import Callable
@@ -8,7 +10,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import numpy as np
 import pytest
 
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
@@ -138,3 +139,31 @@ def test_apply_corrections_keeps_only_the_parameter_it_reads(multiplicity_sim: M
     """Reject unused parameters that could mis-correct p-values."""
     assert list(inspect.signature(multiplicity_sim.apply_corrections)
                 .parameters) == ["pv"]
+
+
+def test_apply_corrections_matches_statsmodels(multiplicity_sim: ModuleType) -> None:
+    """Batched masks agree with statsmodels row by row away from exact ties."""
+    from statsmodels.stats.multitest import multipletests
+
+    alpha = multiplicity_sim.ALPHA
+    rng = np.random.default_rng(7)
+    pv = np.vstack([
+        rng.uniform(0, 1, size=(40, 6)),
+        rng.uniform(0, 0.02, size=(10, 6)),
+        np.array([[0.001, 0.011, 0.021, 0.031, 0.041, 0.9]]),
+    ])
+    got = multiplicity_sim.apply_corrections(pv)
+    methods = {"Bonferroni": "bonferroni", "Holm": "holm",
+               "Hochberg": "simes-hochberg", "BH(q=0.05)": "fdr_bh"}
+    for name, method in methods.items():
+        for row, mask in zip(pv, got[name]):
+            expected = multipletests(row, alpha=alpha, method=method)[0]
+            assert list(mask) == list(expected), (name, row.tolist())
+
+
+def test_apply_corrections_rejects_strictly_below_the_bonferroni_bar(multiplicity_sim: ModuleType) -> None:
+    """A p-value exactly at ``ALPHA / m`` is not rejected, so ties never inflate rejections."""
+    alpha = multiplicity_sim.ALPHA
+    pv = np.array([[alpha / 4, alpha / 4 - 1e-12, 0.5, 0.9]])
+    mask = multiplicity_sim.apply_corrections(pv)["Bonferroni"][0]
+    assert list(mask) == [False, True, False, False]

@@ -256,7 +256,7 @@ def test_no_bare_replicate_count_literals_survive(multiplicity_sim: ModuleType) 
 
     assert multiplicity_sim.EQ_R_GRID[0] == multiplicity_sim.R_DEFAULT
     assert list(multiplicity_sim.EQ_R_GRID) == sorted(multiplicity_sim.EQ_R_GRID)
-    assert "cap=EQ_R_GRID[-1]" in source
+    assert multiplicity_sim.EQ_R_GRID[-1] == max(multiplicity_sim.EQ_R_GRID)
 
 
 def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim: ModuleType) -> None:

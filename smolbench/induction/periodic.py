@@ -18,7 +18,7 @@ from smolbench.evals.tokenization import (
     token_matched_noise_prompt,
 )
 from smolbench.induction._common import (
-    Prompter as _Prompter,
+    Prompter,
     RenderedQuery,
     build_substitution,
     context_renderer,
@@ -231,7 +231,7 @@ CONDITIONS: Mapping[str, Condition] = MappingProxyType({
 RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
 
 
-def _resolve_arm_template(name: str, condition: Condition, prompter: _Prompter) -> string.Template:
+def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -> string.Template:
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` requires its range-free template to prevent answer leakage.
@@ -293,7 +293,7 @@ def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> No
 
 def get_periodic_prompts(
     config: PeriodicConfig,
-    prompter: _Prompter,
+    prompter: Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
@@ -390,7 +390,7 @@ def get_periodic_prompts(
 
 def _get_periodic_quizzes(
     config: PeriodicConfig,
-    prompter: _Prompter,
+    prompter: Prompter,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition],
     qna_cls: type[QnA],
@@ -421,9 +421,10 @@ def _get_periodic_quizzes(
         conditions,
     )
 
+
 def get_periodic_quiz(
     config: PeriodicConfig,
-    prompter: _Prompter,
+    prompter: Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
@@ -451,7 +452,7 @@ def get_periodic_quiz(
 
 def get_periodic_numeric_quiz(
     config: PeriodicConfig,
-    prompter: _Prompter,
+    prompter: Prompter,
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,

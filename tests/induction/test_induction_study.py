@@ -15,7 +15,6 @@ from smolbench.induction.experiment import InductionExperiment
 from conftest import StubTokenizer, import_run_study
 from tests._paths import NOTEBOOKS
 
-RUN_STUDY_PATH = NOTEBOOKS / "induction" / "run_study.py"
 STUDY_KEYS = sorted(study_config.roster_keys())
 
 MINISTRAL = ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b")

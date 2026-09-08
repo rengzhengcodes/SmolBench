@@ -126,6 +126,7 @@ def test_unmatched_targets_raise(tokenizer: "StubTokenizer | TiktokenTokenizer")
             render, CONTEXT, 5_000, MergeEverythingTokenizer(), unit=" \t"
         )
 
+
 @pytest.mark.parametrize("n", (1, 2))
 def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(
     tokenizer: "StubTokenizer | TiktokenTokenizer", n: int,

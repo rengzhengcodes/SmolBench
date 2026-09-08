@@ -107,7 +107,6 @@ notebook = [
     "python-dotenv>=1.0.1",
     # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
     "smolbench[aws]",
-    "matplotlib>=3.10.0",
     # The analysis scripts under notebooks/{induction,deduction}/analysis/
     # import scipy.stats for their reference distributions (induction
     # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
