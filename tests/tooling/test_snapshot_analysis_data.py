@@ -14,6 +14,9 @@ import pytest
 from scripts.results import snapshot_analysis_data as snap
 from tests._paths import REPO_ROOT
 
+#: The dataset-specific figures that must no longer be emitted from Python.
+DATASET_LITERALS = ("74 cells", "232", "712", "68/30/50", "5.9", "24.6")
+
 
 class FakeS3:
     """Record calls and serve listings."""
@@ -108,6 +111,9 @@ def test_the_reading_rules_ship_as_a_dated_document() -> None:
     for literal in ("74", "232", "151", "81", "712", "944", "5.9", "24.6", "68/30/50"):
         assert literal in text, literal
     assert "2026-08-16" in text  # These counts describe one dated dataset.
+    source = (REPO_ROOT / "scripts" / "results" / "snapshot_analysis_data.py").read_text()
+    for literal in DATASET_LITERALS:
+        assert literal not in source, literal
 
 
 def test_the_bucket_follows_smolbench_results_s3(

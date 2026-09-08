@@ -214,12 +214,25 @@ def test_extens_vs_noise_mechanism_labels(
 
 SUPERSEDED_NAME = "all_rows_SUPERSEDED-20260815T000000Z.jsonl"
 
-def test_retired_artifact_markers(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name, refused", [
+    (SUPERSEDED_NAME, True), ("all_rows_STALE-20260814T000000Z.jsonl", True),
+    ("verified_rows_BROKEN-20260813T000000Z.jsonl", True),
+    # markers are anchored on ``_MARKER-``: ordinary words must not trip
+    ("stale_check_rows.jsonl", False), ("unBROKEN.jsonl", False), ("rows_STALEMATE.jsonl", False),
+    # matched on the BASENAME, not on any parent directory
+    ("SUPERSEDED_audit/verified_rows.jsonl", False),
+])
+def test_retired_artifact_markers(tmp_path: Path, name: str, refused: bool) -> None:
+    """Pin anchored basename matching for every retired-artifact marker."""
     from smolbench.deduction.lean import runner
-    paths = [tmp_path / "verified_rows.jsonl", tmp_path / SUPERSEDED_NAME]
+    paths = [tmp_path / "verified_rows.jsonl", tmp_path / name]
+    if not refused:
+        ded_pa.reject_superseded(paths)
+        runner.reject_superseded_rows(paths)
+        return
     with pytest.raises(SystemExit) as excinfo:
         ded_pa.reject_superseded(paths)
-    assert SUPERSEDED_NAME in str(excinfo.value)
+    assert name in str(excinfo.value)
     with pytest.raises(ValueError):
         runner.reject_superseded_rows(paths)
 
@@ -232,6 +245,7 @@ def _theorem_dir_with(root: Path, filename: str) -> Path:
     return theorem_dir
 
 def test_retired_artifacts_are_refused_by_every_scanner(tmp_path: Path) -> None:
+    """Require every scanner to accept clean artifacts and refuse retired ones."""
     from smolbench.deduction.lean import cli, runner
     rows = _write_rows(tmp_path / SUPERSEDED_NAME, ("t1", "success"))
     with pytest.raises(SystemExit, match="SUPERSEDED"):
@@ -244,6 +258,11 @@ def test_retired_artifacts_are_refused_by_every_scanner(tmp_path: Path) -> None:
         runner.write_theorem_summary(_theorem_dir_with(bad, SUPERSEDED_NAME))
     with pytest.raises(ValueError, match="SUPERSEDED"):
         cli.cmd_show(argparse.Namespace(run_dir=str(bad), theorem=None))
+    clean = _theorem_dir_with(tmp_path / "ok", "hint-3__m1.jsonl")
+    assert cli.cmd_show(argparse.Namespace(run_dir=str(tmp_path / "ok"), theorem=None)) == 0
+    (clean / "outputs" / "hint-3__m1.jsonl").unlink()  # row schema is not the
+    runner.write_theorem_summary(clean)                # subject of this test
+    assert (clean / "summary.md").exists()
 
 def test_lane_outcomes_refuses_ungraded_rows(tmp_path: Path) -> None:
     _lane(tmp_path / "rows", "m1", ("t1", "success"), ("t2", "unverified"))

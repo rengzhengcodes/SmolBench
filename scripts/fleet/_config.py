@@ -75,5 +75,5 @@ STANDALONE_TAG: str = _FLEET.standalone_tag
 #: Roster keys from config so new rungs need no second fleet list.
 ROSTER_KEYS: tuple[str, ...] = roster_keys()
 
-#: Validated, read-only spec-key-to-analysis-tag mapping.
+#: Validated, read-only mapping with roster_keys()'s key set; order is not guaranteed.
 ROSTER_TAGS: Mapping[str, str] = _STUDY.roster.tags

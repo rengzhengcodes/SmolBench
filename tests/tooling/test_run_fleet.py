@@ -224,7 +224,7 @@ def test_regions_and_tag_prefix_are_declared_once() -> None:
 
 def test_fleet_config_is_read_from_the_committed_study_config() -> None:
     """Fleet vocabulary comes from the committed study config."""
-    from smolbench.evals.study_config import load_study_config, roster_keys
+    from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
 
     study = load_study_config()
     cfg = study.fleet
@@ -234,7 +234,7 @@ def test_fleet_config_is_read_from_the_committed_study_config() -> None:
     assert config.STANDALONE_TAG == cfg.standalone_tag
     assert config.DEFAULT_REGIONS == ",".join(cfg.regions)
     assert config.ROSTER_KEYS == roster_keys()
-    assert config.ROSTER_TAGS is study.roster.tags
+    assert config.ROSTER_TAGS == {key: tag_for(key) for key in roster_keys()}
     assert set(laneenv.LANES) == set(config.ROSTER_KEYS)
     assert {key: lane.tag for key, lane in laneenv.LANES.items()} == dict(config.ROSTER_TAGS)
 
@@ -280,7 +280,11 @@ def test_every_lane_override_key_is_a_roster_key_and_reaches_lane_env() -> None:
                for lane in laneenv.LANES.values())
 
 
-def test_lane_image_has_a_three_step_precedence() -> None:
+def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence() -> None:
+    """Keep the fleet default aliased to EC2's own image value."""
+    from smolbench.evals.providers import ec2
+
+    assert laneenv.FLEET_IMAGE is ec2.EC2_VLLM_IMAGE
     plain, pinned = laneenv.LANES["gemma-4-e2b"], laneenv.LANES["deepseek-v4-pro"]
     assert "EC2_VLLM_IMAGE" not in laneenv.lane_env(plain, "induction", base_env={})
     assert "EC2_VLLM_IMAGE" in laneenv.PASSTHROUGH_ENV
@@ -548,7 +552,8 @@ def test_a_spool_failure_reaches_the_closing_report(
 
 def test_no_fleet_script_names_the_results_bucket() -> None:
     """Fleet scripts must not name the results bucket."""
-    banned = ("smolbench-results-414266451290",)
+    banned = ("smolbench-results-414266451290", "sync_deduction_spool",
+              "SPOOL_BUCKET", "SPOOL_REGION")
     for source in (SCRIPTS / "fleet").glob("*.py"):
         text = source.read_text()
         assert not [b for b in banned if b in text], source.name
@@ -679,7 +684,7 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
     assert fleet._lane_env is laneenv and fleet._supervisor is sup
     for name in ("LANES", "Lane", "TIER_MEMBERS", "TIER_INSTANCE_TYPES",
                  "TIER_REQUIRE_GPU", "TIER_BUDGET_HOURS", "PASSTHROUGH_ENV",
-                 "lane_env", "lane_command"):
+                 "lane_env", "lane_command", "FLEET_IMAGE"):
         assert hasattr(laneenv, name), name
         assert not hasattr(fleet, name), f"run_fleet still owns {name}"
     for name in ("_LaneRun", "_Presence", "_run_fleet", "_monitor_tick",
