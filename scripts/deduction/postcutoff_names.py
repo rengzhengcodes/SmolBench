@@ -29,6 +29,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Iterable
 
 #: Fixed name: the script loads by file path, under which ``__name__`` varies,
@@ -584,6 +585,38 @@ def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
     return sorted(path for path in base.rglob("*.lean") if path.is_file())
 
 
+def _scan_tree_state(
+    root: pathlib.Path, subdir: str,
+) -> tuple[dict[str, Decl], set[str], set[str]]:
+    """Read a Lean tree once and collect declarations, lines, and paths.
+
+    Combining these products avoids three full walks of the old mathlib tree.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        Root of the Lean tree.
+    subdir : str
+        Subdirectory containing Lean files.
+
+    Returns
+    -------
+    tuple[dict[str, Decl], set[str], set[str]]
+        Declarations, normalized non-empty lines, and root-relative file paths.
+    """
+    decls: dict[str, Decl] = {}
+    lines: set[str] = set()
+    files: set[str] = set()
+    for path in _iter_lean_files(root, subdir):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = path.relative_to(root).as_posix()
+        files.add(rel)
+        for decl in scan_lean_text(text, rel):
+            decls.setdefault(decl.full_name, decl)
+        lines.update(filter(None, (normalise_line(line) for line in text.splitlines())))
+    return decls, lines, files
+
+
 def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
     """Scan every ``.lean`` file of a tree and index declarations by full name.
 
@@ -605,14 +638,7 @@ def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
     dict[str, Decl]
         declarations indexed by full name.
     """
-    out: dict[str, Decl] = {}
-    for path in _iter_lean_files(root, subdir):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        rel = path.relative_to(root).as_posix()
-        for decl in scan_lean_text(text, rel):
-            if decl.full_name not in out:
-                out[decl.full_name] = decl
-    return out
+    return _scan_tree_state(root, subdir)[0]
 
 
 def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set[str]:
@@ -640,13 +666,7 @@ def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set
     set[str]
         non-empty normalised source lines.
     """
-    lines: set[str] = set()
-    for path in _iter_lean_files(root, subdir):
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            normalised = normalise_line(line)
-            if normalised:
-                lines.add(normalised)
-    return lines
+    return _scan_tree_state(root, subdir)[1]
 
 
 def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
@@ -1286,17 +1306,12 @@ def resolve_provenance(
     return provenance
 
 
-def _bump(counters: dict, key: str) -> None:
-    """Increment ``counters[key]``, tolerating a key that is not there yet."""
-    counters[key] = counters.get(key, 0) + 1
-
-
 def apply_pr_filter(
     provenance: dict[str, dict],
     target_date: str,
     token: str | None,
     cache: dict,
-    counters: dict,
+    counters: Counter[str],
 ) -> dict[str, dict]:
     """Keep only the declarations with dated evidence of being post-cutoff.
 
@@ -1325,7 +1340,7 @@ def apply_pr_filter(
         GitHub token for pull request lookups.
     cache : dict
         pull request creation dates, updated in place.
-    counters : dict
+    counters : Counter[str]
         pipeline counters, updated in place.
 
     Returns
@@ -1345,10 +1360,10 @@ def apply_pr_filter(
             if key in cache:
                 created_at = cache[key]
             elif rate_limited:
-                _bump(counters, "rate_limited")
+                counters["rate_limited"] += 1
                 continue
             else:
-                _bump(counters, "api_calls")
+                counters["api_calls"] += 1
                 try:
                     created_at = fetch_pr_created_at(pr_number, token)
                 except RateLimitError as exc:
@@ -1358,13 +1373,13 @@ def apply_pr_filter(
                         exc,
                         len(selected),
                     )
-                    _bump(counters, "rate_limited")
+                    counters["rate_limited"] += 1
                     continue
                 cache[key] = created_at
 
         if created_at is not None:
             if created_at[:10] >= target_date:
-                _bump(counters, "kept_pr")
+                counters["kept_pr"] += 1
                 selected[name] = {
                     "file_path": entry["file_path"],
                     "introduced_commit": entry["introduced_commit"],
@@ -1373,13 +1388,13 @@ def apply_pr_filter(
                     "reason": "pr-opened-after-T",
                 }
             else:
-                _bump(counters, "dropped_pr_before_target")
+                counters["dropped_pr_before_target"] += 1
             continue
 
         # No usable PR evidence: fall back to the introducing commit's own date.
         author_date = entry.get("author_date")
         if author_date is not None and author_date[:10] >= target_date:
-            _bump(counters, "kept_commit_date")
+            counters["kept_commit_date"] += 1
             selected[name] = {
                 "file_path": entry["file_path"],
                 "introduced_commit": entry["introduced_commit"],
@@ -1390,7 +1405,7 @@ def apply_pr_filter(
         else:
             # One counter for both commit-date failures: no author date and an
             # author date before the target both mean no evidence the declaration is new.
-            _bump(counters, "dropped_no_date")
+            counters["dropped_no_date"] += 1
     return selected
 
 
@@ -1436,10 +1451,8 @@ def build_artifact(
     decls: dict[str, dict] = {}
     for name in sorted(selected):
         entry = selected[name]
-        decl = kept.get(name)
         decls[name] = {
-            # Prefer `kept`'s own record over `selected`'s derived copy.
-            "file_path": decl.file_path if decl is not None else entry["file_path"],
+            "file_path": kept[name].file_path,
             "introduced_commit": entry["introduced_commit"],
             "pr_number": entry["pr_number"],
             "pr_created_at": entry["pr_created_at"],
@@ -1525,15 +1538,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # Stage 2: scan both trees.
     new_decls = scan_tree(wt_new, _SUBDIR)
-    old_decls = scan_tree(wt_old, _SUBDIR)
+    old_decls, old_lines, old_files = _scan_tree_state(wt_old, _SUBDIR)
     # An empty side would make the diff meaningless (empty OLD tree => every
     # name looks new); refuse rather than handle it.
     if not new_decls:
         raise SystemExit(f"the new tree at {wt_new} yielded zero declarations -- refusing to diff")
     if not old_decls:
         raise SystemExit(f"the old tree at {wt_old} yielded zero declarations -- refusing to diff")
-    old_lines = collect_normalised_lines(wt_old, _SUBDIR)
-    old_files = {path.relative_to(wt_old).as_posix() for path in _iter_lean_files(wt_old, _SUBDIR)}
 
     # Stage 3: select, attribute, date.
     kept, counts = select_postcutoff_names(new_decls, old_decls, old_lines, old_files)
@@ -1543,7 +1554,7 @@ def main(argv: list[str] | None = None) -> int:
     if cache_path.is_file():
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
         LOGGER.info("loaded %d cached PR date(s) from %s", len(cache), cache_path)
-    counters: dict = {}
+    counters: Counter[str] = Counter()
     try:
         selected = apply_pr_filter(provenance, args.target_date, token, cache, counters)
     finally:

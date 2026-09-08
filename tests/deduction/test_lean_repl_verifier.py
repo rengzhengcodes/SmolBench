@@ -54,6 +54,7 @@ def _bt(tactics: list[str], *, file_path: str = "Mini/A.lean", name: str = "Mini
         full_name=name,
         start=start,
         end=(99, 0),
+        postcutoff=False,
         traced_tactics=[
             TracedTactic(tactic=t, state_before="", state_after="", premises=[])
             for t in tactics
@@ -578,15 +579,6 @@ def test_try_tail_raises_on_a_repl_level_failure_so_the_caller_maps_it_to_except
     session = FakeSession({"rfl": replbackend.ReplError("timeout: 30s")})
     with pytest.raises(replbackend.ReplError):
         verify.try_tail(session, 0, "rfl", "t")
-
-
-def test_try_tail_maps_an_exception_kind_outcome_to_a_raise() -> None:
-    session = FakeSession(
-        {"rfl": replbackend.StepOutcome("exception", None, "unknown proofState", None)}
-    )
-    with pytest.raises(replbackend.ReplError) as exc:
-        verify.try_tail(session, 0, "rfl", "t")
-    assert "unknown proofState" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

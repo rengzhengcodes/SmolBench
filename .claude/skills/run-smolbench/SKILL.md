@@ -33,7 +33,6 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
 bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real REPL replay (see below)
-bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + FULL run-sweep: fake LLMs, REAL Lean (~30 s warm)
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -97,26 +96,11 @@ invocation, `LEAN_MODEL=<key>`); `notebooks/deduction/lean_eval.ipynb` is the
 interactive companion and `run-sweep` the headless escape hatch for the same
 config schema.
 
-**Credential-free END-TO-END sweep verification (fake LLM, REAL Lean):**
-`lean_smoke.sh --e2e` is the committed harness — it starts two local
-OpenAI-compatible stubs (`stub_llm.py` beside this file: one answers with
-the theorem's ground-truth tail in a ```` ```lean ```` fence, one with a
-bogus tactic), points the `primeintellect` + `openrouter` providers at them
-via `*_BASE_URL`/`*_API_KEY` env, and drives `run-sweep` on
-`Lagrange.eval_nodal_at_node` (2 tactics). It asserts:
-sanity gate passes, real Lean returns `success` for the true tail and
-`lean_error` for the bogus one, rows AND wire requests carry `seed`,
-per-model provider dispatch holds, and an identical rerun resume-skips both
-cells. Results/reqlog go to a mktemp dir via `SMOLBENCH_LEAN_RESULTS` —
-keep stub runs out of the committed results tree if you adapt it. Like
-`--replay` it needs elan plus `SMOLBENCH_MATHLIB_ROOT` pointing at a BUILT
-mathlib4 checkout.
 Real-model `run-cell`/`run-sweep` need a provider key
 (`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
 user-opt-in only; `filter` (~70 min/split) produces the
-`replay_passing_*.jsonl` sidecar that non-explicit sweep configs need —
-none is checked in yet (`--e2e` sidesteps it with `theorems.source:
-explicit`). Sweep results land under `notebooks/deduction/results/runs/`.
+`replay_passing_*.jsonl` sidecar that non-explicit sweep configs need.
+Sweep results land under `notebooks/deduction/results/runs/`.
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 

@@ -28,23 +28,13 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
-def _cell_key(row: dict) -> tuple:
-    # Delegates to runner._row_key for the field order; local import so
-    # argparse-only callers skip runner's import chain.
-    from smolbench.deduction.lean import runner
-    return runner._row_key(
-        row.get("model"), row.get("theorem_id"), row.get("k"),
-        row.get("rung"), row.get("replicate_idx"),
-    )
-
-
 def merge_shards(
     key: str,
     n: int,
     *,
     runs_root: Path,
-    expect_cells: int | None,
-    expect_sanity: int | None,
+    expect_cells: int,
+    expect_sanity: int,
 ) -> Path:
     """Fold ``n`` shard run directories into the canonical ``scaling_<key>`` directory.
 
@@ -59,9 +49,9 @@ def merge_shards(
         Number of shard run directories.
     runs_root : Path
         Directory containing shard and canonical run directories.
-    expect_cells : int | None
+    expect_cells : int
         Expected number of merged cell rows.
-    expect_sanity : int | None
+    expect_sanity : int
         Expected number of merged sanity rows.
 
     Returns
@@ -87,7 +77,7 @@ def merge_shards(
 
     # Rows are gathered by key across all shards first: the duplicate-vs-resume
     # judgment below needs every row for a key in hand.
-    cell_rows_by_key: dict[tuple, list[dict]] = {}
+    cell_rows: list[dict] = []
     sanity_ids: set[str] = set()
     per_shard_rows: list[list[dict]] = []
     n_sanity = 0
@@ -101,7 +91,7 @@ def merge_shards(
         per_shard_rows.append(kept)
         for row in kept:
             if row.get("kind") == "cell":
-                cell_rows_by_key.setdefault(_cell_key(row), []).append(row)
+                cell_rows.append(row)
             elif row.get("kind") == "sanity":
                 n_sanity += 1
                 t = row.get("theorem_id")
@@ -115,28 +105,18 @@ def merge_shards(
     # could never otherwise produce. Anchored on the literal "exception" to
     # match _existing_keys, not the other verdict taxonomies.
     # `cell_key`, not `key`, to avoid shadowing this function's `key` param.
-    n_resumed = 0
-    for cell_key, rows in cell_rows_by_key.items():
+    grouped = runner.group_cell_rows(cell_rows, runner._cell_key)
+    for cell_key, rows in grouped.items():
         surviving = [r for r in rows if r.get("verdict") != "exception"]
         if len(surviving) >= 2:
             raise SystemExit(
                 f"duplicate cell across shards: {cell_key} has {len(surviving)} "
                 f"surviving rows (verdicts {[r.get('verdict') for r in surviving]})"
             )
-        if len(rows) > 1:
-            n_resumed += 1
-    if n_resumed:
-        logging.info(
-            f"{n_resumed} cell key(s) carried an exception row plus a resumed "
-            "retry; both rows are kept in the merged file and the key counts once"
-        )
-
-    # Distinct keys, not rows: a lane resumed past one exception (945 rows
-    # against a pinned 944) doesn't fail this for the same reason as above.
-    n_cells = len(cell_rows_by_key)
-    if expect_cells is not None and n_cells != expect_cells:
+    n_cells = len(runner.dedupe_cell_rows(cell_rows))
+    if n_cells != expect_cells:
         raise SystemExit(f"merged distinct cell count {n_cells} != expected {expect_cells}")
-    if expect_sanity is not None and n_sanity != expect_sanity:
+    if n_sanity != expect_sanity:
         raise SystemExit(f"merged sanity count {n_sanity} != expected {expect_sanity}")
 
     # Gate: the theorems/ trees must be disjoint (theorem-stride shards are).

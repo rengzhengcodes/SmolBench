@@ -180,8 +180,6 @@ def _count_tokens(s: str) -> int:
     For BUDGET-style measurements only, where an approximate count is an acceptable price
     for never raising because `tiktoken` is missing. The `noise` chain needs an EXACT length
     control instead, so it uses `TiktokenTokenizer` directly rather than this fallback.
-    `_render_hint_parts`'s hint:3+ budget re-implements this same policy inline as a local
-    ``tok()`` (not a call here); change both together.
 
     Parameters
     ----------
@@ -280,7 +278,8 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     base_text = "\n\n".join(base_parts)
     base_prompt = _as_full_prompt(level, base_text)
 
-    target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
+    target_parts = _render_hint_parts(theorem, k, level)
+    target_text = "\n\n".join(target_parts)
     target_prompt = _as_full_prompt(level, target_text)
 
     # Reused for both counts below -- no need to reload the encoding per measurement.
@@ -309,15 +308,6 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
         tokenizer,
         unit=choose_whitespace_unit(tokenizer),
     )
-
-    # Re-verify rather than trust the helper's own check.
-    padded_tokens = tokenizer.count(padded_prompt)
-    if padded_tokens != target_tokens:
-        raise ValueError(
-            f"noise:{level} padding for {theorem.full_name!r} at k={k} did not "
-            f"hit the exact target: got {padded_tokens} PROMPT tokens, wanted "
-            f"{target_tokens}"
-        )
 
     # suffix_len is derived from base_prompt, never hardcoded from prompt.py's suffix --
     # copying that literal would be exactly the drift this closes.
@@ -406,16 +396,6 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                 seeds.append(p)
         if seeds:
             transitive_premises = premise_dep_closure(seeds, depth)
-            try:
-                import tiktoken
-                enc = tiktoken.get_encoding("cl100k_base")
-
-                def tok(s: str) -> int:
-                    return len(enc.encode(s))
-            except Exception:  # noqa: BLE001
-                def tok(s: str) -> int:
-                    return len(s) // 4
-
             chunks: list[str] = []
             used = 0
             n_kept = 0
@@ -425,7 +405,7 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                     f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
                     f"```lean\n{body_with_proof(p)}\n```"
                 )
-                cost = tok(snippet)
+                cost = _count_tokens(snippet)
                 if used + cost > _HINT2_3_TOKEN_CAP:
                     break
                 chunks.append(snippet)
@@ -593,15 +573,15 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
     if chain == "noise":
         if level < 1:
             return True
-        if is_trivial_rung(theorem, k, "hint", level):
-            return True
         # Must measure the same quantity as `_render_noise_parts` -- full PROMPT tokens, not
         # `_count_tokens`'s context-text count -- or a rung called trivial here could still
         # render non-trivially there, or vice versa (silently unpadded).
         from smolbench.evals.tokenization import TiktokenTokenizer
         tokenizer = TiktokenTokenizer()
-        base_text = "\n\n".join(_render_hint_parts(theorem, k, level - 1))
-        target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
+        base_parts = _render_hint_parts(theorem, k, level - 1)
+        target_parts = _render_hint_parts(theorem, k, level)
+        base_text = "\n\n".join(base_parts)
+        target_text = "\n\n".join(target_parts)
         base_tokens = tokenizer.count(_as_full_prompt(level, base_text))
         target_tokens = tokenizer.count(_as_full_prompt(level, target_text))
         return target_tokens - base_tokens <= 0

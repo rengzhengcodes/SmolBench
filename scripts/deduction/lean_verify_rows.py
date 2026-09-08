@@ -44,6 +44,7 @@ from smolbench.deduction.lean.runner import (
 from smolbench.deduction.lean.runner import (
     _default_verifier,
     group_cell_rows,
+    jsonl_line,
     read_jsonl_tolerating_torn_tail,
     spool_prefix,
 )
@@ -73,9 +74,6 @@ DOJO_CACHE_DIR: Path = Path.home() / ".cache" / "lean_dojo"
 #: cache, never the cache dir itself, which this process's worker threads read/write.
 _LOCK_FILENAME = ".smolbench_verify.lock"
 
-#: Every `(kind, split)` the corpus defines (`SplitKind`/`Split` literals): the full
-#: space `_lookup_theorem` scans, since a row carries no `kind`/`split` of its own.
-_CORPUS_KINDS: tuple[str, ...] = ("random", "novel_premises")
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 
 # ---------------------------------------------------------------------------
@@ -505,14 +503,13 @@ def _theorem_index() -> dict[str, BenchmarkTheorem]:
     operator may only have bootstrapped the splits they swept. Memoised per process.
     """
     index: dict[str, BenchmarkTheorem] = {}
-    for kind in _CORPUS_KINDS:
-        for split in _CORPUS_SPLITS:
-            try:
-                theorems = load_split(kind, split)  # type: ignore[arg-type]
-            except FileNotFoundError:
-                continue
-            for theorem in theorems:
-                index.setdefault(theorem.full_name, theorem)
+    for split in _CORPUS_SPLITS:
+        try:
+            theorems = load_split("random", split)  # type: ignore[arg-type]
+        except FileNotFoundError:
+            continue
+        for theorem in theorems:
+            index.setdefault(theorem.full_name, theorem)
     return index
 
 
@@ -658,7 +655,7 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
     scratch = workdir / VERIFIED_FILENAME
     with scratch.open("w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.write(jsonl_line(row))
     client.upload_file(str(scratch), bucket, key)
 
 
@@ -995,8 +992,9 @@ def verify_run(
                     f"{completed}/{len(pending)} group(s)."
                 )
 
-    upload_rows(client, out_rows, bucket, verified_key, run_dir)
-    logging.info(f"lean_verify_rows[{run}]: done -- {completed} group(s) processed, final upload.")
+    if completed % UPLOAD_EVERY_GROUPS:
+        upload_rows(client, out_rows, bucket, verified_key, run_dir)
+    logging.info(f"lean_verify_rows[{run}]: done -- {completed} group(s) processed.")
 
     # Full-pass sentinel gate. Only --limit/--theorem/--dry-run make this partial;
     # resume is deliberately not a `full_pass` term, since a `done` group has zero

@@ -83,16 +83,16 @@ def test_merge_gates_fail_closed(tmp_path: Path) -> None:
     _write_shard(runs, "dup", 0, 2, [_cell("A")])
     _write_shard(runs, "dup", 1, 2, [_cell("A")])
     with pytest.raises(SystemExit, match="(?i)duplicate"):
-        merge_mod.merge_shards("dup", 2, runs_root=runs, expect_cells=None, expect_sanity=None)
+        merge_mod.merge_shards("dup", 2, runs_root=runs, expect_cells=1, expect_sanity=0)
 
     runs2 = tmp_path / "runs2"
     _write_shard(runs2, "tot", 0, 1, [_cell("A")])
     with pytest.raises(SystemExit, match="cell count 1 != expected 944"):
-        merge_mod.merge_shards("tot", 1, runs_root=runs2, expect_cells=944, expect_sanity=None)
+        merge_mod.merge_shards("tot", 1, runs_root=runs2, expect_cells=944, expect_sanity=0)
 
     runs3 = tmp_path / "runs3"
     with pytest.raises(SystemExit, match="missing"):
-        merge_mod.merge_shards("gone", 2, runs_root=runs3, expect_cells=None, expect_sanity=None)
+        merge_mod.merge_shards("gone", 2, runs_root=runs3, expect_cells=0, expect_sanity=0)
 
     runs4 = tmp_path / "runs4"
     _write_shard(runs4, "clob", 0, 1, [_cell("A")])
@@ -100,7 +100,7 @@ def test_merge_gates_fail_closed(tmp_path: Path) -> None:
     canonical.mkdir()
     (canonical / "all_rows.jsonl").write_text("precious\n")
     with pytest.raises(SystemExit, match="refusing to clobber"):
-        merge_mod.merge_shards("clob", 1, runs_root=runs4, expect_cells=None, expect_sanity=None)
+        merge_mod.merge_shards("clob", 1, runs_root=runs4, expect_cells=1, expect_sanity=0)
     assert (canonical / "all_rows.jsonl").read_text() == "precious\n"
 
 
@@ -119,7 +119,7 @@ def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path: Pat
     path = runs2 / "scaling_bad_shard0of1" / "all_rows.jsonl"
     path.write_text("{oops\n" + path.read_text())
     with pytest.raises(SystemExit, match="corrupt row mid-file at line 1"):
-        merge_mod.merge_shards("bad", 1, runs_root=runs2, expect_cells=None, expect_sanity=None)
+        merge_mod.merge_shards("bad", 1, runs_root=runs2, expect_cells=1, expect_sanity=1)
     assert not (runs2 / "scaling_bad" / "all_rows.jsonl").exists()
 
 
@@ -158,7 +158,7 @@ def test_merge_collapses_an_exception_only_cell(tmp_path: Path) -> None:
         _cell_v("A", "exception"),
     ])
     out = merge_mod.merge_shards("allexc", 1, runs_root=runs,
-                                 expect_cells=1, expect_sanity=None)
+                                 expect_cells=1, expect_sanity=0)
     assert len(_lines(out)) == 2
 
 
@@ -175,4 +175,4 @@ def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path: Path) ->
     _write_shard(runs, "twice", 1, 2, [_cell_v("A", "lean_error")])
     with pytest.raises(SystemExit, match="(?i)duplicate"):
         merge_mod.merge_shards("twice", 2, runs_root=runs,
-                               expect_cells=None, expect_sanity=None)
+                               expect_cells=1, expect_sanity=0)

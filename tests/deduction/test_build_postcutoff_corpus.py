@@ -3,10 +3,9 @@
 Expected values (split assignment, digest recipe, refusal messages, summary schema)
 come from POSTCUTOFF_SPEC_B2, not from the implementation.
 
-The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic LeanDojo-v2
-export: three theorems, each present once in ``random`` and once in ``novel_premises``
-(in a DIFFERENT split), exercising the builder's union-across-families + dedup path
-and its own re-splitting. Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
+The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic
+LeanDojo-v2 export whose three random-split theorems exercise re-splitting.
+Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
 """
 
 import hashlib
@@ -99,17 +98,9 @@ def test_local_url_is_rewritten_to_github(built: Path) -> None:
 def test_split_assignment_is_sha256_deterministic(built: Path) -> None:
     """sha256(full_name)[:8] % 100 buckets Mini.postB into val (89) though the fixture files it under random/test, proving splits are re-derived, not inherited."""
     assert int(hashlib.sha256(b"Mini.postB").hexdigest()[:8], 16) % 100 == 89
-    for kind in ("random", "novel_premises"):
-        assert _json(built / kind / "train.json") == []
-        assert _json(built / kind / "test.json") == []
-        assert [r["full_name"] for r in _json(built / kind / "val.json")] == ["Mini.postB"]
-
-
-def test_both_split_families_carry_the_same_rows(built: Path) -> None:
-    """novel_premises is a copy of random so every loader path works."""
-    for split in ("train", "val", "test"):
-        assert _json(built / "random" / f"{split}.json") == _json(
-            built / "novel_premises" / f"{split}.json")
+    assert _json(built / "random" / "train.json") == []
+    assert _json(built / "random" / "test.json") == []
+    assert [r["full_name"] for r in _json(built / "random" / "val.json")] == ["Mini.postB"]
 
 
 def test_metadata_block_matches_package_a_contract(built: Path) -> None:
@@ -146,9 +137,7 @@ def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) ->
     assert summary["target_date"] == "2026-06-03"
     assert summary["min_traced_tactics"] == 2
     assert summary["counts"] == {
-        "rows_read": 6,
-        "unique_theorems": 3,
-        "duplicates_dropped": 3,
+        "rows_read": 3,
         "postcutoff_named": 2,
         "with_min_tactics": 1,
         "written": 1,
@@ -156,8 +145,6 @@ def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) ->
     }
     assert summary["rows_per_source_file"] == {
         "random/train.json": 1, "random/val.json": 1, "random/test.json": 1,
-        "novel_premises/train.json": 1, "novel_premises/val.json": 1,
-        "novel_premises/test.json": 1,
     }
     assert summary["full_names"] == ["Mini.postB"]
     assert summary["sha256_of_sorted_full_names"] == (
@@ -180,11 +167,10 @@ def _synthetic_export(root: Path, names_and_tactics: dict[str, int]) -> Path:
                  "state_before": "⊢ A", "state_after": "no goals"}
                 for j in range(ntac)],
         })
-    for kind in ("random", "novel_premises"):
-        (root / kind).mkdir(parents=True, exist_ok=True)
-        (root / kind / "train.json").write_text(json.dumps(rows))
-        for split in ("val", "test"):
-            (root / kind / f"{split}.json").write_text("[]")
+    (root / "random").mkdir(parents=True, exist_ok=True)
+    (root / "random" / "train.json").write_text(json.dumps(rows))
+    for split in ("val", "test"):
+        (root / "random" / f"{split}.json").write_text("[]")
     (root / "metadata.json").write_text(json.dumps({
         "dataset_name": "synthetic", "creation_time": "2026-08-30 00:00:00.000000",
         "from_repo": {"url": "/mnt/data/mathlib4", "commit": NEW_COMMIT},
@@ -253,12 +239,10 @@ def test_refuses_when_export_commit_disagrees_with_names_json(tmp_path: Path) ->
 def test_refuses_when_a_selected_row_carries_a_foreign_commit(tmp_path: Path) -> None:
     """A row traced at another commit cannot be part of this pool."""
     export = _real_export_copy(tmp_path)
-    # Mini.postB occurs once per family; poison BOTH, so the refusal cannot be
-    # dodged by whichever occurrence dedup happens to keep.
-    for rel in ("random/test.json", "novel_premises/val.json"):
-        rows = _json(export / rel)
-        rows[0]["commit"] = "e" * 40
-        (export / rel).write_text(json.dumps(rows))
+    rel = "random/test.json"
+    rows = _json(export / rel)
+    rows[0]["commit"] = "e" * 40
+    (export / rel).write_text(json.dumps(rows))
     with pytest.raises(SystemExit) as exc:
         _build(tmp_path / "out", export=export)
     assert "Mini.postB" in str(exc.value) and "e" * 40 in str(exc.value)

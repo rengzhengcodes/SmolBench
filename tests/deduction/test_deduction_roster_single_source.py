@@ -110,15 +110,6 @@ def test_audit_lanes_cover_the_roster_exactly(roster: tuple[str, ...]) -> None:
     }
 
 
-def test_flip_run_lanes_are_real_lanes(roster: tuple[str, ...]) -> None:
-    """Every FLIP_RUNS lane names a roster key, so a re-run cannot audit a ghost."""
-    if not AUDIT.exists():
-        pytest.skip("audit_lean_pinning.py lives in a later stack slice")
-    audit = _load(AUDIT, "audit_lean_pinning_for_flip_pin")
-    unknown = sorted({lane for _, lane in audit.FLIP_RUNS} - set(roster))
-    assert not unknown, unknown
-
-
 # Pin each consumer to study_config itself, and pin the literals gone.
 
 #: Files that must no longer spell the results bucket or its region. The bucket

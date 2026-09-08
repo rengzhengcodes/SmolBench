@@ -18,8 +18,8 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    DEFAULT_DOJO_TIMEOUT, SANITY_FAILURE_VERDICTS, dedupe_cell_rows,
-    load_sweep_config, new_run_id, regenerate_run_artifacts,
+    DEFAULT_DOJO_TIMEOUT, analyze_rows, jsonl_line, load_sweep_config,
+    model_totals, new_run_id, read_jsonl_tolerating_torn_tail, regenerate_run_artifacts,
     reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
 )
 
@@ -154,10 +154,8 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
     done: dict[str, str] = {}
     if out_path.exists() and not args.fresh:
-        with out_path.open() as f:
-            for line in f:
-                rec = json.loads(line)
-                done[rec["full_name"]] = rec["verdict"]
+        for rec in read_jsonl_tolerating_torn_tail(out_path):
+            done[rec["full_name"]] = rec["verdict"]
         print(f"resume: {len(done)} already recorded in {out_path.name}", flush=True)
 
     if args.fresh and out_path.exists():
@@ -185,7 +183,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
             }
             if r.error:
                 rec["error"] = r.error.strip().splitlines()[0][:300]
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.write(jsonl_line(rec))
             f.flush()
 
             if r.verdict == "success":
@@ -379,83 +377,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     int
         1 if `path` has no cell rows, else 0.
     """
-    from collections import defaultdict
-
-    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
-            "no_answer": 0,
-            "unverified": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0, "trunc": 0,
-        }
-    )
-    # Full cell identity, not folded into `cells`: pass@N asks whether ANY replicate of
-    # this exact (theorem, k) succeeded, which the (rung, model)-only `cells` has lost.
-    groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
-
-    n_rows = 0
-    n_sanity_pass = 0
-    n_sanity_fail = 0
-    n_sanity_skipped = 0
     # Unlike the run-dir globs elsewhere in this file, `path` is unfiltered upstream -- the
     # likeliest place to point at a retired `all_rows_SUPERSEDED-<stamp>.jsonl`.
     reject_superseded_rows([args.path])
-    # Collected here, not aggregated inline: dedupe_cell_rows must run on the whole set
-    # before `cells`/`groups` are built, or a resumed lane's retried cell counts twice.
-    # Sanity rows have no cell identity and stay a single streaming pass.
-    cell_rows: list[dict] = []
-    with open(args.path) as f:
-        for line in f:
-            r = json.loads(line)
-            kind = r.get("kind", "cell")
-            if kind == "sanity":
-                if r.get("verdict") == "success":
-                    n_sanity_pass += 1
-                elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
-                    n_sanity_fail += 1
-                else:
-                    # "exception" (infra failure, not evidence the ground truth is broken)
-                    # is deliberately excluded from SANITY_FAILURE_VERDICTS, so it counts as
-                    # deferred/unresolved here too, not a fail; "skipped" is a
-                    # generation-only sweep's deferred replay.
-                    n_sanity_skipped += 1
-                continue
-            cell_rows.append(r)
-
-    for r in dedupe_cell_rows(cell_rows):
-        n_rows += 1
-        key = (r.get("rung", "?"), r.get("model", "?"))
-        c = cells[key]
-        c["n"] += 1
-        v = r.get("verdict", "exception")
-        if v in c:
-            c[v] += 1
-        else:
-            c["exception"] += 1
-        c["tok_in"] += r.get("prompt_tokens", 0)
-        c["tok_out"] += r.get("completion_tokens", 0)
-        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-
-        # A reasoning model cut off mid-<think> emits no tactic block, which otherwise looks
-        # like an ordinary incomplete/given_up verdict; counted separately so a wave of
-        # truncations doesn't read as reasoning dead ends. `content` is a fallback key name
-        # for row variants using the provider SDK's naming.
-        raw_text = r.get("raw_response", "") or r.get("content", "")
-        unclosed_think_in_raw = "<think>" in raw_text and "</think>" not in raw_text
-        # Under a vLLM --reasoning-parser the server splits <think> into `reasoning_content`,
-        # so a death in the think channel leaves `raw_response` empty rather than unclosed.
-        # Tests `raw_response` alone, not the `content`-fallback `raw_text`, matching the row
-        # schema runner.py writes in that mode.
-        died_in_reasoning_channel = bool(r.get("reasoning_content")) and not (r.get("raw_response") or "").strip()
-        if unclosed_think_in_raw or died_in_reasoning_channel:
-            c["trunc"] += 1
-
-        group_key = (
-            r.get("model", "?"), r.get("rung", "?"),
-            r.get("theorem_id", "?"), r.get("k", -1),
-        )
-        groups[group_key].append(v)
+    cells, groups, sanity = analyze_rows(Path(args.path))
+    n_sanity_pass, n_sanity_fail, n_sanity_skipped = sanity
+    n_rows = sum(counter["n"] for counter in cells.values())
 
     if not cells:
         print(f"empty: no rows in {args.path}", file=sys.stderr)
@@ -521,15 +448,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     # Per-model rollup
     print("\n# per-model totals")
-    by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0}
-    )
-    for (_, model), c in cells.items():
-        by_model[model]["n"] += c["n"]
-        by_model[model]["success"] += c["success"]
-        by_model[model]["tok_in"] += c["tok_in"]
-        by_model[model]["tok_out"] += c["tok_out"]
-    for model, m in sorted(by_model.items()):
+    for model, m in sorted(model_totals(cells).items()):
         rate = m["success"] / m["n"] if m["n"] else 0
         print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
               f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
@@ -538,11 +457,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     # plain success rate above. N comes from the data, not the sweep config. ----
     n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
     if n_max_replicates > 1:
-        passn_cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
-            lambda: {"groups": 0, "pass": 0}
-        )
+        passn_cells: dict[tuple[str, str], dict[str, int]] = {}
         for (model, rung, _theorem_id, _k), verdicts in groups.items():
-            pc = passn_cells[(rung, model)]
+            pc = passn_cells.setdefault((rung, model), {"groups": 0, "pass": 0})
             pc["groups"] += 1
             if "success" in verdicts:
                 pc["pass"] += 1
@@ -556,12 +473,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(f"{rung:<10} {model:<36} {pc['pass']:>5}/{pc['groups']:<4} {rate:>6.1%}")
 
         print("\n# pass@N per-model totals")
-        by_model_passn: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"groups": 0, "pass": 0}
-        )
+        by_model_passn: dict[str, dict[str, int]] = {}
         for (_rung, model), pc in passn_cells.items():
-            by_model_passn[model]["groups"] += pc["groups"]
-            by_model_passn[model]["pass"] += pc["pass"]
+            total = by_model_passn.setdefault(model, {"groups": 0, "pass": 0})
+            total["groups"] += pc["groups"]
+            total["pass"] += pc["pass"]
         for model, m in sorted(by_model_passn.items()):
             rate = m["pass"] / m["groups"] if m["groups"] else 0
             print(f"  {model:<36}  {m['pass']:>4}/{m['groups']:<4}  {rate:>6.1%}")
@@ -630,11 +546,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         return 2
 
     by_thm: dict[str, dict[str, dict]] = {}
-    for line in all_rows.open():
-        try:
-            r = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for r in read_jsonl_tolerating_torn_tail(all_rows):
         if r.get("kind") != "cell":
             continue
         if r.get("model") != args.model:
@@ -757,15 +669,10 @@ def cmd_show(args: argparse.Namespace) -> int:
             jsonl_files = sorted(out_dir.glob("*.jsonl"))
             reject_superseded_rows(jsonl_files)
             for f in jsonl_files:
-                with f.open() as fh:
-                    for line in fh:
-                        try:
-                            r = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        n_total += 1
-                        if r.get("verdict") == "success":
-                            n_ok += 1
+                for r in read_jsonl_tolerating_torn_tail(f):
+                    n_total += 1
+                    if r.get("verdict") == "success":
+                        n_ok += 1
         rows.append((d.name, n_ok, n_total))
 
     print(f"# {len(rows)} theorems in {run_dir}\n")
@@ -801,6 +708,26 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_split_args(parser: argparse.ArgumentParser) -> None:
+    """Add the shared corpus-family and partition options to `parser`.
+
+    Centralizing these choices prevents subcommands from exposing different
+    corpus schemas.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+        Subcommand parser receiving the options.
+
+    Returns
+    -------
+    None
+        The parser is modified in place.
+    """
+    parser.add_argument("--kind", choices=["random"], default="random")
+    parser.add_argument("--split", choices=["train", "val", "test"], default="val")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser: one required subcommand (``dest="cmd"``).
 
@@ -814,14 +741,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_meta.set_defaults(func=cmd_metadata)
 
     p_list = sub.add_parser("list", help="list theorems in a split")
-    p_list.add_argument("--kind", choices=["random", "novel_premises"], default="random")
-    p_list.add_argument("--split", choices=["train", "val", "test"], default="val")
+    _add_split_args(p_list)
     p_list.add_argument("--limit", type=int, default=10)
     p_list.set_defaults(func=cmd_list)
 
     p_replay = sub.add_parser("replay", help="replay ground-truth tactics via a Lean REPL session")
-    p_replay.add_argument("--kind", choices=["random", "novel_premises"], default="random")
-    p_replay.add_argument("--split", choices=["train", "val", "test"], default="val")
+    _add_split_args(p_replay)
     p_replay.add_argument("-n", type=int, default=5, help="number of theorems to replay")
     p_replay.add_argument("--seed", type=int, default=0)
     p_replay.add_argument("--max-tactics", type=int, default=5)
@@ -833,8 +758,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_replay.set_defaults(func=cmd_replay)
 
     p_filter = sub.add_parser("filter", help="replay every traced theorem; persist pass/fail list")
-    p_filter.add_argument("--kind", choices=["random", "novel_premises"], default="random")
-    p_filter.add_argument("--split", choices=["train", "val", "test"], default="val")
+    _add_split_args(p_filter)
     p_filter.add_argument("--limit", type=int, default=0, help="cap number of theorems (0 = no cap)")
     # Deliberately NOT `DEFAULT_DOJO_TIMEOUT`: `cmd_filter` replays EVERY theorem in the
     # pool (potentially hundreds), unlike `replay`'s small sample or `run-cell`'s single
@@ -847,8 +771,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_cell = sub.add_parser("run-cell", help="run one (theorem,k,rung) cell with N replicates")
     p_cell.add_argument("--full-name", required=True)
-    p_cell.add_argument("--kind", choices=["random", "novel_premises"], default="random")
-    p_cell.add_argument("--split", choices=["train", "val", "test"], default="val")
+    _add_split_args(p_cell)
     p_cell.add_argument("--k", type=int, default=-1, help="step index (default: last step = len-1)")
     p_cell.add_argument(
         "--rung",
@@ -902,8 +825,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_cmp.set_defaults(func=cmd_compare)
 
     p_ps = sub.add_parser("prompt-stats", help="token-count distribution of rendered prompts per rung")
-    p_ps.add_argument("--kind", choices=["random", "novel_premises"], default="random")
-    p_ps.add_argument("--split", choices=["train", "val", "test"], default="val")
+    _add_split_args(p_ps)
     p_ps.add_argument("--limit", type=int, default=50)
     p_ps.add_argument("--max-tactics", type=int, default=5)
     p_ps.add_argument("--seed", type=int, default=0)

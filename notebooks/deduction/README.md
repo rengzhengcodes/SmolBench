@@ -15,7 +15,6 @@ deduction/
   run_study.py           the per-lane, generation-only driver  <- pinned here
   sweep.yaml             the sweep knobs every lane ran under  <- see below
   lean_eval.ipynb        the exploration notebook
-  pinned_theorems.json   the 300 theorems every lane ran  <- see "History: the pre-cutoff study"
   results/, data/        S3-mirrored; both archived out of the tree
   analysis/              the numbers that got published
 ```
@@ -82,19 +81,13 @@ The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/` -- a pre
   `creation_time`, `from_repo` (`url`/`commit`), `leandojo_version`, and --
   for a post-cutoff corpus -- an extra `postcutoff` block (see "Corpus date
   vs. model cutoffs" below).
-- `novel_premises/{train,val,test}.json` and `random/{train,val,test}.json`
-  -- the two split-kind directories `smolbench.deduction.lean.corpus` loads
-  via `load_split(kind, split)`. In the PRE-CUTOFF LeanDojo Benchmark 4
-  snapshot these are two independent partitions: `"random"` is an i.i.d.
-  train/val/test split, `"novel_premises"` is a val/test split chosen so its
-  premises are under-represented in train (the harder generalization slice
-  that pre-cutoff study's pool was drawn from -- see "History: the
-  pre-cutoff study" below). `build_postcutoff_corpus.py` writes both
-  directories too (so no loader path 404s), but as real copies of the SAME
-  rows: there is no separate generalization-slice curation post-cutoff, so
-  this study's driver now reads `random`/`val` by default
-  (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`; see `run_study.py`'s module
-  docstring, "Environment"). Each file is a JSON array of theorem records
+- `random/{train,val,test}.json` -- the sole split family emitted by
+  `build_postcutoff_corpus.py` and loaded by
+  `smolbench.deduction.lean.corpus`. The PRE-CUTOFF LeanDojo Benchmark 4
+  snapshot also had an independent `novel_premises` family for a harder
+  generalization slice, but the post-cutoff corpus does not manufacture a
+  byte-equivalent compatibility copy. The driver reads `random` and lets
+  `LEAN_CORPUS_SPLIT` select its split. Each file is a JSON array of theorem records
   (`url`, `commit`, `file_path`, `full_name`, `start`, `end`,
   `traced_tactics`).
 - `licenses/` -- upstream license files for the traced repo and the tools
@@ -161,11 +154,6 @@ mathlib4 commit `fe4454af`, `creation_time` 2024-03-24.
 805-theorem `replay_passing` pool -- a pool that is not stable by
 construction, since a regenerated sidecar can add or drop a theorem and
 `rng.sample` depends on both membership and population order. So
-`pinned_theorems.json` records that pre-cutoff draw verbatim (the 300
-`full_name`s, corpus provenance, derivation recipe, a sha256 over the
-sorted names), and `tests/deduction/test_lean_pinning_audit.py` pins that
-digest -- the only in-tree answer to which theorems the pre-cutoff study
-ran, since the corpus and sidecars are archived out of the tree.
 `scripts/results/audit_lean_pinning.py` confirms all 21 lanes ran that
 same 300 theorems and 944 cells (`--expect-theorems 300
 --expect-cells 944`, plus 300 sanity rows) with byte-identical rendered
@@ -187,12 +175,9 @@ checkpoint's cutoff postdates it, so 0 of the benchmark's 300 theorems
 qualify as post-cutoff by construction, and no sampling, seed, or split
 change over this single-commit snapshot can produce one.
 
-Neither of the pre-cutoff study's two holdout mechanisms is a substitute for
-a post-cutoff tail, and neither should be cited as if it were one:
-`decontam.py` screens a candidate training corpus for content that
-reproduces eval theorems, and the pre-cutoff study's `novel_premises` split
-selects theorems under-represented in the benchmark's own train split --
-both operate entirely within that same 2024-03-24 snapshot.
+The pre-cutoff study's holdout is not a substitute for a post-cutoff tail:
+its `novel_premises` split selects theorems under-represented in the
+benchmark's own train split, entirely within that same 2024-03-24 snapshot.
 
 **What the code now enforces.** A re-collection is underway on a NEW mathlib4
 snapshot, restricted by declaration-name set difference against the old
@@ -248,14 +233,8 @@ So, per theorem, the eval exposes: its goal states at every step `k`
 (`state_before` for each traced tactic), its tactic PREFIX (every tactic
 before step `k`, surfaced at `stepk:2` and above as "proof so far"), and
 its ground-truth tactic TAIL (the tactic actually asked for at each `k`,
-plus -- implicitly, by construction -- everything after it in the
-recorded proof). This is exactly the content
-`smolbench.deduction.lean.decontam.HoldoutIndex` fingerprints (its K3
-"goal state" and K4 "tactic chain" key families) to catch a candidate
-training corpus that reproduces an eval theorem's states or tactic chains
-inside some OTHER, differently-named theorem -- a leak channel a
-`full_name`-only holdout cannot see. See that module's docstring for the
-full K1-K4 breakdown.
+plus -- implicitly, by construction -- everything after it in the recorded
+proof).
 
 ## Results policy: S3-only
 
@@ -477,11 +456,6 @@ study's code, notebooks, and documentation.
   a deeper hop count is progressively more likely to hit the renderer's own
   50k-token cap before its expanded content actually reaches a rendered
   prompt.
-- **The `novel_premises` split kind, post-cutoff.** Redundant with `random`
-  now: `build_postcutoff_corpus.py` writes `novel_premises/` as a real copy
-  of `random/`'s rows rather than an independent curated slice (see "Data
-  layout" above), so `run_study.build_config` reads `random`/`val` by
-  default (`LEAN_CORPUS_KIND`/`LEAN_CORPUS_SPLIT`).
 - **Live REPL interaction during generation.** Everything in this
   study's generation phase (`run_study.py`, and by extension
   `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore

@@ -3,10 +3,10 @@
 `corpus.jsonl` has one record per Lean source file in the traced repo:
     {path, imports: [paths], premises: [{full_name, code, start, end, kind}]}
 
-Three layers of premise text: `signature(p)` (the prefix of `code` before the
-first top-level `:=`), `body(p)` (the corpus's `code` field), and
-`body_with_proof(p)` (slices the source file from the premise's `start` to the
-next top-level declaration, so theorem proof bodies are captured too).
+Two layers of premise text: `signature(p)` (the prefix of `code` before the
+first top-level `:=`) and `body_with_proof(p)` (slices the source file from the
+premise's `start` to the next top-level declaration, so theorem proof bodies
+are captured too).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from functools import lru_cache
 from pathlib import Path
 
 from .corpus import data_root, metadata
-from .decontam_config import load_decontam_config
 
 
 @dataclass(frozen=True)
@@ -127,11 +126,6 @@ def signature(p: Premise) -> str:
             return s[:i].rstrip()
         i += 1
     return s.rstrip()
-
-
-def body(p: Premise) -> str:
-    """The premise's corpus source text, unchanged (see `Premise.code`)."""
-    return p.code
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +241,7 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
 def body_with_proof(p: Premise) -> str:
     """The full declaration including any proof body, via `slice_full_decl`.
 
-    Falls back to `body(p)` when the source file is not accessible.
+    Falls back to `p.code` when the source file is not accessible.
 
     Parameters
     ----------
@@ -298,58 +292,23 @@ def has_full_source(p: Premise) -> bool:
 # are ASCII.
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
-def _validate_lean_noise(entries: "frozenset[str]") -> "frozenset[str]":
-    """Return `entries` unchanged, raising if any could never match a token.
-
-    Two entry classes are provably dead: one-character-or-shorter (the
-    ``len(tok) <= 1`` arm in `referenced_premises` already drops those,
-    regardless of the stoplist), and non-`_IDENT_RE` tokens (only
-    `_IDENT_RE.findall` output is ever tested for membership). Either kind
-    documents a filter that never runs -- exactly the dead weight a past
-    cleanup removed from the hand-written list this config replaced.
-    Refusing them at import keeps that cleanup from regressing now that the
-    list is edited as data rather than as code. Raises `ValueError` naming
-    every offender.
-
-    Parameters
-    ----------
-    entries : frozenset[str]
-        Tokens configured as Lean noise.
-
-    Returns
-    -------
-    frozenset[str]
-        `entries` unchanged.
-
-    Raises
-    ------
-    ValueError
-        If any entry could never match a token.
-    """
-    dead = sorted(e for e in entries if len(e) <= 1 or not _IDENT_RE.fullmatch(e))
-    if dead:
-        raise ValueError(
-            "decontam_config.toml [premises] lean_noise has dead entries: "
-            f"{', '.join(repr(e) for e in dead)}. An entry is dead if it is one "
-            "character or shorter, or is not a premises._IDENT_RE token. "
-            "referenced_premises() skips a token on `tok in _LEAN_NOISE or "
-            "len(tok) <= 1`, so the length arm already drops every "
-            "single-character token regardless of this list, and only "
-            "_IDENT_RE tokens are ever tested for membership at all. Either "
-            "kind therefore asserts a filter that never runs. Remove them -- "
-            "or, for the length case only, drop the `len(tok) <= 1` arm from "
-            "referenced_premises first."
-        )
-    return entries
-
-
-#: Lean keywords, tactic vocabulary, and short identifiers that would pollute
-#: the dep graph if treated as premise references. Entries and rationale live
-#: in `decontam_config.toml`'s `[premises]` section; validated here since that
-#: needs `_IDENT_RE`. Resolved once at import (not per call, since
-#: `referenced_premises` checks membership per token of every premise body
-#: scanned) so a malformed config fails at import, not mid-scan.
-_LEAN_NOISE: "frozenset[str]" = _validate_lean_noise(load_decontam_config().lean_noise)
+#: Lean keywords, tactic vocabulary, and short identifiers excluded from the
+#: premise dependency graph. Single-character names are handled separately.
+_LEAN_NOISE: frozenset[str] = frozenset({
+    "theorem", "lemma", "def", "instance", "structure", "inductive",
+    "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
+    "if", "then", "else", "match", "with", "by", "have", "show", "this",
+    "true", "True", "false", "False", "Type", "Prop", "Sort", "Set",
+    "namespace", "open", "import", "section", "end", "variable", "variables",
+    "where", "macro", "syntax", "elab", "deriving", "attribute", "set_option",
+    "noncomputable", "private", "protected", "partial", "mutual",
+    "rw", "rewrite", "simp", "exact", "apply", "intro", "intros", "rintro",
+    "cases", "rcases", "obtain", "use", "constructor", "refine", "refine'",
+    "split", "and", "or", "not", "iff", "exists", "forall", "all_goals",
+    "any_goals", "tauto", "ring", "field_simp", "linarith", "nlinarith",
+    "omega", "decide", "rfl", "trivial", "assumption", "id", "le", "lt",
+    "ge", "gt", "eq", "ne", "of", "to", "from", "h1", "h2", "h3",
+})
 
 
 @lru_cache(maxsize=1)
@@ -399,7 +358,7 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     out: list[Premise] = []
     for tok in _IDENT_RE.findall(text):
         # `len(tok) <= 1` makes single-char identifiers unreachable regardless
-        # of `_LEAN_NOISE` (see `_validate_lean_noise`).
+        # of `_LEAN_NOISE`.
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
         # Exact full-name match (e.g. `Set.subset_def`).

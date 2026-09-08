@@ -5,10 +5,9 @@ snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; its parallel
 premise corpus lives in ``smolbench.deduction.lean.premises``. Pool sizes and
 bootstrap instructions: ``notebooks/deduction/README.md``.
 
-Loaders are keyed by ``(kind, split)``; ``kind="novel_premises"`` is the harder
-generalization slice (val/test theorems whose premises are under-represented in
-train), ``"random"`` is i.i.d. The ~700 MB dataset is not shipped here; loaders
-raise ``FileNotFoundError`` naming the remedy when a file is missing.
+Loaders are keyed by ``(kind, split)``; the sole ``"random"`` family is i.i.d.
+The ~700 MB dataset is not shipped here; loaders raise ``FileNotFoundError``
+naming the remedy when a file is missing.
 
 Loaders also accept a *post-cutoff* corpus: one traced at a recent mathlib4
 commit and restricted, by declaration-name set difference against an older
@@ -50,7 +49,7 @@ def data_root() -> Path:
 
 
 Split = Literal["train", "val", "test"]
-SplitKind = Literal["random", "novel_premises"]
+SplitKind = Literal["random"]
 
 
 @dataclass(frozen=True)
@@ -99,10 +98,8 @@ class BenchmarkTheorem:
     traced_tactics: list[TracedTactic]
     #: True when this theorem's name is absent from the corpus's `postcutoff`
     #: metadata block's ``old_commit`` trace -- i.e. provably post-cutoff by
-    #: name-set difference, not a date heuristic. Defaults False so ordinary
-    #: rows (no ``postcutoff`` key) still parse; must stay the LAST field
-    #: since `BenchmarkTheorem` is frozen and every other field is required.
-    postcutoff: bool = False
+    #: name-set difference, not a date heuristic.
+    postcutoff: bool
 
     @property
     def has_proof(self) -> bool:
@@ -148,9 +145,7 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
         start=tuple(rec["start"]),
         end=tuple(rec["end"]),
         traced_tactics=tts,
-        # A row that omits the key predates the post-cutoff contract (or
-        # simply isn't post-cutoff); treat that as False, not an error.
-        postcutoff=bool(rec.get("postcutoff", False)),
+        postcutoff=bool(rec["postcutoff"]),
     )
 
 
@@ -217,11 +212,7 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
 #: same theorems in the same order everywhere.
 _SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
 
-#: The one split family `eval_split_specs` scans. ``novel_premises`` is
-#: excluded: ``build_postcutoff_corpus.py`` writes a ``novel_premises/`` dir
-#: that COPIES ``random/``'s rows rather than an independently curated slice,
-#: so indexing it would re-index the same theorems for no gain. ``random`` is
-#: also what ``run_study.py``'s ``build_config`` defaults to.
+#: The one split family `eval_split_specs` scans.
 _EVAL_SPLIT_KIND: SplitKind = "random"
 
 
@@ -239,7 +230,7 @@ def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
 
     Raises `FileNotFoundError` if ``data_root() / "random"`` doesn't exist, or
     `ValueError` if it exists but holds none of the recognised split files --
-    an empty tuple would be a silent no-op, decontaminating nothing while
+    an empty tuple would be a silent no-op, protecting nothing while
     still reporting success.
     """
     root = data_root()
@@ -259,7 +250,7 @@ def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
         raise ValueError(
             f"{kind_dir} holds no recognised split file (expected at least one of "
             f"{expected}) — an eval holdout built from an empty spec list "
-            "decontaminates nothing; re-bootstrap the corpus (see "
+            "protects nothing; re-bootstrap the corpus (see "
             "notebooks/deduction/README.md's \"Data bootstrap\")"
         )
     return specs

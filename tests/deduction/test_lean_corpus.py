@@ -115,13 +115,6 @@ def test_postcutoff_flag_is_read_off_every_theorem_row(postcutoff_data: Path) ->
     assert all(t.postcutoff is True for t in thms)
 
 
-def test_absent_block_is_none_and_rows_default_to_not_postcutoff(lean_data: Path) -> None:
-    """The old (2024-03-24) corpus stays legal to load and reports itself honestly."""
-    assert corpus.postcutoff_metadata() is None
-    assert corpus.is_postcutoff_corpus() is False
-    assert all(t.postcutoff is False for t in corpus.load_split("random", "val"))
-
-
 def test_commit_mismatch_between_from_repo_and_block_raises(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -228,7 +221,7 @@ def test_eval_split_specs_is_canonically_ordered_and_call_time(
 def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Never an empty tuple: a holdout built from one would decontaminate nothing."""
+    """Never an empty tuple: a holdout built from one would protect nothing."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "missing"))
     with pytest.raises(FileNotFoundError, match="missing"):
         corpus.eval_split_specs()

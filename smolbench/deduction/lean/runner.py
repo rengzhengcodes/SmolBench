@@ -645,10 +645,9 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
 
 
 def _cell_key(r: dict) -> tuple:
-    """`_row_key` off a raw row, with the tolerant defaults resume decisions use."""
+    """Return `_row_key` for a schema-complete cell row."""
     return _row_key(
-        r.get("model", ""), r.get("theorem_id", ""), int(r.get("k", -1)),
-        r.get("rung", ""), int(r.get("replicate_idx", -1)),
+        r["model"], r["theorem_id"], int(r["k"]), r["rung"], int(r["replicate_idx"]),
     )
 
 
@@ -918,13 +917,8 @@ def write_theorem_summary(theorem_dir: Path) -> None:
         stem = jl.stem
         if "__" not in stem:
             continue
-        with jl.open() as f:
-            for line in f:
-                try:
-                    r = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                cells[(r["rung"], r["model"])].append(r)
+        for r in read_jsonl_tolerating_torn_tail(jl):
+            cells[(r["rung"], r["model"])].append(r)
 
     rungs = sorted({r for r, _ in cells.keys()}, key=_rung_sort_key)
     models = sorted({m for _, m in cells.keys()})
@@ -981,13 +975,98 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     (theorem_dir / "summary.md").write_text("\n".join(lines))
 
 
+def analyze_rows(
+    path: Path,
+) -> tuple[
+    dict[tuple[str, str], dict[str, int]],
+    dict[tuple[str, str, str, int], list[str]],
+    tuple[int, int, int],
+]:
+    """Aggregate schema-complete run rows for every analysis renderer.
+
+    Sharing cell deduplication, verdict/token/time counters, truncation and
+    Lean-3 detection keeps the CLI and durable report on one pipeline.
+
+    Parameters
+    ----------
+    path : Path
+        JSONL file to aggregate.
+
+    Returns
+    -------
+    tuple[dict, dict, tuple[int, int, int]]
+        Per-rung/model counters, pass@N groups, and sanity pass/fail/deferred counts.
+    """
+    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {
+            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
+            "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0, "unverified": 0, "tok_in": 0, "tok_out": 0,
+            "ms": 0, "trunc": 0, "l3": 0,
+        }
+    )
+    groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
+    sanity = [0, 0, 0]
+    cell_rows: list[dict] = []
+    for row in read_jsonl_tolerating_torn_tail(path):
+        if row["kind"] != "sanity":
+            cell_rows.append(row)
+        elif row.get("verdict") == "success":
+            sanity[0] += 1
+        elif row.get("verdict") in SANITY_FAILURE_VERDICTS:
+            sanity[1] += 1
+        else:
+            sanity[2] += 1
+
+    for row in dedupe_cell_rows(cell_rows):
+        counter = cells[(row.get("rung", "?"), row.get("model", "?"))]
+        counter["n"] += 1
+        verdict = row.get("verdict", "exception")
+        counter[verdict if verdict in counter else "exception"] += 1
+        counter["tok_in"] += row.get("prompt_tokens", 0)
+        counter["tok_out"] += row.get("completion_tokens", 0)
+        counter["ms"] += row.get("gen_ms", 0) + row.get("verify_ms", 0)
+        raw = row.get("raw_response", "") or row.get("content", "")
+        if (("<think>" in raw and "</think>" not in raw)
+                or (row.get("reasoning_content") and not (row.get("raw_response") or "").strip())):
+            counter["trunc"] += 1
+        if lean3.find_relics(row.get("candidate_proof") or ""):
+            counter["l3"] += 1
+        groups[(row.get("model", "?"), row.get("rung", "?"),
+                row.get("theorem_id", "?"), row.get("k", -1))].append(verdict)
+    return dict(cells), dict(groups), (sanity[0], sanity[1], sanity[2])
+
+
+def model_totals(cells: dict[tuple[str, str], dict[str, int]]) -> dict[str, dict[str, int]]:
+    """Roll per-rung counters into per-model totals.
+
+    The CLI and durable analysis both present this same rollup.
+
+    Parameters
+    ----------
+    cells : dict[tuple[str, str], dict[str, int]]
+        Counters returned by `analyze_rows`.
+
+    Returns
+    -------
+    dict[str, dict[str, int]]
+        Totals keyed by model.
+    """
+    totals: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
+    )
+    for (_, model), counter in cells.items():
+        for key in totals[model]:
+            totals[model][key] += counter[key]
+    return dict(totals)
+
+
 def write_run_analysis(run_dir: Path) -> None:
     """Read all_rows.jsonl; overwrite `run_dir`'s analysis.txt with a (rung, model) table.
 
     Regenerates wholesale; a no-op when `all_rows.jsonl` doesn't exist. `l3`
     counts cells whose `candidate_proof` holds a PARSE-LEVEL Lean 3 relic
-    (`lean3.find_relics`), regardless of verdict -- the metric
-    `lean3.corrupt_tail`'s repair training aims to drive to zero. Cell rows
+    (`lean3.find_relics`), regardless of verdict. Cell rows
     are deduped through `dedupe_cell_rows` first, so "N cells" and every
     per-cell `n` count distinct cells, not raw rows.
 
@@ -1000,52 +1079,9 @@ def write_run_analysis(run_dir: Path) -> None:
     if not all_rows.exists():
         return
 
-    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
-            "no_answer": 0,
-            "unverified": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
-        }
-    )
-    n_sanity_pass = 0
-    n_sanity_fail = 0
-    n_sanity_skipped = 0
-    # Collected here, not aggregated inline, so `dedupe_cell_rows` can collapse
-    # an exception-then-retry pair before the "N cells" count and per-cell
-    # tallies below ever see the raw row count.
-    cell_rows: list[dict] = []
-    for r in read_jsonl_tolerating_torn_tail(all_rows):
-        if r["kind"] == "sanity":
-            if r.get("verdict") == "success":
-                n_sanity_pass += 1
-            elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
-                n_sanity_fail += 1
-            else:
-                # "skipped" (deferred) or "exception" (infra): nothing POSITIVELY failed.
-                n_sanity_skipped += 1
-            continue
-        cell_rows.append(r)
-
-    # Deduped cell count: a lane that resumed past an exception reads as one
-    # cell, not two (see dedupe_cell_rows).
-    n_rows = 0
-    for r in dedupe_cell_rows(cell_rows):
-        n_rows += 1
-        key = (r.get("rung", "?"), r.get("model", "?"))
-        c = cells[key]
-        c["n"] += 1
-        v = r.get("verdict", "exception")
-        if v in c:
-            c[v] += 1
-        else:
-            c["exception"] += 1
-        c["tok_in"] += r.get("prompt_tokens", 0)
-        c["tok_out"] += r.get("completion_tokens", 0)
-        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-        if lean3.find_relics(r.get("candidate_proof") or ""):
-            c["l3"] += 1
+    cells, _groups, sanity = analyze_rows(all_rows)
+    n_sanity_pass, n_sanity_fail, n_sanity_skipped = sanity
+    n_rows = sum(counter["n"] for counter in cells.values())
 
     out: list[str] = []
     out.append(
@@ -1088,16 +1124,7 @@ def write_run_analysis(run_dir: Path) -> None:
         )
 
     out.append("\n# per-model totals")
-    by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
-    )
-    for (_, model), c in cells.items():
-        by_model[model]["n"] += c["n"]
-        by_model[model]["success"] += c["success"]
-        by_model[model]["tok_in"] += c["tok_in"]
-        by_model[model]["tok_out"] += c["tok_out"]
-        by_model[model]["l3"] += c["l3"]
-    for model, m in sorted(by_model.items()):
+    for model, m in sorted(model_totals(cells).items()):
         rate = m["success"] / m["n"] if m["n"] else 0
         out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
                    f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "

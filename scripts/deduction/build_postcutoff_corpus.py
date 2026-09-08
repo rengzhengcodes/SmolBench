@@ -46,13 +46,10 @@ DEFAULT_MIN_TACTICS = 2
 #: ``traced_files.jsonl`` are the premise universe and are copied unfiltered.
 REQUIRED_EXPORT_FILES = ("metadata.json", "corpus.jsonl", "traced_files.jsonl")
 
-SPLIT_KINDS = ("random", "novel_premises")
 SPLITS = ("train", "val", "test")
 
-#: Fixed read order for the six split files. Load-bearing: dedup keeps the
-#: first occurrence of a ``full_name``, so this order decides which of a
-#: theorem's two copies survives.
-SOURCE_ORDER = tuple(f"{kind}/{split}.json" for kind in SPLIT_KINDS for split in SPLITS)
+#: Fixed read order for the export's split files.
+SOURCE_ORDER = tuple(f"random/{split}.json" for split in SPLITS)
 
 #: Human-readable form of `assign_split`, recorded in BUILD_SUMMARY.json so the
 #: rule travels with the artefact rather than living only in this file.
@@ -123,9 +120,6 @@ def load_names(path: Path, export_commit: str) -> dict:
 def read_source_rows(export: Path, present: list[str]) -> tuple[list[dict], dict[str, int]]:
     """Read every theorem row from the export's split files, in `SOURCE_ORDER`.
 
-    The same theorem appears once per split family, so the returned row list
-    double-counts (see `dedup_by_full_name`).
-
     Parameters
     ----------
     export : Path
@@ -145,36 +139,6 @@ def read_source_rows(export: Path, present: list[str]) -> tuple[list[dict], dict
         rows_per_source_file[rel] = len(file_rows)
         rows.extend(file_rows)
     return rows, rows_per_source_file
-
-
-def dedup_by_full_name(rows: list[dict]) -> tuple[list[dict], int]:
-    """Collapse the two split families' overlapping rows, keeping the first seen.
-
-    ``random`` and ``novel_premises`` partition the same theorem universe
-    differently, so their union contains each theorem twice. First-wins in
-    `SOURCE_ORDER` rather than merging the two copies: they're byte-equal
-    upstream, and picking deterministically means a disagreement is caught by
-    a later gate instead of being averaged away.
-
-    Parameters
-    ----------
-    rows : list[dict]
-        Theorem rows from both split families.
-
-    Returns
-    -------
-    tuple[list[dict], int]
-        unique rows and the number of duplicates dropped.
-    """
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for row in rows:
-        name = row["full_name"]
-        if name in seen:
-            continue
-        seen.add(name)
-        unique.append(row)
-    return unique, len(rows) - len(unique)
 
 
 def assign_split(full_name: str) -> str:
@@ -336,9 +300,8 @@ def write_corpus(
 ) -> dict[str, int]:
     """Write the ``leandojo_benchmark_4`` tree under ``out_root``.
 
-    All six split files are always written, empty ones as ``[]``, so every
-    ``load_split(kind, split)`` call reaches a file; ``novel_premises`` receives
-    the same rows as ``random``. ``corpus.jsonl``/``traced_files.jsonl`` are copied
+    All three split files are always written, empty ones as ``[]``, so every
+    ``load_split`` call reaches a file. ``corpus.jsonl``/``traced_files.jsonl`` are copied
     with `shutil.copyfile` rather than re-serialised: the real
     ``corpus.jsonl`` is hundreds of MB and there is nothing in it to filter.
 
@@ -356,7 +319,7 @@ def write_corpus(
     Returns
     -------
     dict[str, int]
-        rows written per split (applies to both families).
+        Rows written per split.
     """
     dest = out_root / "leandojo_benchmark_4"
     dest.mkdir(parents=True, exist_ok=True)
@@ -369,15 +332,11 @@ def write_corpus(
     for split_rows in per_split.values():
         split_rows.sort(key=lambda r: r["full_name"])
 
-    for kind in SPLIT_KINDS:
-        (dest / kind).mkdir(parents=True, exist_ok=True)
-        for split in SPLITS:
-            # indent=1 / ensure_ascii=False matches LeanDojo's own export style,
-            # so a diff against an upstream benchmark stays readable and the
-            # Unicode in theorem statements survives as text.
-            (dest / kind / f"{split}.json").write_text(
-                json.dumps(per_split[split], indent=1, ensure_ascii=False)
-            )
+    (dest / "random").mkdir(parents=True, exist_ok=True)
+    for split in SPLITS:
+        (dest / "random" / f"{split}.json").write_text(
+            json.dumps(per_split[split], indent=1, ensure_ascii=False)
+        )
 
     (dest / "metadata.json").write_text(json.dumps(metadata, indent=1, ensure_ascii=False))
     for name in ("corpus.jsonl", "traced_files.jsonl"):
@@ -427,10 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     names = load_names(args.names, export_metadata["from_repo"]["commit"])
 
     rows, rows_per_source_file = read_source_rows(args.export, present)
-    unique, duplicates_dropped = dedup_by_full_name(rows)
-
     decls = names["decls"]
-    postcutoff_named = [row for row in unique if row["full_name"] in decls]
+    postcutoff_named = [row for row in rows if row["full_name"] in decls]
     with_min_tactics = [
         row for row in postcutoff_named if len(row["traced_tactics"]) >= args.min_tactics
     ]
@@ -442,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
         # one-liners.
         culprit = (
             f"the post-cutoff name set ({len(decls)} declarations) matched none of the "
-            f"{len(unique)} theorems in the export"
+            f"{len(rows)} theorems in the export"
             if not postcutoff_named
             else f"the --min-tactics {args.min_tactics} floor dropped all "
                  f"{len(postcutoff_named)} post-cutoff theorems"
@@ -473,8 +430,6 @@ def main(argv: list[str] | None = None) -> int:
         "rows_per_source_file": rows_per_source_file,
         "counts": {
             "rows_read": len(rows),
-            "unique_theorems": len(unique),
-            "duplicates_dropped": duplicates_dropped,
             "postcutoff_named": len(postcutoff_named),
             "with_min_tactics": len(with_min_tactics),
             "written": len(out_rows),
@@ -490,8 +445,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"post-cutoff corpus written to {args.out / 'leandojo_benchmark_4'}\n"
-        f"  read {len(rows)} rows -> {len(unique)} unique "
-        f"(-{duplicates_dropped} cross-family duplicates)\n"
+        f"  read {len(rows)} rows\n"
         f"  post-cutoff named: {len(postcutoff_named)}  "
         f">= {args.min_tactics} tactics: {len(with_min_tactics)}\n"
         f"  written: {len(out_rows)}  "

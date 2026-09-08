@@ -9,7 +9,7 @@ by file path from ``notebooks/induction/run_study.py`` (the roster's single
 source of truth) rather than imported, since a bare ``import run_study``
 would be ambiguous once both trees' same-named modules are on ``sys.path``.
 Sweep knobs live in ``notebooks/deduction/sweep.yaml``; ``build_config``
-stamps its SHA-256 (and ``decontam_config.toml``'s) into every run's
+stamps its SHA-256 into every run's
 ``manifest.json`` for provenance. What this file adds on top is lane
 IDENTITY -- ``run_name``, seeds, the served model, optional shard/whitelist.
 
@@ -226,7 +226,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # Late imports: safe only now that our own EC2_* setdefaults have landed and
 # MODELS/COT_ARGS are bound. Hence noqa: E402.
 from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.deduction.lean import corpus, decontam_config, runner  # noqa: E402
+from smolbench.deduction.lean import corpus, runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
 
@@ -258,11 +258,9 @@ def resolve_lean_seed() -> int:
     seed ``runner.sweep`` puts on the wire (replicate `i` decodes at
     `seed + i`).
 
-    WARNING: a non-zero ``LEAN_SEED`` re-draws the theorem sample, desyncing
-    from the pinned 300 in ``notebooks/deduction/pinned_theorems.json`` (its
-    digest is asserted in ``tests/deduction/test_lean_pinning_audit.py``) and
-    making the run incomparable with the published lanes. Only for a
-    deliberate, clearly-labelled re-sampling experiment.
+    WARNING: a non-zero ``LEAN_SEED`` re-draws the theorem sample and makes the
+    run incomparable with lanes using another seed. Only for a deliberate,
+    clearly-labelled re-sampling experiment.
     """
     raw = os.environ.get("LEAN_SEED", "").strip()
     if not raw:
@@ -337,10 +335,7 @@ def _stamp_path(path: Path) -> str:
 
     A path outside the repo has no repo-relative spelling, so it is returned
     absolute instead -- reachable only through `build_config`'s
-    ``sweep_config_path`` test seam, never in production. Shared by both of
-    `build_config`'s provenance stamps (``sweep_config`` and
-    ``decontam_config``) so the two cannot drift apart in how they spell a
-    path.
+    ``sweep_config_path`` test seam, never in production.
 
     Parameters
     ----------
@@ -372,10 +367,8 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
 
     USER-LOCKED: every key is identical across all 21 checkpoints except
     ``run_name`` and ``models[0]``, so a next-tactic success-rate difference
-    points at the model, not a changed sweep. The sweep file's SHA-256, and
-    ``decontam_config.toml``'s (its premise stoplist decides what
-    ``hint:3``/``hint:4`` contain), are stamped into every run's
-    ``manifest.json`` as ``sweep_config``/``decontam_config`` provenance.
+    points at the model, not a changed sweep. The sweep file's SHA-256 is
+    stamped into every run's ``manifest.json`` as ``sweep_config`` provenance.
 
     Two refusals guard the loaded file, RESERVED checked before MISSING so a
     file breaking both is diagnosed by the more dangerous one: a RESERVED key
@@ -393,7 +386,7 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
 
     A path outside the repo is stamped absolute, since it has no repo-relative
     spelling. ``LEAN_SHARD``, ``LEAN_RUN_NAME``,
-    ``LEAN_CELL_WHITELIST``, ``LEAN_CORPUS_KIND``, ``LEAN_CORPUS_SPLIT`` and
+    ``LEAN_CELL_WHITELIST``, ``LEAN_CORPUS_SPLIT`` and
     ``LEAN_SEED`` are all read at call time, never at import and never
     cached; ``run_name`` defaults to ``f"scaling_{key}"`` plus a
     ``_shard<i>of<n>`` suffix when sharding, matching
@@ -506,12 +499,7 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
 
     theorems: dict[str, Any] = cfg["theorems"]
     theorems["seed"] = seed
-    # kind/split: the sweep file's values are the defaults
-    # LEAN_CORPUS_KIND/LEAN_CORPUS_SPLIT override (and a blank override falls
-    # back to). Each is bound to a local first, since the assignment
-    # overwrites the very value it falls back to.
-    yaml_kind = theorems["kind"]
-    theorems["kind"] = os.environ.get("LEAN_CORPUS_KIND", yaml_kind).strip() or yaml_kind
+    # The sole corpus family is fixed; the split remains selectable per run.
     yaml_split = theorems["split"]
     theorems["split"] = os.environ.get("LEAN_CORPUS_SPLIT", yaml_split).strip() or yaml_split
     if shard:
@@ -535,18 +523,6 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     cfg["sweep_config"] = {
         "path": _stamp_path(config_path),
         "sha256": sweep_config_sha256,
-    }
-
-    # decontam_config.toml's premise stoplist decides what the hint:3/hint:4
-    # rungs contain, so the manifest records which stoplist produced them,
-    # same as the sweep-file stamp above. Computed here from a file the
-    # package ships (path and digest off the same loaded object, so they
-    # can't drift apart), not read from the sweep file -- hence absent from
-    # both the reserved and required key sets.
-    decontam = decontam_config.load_decontam_config()
-    cfg["decontam_config"] = {
-        "path": _stamp_path(decontam.path),
-        "sha256": decontam.sha256,
     }
 
     # Optional, like the shard key above, but purely informational: `runner.sweep`
@@ -856,7 +832,7 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Regenerate EVERY cell, including ones that already have a "
             "proof, and move the existing all_rows.jsonl aside first. For "
-            "decontaminating a lane whose cells were generated on more "
+            "repairing a lane whose cells were generated on more "
             "than one hardware config -- resume alone cannot do this, "
             "because it (correctly) skips cells that already have content."
         ),

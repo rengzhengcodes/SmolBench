@@ -24,8 +24,6 @@ from tests._paths import (LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTO
 DRIVER_PATH = NOTEBOOKS / "deduction" / "run_study.py"
 #: The committed sweep knobs `build_config` loads and fingerprints.
 SWEEP_YAML = NOTEBOOKS / "deduction" / "sweep.yaml"
-#: The committed decontamination policy `build_config` also fingerprints.
-DECONTAM_TOML = REPO_ROOT / "smolbench" / "deduction" / "lean" / "decontam_config.toml"
 INDUCTION_PATH = NOTEBOOKS / "induction" / "run_study.py"
 KEY = "glm-4.7"
 IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7"
@@ -104,13 +102,6 @@ def test_build_config_locked_overridable_and_unshared(
         "sweep_config": {
             "path": "notebooks/deduction/sweep.yaml",
             "sha256": hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest(),
-        },
-        # Second provenance stamp: the decontam stoplist decides which identifiers
-        # resolve to premise references, shaping what hint:3/hint:4 contain. Computed
-        # from a shipped file, not sweep.yaml, so it's in neither key set.
-        "decontam_config": {
-            "path": "smolbench/deduction/lean/decontam_config.toml",
-            "sha256": hashlib.sha256(DECONTAM_TOML.read_bytes()).hexdigest(),
         }}
     before = json.dumps(driver.COT_ARGS[KEY], sort_keys=True)
     cfg["models"][0]["extra_params"]["enable_thinking"] = "CLOBBERED"
@@ -394,16 +385,15 @@ def test_build_config_gates_target_date_on_roster_latest_release(
     corpus.reset_caches()
 
 
-def test_corpus_kind_and_split_are_env_configurable(
+def test_corpus_split_is_env_configurable(
         driver: ModuleType, postcutoff_corpus: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The new corpus has one `random`/`val` family; the source stays replay_passing."""
     assert (driver.build_config(KEY)["theorems"]["kind"],
             driver.build_config(KEY)["theorems"]["split"]) == ("random", "val")
-    monkeypatch.setenv("LEAN_CORPUS_KIND", "novel_premises")
     monkeypatch.setenv("LEAN_CORPUS_SPLIT", "test")
     got = driver.build_config(KEY)["theorems"]
     assert (got["kind"], got["split"], got["source"]) == (
-        "novel_premises", "test", "replay_passing")
+        "random", "test", "replay_passing")
 
 
 def test_main_refuses_a_pre_cutoff_corpus_before_provisioning(
@@ -788,34 +778,3 @@ def test_the_cli_run_sweep_path_uses_the_same_loader(tmp_path: Path) -> None:
     config, digest = runner.load_sweep_config(SWEEP_YAML)
     assert isinstance(config, dict)
     assert digest == hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest()
-
-
-def test_the_decontam_digest_lands_in_the_run_manifest(
-        driver: ModuleType, sweep_env: Path, stub_server: Any) -> None:
-    """The stoplist that shaped the prompts (decontam_config.toml, via
-    premises._LEAN_NOISE) is recorded beside the sweep knobs, so an archived run
-    says which stoplist produced its hint:3/hint:4 prompts."""
-    cfg = driver.build_config(KEY)
-    cfg["theorems"] = {"source": "explicit", "kind": "random", "split": "val",
-                       "full_names": ["Mini.theoremA"], "require_postcutoff": True}
-    cfg["rungs"] = ["stepk:1"]
-    run_dir = sweep_env / "runs" / cfg["run_name"]
-    runner.sweep(cfg, run_dir, verifier=NullVerifier())
-
-    manifest = json.loads((run_dir / "manifest.json").read_text())
-    assert manifest["config"]["decontam_config"] == {
-        "path": "smolbench/deduction/lean/decontam_config.toml",
-        "sha256": hashlib.sha256(DECONTAM_TOML.read_bytes()).hexdigest(),
-    }
-
-
-def test_the_stamped_decontam_path_is_the_file_actually_loaded(
-        driver: ModuleType, postcutoff_corpus: Path) -> None:
-    """The stamp must name the file the loader actually read, not a re-spelled
-    guess -- checked by resolving both to the same path."""
-    from smolbench.deduction.lean.decontam_config import load_decontam_config
-
-    stamp = driver.build_config(KEY)["decontam_config"]
-    loaded = load_decontam_config()
-    assert (REPO_ROOT / stamp["path"]).resolve() == DECONTAM_TOML.resolve()
-    assert stamp["sha256"] == loaded.sha256
