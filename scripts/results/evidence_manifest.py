@@ -516,6 +516,8 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
         # ---- check 4: citation coverage (writeups only) ------------------
         if entry["role"] != "writeup":
             continue
+        # Decode the exact bytes hashed above, so a changing reference cannot
+        # pass one check and supply different text to citation coverage.
         cited = cited_artifacts(content.decode("utf-8", errors="replace"))
         citations[relpath] = cited
         # Name match only; whether it's the *right* artifact is for the entry's note.

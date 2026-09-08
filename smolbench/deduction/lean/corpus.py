@@ -212,7 +212,8 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
 #: same theorems in the same order everywhere.
 _SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
 
-#: The one split family `eval_split_specs` scans.
+#: The one split family `eval_split_specs` scans. The post-cutoff builder emits
+#: no duplicate compatibility family, and this is the family the study runs.
 _EVAL_SPLIT_KIND: SplitKind = "random"
 
 

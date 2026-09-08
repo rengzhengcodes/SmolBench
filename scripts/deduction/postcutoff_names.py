@@ -1452,6 +1452,8 @@ def build_artifact(
     for name in sorted(selected):
         entry = selected[name]
         decls[name] = {
+            # ``kept`` is the authoritative declaration record; every selected
+            # name is guaranteed to be present there.
             "file_path": kept[name].file_path,
             "introduced_commit": entry["introduced_commit"],
             "pr_number": entry["pr_number"],

@@ -334,6 +334,8 @@ def write_corpus(
 
     (dest / "random").mkdir(parents=True, exist_ok=True)
     for split in SPLITS:
+        # LeanDojo's indent/Unicode style keeps upstream diffs readable and
+        # theorem statements as text rather than escapes.
         (dest / "random" / f"{split}.json").write_text(
             json.dumps(per_split[split], indent=1, ensure_ascii=False)
         )

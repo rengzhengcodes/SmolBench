@@ -133,7 +133,8 @@ theorem_workers: 4
 # derivation for 8 specifically; runner.sweep's own default is 12.
 max_concurrency: 8
 
-# The corpus has one `random` family; LEAN_CORPUS_SPLIT can select its split.
+# The corpus has one `random` family because the builder no longer emits a
+# byte-equivalent compatibility copy; LEAN_CORPUS_SPLIT can select its split.
 # require_postcutoff makes runner._select_theorems re-enforce the same
 # gate build_config already ran, at the point the pool is actually
 # sampled (see that function's docstring for why both checks exist).
@@ -152,7 +153,8 @@ theorems:
   # LEAN_CORPUS_SPLIT override replaces, and that a blank override falls
   # back to.
   split: val
-  # Desired theorem-pool size for the study.
+  # 300 preserves the published study's pool SIZE; the post-cutoff draw has
+  # different theorem identities.
   limit: 300
   # Re-enforced at sweep time by runner._select_theorems -- see the
   # "Post-cutoff corpus gate" section of run_study.build_config's docstring

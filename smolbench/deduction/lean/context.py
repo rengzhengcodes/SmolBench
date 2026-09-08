@@ -308,6 +308,8 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
         tokenizer,
         unit=choose_whitespace_unit(tokenizer),
     )
+    # The helper enforces the exact token target. The independent guard below
+    # still protects byte-accurate pad recovery from future prompt prefixes.
 
     # suffix_len is derived from base_prompt, never hardcoded from prompt.py's suffix --
     # copying that literal would be exactly the drift this closes.
@@ -573,6 +575,8 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
     if chain == "noise":
         if level < 1:
             return True
+        # The full-prompt token delta below subsumes hint's structural
+        # triviality check and is the quantity noise rendering actually uses.
         # Must measure the same quantity as `_render_noise_parts` -- full PROMPT tokens, not
         # `_count_tokens`'s context-text count -- or a rung called trivial here could still
         # render non-trivially there, or vice versa (silently unpadded).

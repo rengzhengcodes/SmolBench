@@ -1005,8 +1005,12 @@ def analyze_rows(
             "ms": 0, "trunc": 0, "l3": 0,
         }
     )
+    # Keep full cell identity: pass@N asks whether any replicate of an exact
+    # (theorem, k) succeeded, which rung/model counters cannot recover.
     groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
     sanity = [0, 0, 0]
+    # Aggregate only after collecting all cells: deduplication must collapse
+    # an exception-then-retry pair before counts or pass@N groups see it.
     cell_rows: list[dict] = []
     for row in read_jsonl_tolerating_torn_tail(path):
         if row["kind"] != "sanity":
@@ -1016,6 +1020,8 @@ def analyze_rows(
         elif row.get("verdict") in SANITY_FAILURE_VERDICTS:
             sanity[1] += 1
         else:
+            # Infra exceptions and generation-only skips are unresolved, not
+            # positive evidence that the ground truth failed.
             sanity[2] += 1
 
     for row in dedupe_cell_rows(cell_rows):
@@ -1026,6 +1032,10 @@ def analyze_rows(
         counter["tok_in"] += row.get("prompt_tokens", 0)
         counter["tok_out"] += row.get("completion_tokens", 0)
         counter["ms"] += row.get("gen_ms", 0) + row.get("verify_ms", 0)
+        # Count reasoning truncation separately so cut-off thoughts do not look
+        # like ordinary proof dead ends. With a vLLM reasoning parser, a death
+        # in that channel leaves raw_response empty and reasoning_content set;
+        # ``content`` remains the fallback for provider-shaped row variants.
         raw = row.get("raw_response", "") or row.get("content", "")
         if (("<think>" in raw and "</think>" not in raw)
                 or (row.get("reasoning_content") and not (row.get("raw_response") or "").strip())):

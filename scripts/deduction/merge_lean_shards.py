@@ -113,6 +113,11 @@ def merge_shards(
                 f"duplicate cell across shards: {cell_key} has {len(surviving)} "
                 f"surviving rows (verdicts {[r.get('verdict') for r in surviving]})"
             )
+    n_resumed = sum(len(rows) > 1 for rows in grouped.values())
+    if n_resumed:
+        logging.info("%d cell key(s) keep exception rows plus a resumed retry", n_resumed)
+    # Keep exception+retry rows in the merged file but count their key once;
+    # otherwise a valid resumed lane can read as 945 rows against 944 cells.
     n_cells = len(runner.dedupe_cell_rows(cell_rows))
     if n_cells != expect_cells:
         raise SystemExit(f"merged distinct cell count {n_cells} != expected {expect_cells}")

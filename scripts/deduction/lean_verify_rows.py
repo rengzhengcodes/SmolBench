@@ -992,6 +992,7 @@ def verify_run(
                     f"{completed}/{len(pending)} group(s)."
                 )
 
+    # A checkpoint on the last group already uploaded these exact rows.
     if completed % UPLOAD_EVERY_GROUPS:
         upload_rows(client, out_rows, bucket, verified_key, run_dir)
     logging.info(f"lean_verify_rows[{run}]: done -- {completed} group(s) processed.")

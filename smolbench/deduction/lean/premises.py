@@ -293,7 +293,8 @@ def has_full_source(p: Premise) -> bool:
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
 #: Lean keywords, tactic vocabulary, and short identifiers excluded from the
-#: premise dependency graph. Single-character names are handled separately.
+#: premise dependency graph. Frozen once because membership is checked for
+#: every token; single-character names are handled separately.
 _LEAN_NOISE: frozenset[str] = frozenset({
     "theorem", "lemma", "def", "instance", "structure", "inductive",
     "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",

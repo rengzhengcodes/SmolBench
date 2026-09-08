@@ -100,7 +100,8 @@ Real-model `run-cell`/`run-sweep` need a provider key
 (`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
 user-opt-in only; `filter` (~70 min/split) produces the
 `replay_passing_*.jsonl` sidecar that non-explicit sweep configs need.
-Sweep results land under `notebooks/deduction/results/runs/`.
+No such sidecar is checked in yet. Sweep results land under
+`notebooks/deduction/results/runs/`.
 
 ## Live AWS surfaces — do NOT run without explicit user opt-in
 

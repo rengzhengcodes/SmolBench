@@ -4,7 +4,9 @@ Lean 3 syntax survives SFT/LoRA training as a residue: `refl` for `rfl`,
 `existsi` for `use`, `begin...end`, `λ x, e` binders, and trailing commas.
 Detection is parse-level only; no mathlib3-to-mathlib4 lemma rename rule is
 attempted. Bracket depth accumulates across the whole text so commas inside a
-multi-line bracketed term are not misclassified.
+multi-line bracketed term are not misclassified. An unclosed opener can
+therefore suppress a later trailing-comma flag, and string contents are not
+skipped.
 """
 
 from __future__ import annotations
@@ -25,9 +27,14 @@ class Relic:
 
 _OPEN_BRACKETS = "⟨([{"
 _CLOSE_BRACKETS = "⟩)]}"
+# Word boundaries avoid mistaking names such as ``le_refl`` or
+# ``existsi_something`` for bare tactics.
 _REFL_RE = re.compile(r"\brefl\b")
 _EXISTSI_RE = re.compile(r"\bexistsi\b")
+# ``λ`` is a Unicode word character, so the same boundary rule works for it.
 _BINDER_RE = re.compile(r"\b(?:fun|λ)\b")
+# Markers after which ``refl`` occupies tactic-head position; line start is
+# checked separately as an empty prefix.
 _REFL_HEAD_MARKERS = (";", "<;>", "·", "{")
 
 
