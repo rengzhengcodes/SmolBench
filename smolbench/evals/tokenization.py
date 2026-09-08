@@ -189,12 +189,12 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
-            ``ec2.EC2_DEPLOY_SPECS`` key.
+        ``ec2.EC2_DEPLOY_SPECS`` key.
 
     Returns
     -------
     Tokenizer
-            Served checkpoint tokenizer.
+        Served checkpoint tokenizer.
     """
     from smolbench.evals.providers import ec2
 
@@ -233,17 +233,17 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Parameters
     ----------
     tokenizer : Tokenizer
-            Tokenizer to probe.
+        Tokenizer to probe.
 
     Returns
     -------
     str
-            Qualifying pad atom.
+        Qualifying pad atom.
 
     Raises
     ------
     ValueError
-            If no candidate qualifies.
+        If no candidate qualifies.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -275,20 +275,20 @@ def token_matched_noise_prompt(
     Parameters
     ----------
     render : Callable[[str], str]
-            Deterministic context renderer.
+        Deterministic context renderer.
     context : str
-            Context to pad.
+        Context to pad.
     target_tokens : int
-            Exact rendered token count.
+        Exact rendered token count.
     tokenizer : Tokenizer
-            Model tokenizer.
+        Model tokenizer.
     unit : str | None
-            Pad atom; probes when omitted.
+        Pad atom; probes when omitted.
 
     Returns
     -------
     str
-            Exact-length rendered prompt.
+        Exact-length rendered prompt.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

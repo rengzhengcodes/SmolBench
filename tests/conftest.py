@@ -251,9 +251,9 @@ class S3Archive:
     Parameters
     ----------
     uri : str
-            Archive URI.
+        Archive URI.
     region : str or None
-            S3 region.
+        S3 region.
     """
 
     def __init__(self, uri: str, region: str | None) -> None:

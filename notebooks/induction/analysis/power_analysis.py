@@ -145,8 +145,8 @@ def cmh_stat(
 ) -> np.ndarray:
     """Compute the continuity-corrected 2 x 2 x K CMH statistic.
 
-Stratifies by harmonic; generalized CMH is distinct. Conditions require equal
-trial counts per stratum.
+    Stratifies by harmonic; generalized CMH is distinct. Conditions require equal
+    trial counts per stratum.
 
     Parameters
     ----------
@@ -183,8 +183,8 @@ def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int) -> np.ndarray:
 def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     """Compute generalized-CMH statistics for three-rung families.
 
-Uniform rung and stratum trials permit the fixed covariance shortcut.
-Singular batches return zero because their residual is zero.
+    Uniform rung and stratum trials permit the fixed covariance shortcut.
+    Singular batches return zero because their residual is zero.
 
     Parameters
     ----------
@@ -270,7 +270,7 @@ def simulated_power(
 ) -> float:
     """Estimate harmonic-stratified CMH power.
 
-Callers pass tier-specific ``alpha`` because defaults differ by tier.
+    Callers pass tier-specific ``alpha`` because defaults differ by tier.
 
     Parameters
     ----------
@@ -325,7 +325,7 @@ def replicates_needed(
 ) -> _SizingScan:
     """Find the smallest replicate count for each power target.
 
-Cache rate values and seed each scan so hits and recomputations agree.
+    Cache rate values and seed each scan so hits and recomputations agree.
 
     Parameters
     ----------
@@ -368,7 +368,7 @@ def fisher_check(
 ) -> float:
     """Cross-check power with pooled two-sided Fisher tests.
 
-Cache discrete counts to limit SciPy calls.
+    Cache discrete counts to limit SciPy calls.
 
     Parameters
     ----------
@@ -414,7 +414,7 @@ def equivalence_replicates(
 ) -> int | None:
     """Find the smallest R for 80% TOST equivalence power.
 
-Simulate both arms at their mean because this tests a true tie.
+    Simulate both arms at their mean because this tests a true tie.
 
     Parameters
     ----------
@@ -463,7 +463,7 @@ def omnibus_power(
 ) -> float:
     """Estimate a family's Tier-1 omnibus-gate power.
 
-Use uniform trials across rungs and strata because generalized CMH requires it.
+    Use uniform trials across rungs and strata because generalized CMH requires it.
 
     Parameters
     ----------
@@ -508,7 +508,7 @@ def omnibus_interaction_power(
 ) -> float:
     """Estimate model-by-information interaction power.
 
-The 60-df test is diagnostic, not a gate. Failed fits count as non-rejections.
+    The 60-df test is diagnostic, not a gate. Failed fits count as non-rejections.
 
     Parameters
     ----------
@@ -570,7 +570,7 @@ The 60-df test is diagnostic, not a gate. Failed fits count as non-rejections.
 def build_primary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
     """Build PRIMARY ladder and information contrasts.
 
-Keep ladder contrasts first because the report slices at that boundary.
+    Keep ladder contrasts first because the report slices at that boundary.
     """
     contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
     for family, rungs in FAMILIES.items():
@@ -588,7 +588,7 @@ Keep ladder contrasts first because the report slices at that boundary.
 def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
     """Build SECONDARY size-matched, cross-family contrasts.
 
-Use only ``intens`` and group by rung level.
+    Use only ``intens`` and group by rung level.
     """
     contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
     for r in range(3):
@@ -675,8 +675,8 @@ def _print_sizing_rows(
 def check_design_invariants() -> None:
     """Check protocol denominators and contrast builders agree.
 
-Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
-``python -O`` removes assertions.
+    Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
+    ``python -O`` removes assertions.
     """
     # Literal protocol denominators prevent silent redesign.
     if N_PRIMARY != 210 or N_SECONDARY != 63:
@@ -832,8 +832,8 @@ def primary_contrasts_table(
 ) -> dict:
     """Build PRIMARY sizing data and recommendation inputs.
 
-Use the maximum powered R, not the ceiling, so censored contrasts do not set
-the recommendation.
+    Use the maximum powered R, not the ceiling, so censored contrasts do not set
+    the recommendation.
 
     Parameters
     ----------
