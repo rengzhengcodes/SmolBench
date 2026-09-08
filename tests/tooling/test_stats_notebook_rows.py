@@ -1,18 +1,4 @@
-"""Section 5 and 6 of ``statistical_analyses.ipynb`` read rows from S3, not from disk.
-
-Both are the shared reader's job: ``rows_source.resolve_rows_dir`` fetches the
-21 lanes' ``verified_rows.jsonl`` from the study's spool prefix, and the same
-function -- one directory over, with the run marker and file name overridden --
-fetches the DojoInit recovery rows the sensitivity pool needs.
-
-These tests drive the extracted cell source against an injected fake S3, the
-way ``tests/deduction/test_deduction_rows_source.py`` drives the scripts: a
-fake ``boto3`` module in ``sys.modules`` runs the cells' production code path
-(no client parameter, no test-only hook) with no network or credentials.
-
-Each cell is extracted by a stable needle and ``exec``ed on its own namespace;
-nothing here runs the notebook end to end.
-"""
+"""Test Sections 5–6 S3 row loading with injected production-path S3."""
 
 from __future__ import annotations
 
@@ -51,12 +37,7 @@ def _cell_row(model: str, theorem: str, verdict: str, rung: str) -> dict:
 
 
 def _fake_bucket(models: tuple[str, ...]) -> dict[str, str]:
-    """Build ``{s3 key: body}`` for a whole study: 21 lanes plus the recovery run.
-
-    Verdicts vary with the lane index so the lanes do not all agree -- an
-    all-identical pool makes every contrast degenerate and would let a report
-    that computed nothing still print.
-    """
+    """Build 21 study lanes and the recovery run; varied verdicts prevent degenerate contrasts."""
     objects: dict[str, str] = {}
     for lane_index, model in enumerate(models):
         rows = [_cell_row(model, theorem,
@@ -78,11 +59,7 @@ def _fake_bucket(models: tuple[str, ...]) -> dict[str, str]:
 
 
 class FakePaginator:
-    """``list_objects_v2`` over an in-memory bucket, in two pages.
-
-    Two pages because real ``ListObjectsV2`` caps a response at 1000 keys; a
-    single-page fake would pass here and hide a reader that truncates.
-    """
+    """Two-page in-memory ``list_objects_v2``; production caps pages at 1000 keys."""
 
     def __init__(self, objects: dict[str, str], calls: list) -> None:
         self._objects = objects
@@ -138,12 +115,7 @@ def modules() -> dict:
 def fake_s3(
     modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> FakeS3:
-    """A fake S3 the cells reach through their own ``import boto3``.
-
-    Injected as a fake ``boto3`` module, not a ``client=`` argument:
-    ``rows_source`` imports boto3 inside the download function, and the
-    notebook must not carry a test-only injection hook.
-    """
+    """Inject fake ``boto3`` because production imports it inside downloads."""
     client = FakeS3(_fake_bucket(modules["ded_pa"].MODELS))
     monkeypatch.setitem(sys.modules, "boto3",
                         types.SimpleNamespace(client=lambda *a, **kw: client))
@@ -164,7 +136,7 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The heavy cell must download both trees through `rows_source` and report both in one run."""
+    """The heavy cell downloads and reports both pools."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     out = capsys.readouterr().out
@@ -175,10 +147,7 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(
     assert len(recovered) == len(modules["ded_pa"].MODELS), recovered
     assert all(f"/{RECOVERY_RUN}/" in k for k in recovered), recovered
 
-    # Asserted on the affirmative label `mode_report` prints when a recovery
-    # pool exists, not the substring "recovery": the no-recovery fallback and
-    # the section's own blurb both name "recovery" too, so a plain substring
-    # check would pass even if the cell fetched rows and dropped them.
+    # The affirmative label avoids matching fallback prose after dropped rows.
     assert "+ DojoInit recovery" in out, out[-2500:]
     assert "Post-recovery pools are NOT shown" not in out, out[-2500:]
     assert namespace["ROWS_DIR"].is_dir()
@@ -192,7 +161,7 @@ def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(
 def test_section_5_reads_the_prefix_the_scripts_read(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3
 ) -> None:
-    """The listing prefixes must be the study's spool prefix and its recovery run, not just "something downloaded"."""
+    """Listings use the study spool and recovery prefixes."""
     spool = modules["rows_source"].spool_prefix()
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
@@ -205,7 +174,7 @@ def test_section_6_reuses_the_rows_section_5_already_fetched(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """hint-vs-noise must reuse section 5's directory, not re-download all 21 lanes via a second `--s3`."""
+    """Hint-vs-noise reuses Section 5 rows."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     downloads_after_section_5 = len(fake_s3.downloads)
@@ -221,7 +190,7 @@ def test_the_heavy_cells_stay_gated(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """With `RUN_HEAVY` false, the cells must touch S3 not at all and say so: the gate must be checked before any download, not after."""
+    """``RUN_HEAVY`` must gate S3 before downloads."""
     namespace = dict(modules, RUN_HEAVY=False)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     _exec_cell(nb, "hint_vs_noise.main(", namespace)
@@ -234,7 +203,7 @@ def test_the_heavy_cells_stay_gated(
 def test_an_incomplete_recovery_fetch_stops_the_cell_by_name(
     nb: dict[str, Any], modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A partial recovery tree must refuse loudly by naming the missing model, not silently compare a short pool against the full headline."""
+    """Incomplete recovery rows must name the missing model, not silently compare pools."""
     objects = _fake_bucket(modules["ded_pa"].MODELS)
     dropped = modules["ded_pa"].MODELS[3]
     del objects[

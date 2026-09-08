@@ -21,7 +21,7 @@ def nb() -> dict:
 
 
 def _section_7_markdown(nb: dict[str, Any]) -> str:
-    """Return section 7's markdown span."""
+    """Return Section 7 markdown."""
     sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
                for cell in nb["cells"]]
     start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
@@ -32,13 +32,13 @@ def _section_7_markdown(nb: dict[str, Any]) -> str:
 
 @pytest.fixture(scope="module")
 def modules() -> dict[str, Any]:
-    """Load the notebook's analysis modules once."""
+    """Load analysis modules once."""
     return load_analysis_modules()
 
 
 @pytest.fixture(scope="module")
 def stats(modules: dict[str, Any]) -> ModuleType:
-    """Return the shared notebook-estimator module."""
+    """Return the shared estimator module."""
     return modules["notebook_stats"]
 
 
@@ -54,12 +54,12 @@ BOOT_CASES = [
 def test_boot_resamples_is_derived_from_the_alpha_in_use(
     stats: ModuleType, alpha: float, expected: int
 ) -> None:
-    """B must follow alpha: 4,000 resamples put only 0.2 draws in the tail read at alpha/2, biasing the endpoint toward EQUIVALENT."""
+    """B follows alpha; 4,000 gives 0.2 alpha/2-tail draws and biases EQUIVALENT."""
     assert stats.boot_resamples(alpha) == expected
 
 
 def test_boot_resamples_meets_its_own_tail_criterion(stats: ModuleType) -> None:
-    """Uncapped, the derived B puts at least TARGET resamples in each tail."""
+    """Uncapped B provides at least TARGET draws per tail."""
     target = stats.BOOT_TAIL_TARGET
     cap = stats.BOOT_RESAMPLE_CAP
     for alpha in (0.1, 0.05, 0.01, 0.001, 0.0005):
@@ -71,7 +71,7 @@ def test_boot_resamples_meets_its_own_tail_criterion(stats: ModuleType) -> None:
 def test_boot_resamples_warns_when_it_caps(
     stats: ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A capped B must warn: silently returning the cap would let a reader believe the endpoint resolves alpha when it does not."""
+    """Capped B warns because the cap does not resolve alpha."""
     alpha = 2 * 0.05 / 966
     stats._BOOT_CAP_WARNED.clear()
     capsys.readouterr()
@@ -87,7 +87,7 @@ def test_boot_resamples_warns_when_it_caps(
 def test_paired_diff_ci_defaults_to_the_derived_count(
     stats: ModuleType, modules: dict[str, Any]
 ) -> None:
-    """The default must be the derivation, not a second hardcoded number."""
+    """The default uses the derivation, not a second constant."""
     import numpy as np
 
     error_bars = modules["error_bars"]
@@ -114,7 +114,7 @@ def test_paired_diff_ci_defaults_to_the_derived_count(
 def test_synth_iid_path_takes_exactly_one_draw(
     stats: ModuleType, modules: dict[str, Any]
 ) -> None:
-    """`cluster_sd=0` must take exactly one `random((n_seeds, n_harm))` draw and leave the generator there: an extra draw would shift every later case in the shared stream and could flip an EQUIVALENT assertion."""
+    """``cluster_sd=0`` takes one draw; extras shift the shared stream and can flip EQUIVALENT."""
     import numpy as np
 
     n_harm = modules["ind_pa"].N_HARMONICS
@@ -131,7 +131,7 @@ def test_synth_iid_path_takes_exactly_one_draw(
 def test_clustered_synth_reaches_the_target_design_effect(
     stats: ModuleType, modules: dict[str, Any]
 ) -> None:
-    """The clustered arm must measure as clustered by the live `design_effect` metric, not just be an i.i.d. case with a different name."""
+    """The clustered arm must measure as clustered by live ``design_effect``."""
     import numpy as np
 
     paired = modules["paired"]
@@ -155,7 +155,7 @@ def test_clustered_synth_reaches_the_target_design_effect(
 def test_clustering_inflates_the_decided_rate_on_a_true_null(
     stats: ModuleType, modules: dict[str, Any]
 ) -> None:
-    """The diagnostic must be able to come out the other way: with an arm-specific replicate effect, a true null is DECIDED far more often than alpha allows."""
+    """A clustered true null is DECIDED more often than alpha allows."""
     n_sim = 60
     kwargs = {"n_harm": modules["ind_pa"].N_HARMONICS,
               "paired": modules["paired"], "error_bars": modules["error_bars"]}
@@ -177,7 +177,7 @@ def test_clustering_inflates_the_decided_rate_on_a_true_null(
 
 
 def test_self_test_asserts_no_equivalence_under_clustering(nb: dict[str, Any]) -> None:
-    """The clustered case must be reported, never asserted: asserting EQUIVALENT on clustered data failed 38 times in 60 at deff 3.19."""
+    """Report clustered cases: EQUIVALENT assertions failed 38/60 at deff 3.19."""
     import ast
 
     source = cell_source(nb, "self-test PASSED")
@@ -191,7 +191,7 @@ def test_self_test_asserts_no_equivalence_under_clustering(nb: dict[str, Any]) -
 
 
 def test_section_7_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
-    """Section 7 must name `design_effect` and the PR #12 parallel, so a reader can check the clustered case against the study's own numbers."""
+    """Section 7 names ``design_effect`` and the PR #12 parallel."""
     joined = _section_7_markdown(nb)
     for token in ("design_effect", "multiplicity_sim", "PR #12"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
@@ -200,7 +200,7 @@ def test_section_7_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
 def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(
     stats: ModuleType, modules: dict[str, Any]
 ) -> None:
-    """At the posterior alpha, no B on the grid reaches DRIFT_TOL: 500,000 resamples put only 25.9 draws in a tail that wants 50, which is why the derived count is capped rather than obeyed."""
+    """No grid B reaches DRIFT_TOL: 500,000 gives 25.9 tail draws, not 50, so cap B."""
     import numpy as np
 
     error_bars = modules["error_bars"]
@@ -223,7 +223,7 @@ def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(
 
 
 def test_section_7_markdown_explains_the_block_count_limit(nb: dict[str, Any]) -> None:
-    """B buys Monte-Carlo precision only; R = 30 blocks bound what any B can say."""
+    """B adds Monte-Carlo precision; R = 30 bounds inference."""
     joined = _section_7_markdown(nb)
     for token in ("B_GRID", "DRIFT_TOL", "R = 30"):
         assert token in joined, f"section 7 markdown never mentions {token!r}"
@@ -233,7 +233,7 @@ def test_section_7_markdown_explains_the_block_count_limit(nb: dict[str, Any]) -
 def calibration(
     nb: dict[str, Any], modules: dict[str, Any], stats: ModuleType
 ) -> tuple[dict, str]:
-    """Execute the calibration cell once and capture its output."""
+    """Execute the calibration cell once."""
     import contextlib
     import io
 
@@ -254,7 +254,7 @@ def calibration(
 def test_calibration_runs_at_the_studys_own_R_and_alpha(
     calibration: tuple[dict[str, Any], str], modules: dict[str, Any]
 ) -> None:
-    """The calibration's R and alpha must be the study's own, read from live sources: a different alpha is a different question with the same name."""
+    """Use the study R and alpha; another alpha answers another question."""
     namespace, _out = calibration
     assert namespace["STUDY_R"] == modules["run_study"].N_REPLICATES
     rows = namespace["CALIBRATION_ROWS"]
@@ -266,7 +266,7 @@ def test_calibration_runs_at_the_studys_own_R_and_alpha(
 
 
 def test_calibration_reports_both_numbers(calibration: tuple[dict[str, Any], str]) -> None:
-    """Both headline numbers (the deff ceiling and the study-shaped rate) must reach the reader's screen, not just the namespace."""
+    """Print the deff ceiling and study-shaped rate."""
     namespace, out = calibration
     ceiling = namespace["CALIBRATED_DEFF_CEILING"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -275,7 +275,7 @@ def test_calibration_reports_both_numbers(calibration: tuple[dict[str, Any], str
 
 
 def test_calibration_states_its_detection_floor(calibration: tuple[dict[str, Any], str]) -> None:
-    """"No measured inflation" is not "calibrated to alpha": the cell must state the detection floor, or the ceiling reads stronger than the evidence behind it."""
+    """State the detection floor; no measured inflation does not calibrate alpha."""
     _namespace, out = calibration
     lowered = out.lower()
     assert "detect" in lowered, out[-1500:]
@@ -286,7 +286,7 @@ def test_calibration_states_its_detection_floor(calibration: tuple[dict[str, Any
 def test_the_ceiling_sits_below_the_studys_own_design_effect(
     calibration: tuple[dict[str, Any], str]
 ) -> None:
-    """The substantive claim: at the study's own deff (~3, from `CLUSTER_SD`'s calibration), the classifier's DECIDED is not valid."""
+    """At study deff ~3, ``DECIDED`` is invalid."""
     namespace, _out = calibration
     ceiling = namespace["CALIBRATED_DEFF_CEILING"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -298,7 +298,7 @@ def test_the_ceiling_sits_below_the_studys_own_design_effect(
 def test_the_studys_shaped_rate_is_inflated_by_orders_of_magnitude(
     calibration: tuple[dict[str, Any], str]
 ) -> None:
-    """The measured rate at the study-shaped deff, against the alpha it claims."""
+    """Measure the study-shaped rate against claimed alpha."""
     namespace, _out = calibration
     alpha = namespace["ALPHA_POSTERIOR"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -310,11 +310,10 @@ def test_false_decided_rate_can_come_out_the_other_way(
     calibration: tuple[dict[str, Any], str], stats: ModuleType,
     modules: dict[str, Any]
 ) -> None:
-    """The estimator must be able to report no inflation (and does, on i.i.d. draws): a measurement that cannot return the negative answer is not one."""
+    """The estimator can report no inflation on i.i.d. draws."""
     namespace, _out = calibration
-    # 400 draws, not 200: at the study-shaped rate (~2%) a 200-draw control has
-    # a few percent chance of coming back empty, which would misread as "the
-    # estimator cannot see clustering" rather than as thin sampling.
+    # Use 400 draws: a 200-draw ~2% control has a few-percent empty chance,
+    # which would mimic thin sampling.
     kwargs = {"n_sim": 400, "r": modules["run_study"].N_REPLICATES,
               "alpha": namespace["ALPHA_POSTERIOR"],
               "n_harm": modules["ind_pa"].N_HARMONICS, "paired": modules["paired"]}
@@ -327,7 +326,7 @@ def test_false_decided_rate_can_come_out_the_other_way(
 
 
 def test_the_calibration_prints_beside_the_verdict_table(nb: dict[str, Any]) -> None:
-    """The verdict table and its calibration must read as one exhibit: same section, no code cell between them."""
+    """Keep the verdict table and calibration adjacent."""
     sources = ["".join(cell["source"]) for cell in nb["cells"]]
     table = next(i for i, s in enumerate(sources) if "verdict_distribution =" in s)
     calibration = next(i for i, s in enumerate(sources) if "false_decided_rate =" in s)
@@ -341,7 +340,7 @@ def test_the_calibration_prints_beside_the_verdict_table(nb: dict[str, Any]) -> 
 def test_section_7_markdown_states_the_validity_rule_without_a_literal(
     nb: dict[str, Any], calibration: tuple[dict[str, Any], str]
 ) -> None:
-    """The markdown states the rule, not the number: a hardcoded threshold would keep reading as authoritative after a re-run moved it."""
+    """Markdown states the rule because reruns move hardcoded thresholds."""
     namespace, _out = calibration
     joined = _section_7_markdown(nb)
     lowered = joined.lower()

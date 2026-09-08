@@ -1,27 +1,13 @@
 # SmolBench
 
-SmolBench is a benchmark suite for smol manipulation of language. It
-measures how the representation of positive utility information in a
-prompt's context affects LLM performance. Two families of benchmarks live
-in this repository:
+SmolBench measures how positive-utility context representation affects LLM performance.
 
-- **Induction** (`smolbench/induction/`): asks a model to infer a rule
-  from examples. The `periodic` benchmark uses a generalized FizzBuzz
-  sequence, comparing an intensional (compact rule) representation
-  against an extensional (fully enumerated) one, plus a token-matched
-  noise-padded control. See `smolbench/induction/README.md` for the full
-  task design.
-- **Deduction** (`smolbench/deduction/lean/`): asks a model to derive a
-  valid consequence from given premises, under fixed rules of inference.
-  Its one experiment to date, the Lean 4 theorem-proving eval, measures
-  next-tactic completion accuracy over LeanDojo Benchmark 4 / Mathlib4
-  theorems as the model gets progressively more proof-state and premise
-  context. See `notebooks/deduction/README.md` for the current study.
+- **Induction** (`smolbench/induction/`): generalized FizzBuzz rule inference with compact, enumerated, and token-matched noise contexts.
+- **Deduction** (`smolbench/deduction/lean/`): Lean 4 next-tactic completion as proof-state and premise context grows.
 
 ## Package layout
 
-An annotated tree of the whole repository. Each subsystem has its own
-README with the full detail; this section is the map.
+Repository map.
 
 ```
 smolbench/                 the installable library
@@ -98,24 +84,15 @@ tests/                     the offline pytest suite (see tests/README.md), zero 
 
 ## Install
 
-SmolBench uses `uv` for dependency management. Install the environment
-(`.venv`, Python 3.12, pinned by `.python-version` because `lean-dojo`
-pins `Requires-Python <3.13`) with:
+Install the Python 3.12 environment; `lean-dojo` pins `Requires-Python <3.13`.
 
 ```bash
 uv sync --all-extras
 ```
 
-This builds a single `.venv` holding every extra, including the Lean
-verification path's `lean-interact` dependency. `lean-dojo` is still
-installed too, but for corpus tracing and premise slicing, not verification.
+This installs `lean-interact` for verification; `lean-dojo` remains for corpus tracing and premise slicing.
 
-`pyproject.toml` declares four optional extras: `dev` (pytest, linters),
-`aws` (boto3/botocore, for the EC2 and SageMaker/Bedrock providers),
-`lean` (the Lean theorem-proving stack), and `notebook` (python-dotenv, scipy,
-statsmodels and other notebook-only dependencies). `smolbench` itself
-requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
-`huggingface-hub`, and `tokenizers`.
+Extras: `dev`, `aws`, `lean`, and `notebook`. Base dependencies are Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`, `huggingface-hub`, and `tokenizers`.
 
 ## Run the tests
 
@@ -123,12 +100,6 @@ requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
 ```
 
-The suite needs no AWS credentials or network access: it drives the real
-quiz-generation, provider-dispatch, and grading code paths against a local
-OpenAI-compatible stub server. This prints `1204 passed, 5 skipped`.
+The suite uses a local OpenAI-compatible stub, so it needs no AWS credentials or network access. This prints `1204 passed, 5 skipped`.
 
-All 5 skips are the same opt-in gate: `tests/deduction/test_s3_archive.py`
-pins archived evidence that lives only on S3, so it skips unless
-`SMOLBENCH_ARCHIVE_S3` is set. See `notebooks/ARCHIVE.md` under `## S3` for
-the worked invocation, and its `## GitHub releases` section for the archive
-sha256s.
+All 5 skips are `tests/deduction/test_s3_archive.py`: archived S3 evidence requires `SMOLBENCH_ARCHIVE_S3`. `notebooks/ARCHIVE.md` documents `## S3` and archive sha256s.

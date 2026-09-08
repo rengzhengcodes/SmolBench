@@ -1,9 +1,6 @@
-"""Shared machinery for the ``statistical_analyses.ipynb`` cell tests.
+"""Shared helpers for ``statistical_analyses.ipynb`` cell tests.
 
-Notebook integration checks address cells by stable content while estimator
-tests import their shared module directly.
-
-Not named ``test_*``: it holds no tests and must not be collected.
+Cells use stable content because indexes can silently target another cell.
 """
 
 from __future__ import annotations
@@ -27,12 +24,7 @@ def load_notebook() -> dict:
 
 
 def cell_source(nb: dict, needle: str) -> str:
-    """Return the source of the ONE cell containing `needle`.
-
-    Cells are addressed by content, never by index: the notebook gains and
-    loses cells, and an index-keyed test would silently start asserting about
-    a different cell instead of failing.
-    """
+    """Return the unique cell containing `needle`; indexes can silently drift."""
     hits = [c for c in nb["cells"] if needle in "".join(c["source"])]
     assert len(hits) == 1, f"expected exactly one cell containing {needle!r}, got {len(hits)}"
     return "".join(hits[0]["source"])
@@ -48,16 +40,9 @@ def _load(name: str, rel: str) -> ModuleType:
 
 
 def load_analysis_modules() -> dict:
-    """Execute the notebook's OWN loader cell and return the namespace it binds.
+    """Execute the notebook loader cell and return its namespace.
 
-    Exec'd rather than mirrored: a hand-copied loader could drift from the
-    bind order the notebook actually runs, and siblings import
-    ``power_analysis`` by bare name so that order is load-bearing.
-
-    Run from the repo root -- the cell's ``find_repo()`` anchors the tree by
-    walking up from cwd -- with os.environ and sys.path snapshotted and
-    restored: ``load_dotenv`` writes keys that cannot be named in advance, so
-    a per-key monkeypatch would not cover them.
+    Execute it to preserve load order; restore process state because ``load_dotenv`` mutates unknown keys.
     """
     namespace: dict = {}
     saved_modules = {k: sys.modules.get(k)

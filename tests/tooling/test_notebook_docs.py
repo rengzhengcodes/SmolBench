@@ -1,19 +1,4 @@
-"""``notebooks/README.md`` and ``notebooks/ARCHIVE.md``, pinned against the code.
-
-Entry points a reader hits before any script: ARCHIVE.md says where artifacts
-live on S3, the README says what each study directory holds and which paths
-may not move.
-
-* retirement writes a ``.superseded`` S3 marker key or renames the local file
-  to ``rep_<seed>.SUPERSEDED-<run_ts>.yaml``; readers skip retired runs, then
-  earliest-wins over what survives.
-* ``regrade.py`` writes a replacement carrying ``regraded_from`` and
-  supersedes the run it replaces.
-* deduction analysis reads rows straight from S3 via ``rows_source.py``.
-
-Marker spellings below are imported from the store module, not typed here, so
-a doc quoting a marker the code no longer writes fails this file.
-"""
+"""Pin notebook README and archive claims against code."""
 
 from __future__ import annotations
 
@@ -38,7 +23,7 @@ def readme() -> str:
 
 
 def test_archive_documents_both_supersede_spellings(archive: str) -> None:
-    """Both supersede spellings must be named: quoting only one leaves the other looking like corruption."""
+    """Both supersede spellings must be documented."""
     from smolbench.evals.results_store import (
         LOCAL_SUPERSEDED_INFIX,
         S3_SUPERSEDED_SUFFIX,
@@ -52,7 +37,7 @@ def test_archive_documents_both_supersede_spellings(archive: str) -> None:
 
 
 def test_both_docs_describe_the_regrade_path(archive: str, readme: str) -> None:
-    """`regraded_from` makes a regraded run traceable to the run it replaced; both docs must mention it."""
+    """Both docs name ``regraded_from`` for replacement traceability."""
     from smolbench.evals.quiz import Marks
 
     assert "regraded_from" in Marks.__dataclass_fields__, \
@@ -70,7 +55,7 @@ def test_the_docs_name_the_direct_s3_readers(readme: str) -> None:
 
 
 def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> None:
-    """A reader who cannot find the recovery-run prefix here cannot verify what the notebook and audit script both read."""
+    """Archive locates recovery rows read by notebook and audit."""
     from tests._paths import SCRIPTS
 
     audit = (SCRIPTS / "results" / "audit_lean_pinning.py").read_text()
@@ -82,7 +67,7 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> N
 
 
 def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) -> None:
-    """ARCHIVE.md must name the re-collection prefix `rows_source.spool_prefix()` actually defaults to, not the retired pre-cutoff one."""
+    """Archive names the live ``rows_source.spool_prefix()`` default."""
     import importlib.util
     import sys
 
@@ -98,15 +83,13 @@ def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) 
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme: str) -> None:
-    """No path in the README may point at a file the tree does not have (counterpart to the root README's own map check)."""
+    """README file paths resolve in the tree."""
     named = sorted(set(re.findall(r"[\w./-]*[\w-]+\.(?:py|ipynb|md|yaml|toml)", readme)))
     assert named, "the README names no files at all"
-    skip = {"pyproject.toml"}                     # named as a concept, at the root
+    skip = {"pyproject.toml"}  # Named as a root-level concept.
 
     def resolves(name: str) -> bool:
-        # A placeholder segment (``notebooks/<study>/run_study.py``) truncates
-        # the token at the ``>``, leaving a leading "/": resolve what is left
-        # by basename rather than reporting a ghost the README never wrote.
+        # Placeholder paths truncate at ``>``; resolve the remaining basename.
         name = name.lstrip("/")
         if "<" in name or name in skip:
             return True
