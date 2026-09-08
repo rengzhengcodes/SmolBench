@@ -45,6 +45,7 @@ from power_analysis import (  # noqa: E402
     build_within_family_contrasts,
     grade_verdicts,
     mcnemar_exact_p,
+    pooled_discordant_counts,
     reject_unverified_verdicts,
 )
 
@@ -275,7 +276,7 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
     return dict(diff=hat, lo=lo, hi=hi, se=float(star.std(ddof=1)), fallback=fb)
 
 
-def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
+def paired_mcnemar(blocks: dict, a: str, b: str) -> tuple:
     """Compute discordant counts and the exact McNemar p over all paired cells.
 
     Treats each cell as independent, so this is a DESCRIPTIVE column beside the
@@ -283,8 +284,6 @@ def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
 
     Parameters
     ----------
-    models : list[str]
-        Models in the paired pool.
     blocks : dict
         Theorem blocks containing paired cell verdicts.
     a : str
@@ -298,14 +297,7 @@ def paired_mcnemar(models: list[str], blocks: dict, a: str, b: str) -> tuple:
         (nb, nc, p): cells where `a` succeeds and `b` fails, the reverse, and the
         exact two-sided McNemar p.
     """
-    nb = nc = 0
-    for cells in blocks.values():
-        for cellmap in cells.values():
-            va, vb = cellmap[a], cellmap[b]
-            if va and not vb:
-                nb += 1
-            elif vb and not va:
-                nc += 1
+    nb, nc = pooled_discordant_counts(blocks, a, b)
     return nb, nc, mcnemar_exact_p(nb, nc)
 
 
@@ -650,15 +642,16 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
           f"{'percentile':>17s} {'own-lane':>9s}")
     print("-" * 92)
     order = [m for fam in FAMILIES.values() for m in fam]
+    jmap = {model: j for j, model in enumerate(models)}
     for m in order:
-        j = models.index(m)
+        j = jmap[m]
         r = bs["marginal"][j]
         flag = " *pct" if r["fallback"] else ""
         print(f"{m:30s} {r['rate']:7.3f} [{r['lo']:.3f}, {r['hi']:.3f}] "
               f"{r['hi'] - r['lo']:7.3f} [{r['pct_lo']:.3f}, {r['pct_hi']:.3f}] "
               f"{per_lane.get(m, float('nan')):9.3f}{flag}")
     if meta:
-        gaps = {m: abs(per_lane[m] - bs["marginal"][models.index(m)]["rate"])
+        gaps = {m: abs(per_lane[m] - bs["marginal"][jmap[m]]["rate"])
                 for m in order if m in per_lane}
         worst = max(gaps, key=gaps.get)
         denoms = sorted({meta["own_denominator"][m] for m in order})
@@ -679,7 +672,7 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
           f"factor.")
 
     results = {"n_theorem_blocks": n_thm, "n_cells": n_cells, "B": B,
-               "marginals": {m: bs["marginal"][models.index(m)] for m in models},
+               "marginals": {m: bs["marginal"][jmap[m]] for m in models},
                "contrasts": {}}
 
     for tier, contrasts, corrected in (
@@ -689,8 +682,8 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
         p_block = block_signflip_p(succ, models, contrasts)
         rows = []
         for i, (label, a, b) in enumerate(contrasts):
-            ci = diff_ci(bs, models.index(a), models.index(b))
-            nb, nc, p_cell = paired_mcnemar(models, blocks, a, b)
+            ci = diff_ci(bs, jmap[a], jmap[b])
+            nb, nc, p_cell = paired_mcnemar(blocks, a, b)
             rows.append((label, a, b, ci, nb, nc, float(p_block[i]), p_cell))
         pv = np.array([r[6] for r in rows])          # PRIMARY inference
         pv_cell = np.array([r[7] for r in rows])     # descriptive

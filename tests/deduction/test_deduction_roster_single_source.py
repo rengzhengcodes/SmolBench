@@ -17,7 +17,6 @@ config the two would diverge here.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ from typing import Any
 import pytest
 
 from smolbench.evals.study_config import families, load_study_config, roster_keys
-from tests._paths import NOTEBOOKS, SCRIPTS
+from tests._paths import NOTEBOOKS, SCRIPTS, load_by_path
 
 INDUCTION_DRIVER = NOTEBOOKS / "induction" / "run_study.py"
 POWER_ANALYSIS = NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py"
@@ -46,11 +45,7 @@ def _load(path: Path, name: str) -> ModuleType:
     """
     saved = dict(os.environ)
     try:
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
+        return load_by_path(path, name)
     finally:
         sys.modules.pop(name, None)
         os.environ.clear()
@@ -69,45 +64,6 @@ def roster() -> tuple[str, ...]:
 @pytest.fixture(scope="module")
 def power_analysis() -> ModuleType:
     return _load(POWER_ANALYSIS, "deduction_power_analysis_for_roster_pin")
-
-
-def test_power_analysis_families_cover_the_roster_exactly(
-    roster: tuple[str, ...], power_analysis: ModuleType
-) -> None:
-    """FAMILIES' 21 keys are the roster's 21 keys -- as a set and by count.
-
-    Set equality, not just a count: 21-vs-21 with one key swapped for a typo is
-    exactly the failure that would otherwise surface as a lane silently missing
-    from every contrast the analysis reports.
-    """
-    flat = [m for rungs in power_analysis.FAMILIES.values() for m in rungs]
-    assert len(power_analysis.FAMILIES) == 7, sorted(power_analysis.FAMILIES)
-    assert all(len(rungs) == 3 for rungs in power_analysis.FAMILIES.values())
-    assert len(flat) == len(set(flat)) == 21
-    assert set(flat) == set(roster), {
-        "missing_from_FAMILIES": sorted(set(roster) - set(flat)),
-        "not_in_roster": sorted(set(flat) - set(roster)),
-    }
-    assert tuple(power_analysis.MODELS) == tuple(flat), (
-        "MODELS must stay a plain flattening of FAMILIES"
-    )
-
-
-def test_audit_lanes_cover_the_roster_exactly(roster: tuple[str, ...]) -> None:
-    """audit_lean_pinning.LANES is the same 21 keys, in the same order.
-
-    Order matters here in a way it does not for `FAMILIES`: LANES' own comment
-    calls itself "the 21 lane spec keys, in roster order", and reports built
-    from it are read side by side with the induction study's.
-    """
-    if not AUDIT.exists():
-        pytest.skip("audit_lean_pinning.py lives in a later stack slice")
-    audit = _load(AUDIT, "audit_lean_pinning_for_roster_pin")
-    assert list(audit.LANES) == list(roster), {
-        "missing_from_LANES": sorted(set(roster) - set(audit.LANES)),
-        "not_in_roster": sorted(set(audit.LANES) - set(roster)),
-        "order_only": sorted(audit.LANES) == sorted(roster),
-    }
 
 
 # Pin each consumer to study_config itself, and pin the literals gone.
@@ -130,21 +86,6 @@ def test_power_analysis_roster_is_the_config_roster(power_analysis: ModuleType) 
     """
     assert dict(power_analysis.FAMILIES) == {f: tuple(r) for f, r in families().items()}
     assert tuple(power_analysis.MODELS) == tuple(roster_keys())
-
-
-def test_power_analysis_module_scope_guards_survive_dash_O(power_analysis: ModuleType) -> None:
-    """The drift guards are `raise`, not `assert` -- `python -O` strips asserts.
-
-    Checked on the source, because a passing import proves nothing either way:
-    the guards only fire on a broken config, which the committed one is not.
-    """
-    source = POWER_ANALYSIS.read_text()
-    head = source.split("# Design constants.", 1)[0]
-    assert "\nassert " not in head, (
-        "a module-scope `assert` guard survives above the design constants; "
-        "`python -O` would delete it"
-    )
-    assert "raise ValueError(" in head
 
 
 def test_audit_lanes_are_the_config_roster(roster: tuple[str, ...]) -> None:

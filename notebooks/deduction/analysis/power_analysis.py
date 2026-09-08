@@ -34,7 +34,6 @@ import functools
 import hashlib
 import json
 import sys
-import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import combinations
@@ -63,7 +62,6 @@ from _power_common import (
     POWER_TARGETS,
     SEED,
     fmt_r,
-    results_dir,
 )
 
 from smolbench.evals.study_config import families as _study_families
@@ -72,8 +70,9 @@ from smolbench.evals.study_config import roster_keys as _study_roster_keys
 from rows_source import (  # noqa: E402
     S3_BUCKET,
     _banner,
-    download_scaling_rows,
+    add_source_args,
     reject_superseded,
+    resolve_rows_dir,
     spool_prefix,
 )
 
@@ -139,8 +138,6 @@ ALPHA_PRIMARY = ALPHA / N_PRIMARY
 N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
-
-RESULTS_DIR = results_dir(__file__, up=1)
 
 _Contrast = tuple[str, str, str]  # (label, model_a, model_b)
 
@@ -636,15 +633,17 @@ def build_cross_family_contrasts() -> list:
     return contrasts
 
 
-if len(build_within_family_contrasts()) != N_PRIMARY:
+_WITHIN_FAMILY_CONTRASTS = build_within_family_contrasts()
+_CROSS_FAMILY_CONTRASTS = build_cross_family_contrasts()
+if len(_WITHIN_FAMILY_CONTRASTS) != N_PRIMARY:
     raise ValueError(
         f"N_PRIMARY={N_PRIMARY} but the within-family builder returns "
-        f"{len(build_within_family_contrasts())} contrasts; ALPHA_PRIMARY is frozen"
+        f"{len(_WITHIN_FAMILY_CONTRASTS)} contrasts; ALPHA_PRIMARY is frozen"
     )
-if len(build_cross_family_contrasts()) != N_SECONDARY:
+if len(_CROSS_FAMILY_CONTRASTS) != N_SECONDARY:
     raise ValueError(
         f"N_SECONDARY={N_SECONDARY} but the cross-family builder returns "
-        f"{len(build_cross_family_contrasts())} contrasts; ALPHA_SECONDARY is frozen"
+        f"{len(_CROSS_FAMILY_CONTRASTS)} contrasts; ALPHA_SECONDARY is frozen"
     )
 
 
@@ -1131,38 +1130,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument(
-        "--s3",
-        action="store_true",
-        help=(
-            f"Download this study's run files from s3://{S3_BUCKET}/<spool-prefix> "
-            "into a temp dir and analyze those (preferring verified_rows.jsonl, "
-            "falling back to all_rows.jsonl per run -- see the module docstring's "
-            "warning about \"unverified\" verdicts). Overrides --results-dir. "
-            "<spool-prefix> is set by "
-            "--spool-prefix, below."
-        ),
-    )
-    p.add_argument(
-        "--spool-prefix",
-        default=None,
-        help=(
-            "S3 key prefix the deduction lanes spooled under (default: "
-            "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset). "
-            "Resolved after argument parsing, not here. Ignored unless --s3 "
-            "is passed."
-        ),
-    )
-    p.add_argument(
-        "--results-dir",
-        type=Path,
-        default=RESULTS_DIR,
-        help=(
-            "Local results directory to read "
-            "<results-dir>/runs/scaling_*/verified_rows.jsonl from "
-            "(default: %(default)s). Ignored if --s3 is passed."
-        ),
-    )
+    add_source_args(p)
     p.add_argument(
         "--models",
         type=str,
@@ -1201,47 +1169,17 @@ def main(argv: list[str] | None = None) -> int:
         tuple(m.strip() for m in args.models.split(",")) if args.models else None
     )
 
-    if args.s3:
-        # Resolved HERE, after parse_args: not a module constant and not an
-        # argparse default, so a late LEAN_SPOOL_PREFIX takes effect.
-        deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
-        tmp_dir = Path(tempfile.mkdtemp(prefix="smolbench_deduction_power_"))
-        print(
-            f"Downloading run files from s3://{S3_BUCKET}/{deduction_prefix} into "
-            f"{tmp_dir} ...",
-            file=sys.stderr,
-        )
-        # `download_scaling_rows`, not `rows_source.resolve_rows_dir`: this script
-        # needs the row-file LIST (it reports how many runs loaded) and must return 1
-        # on an empty archive rather than raise. Both candidates are passed to keep
-        # this script's documented all_rows.jsonl fallback -- the candidate name is
-        # also the landed basename, so `load_joint_cells`'s unverified-input banner
-        # still fires on it. `load_joint_cells` keys every model off the row's own
-        # ``model`` field and never reads a directory name, so this same downloader
-        # also serves `error_bars.py`/`hint_vs_noise.py`.
-        row_files = download_scaling_rows(
-            tmp_dir,
-            prefix=deduction_prefix,
-            candidates=("verified_rows.jsonl", "all_rows.jsonl"),
-        )
-        if not row_files:
-            print(
-                f"No run files found under s3://{S3_BUCKET}/{deduction_prefix} -- "
-                f"nothing to analyze.",
-                file=sys.stderr,
-            )
-            return 1
-    else:
-        row_files = sorted(args.results_dir.glob("runs/scaling_*/verified_rows.jsonl"))
-        if not row_files:
-            print(
-                f"No verified_rows.jsonl files found under "
-                f"{args.results_dir}/runs/scaling_*/ -- nothing to analyze. Pass "
-                f"--s3 to download and analyze the live S3-backed runs, or "
-                f"--results-dir to point at a different local results tree.",
-                file=sys.stderr,
-            )
-            return 1
+    rows_dir = resolve_rows_dir(
+        rows_dir=args.rows_dir,
+        s3_prefix=None if args.s3 is None else (args.s3 or spool_prefix()),
+        candidates=("verified_rows.jsonl", "all_rows.jsonl"),
+    )
+    row_files = sorted(rows_dir.glob("*/verified_rows.jsonl"))
+    verified_dirs = {path.parent for path in row_files}
+    row_files.extend(sorted(
+        path for path in rows_dir.glob("*/all_rows.jsonl")
+        if path.parent not in verified_dirs
+    ))
 
     models, blocks, prompt_rungs = load_joint_cells(row_files, models=models_filter)
     if not blocks:

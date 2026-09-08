@@ -15,7 +15,6 @@ installed by default); ``boto3`` is imported lazily inside
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import tempfile
 from collections.abc import Iterable
@@ -25,7 +24,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from smolbench.evals.retired_markers import is_retired  # noqa: E402
+from smolbench.evals.spool import spool_prefix  # noqa: E402
 from smolbench.evals.study_config import load_study_config  # noqa: E402
+from smolbench.evals import _aws  # noqa: E402
 
 # The archive's address.
 # Read from the committed study_config.toml (same file the fleet driver and
@@ -36,21 +37,6 @@ from smolbench.evals.study_config import load_study_config  # noqa: E402
 # -- see `spool_prefix`.
 S3_BUCKET = load_study_config().results.bucket
 S3_REGION = load_study_config().results.region
-
-#: Duplicated from `smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`
-#: rather than imported: that module reaches the provider and corpus stacks.
-_DEDUCTION_SPOOL_PREFIX = "deduction_postcutoff/runs"
-
-
-def spool_prefix() -> str:
-    """The ``LEAN_SPOOL_PREFIX`` override, or `_DEDUCTION_SPOOL_PREFIX`; never trailing "/".
-
-    Resolved per call, never at import or as an argparse default, so a late
-    override takes effect.
-    """
-    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
-    return raw.rstrip("/") if raw else _DEDUCTION_SPOOL_PREFIX
-
 
 # The retired-artifact guard.
 def _banner(title: str, lines: Iterable[str]) -> str:
@@ -133,9 +119,7 @@ def download_scaling_rows(
     if client is None:
         # Lazy, and skipped entirely for an injected client: keeps every
         # non-S3 code path in these scripts boto3-free.
-        import boto3
-
-        client = boto3.client("s3", region_name=S3_REGION)
+        client = _aws.fresh_client("s3", S3_REGION)
 
     paginator = client.get_paginator("list_objects_v2")
 

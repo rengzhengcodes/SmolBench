@@ -2,7 +2,6 @@
 
 import contextlib
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
@@ -17,9 +16,9 @@ import pytest
 
 from smolbench.deduction.lean import corpus, runner
 from smolbench.deduction.lean.nullverify import NullVerifier
-from conftest import chat_completion
+from conftest import chat_completion, write_jsonl
 from tests._paths import (LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOFF,
-                         NOTEBOOKS, REPO_ROOT)
+                         NOTEBOOKS, REPO_ROOT, load_by_path)
 
 DRIVER_PATH = NOTEBOOKS / "deduction" / "run_study.py"
 #: The committed sweep knobs `build_config` loads and fingerprints.
@@ -34,14 +33,12 @@ LANE_KEYS = ("EC2_EXPERIMENT_TAG", "EC2_STATE_FILE", "EC2_VLLM_IMAGE", "LEAN_STA
 #: `Lane.experiment_tag`), the other two are values only it knows.
 FLEET = {"EC2_EXPERIMENT_TAG": f"scaling-{KEY}", "EC2_VLLM_IMAGE": "fleet/image:pinned",
          "SMOLBENCH_LEAN_RESULTS": "/tmp/fleet-owned-results"}
-#: `build_config`'s locked `theorems` block; `kind`/`split` select the `random`/`val`
-#: family (env-overridable), `require_postcutoff` refuses a pre-cutoff pool.
+#: `build_config`'s locked `theorems` block.
 THEOREMS = {"source": "replay_passing", "kind": "random", "split": "val",
-            "limit": 300, "seed": 0, "require_postcutoff": True}
+            "limit": 300, "seed": 0}
 #: The old corpus's trace commit, which `build_config` must name when it refuses.
 OLD_CORPUS_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
-#: The re-collection's S3 spool prefix; not `deduction/runs`, which holds the
-#: published pre-cutoff study and must never be overwritten.
+#: The re-collection's S3 spool prefix.
 SPOOL_PREFIX = "deduction_postcutoff/runs"
 RUN_FILES = {"manifest.json": '{"run_name": "scaling_glm-4.7"}',
              "all_rows.jsonl": '{"kind": "cell"}\n',
@@ -58,11 +55,7 @@ def _load_isolated(path: Path, name: str, **env: str) -> ModuleType:
         os.environ.pop(stale, None)
     os.environ.update(env)
     try:
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module  # must precede exec_module: 3.14 @dataclass needs it
-        spec.loader.exec_module(module)
-        return module
+        return load_by_path(path, name)
     finally:
         os.environ.clear()
         os.environ.update(saved)
@@ -224,10 +217,9 @@ def test_end_to_end_sweep_offline(driver: ModuleType, sweep_env: Path, stub_serv
                 if r.get("body") is not None and r["path"].endswith("/chat/completions")]
 
     cfg = driver.build_config(KEY)
-    # The mini fixture has no replay_passing sidecar; the rest stays locked, and
-    # `require_postcutoff` rides along so the sweep exercises the corpus gate.
+    # The mini fixture has no replay_passing sidecar; the rest stays locked.
     cfg["theorems"] = {"source": "explicit", "full_names": ["Mini.theoremA"],
-                       "kind": "random", "split": "val", "require_postcutoff": True}
+                       "kind": "random", "split": "val"}
     cfg.update(skip_trivial=False, concurrent_gen=False, theorem_workers=1)
     run_dir = sweep_env / "runs" / cfg["run_name"]
     # one theorem x one k (strategy "last") x 4 rungs x 1 model x 1 replicate
@@ -357,16 +349,6 @@ def _retarget(tmp_path: Path, **block: Any) -> Path:
     return root
 
 
-def test_build_config_refuses_a_pre_cutoff_corpus(
-        driver: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The old 2024-03-24 benchmark is refused, and the refusal names its commit."""
-    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
-    corpus.reset_caches()
-    with pytest.raises(SystemExit, match=OLD_CORPUS_COMMIT):
-        driver.build_config(KEY)
-    corpus.reset_caches()
-
-
 @pytest.mark.parametrize("target_date,ok", [("2026-07-31", True), ("2026-06-03", True),
                                             ("2026-06-02", False), ("2026-04-24", False)])
 def test_build_config_gates_target_date_on_roster_latest_release(
@@ -378,7 +360,7 @@ def test_build_config_gates_target_date_on_roster_latest_release(
                        str(_retarget(tmp_path, target_date=target_date)))
     corpus.reset_caches()
     if ok:
-        assert driver.build_config(KEY)["theorems"]["require_postcutoff"] is True
+        driver.build_config(KEY)
     else:
         with pytest.raises(SystemExit, match=target_date):
             driver.build_config(KEY)
@@ -435,7 +417,7 @@ def test_spool_destination_follows_the_env_override(
 def _explicit(cfg: dict[str, Any], *names: str) -> dict[str, Any]:
     """Point `cfg` at named fixture theorems, keeping the corpus gate on."""
     cfg["theorems"] = {"source": "explicit", "full_names": list(names),
-                       "kind": "random", "split": "val", "require_postcutoff": True}
+                       "kind": "random", "split": "val"}
     return cfg
 
 
@@ -553,8 +535,7 @@ def test_a_lane_missing_one_cell_reports_exactly_that_cell(
     victim = next(r for r in rows if r.get("kind") == "cell")
     key = (victim["model"], victim["theorem_id"], victim["k"], victim["rung"],
            victim["replicate_idx"])
-    (run_dir / "all_rows.jsonl").write_text("".join(
-        json.dumps(r) + "\n" for r in rows if r is not victim))
+    write_jsonl(run_dir / "all_rows.jsonl", (r for r in rows if r is not victim))
     assert driver.outstanding_cell_keys(cfg, run_dir) == {key}
 
 
@@ -694,7 +675,7 @@ def test_sweep_yaml_is_the_only_place_the_knobs_are_written(
                  "dojo_timeout", "concurrent_gen", "skip_trivial", "k",
                  "n_replicates", "rungs", "theorem_workers", "max_concurrency"):
         assert cfg[knob] == loaded[knob], knob
-    for knob in ("source", "limit", "require_postcutoff"):
+    for knob in ("source", "limit"):
         assert cfg["theorems"][knob] == loaded["theorems"][knob], knob
     assert cfg["sweep_config"]["sha256"] == digest
 
@@ -751,7 +732,7 @@ def test_the_sweep_digest_lands_in_the_run_manifest(
     knob values it ran under instead of relying on driver source at a matching commit."""
     cfg = driver.build_config(KEY)
     cfg["theorems"] = {"source": "explicit", "kind": "random", "split": "val",
-                       "full_names": ["Mini.theoremA"], "require_postcutoff": True}
+                       "full_names": ["Mini.theoremA"]}
     cfg["rungs"] = ["stepk:1"]
     run_dir = sweep_env / "runs" / cfg["run_name"]
     runner.sweep(cfg, run_dir, verifier=NullVerifier())

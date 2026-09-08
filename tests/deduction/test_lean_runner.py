@@ -21,7 +21,7 @@ import smolbench.deduction.lean.context as context
 import smolbench.deduction.lean.corpus as corpus
 import smolbench.deduction.lean.prompt as prompt
 import smolbench.deduction.lean.runner as runner
-from conftest import StubServer, chat_completion
+from conftest import StubServer, chat_completion, write_jsonl
 from tests._paths import LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOFF
 
 M1 = "mini/pi-model-a"       # provider: primeintellect
@@ -93,7 +93,7 @@ def sweep_ctx(
                         "OPENROUTER_BASE_URL": stubs[1].base_url,
                         "PRIME_INTELLECT_API_KEY": "stub-key",
                         "OPENROUTER_API_KEY": "stub-key",
-                        "SMOLBENCH_LEAN_DATA": str(FIXTURE),
+                        "SMOLBENCH_LEAN_DATA": str(POSTCUTOFF),
                         "SMOLBENCH_LEAN_RESULTS": str(tmp_path)}.items():
         monkeypatch.setenv(name, value)
     corpus.reset_caches()
@@ -139,8 +139,7 @@ def _rows(run_dir: Path, kind: str | None = None) -> list[dict[str, Any]]:
 
 
 def _write_rows(run_dir: Path, rows: list[dict[str, Any]]) -> None:
-    (run_dir / "all_rows.jsonl").write_text(
-        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+    write_jsonl(run_dir / "all_rows.jsonl", rows)
 
 
 def _key(r: dict[str, Any]) -> tuple[Any, Any, Any, Any, Any]:
@@ -585,7 +584,7 @@ def test_nullverify_sweep_generates_all_theorems(sweep_ctx: SimpleNamespace) -> 
 
 
 # ---------------------------------------------------------------------------
-# theorems.require_postcutoff: the corpus gate inside `_select_theorems`
+# The corpus gate inside `_select_theorems`.
 # ---------------------------------------------------------------------------
 
 #: Selects the fixture's whole 2-theorem pool, in file order, with no sampling.
@@ -614,7 +613,7 @@ def test_require_postcutoff_accepts_a_postcutoff_corpus(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _repoint(monkeypatch, POSTCUTOFF)
     names = [t.full_name
-             for t in runner._select_theorems({**PC_BASE, "require_postcutoff": True})]
+             for t in runner._select_theorems(PC_BASE)]
     assert names == ["Mini.theoremA", "Mini.theoremB"]
     corpus.reset_caches()
 
@@ -624,15 +623,7 @@ def test_require_postcutoff_rejects_the_old_corpus_naming_it(
     """The 2024-03-24 benchmark has no post-cutoff tail; the refusal names the corpus."""
     _repoint(monkeypatch, FIXTURE)
     with pytest.raises(ValueError, match=re.escape(str(FIXTURE))):
-        runner._select_theorems({**PC_BASE, "require_postcutoff": True})
-    corpus.reset_caches()
-
-
-def test_require_postcutoff_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Absent or False, the gate never fires -- the old corpus still selects."""
-    _repoint(monkeypatch, FIXTURE)
-    assert len(runner._select_theorems(PC_BASE)) == 2
-    assert len(runner._select_theorems({**PC_BASE, "require_postcutoff": False})) == 2
+        runner._select_theorems(PC_BASE)
     corpus.reset_caches()
 
 
@@ -642,7 +633,7 @@ def test_require_postcutoff_rejects_a_pre_cutoff_row(
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     assert corpus.is_postcutoff_corpus() is True
     with pytest.raises(ValueError, match="Mini.theoremB"):
-        runner._select_theorems({**PC_BASE, "require_postcutoff": True})
+        runner._select_theorems(PC_BASE)
     corpus.reset_caches()
 
 
@@ -651,9 +642,8 @@ def test_require_postcutoff_checks_the_pool_before_sampling(
     """`shard: "0/2"` drops the offending row, so only a pre-sample check catches it."""
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     sharded = {**PC_BASE, "shard": "0/2"}
-    assert [t.full_name for t in runner._select_theorems(sharded)] == ["Mini.theoremA"]
     with pytest.raises(ValueError, match="Mini.theoremB"):
-        runner._select_theorems({**sharded, "require_postcutoff": True})
+        runner._select_theorems(sharded)
     corpus.reset_caches()
 
 

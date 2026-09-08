@@ -51,17 +51,15 @@ evicts any cached sibling owned by another directory;
 discipline in its `_load` helper.
 
 All three report scripts read the same rows and offer the same choice of where
-those rows come from: `--s3 [PREFIX]` to pull them from the archive, or a local
-directory to analyse a tree you already have (`--rows-dir` for `error_bars.py`
-and `hint_vs_noise.py`, `--results-dir` for `power_analysis.py`, which keeps
-its own `RESULTS_DIR` default). The archive's address, the prefix resolver,
+those rows come from: `--s3 [PREFIX]` to pull them from the archive, or
+`--rows-dir` to analyse a local tree. The archive's address, prefix resolver,
 the retired-artifact guard and the downloader itself live once, in
 `rows_source.py`.
 
 | File | What it's for |
 | --- | --- |
 | `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
-| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3` (with `--spool-prefix`) or `--results-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
+| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3 [PREFIX]` or `--rows-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
 | `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
 | `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
 
@@ -71,8 +69,9 @@ this one and the induction one together must give each a unique
 
 ## Data layout
 
-The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/` -- a pre-cutoff-era directory name (not committed; see "Data bootstrap" below).
-`leandojo_benchmark_4` is a path artifact of the builder's output layout, not itself a claim about which snapshot is checked out: it is both the ORIGINAL pre-cutoff download's directory name and the name `scripts/deduction/build_postcutoff_corpus.py --out <root>` writes its POST-cutoff output under (`<root>/leandojo_benchmark_4`, same pre-cutoff-era name, post-cutoff content):
+The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/`
+(not committed; see "Data bootstrap" below), the output layout written by
+`scripts/deduction/build_postcutoff_corpus.py --out <root>`:
 
 - `corpus.jsonl` -- every premise (theorem/def/etc.) declared in the traced
   mathlib4 repo, with its source position and containing file
@@ -81,12 +80,9 @@ The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/` -- a pre
   `creation_time`, `from_repo` (`url`/`commit`), `leandojo_version`, and --
   for a post-cutoff corpus -- an extra `postcutoff` block (see "Corpus date
   vs. model cutoffs" below).
-- `random/{train,val,test}.json` -- the sole split family emitted by
+- `random/{train,val,test}.json` -- the split family emitted by
   `build_postcutoff_corpus.py` and loaded by
-  `smolbench.deduction.lean.corpus`. The PRE-CUTOFF LeanDojo Benchmark 4
-  snapshot also had an independent `novel_premises` family for a harder
-  generalization slice, but the post-cutoff corpus does not manufacture a
-  byte-equivalent compatibility copy. The driver reads `random` and lets
+  `smolbench.deduction.lean.corpus`. The driver reads `random` and lets
   `LEAN_CORPUS_SPLIT` select its split. Each file is a JSON array of theorem records
   (`url`, `commit`, `file_path`, `full_name`, `start`, `end`,
   `traced_tactics`).
@@ -110,12 +106,9 @@ always does (`theorems.source == "replay_passing"`).
 .venv/bin/python -c "from smolbench.deduction.lean import corpus; print(len(list(corpus.iter_replay_passing('random','val'))))"
 ```
 
-No number is recorded here: the post-cutoff corpus's `replay_passing`/
-`random`/`val` pool depends on which built corpus is checked out, and this
-study has not yet fixed a single number for it the way the pre-cutoff study
-did (see "History: the pre-cutoff study" below, **805**) -- run the command
-above against your own checked-out corpus to find out. Inventing a number
-here would be worse than omitting one.
+No number is recorded here: the `replay_passing`/`random`/`val` pool depends
+on which built corpus is checked out. Run the command above against the active
+corpus to find out.
 
 ### Data bootstrap
 
@@ -128,56 +121,21 @@ against an OLD commit) and point `SMOLBENCH_LEAN_DATA` at wherever you built
 it -- see `smolbench.deduction.lean.corpus.data_root`'s docstring for the
 exact resolution order.
 
-**The driver refuses a pre-cutoff corpus.** `notebooks/deduction/run_study.py`'s
+**The driver requires a post-cutoff corpus.** `notebooks/deduction/run_study.py`'s
 `build_config` calls `corpus.postcutoff_metadata()` before any AWS call and
 `SystemExit`s if it is `None` (see that function's docstring, "Post-cutoff
 corpus gate"): every roster checkpoint's knowledge cutoff postdates the
-original LeanDojo Benchmark 4 snapshot's 2024-03-24 trace, so a pre-cutoff
-corpus's theorems are not a valid held-out set -- a model may simply have
-memorised their proofs during training. (The pre-cutoff study predates
-this gate -- see "History: the pre-cutoff study" below.)
+reference trace, so older theorems are not a valid held-out set -- a model may
+simply have memorised their proofs during training.
 
 Every loader in `smolbench.deduction.lean.corpus` raises an actionable
 `FileNotFoundError` naming the exact missing path if the corpus has not been
 built. The `replay_passing_*.jsonl` sidecars are generated from the built
 corpus (`python -m smolbench.deduction.lean.cli filter --kind random --split
 val`, ~70 min per split) and live beside it at `data_root().parent`; they
-are not tracked -- see `notebooks/ARCHIVE.md` for the archived pre-cutoff
-copies.
-
-### History: the pre-cutoff study
-
-Before this gate existed, the study ran directly against the original
-LeanDojo Benchmark 4 snapshot: pre-cutoff Zenodo record 10929138, traced
-mathlib4 commit `fe4454af`, `creation_time` 2024-03-24.
-`random.Random(0).sample(pool, 300)` drew 300 theorems from that study's
-805-theorem `replay_passing` pool -- a pool that is not stable by
-construction, since a regenerated sidecar can add or drop a theorem and
-`rng.sample` depends on both membership and population order. So
-`scripts/results/audit_lean_pinning.py` confirms all 21 lanes ran that
-same 300 theorems and 944 cells (`--expect-theorems 300
---expect-cells 944`, plus 300 sanity rows) with byte-identical rendered
-prompts (compared by ETag, so no spool download)
--- byte equality, not set equality, since it must prove the same theorem
-was asked at the same step under the same context, including `noise:3`'s
-token-matched padding. That pre-cutoff study's published pools
-(707/828/833 cells) are smaller than its 944 because dead cells and
-verdict filtering shrink it unevenly; use
-`scripts/results/audit_run_completeness.py` for that axis on any run,
-pre- or post-cutoff. New runs draw from the post-cutoff corpus described
-above, whose pool size is not yet fixed.
+are not tracked.
 
 ### Corpus date vs. model cutoffs
-
-`metadata.json` records the trace as mathlib4 at commit `fe4454af`,
-`creation_time` 2024-03-24 -- one snapshot, not a date range. Every roster
-checkpoint's cutoff postdates it, so 0 of the benchmark's 300 theorems
-qualify as post-cutoff by construction, and no sampling, seed, or split
-change over this single-commit snapshot can produce one.
-
-The pre-cutoff study's holdout is not a substitute for a post-cutoff tail:
-its `novel_premises` split selects theorems under-represented in the
-benchmark's own train split, entirely within that same 2024-03-24 snapshot.
 
 **What the code now enforces.** A re-collection is underway on a NEW mathlib4
 snapshot, restricted by declaration-name set difference against the old
@@ -196,11 +154,10 @@ that block, and raises rather than silently reporting False if the block's
 corpus must not be trusted.
 
 The runner enforces this at the point theorems are actually selected:
-`smolbench.deduction.lean.runner._select_theorems` accepts a
-`theorems.require_postcutoff` config key which, when true, refuses to select
-from a corpus that is not `is_postcutoff_corpus()`, and separately refuses
-any pool or final selection containing a theorem whose `postcutoff` flag is
-unset -- both checks raise `ValueError` rather than silently proceeding.
+`smolbench.deduction.lean.runner._select_theorems` refuses a corpus that is
+not `is_postcutoff_corpus()`, and separately refuses any pool containing a
+theorem whose `postcutoff` flag is unset -- both checks raise `ValueError`
+rather than silently proceeding.
 `notebooks/deduction/run_study.py`'s `build_config` runs a second, earlier
 gate, BEFORE any AWS call: it requires `corpus.postcutoff_metadata()` to be
 non-`None` (else `SystemExit`, naming the corpus root and its traced commit)
@@ -209,10 +166,8 @@ and requires the block's `target_date` to be `>=` `ROSTER_LATEST_RELEASE`
 roster: the last Hugging Face commit touching a weight file at each lane's
 pinned revision; weights cannot encode data published after they were
 written, so this is the floor a post-cutoff corpus's target date must clear).
-`build_config` then sets `theorems.require_postcutoff: True` in the sweep
-config it hands to `runner.sweep`, so `_select_theorems` re-checks the same
-corpus and every selected theorem at sweep time, independent of the earlier
-gate.
+`runner.sweep` therefore re-checks the corpus and every selected theorem at
+sweep time, independent of the earlier gate.
 
 ## What the eval exposes per theorem
 

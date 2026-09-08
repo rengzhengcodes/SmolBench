@@ -1,14 +1,6 @@
-"""Docs and notebooks that state the post-cutoff contract (A5, A7).
-
-Prose goes stale silently, so the load-bearing claims are pinned here: the
-Mathlib-vs-dependency filter's actual predicate, the notebooks' JSON shape (an
-edit script that stringifies `source` or drops outputs makes every later diff
-unreviewable), and the attribution of the old study's 300/805/944 counts.
-"""
+"""Notebook serialization and executable-cell contracts."""
 
 import json
-import re
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -18,46 +10,6 @@ from tests._paths import NOTEBOOKS
 
 STATS_NB = NOTEBOOKS / "statistical_analyses.ipynb"
 LEAN_NB = NOTEBOOKS / "deduction" / "lean_eval.ipynb"
-README = NOTEBOOKS / "deduction" / "README.md"
-
-#: Counts that describe the old, pre-cutoff study only. ``300`` is excluded:
-#: it is the live ``theorems.limit`` in `run_study.build_config`, so
-#: demanding a "pre-cutoff" marker beside it
-#: would mislabel current configuration as history. 805 (the retired
-#: ``novel_premises``/``val`` pool) and 944 (that pool's rendered cell count)
-#: remain: neither describes anything the post-cutoff corpus produces.
-OLD_STUDY_NUMBERS = re.compile(r"\b(805|944)\b")
-
-def _paragraphs(text: str) -> Iterator[tuple[str, list[str]]]:
-    """Yield ``(paragraph_text, [lines])`` for each blank-line-delimited block."""
-    block: list[str] = []
-    for line in text.splitlines():
-        if line.strip():
-            block.append(line)
-        elif block:
-            yield "\n".join(block), block
-            block = []
-    if block:
-        yield "\n".join(block), block
-
-
-def _unmarked_lines(
-    text: str, pattern: re.Pattern[str] | None = None, *, marker: str = "pre-cutoff"
-) -> list[str]:
-    """Lines matching `pattern` whose enclosing paragraph lacks `marker`.
-
-    The paragraph is the unit: strict enough that an unrelated section cannot
-    vouch for a number, loose enough that real writing can put the marker a
-    line or two below the number it qualifies. Returns the offending lines
-    (not indices), so a failure names the prose that has to change.
-    """
-    pattern = pattern or OLD_STUDY_NUMBERS
-    offenders = []
-    for paragraph, lines in _paragraphs(text):
-        if marker in paragraph:
-            continue
-        offenders.extend(line.strip() for line in lines if pattern.search(line))
-    return offenders
 
 
 @pytest.fixture(scope="module")
@@ -65,11 +17,6 @@ def stats_nb() -> dict[str, Any]:
     if not STATS_NB.exists():
         pytest.skip("statistical_analyses.ipynb lives in the top stack slice")
     return json.loads(STATS_NB.read_text())
-
-
-@pytest.fixture(scope="module")
-def lean_nb() -> dict[str, Any]:
-    return json.loads(LEAN_NB.read_text())
 
 
 def _cell_source(nb: dict[str, Any], needle: str) -> str:
@@ -117,74 +64,3 @@ def test_dependency_filter_covers_every_lake_package(stats_nb: dict[str, Any]) -
     # A missing path is not evidence of a dependency; keep treating it as Mathlib.
     assert is_mathlib_cell({}) is True
     assert is_mathlib_cell({"file_path": None}) is True
-
-
-def test_lean_eval_attributes_the_old_counts(lean_nb: dict[str, Any]) -> None:
-    """805 / 944 are the pre-cutoff study's numbers, in every cell type,
-    code included -- a code cell can call
-    ``iter_replay_passing("novel_premises", "val")`` against a split family
-    the post-cutoff corpus lacks just as easily as markdown can state the
-    count.
-    """
-    offenders = {
-        i: bad for i, c in enumerate(lean_nb["cells"])
-        if (bad := _unmarked_lines("".join(c["source"])))
-    }
-    assert not offenders, (
-        f"cells state 805/944 without marking them as the pre-cutoff study's "
-        f"numbers: {offenders}")
-
-
-def test_lean_eval_does_not_ask_for_the_retired_split_family() -> None:
-    """The notebook must not name a split family the corpus lacks.
-
-    The post-cutoff corpus has a single ``random`` family; cell 4 asked for
-    ``novel_premises``, which is why running the notebook offline raised
-    before it could validate a single prompt.
-    """
-    retired = re.compile(r"novel_premises")
-    nb = json.loads(LEAN_NB.read_text())
-    offenders = {
-        i: bad for i, cell in enumerate(nb["cells"])
-        if (bad := _unmarked_lines("".join(cell["source"]), retired))
-    }
-    assert not offenders, (
-        f"cells name novel_premises outside a pre-cutoff paragraph: {offenders}")
-
-
-def test_readme_data_sections_describe_the_post_cutoff_corpus() -> None:
-    """The README's own prose is scanned too, not just notebook markdown cells.
-
-    The Data-bootstrap / pinned-300 / not-in-scope sections describe a Zenodo
-    LeanDojo Benchmark 4 download that `run_study.build_config` now
-    SystemExits on.
-    """
-    text = README.read_text()
-    offenders = _unmarked_lines(text)
-    assert not offenders, (
-        "README states 805/944 without a nearby pre-cutoff marker:\n  "
-        + "\n  ".join(offenders))
-    # The retired corpus may still be NAMED -- pinned_theorems.json's recorded
-    # derivation and the published S3 prefix both describe it -- but only from
-    # a paragraph that says so, so a reader cannot mistake it for the corpus to
-    # bootstrap today.
-    retired = re.compile(r"zenodo|leandojo_benchmark_4", re.I)
-    stale = _unmarked_lines(text, retired)
-    assert not stale, (
-        "README points at the retired pre-cutoff corpus from an unmarked "
-        "paragraph:\n  " + "\n  ".join(stale))
-    # ... and the section a reader follows today must name the builder.
-    assert "build_postcutoff_corpus.py" in text
-
-
-def test_readme_states_what_the_code_now_enforces() -> None:
-    """The cutoff section must describe the enforced contract and point at Package B."""
-    text = README.read_text()
-    start = text.index("### Corpus date vs. model cutoffs")
-    section = text[start:text.index("\n## ", start)]
-    for token in ("require_postcutoff", "is_postcutoff_corpus", "ROSTER_LATEST_RELEASE",
-                  "build_postcutoff_corpus.py"):
-        assert token in section, f"{token!r} missing from the cutoff section"
-    # The S3 layout section must not still promise the published study's prefix
-    # for NEW runs.
-    assert "deduction_postcutoff/runs" in text

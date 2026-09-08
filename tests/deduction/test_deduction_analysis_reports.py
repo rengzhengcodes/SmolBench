@@ -9,9 +9,6 @@ Loaded by file path, as the scripts themselves are: they run under
 
 from __future__ import annotations
 
-import importlib.util
-import json
-import sys
 from math import comb
 from pathlib import Path
 from types import ModuleType
@@ -19,54 +16,21 @@ from typing import Any
 
 import pytest
 
+from conftest import cell_row, write_jsonl
 from tests._paths import NOTEBOOKS
+from tests.analysis._trees import load_analysis
 
 ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
 
 
-#: Bare module names the deduction and induction analysis scripts share. The
-#: scripts import their siblings by bare name off their own sys.path insert,
-#: so a cached induction ``power_analysis`` (left by tests/analysis) would be
-#: handed to deduction's ``error_bars`` and fail with an ImportError on a
-#: symbol only the induction module lacks. Evict foreign siblings first.
-_BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
-                  "hint_vs_noise", "rows_source", "significance_report",
-                  "extens_vs_noise", "multiplicity_sim")
-
-
-def _owned_by(module: ModuleType, directory: Path) -> bool:
-    file = getattr(module, "__file__", None)
-    return bool(file) and Path(file).resolve().parent == directory.resolve()
-
-
-def _load(name: str) -> ModuleType:
-    for sibling in _BARE_SIBLINGS:
-        mod = sys.modules.get(sibling)
-        if mod is not None and not _owned_by(mod, ANALYSIS):
-            del sys.modules[sibling]
-    spec = importlib.util.spec_from_file_location(
-        f"deduction_analysis_{name}", ANALYSIS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture(scope="module")
 def pa() -> ModuleType:
-    return _load("power_analysis")
+    return load_analysis("power_analysis", ANALYSIS)
 
 
 @pytest.fixture(scope="module")
 def hvn() -> ModuleType:
-    return _load("hint_vs_noise")
-
-
-def _cell(theorem: str, rung: str, ok: bool, *, model: str = "m", k: int = 1,
-          replicate_idx: int = 0) -> dict[str, Any]:
-    return {"kind": "cell", "model": model, "theorem_id": theorem, "k": k,
-            "rung": rung, "replicate_idx": replicate_idx,
-            "verdict": "success" if ok else "lean_error"}
+    return load_analysis("hint_vs_noise", ANALYSIS)
 
 
 def _write_rows_dir(root: Path, models: list[str] | tuple[str, ...], *,
@@ -87,10 +51,11 @@ def _write_rows_dir(root: Path, models: list[str] | tuple[str, ...], *,
                 hint_ok, noise_ok = False, True
             else:
                 hint_ok, noise_ok = True, True
-            rows.append(_cell(f"T{i}", "hint:3", hint_ok, model=model))
-            rows.append(_cell(f"T{i}", "noise:3", noise_ok, model=model))
-        (d / "verified_rows.jsonl").write_text(
-            "".join(json.dumps(r) + "\n" for r in rows))
+            rows.append(cell_row(theorem_id=f"T{i}", rung="hint:3", model=model,
+                                 verdict="success" if hint_ok else "lean_error"))
+            rows.append(cell_row(theorem_id=f"T{i}", rung="noise:3", model=model,
+                                 verdict="success" if noise_ok else "lean_error"))
+        write_jsonl(d / "verified_rows.jsonl", rows)
 
 
 # The null narrative must follow the result.
@@ -159,12 +124,14 @@ def test_extra_replicates_are_reported_as_dropped(
     """replicate_idx != 0 rows are dropped, never aggregated; the loader must announce the count (stderr banner or logging), or a run with bought replicates would silently be analysed at R=1."""
     path = tmp_path / "verified_rows.jsonl"
     rows = [
-        _cell("T1", "stepk:1", True, model="m1"),
-        _cell("T1", "stepk:1", False, model="m1", replicate_idx=1),
-        _cell("T1", "stepk:1", False, model="m1", replicate_idx=2),
-        _cell("T1", "stepk:1", True, model="m2"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1", replicate_idx=1,
+                 verdict="lean_error"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1", replicate_idx=2,
+                 verdict="lean_error"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m2"),
     ]
-    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    write_jsonl(path, rows)
 
     with caplog.at_level(0):
         _, blocks, _ = pa.load_joint_cells([path], models=("m1", "m2"))
@@ -222,7 +189,7 @@ def test_mcnemar_exact_p_agrees_across_the_whole_grid(pa: ModuleType) -> None:
 
 @pytest.fixture(scope="module")
 def eb() -> ModuleType:
-    return _load("error_bars")
+    return load_analysis("error_bars", ANALYSIS)
 
 
 def _reference_holm(pvals: list[float], alpha: float) -> list[bool]:

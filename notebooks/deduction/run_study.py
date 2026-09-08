@@ -226,6 +226,7 @@ COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 # Late imports: safe only now that our own EC2_* setdefaults have landed and
 # MODELS/COT_ARGS are bound. Hence noqa: E402.
 from smolbench.evals.providers import ec2  # noqa: E402
+from smolbench.evals import _aws, results_store  # noqa: E402
 from smolbench.deduction.lean import corpus, runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
 
@@ -258,9 +259,6 @@ def resolve_lean_seed() -> int:
     seed ``runner.sweep`` puts on the wire (replicate `i` decodes at
     `seed + i`).
 
-    WARNING: a non-zero ``LEAN_SEED`` re-draws the theorem sample and makes the
-    run incomparable with lanes using another seed. Only for a deliberate,
-    clearly-labelled re-sampling experiment.
     """
     raw = os.environ.get("LEAN_SEED", "").strip()
     if not raw:
@@ -271,7 +269,7 @@ def resolve_lean_seed() -> int:
         raise SystemExit(
             f"LEAN_SEED={raw!r} is not a valid integer. This seed drives BOTH "
             "theorem selection (theorems.seed) and decoding (cfg.seed); unset "
-            "it to use the pinned default (0), or set it to an integer."
+            "it to use 0, or set it to an integer."
         ) from None
 
 
@@ -309,7 +307,7 @@ REQUIRED_SWEEP_KEYS: frozenset[str] = frozenset(
 #: block. ``seed`` and ``shard`` are deliberately not here: they are lane
 #: identity, in `RESERVED_SWEEP_THEOREM_KEYS` instead.
 REQUIRED_SWEEP_THEOREM_KEYS: frozenset[str] = frozenset(
-    {"source", "kind", "split", "limit", "require_postcutoff"}
+    {"source", "kind", "split", "limit"}
 )
 
 #: Keys the sweep file must not define, at top level. Each is per-lane
@@ -615,9 +613,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         return 0
 
     if client is None:
-        import boto3  # lazy -- see docstring
-
-        client = boto3.client("s3", region_name=SPOOL_REGION)
+        client = _aws.fresh_client("s3", SPOOL_REGION)
 
     dest_prefix = f"{runner.spool_prefix()}/scaling_{key}/"
     files = sorted(p for p in run_dir.rglob("*") if p.is_file())
@@ -918,14 +914,12 @@ def main(argv: list[str] | None = None) -> None:
             # resume on different hardware stays visible in the log.
             cfg = ec2.server_config(key)
             if cfg is not None:
-                import datetime
-
                 import yaml
 
                 # mkdir first: runner.sweep creates run_dir itself, but this
                 # sidecar writes before the sweep runs.
                 run_dir.mkdir(parents=True, exist_ok=True)
-                stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                stamp = results_store.format_run_ts(results_store.utcnow())
                 with (run_dir / "server_config.yaml").open("a") as sink:
                     yaml.safe_dump([{"captured_utc": stamp, **cfg}],
                                    sink, default_flow_style=False, indent=4)
@@ -938,11 +932,7 @@ def main(argv: list[str] | None = None) -> None:
                 # under its own key.
                 old = run_dir / "all_rows.jsonl"
                 if old.exists():
-                    import datetime
-
-                    stamp = datetime.datetime.now(datetime.timezone.utc).strftime(
-                        "%Y%m%dT%H%M%SZ"
-                    )
+                    stamp = results_store.format_run_ts(results_store.utcnow())
                     archived = run_dir / f"all_rows_SUPERSEDED-{stamp}.jsonl"
                     old.rename(archived)
                     logging.warning(

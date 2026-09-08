@@ -201,13 +201,11 @@ def main(argv: list[str] | None = None) -> int:
            f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}")
     print(hdr)
     print("-" * len(hdr))
-    order = [m for fam in FAMILIES.values() for m in fam]
-    idx = {r["model"]: i for i, r in enumerate(rows)}
-    for m in order:
-        r = rows[idx[m]]
+    order = MODELS
+    for m, r, rejected in zip(order, rows, rej):
         print(f"{r['model']:30s} {r['n']:5d} {r['acc_i']:7.3f} {r['acc_n']:8.3f} "
               f"{r['acc_i'] - r['acc_n']:+7.3f} {r['b']:4d}/{r['c']:<4d} "
-              f"{r['p']:10.2e} {' yes ' if rej[idx[m]] else '  .  '}")
+              f"{r['p']:10.2e} {' yes ' if rejected else '  .  '}")
 
     sig = [rows[i] for i in range(len(rows)) if rej[i]]
     up = [r for r in sig if r["acc_i"] > r["acc_n"]]
@@ -230,8 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     print("-" * 80)
     boundaries, mde80s = [], []
     thresh = ALPHA / len(rows)
-    for m in order:
-        r = rows[idx[m]]
+    for m, r in zip(order, rows):
         nd = r["b"] + r["c"]
         need = None
         for k in range(nd // 2, -1, -1):

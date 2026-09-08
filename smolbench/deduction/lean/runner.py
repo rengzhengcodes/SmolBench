@@ -37,6 +37,7 @@ from typing import Any, TextIO
 import smolbench
 from smolbench.evals.provider import provider_module
 from smolbench.evals.retired_markers import is_retired
+from smolbench.evals.spool import DEDUCTION_SPOOL_PREFIX, spool_prefix
 
 from . import lean3
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
@@ -288,7 +289,7 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
     shown = ", ".join(bad[:5])
     suffix = f", and {len(bad) - 5} more" if len(bad) > 5 else ""
     raise ValueError(
-        f"theorems.require_postcutoff: {len(bad)} theorem(s) are not flagged "
+        f"{len(bad)} theorem(s) are not flagged "
         f"postcutoff: {shown}{suffix}"
     )
 
@@ -315,10 +316,9 @@ def _select_theorems(
     Raises
     ------
     ValueError
-        For an unknown `source`, a malformed `shard`, or (when `require_postcutoff` is set) a
-        pool containing a non-post-cutoff theorem.
+        For an unknown `source`, a malformed `shard`, or a pool containing a
+        non-post-cutoff theorem.
     """
-    require_postcutoff = bool(spec.get("require_postcutoff", False))
     source = spec.get("source", "replay_passing")
     kind = spec.get("kind", "random")
     split = spec.get("split", "val")
@@ -329,9 +329,9 @@ def _select_theorems(
     # Runs before the pool loads, redundant with the per-theorem check below:
     # the old LeanDojo Benchmark 4 snapshot has no post-cutoff tail at all, so
     # no sampling/seed/split choice over it can ever produce a compliant item.
-    if require_postcutoff and not is_postcutoff_corpus():
+    if not is_postcutoff_corpus():
         raise ValueError(
-            f"theorems.require_postcutoff is set but {data_root()} is not a "
+            f"{data_root()} is not a "
             "post-cutoff corpus -- the old single-snapshot LeanDojo Benchmark 4 "
             "has no post-cutoff tail, so no sampling, seed or split change over "
             "it can produce a compliant selection"
@@ -351,8 +351,7 @@ def _select_theorems(
     # only ever remove rows): `random.Random(seed).sample` is order- and
     # population-sensitive, so whether the draw misses a pre-cutoff row must
     # not decide compliance.
-    if require_postcutoff:
-        _require_all_postcutoff(pool)
+    _require_all_postcutoff(pool)
 
     if max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= max_tactics]
@@ -841,21 +840,6 @@ _CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
 
 def _glyph(v: str) -> str:
     return _VERDICT_GLYPH.get(v, "?")
-
-
-#: This study's S3 key prefix.
-DEDUCTION_SPOOL_PREFIX: str = "deduction_postcutoff/runs"
-
-
-def spool_prefix() -> str:
-    """Resolve the S3 key prefix writers/readers use for deduction spool runs.
-
-    Reads `LEAN_SPOOL_PREFIX` at call time, never cached, so a caller can flip
-    the prefix between invocations within one process. Falls back to
-    `DEDUCTION_SPOOL_PREFIX`; strips whitespace and a trailing "/".
-    """
-    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
-    return raw.rstrip("/") if raw else DEDUCTION_SPOOL_PREFIX
 
 
 def reject_superseded_rows(paths: Iterable[str | Path]) -> None:

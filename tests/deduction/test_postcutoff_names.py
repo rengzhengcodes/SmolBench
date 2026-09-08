@@ -10,24 +10,17 @@ a throwaway local git repo built in ``tmp_path`` (so clone/blame/commit-walk run
 for real), with only the GitHub PR lookup replaced by an in-test stub.
 """
 
-import importlib.util
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests._paths import FIXTURES, SCRIPTS
+from tests._paths import FIXTURES, SCRIPTS, load_by_path
 
 _PATH = SCRIPTS / "deduction" / "postcutoff_names.py"
-_SPEC = importlib.util.spec_from_file_location("postcutoff_names", _PATH)
-pcn = importlib.util.module_from_spec(_SPEC)
-# Register before exec_module: a module loaded by path is otherwise absent
-# from sys.modules, which breaks dataclass field resolution under PEP 563.
-sys.modules[_SPEC.name] = pcn
-_SPEC.loader.exec_module(pcn)
+pcn = load_by_path(_PATH, "postcutoff_names")
 
 SAMPLE = FIXTURES / "postcutoff" / "sample.lean"
 

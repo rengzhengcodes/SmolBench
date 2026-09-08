@@ -9,11 +9,9 @@ Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
 """
 
 import hashlib
-import importlib.util
 import json
 import shutil
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -21,13 +19,10 @@ from typing import Any
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
-from tests._paths import FIXTURES, SCRIPTS
+from tests._paths import FIXTURES, SCRIPTS, load_by_path
 
 _PATH = SCRIPTS / "deduction" / "build_postcutoff_corpus.py"
-_SPEC = importlib.util.spec_from_file_location("build_postcutoff_corpus", _PATH)
-build = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = build
-_SPEC.loader.exec_module(build)
+build = load_by_path(_PATH, "build_postcutoff_corpus")
 
 RUNBOOK = SCRIPTS / "deduction" / "trace_mathlib_ec2.sh"
 

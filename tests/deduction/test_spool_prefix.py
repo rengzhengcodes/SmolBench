@@ -62,7 +62,8 @@ def test_readers_expose_a_spool_prefix_flag(path: Path) -> None:
         pytest.skip(f"{path.name} lives in a later stack slice")
     proc = _help(path)
     assert proc.returncode == 0, f"stderr={proc.stderr}"
-    assert "--spool-prefix" in proc.stdout, proc.stdout
+    flag = "--s3 [PREFIX]" if path.name == "power_analysis.py" else "--spool-prefix"
+    assert flag in proc.stdout, proc.stdout
 
 
 def _fake_s3(keys: list[str]) -> Any:

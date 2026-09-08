@@ -4,17 +4,13 @@ power_analysis.py could read the archive; error_bars.py and hint_vs_noise.py --
 the scripts the published numbers come from -- read only a local --rows-dir
 layout that nothing else writes. This module gives all three one archive layout.
 
-Most tests inject a fake S3 client (no network, no boto3). One instead
-monkeypatches `boto3.client` and drives `hint_vs_noise.main(["--s3", ...])` end
-to end, the only way to exercise the lazy import and default-prefix resolution
-together.
+Most tests inject a fake S3 client. One instead patches the shared fresh-client
+factory and drives `hint_vs_noise.main(["--s3", ...])` end to end.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -23,42 +19,16 @@ from typing import Any
 import pytest
 
 from tests._paths import NOTEBOOKS
+from tests.analysis._trees import load_analysis
 
 ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
-
-#: Bare module names the deduction and induction analysis scripts share; each
-#: imports siblings by bare name off its own sys.path insert, so a cached
-#: induction sibling would be handed to a deduction script and fail on a symbol
-#: only one of them has. Evict foreign siblings before loading; rows_source has
-#: no induction twin yet but is listed so adding one can't silently reintroduce this.
-_BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
-                  "hint_vs_noise", "rows_source", "significance_report",
-                  "extens_vs_noise", "multiplicity_sim")
 
 BUCKET_PREFIX = "deduction_postcutoff/runs/"
 
 
-def _owned_by(module: Any, directory: Path) -> bool:
-    file = getattr(module, "__file__", None)
-    return bool(file) and Path(file).resolve().parent == directory.resolve()
-
-
-def _load(name: str) -> ModuleType:
-    for sibling in _BARE_SIBLINGS:
-        mod = sys.modules.get(sibling)
-        if mod is not None and not _owned_by(mod, ANALYSIS):
-            del sys.modules[sibling]
-    spec = importlib.util.spec_from_file_location(
-        f"deduction_analysis_{name}", ANALYSIS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture(scope="module")
 def rows_source() -> ModuleType:
-    return _load("rows_source")
+    return load_analysis("rows_source", ANALYSIS)
 
 
 class FakePaginator:
@@ -251,16 +221,16 @@ def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """hint_vs_noise.py --s3 produces the report from the archive alone: boto3.client is monkeypatched rather than a client injected, so the lazy import inside download_scaling_rows and the after-parsing default-prefix resolution are both exercised for real."""
-    import boto3
+    """hint_vs_noise.py --s3 produces the report from the archive alone."""
+    from smolbench.evals import _aws
 
-    hvn = _load("hint_vs_noise")
+    hvn = load_analysis("hint_vs_noise", ANALYSIS)
     objects = _bucket(**{
         f"scaling_{model}": {"verified_rows.jsonl": _lane_rows(12, b=8)}
         for model in hvn.MODELS
     })
     client = FakeS3(objects)
-    monkeypatch.setattr(boto3, "client", lambda *a, **k: client)
+    monkeypatch.setattr(_aws, "fresh_client", lambda *a, **k: client)
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
 
     assert hvn.main(["--s3"]) == 0

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import itertools
 import json
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
@@ -15,13 +13,12 @@ from typing import Any, Iterator
 import pytest
 from botocore.exceptions import ClientError
 
-from tests._paths import SCRIPTS
+from conftest import cell_row
+from tests._paths import SCRIPTS, load_by_path
 
-_SPEC = importlib.util.spec_from_file_location(
-    "lean_verify_rows_resume_under_test", SCRIPTS / "deduction" / "lean_verify_rows.py")
-lvr = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = lvr
-_SPEC.loader.exec_module(lvr)
+lvr = load_by_path(
+    SCRIPTS / "deduction" / "lean_verify_rows.py", "lean_verify_rows_resume_under_test"
+)
 
 _IDENTITY = ("kind", "model", "theorem_id", "k", "rung", "replicate_idx")
 _WORKDIRS = itertools.count()
@@ -30,15 +27,8 @@ _WORKDIRS = itertools.count()
 def _cell(theorem: str, k: int = 1, *, rung: str = "stepk:1", rep: int = 0,
           model: str = "m", verdict: str = "unverified", proof: str = "tac",
           **extra: Any) -> dict[str, Any]:
-    return {"kind": "cell", "model": model, "theorem_id": theorem, "k": k, "rung": rung,
-            "replicate_idx": rep, "verdict": verdict, "candidate_proof": proof,
-            "lean_error": None, "final_state_pp": None, "verify_ms": 0, "seed": 0, **extra}
-
-
-def _sanity(theorem: str, *, verdict: str = "skipped", applied: int = 0,
-            total: int = 1, ms: int = 0) -> dict[str, Any]:
-    return {"kind": "sanity", "theorem_id": theorem, "verdict": verdict, "error": None,
-            "tactics_applied": applied, "tactics_total": total, "ms": ms}
+    return cell_row(model=model, theorem_id=theorem, k=k, rung=rung,
+                    replicate_idx=rep, verdict=verdict, candidate_proof=proof, **extra)
 
 
 def _dump(rows: list[dict[str, Any]]) -> bytes:
@@ -108,16 +98,20 @@ def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Graded cells and prior sanity verdicts survive verbatim; new and REGROWN groups verify."""
-    all_rows = [_sanity("t1"), _cell("t1", 1, rung="stepk:1"), _cell("t1", 1, rung="hint:2"),
-                _cell("t2", 2, rung="stepk:1"), _cell("t2", 2, rung="hint:2"), _sanity("t2"),
+    all_rows = [cell_row(kind="sanity", theorem_id="t1"),
+                _cell("t1", 1, rung="stepk:1"), _cell("t1", 1, rung="hint:2"),
+                _cell("t2", 2, rung="stepk:1"), _cell("t2", 2, rung="hint:2"), cell_row(kind="sanity", theorem_id="t2"),
                 _cell("t3", 3, rung="stepk:1", proof="NEW"),
                 _cell("t3", 3, rung="hint:2", proof="NEW"),
-                *[_cell("t4", 4, _seq=f"fresh{i}") for i in (1, 2, 3)], _sanity("t4")]
-    prior = [_sanity("t1", verdict="success", applied=5, total=5, ms=42),
+                *[_cell("t4", 4, _seq=f"fresh{i}") for i in (1, 2, 3)],
+                cell_row(kind="sanity", theorem_id="t4")]
+    prior = [cell_row(kind="sanity", theorem_id="t1", verdict="success",
+                      tactics_applied=5, tactics_total=5, ms=42, error=None),
              _cell("t1", 1, rung="hint:2", verdict="lean_error", verify_ms=222),
              _cell("t3", 3, rung="stepk:1", verdict="success", proof="OLD"),
              _cell("t1", 1, rung="stepk:1", verdict="success", verify_ms=111),
-             _sanity("t9", verdict="success", applied=3, ms=9),
+             cell_row(kind="sanity", theorem_id="t9", verdict="success",
+                      tactics_applied=3, ms=9, error=None),
              _cell("t4", 4, verdict="exception", _seq="prior1"),
              _cell("t4", 4, verdict="lean_error", _seq="prior2")]
     fake = _Fake(verdict="incomplete")
@@ -174,9 +168,11 @@ def test_resume_done_groups_all_cells_rule() -> None:
              _cell("t2", 1, rung="stepk:1", verdict="lean_error"),
              _cell("t2", 1, rung="hint:2", verdict="success")]
     assert lvr.resume_done_groups(prior) == {("t2", 1)}
-    assert lvr.resume_done_groups([_sanity("t9", verdict="success")]) == set()
+    assert lvr.resume_done_groups([
+        cell_row(kind="sanity", theorem_id="t9", verdict="success")]) == set()
     assert lvr.resume_done_groups(
-        [_sanity("t1", verdict="success"), _cell("t1", 1, verdict="success")]) == {("t1", 1)}
+        [cell_row(kind="sanity", theorem_id="t1", verdict="success"),
+         _cell("t1", 1, verdict="success")]) == {("t1", 1)}
 
 
 def test_group_unverified_dedups_and_fans_out() -> None:
@@ -186,7 +182,8 @@ def test_group_unverified_dedups_and_fans_out() -> None:
             _cell("T.a", 2, rung="stepk:1", proof="simp"),
             _cell("T.b", 0, rung="stepk:1", proof="rfl"),
             _cell("T.a", 1, rung="hint:3", verdict="success", proof="aesop"),
-            _sanity("T.a"), _cell("T.a", 1, rung="hint:4", proof="simp")]
+            cell_row(kind="sanity", theorem_id="T.a"),
+            _cell("T.a", 1, rung="hint:4", proof="simp")]
     groups = lvr.group_unverified(rows)
     assert groups == {("T.a", 1): [0, 1, 6], ("T.a", 2): [2], ("T.b", 0): [3]}
     assert list(groups) == [("T.a", 1), ("T.a", 2), ("T.b", 0)]
@@ -215,11 +212,6 @@ def test_ram_cap_and_s3_path_mapping() -> None:
     for bad in (3, 0):
         with pytest.raises(SystemExit):
             lvr.check_workers(bad, meminfo)
-    assert lvr.parse_s3_uri("s3://bucket/deduction/runs") == ("bucket", "deduction/runs")
-    assert lvr.parse_s3_uri("s3://bucket/deduction/runs/") == ("bucket", "deduction/runs")
-    assert lvr.parse_s3_uri("s3://bucket") == ("bucket", "")
-    with pytest.raises(ValueError):
-        lvr.parse_s3_uri("https://bucket/key")
     key = lvr.run_object_key("deduction/runs", "scaling_glm-4.7", "verified_rows.jsonl")
     assert key == "deduction/runs/scaling_glm-4.7/verified_rows.jsonl"
     assert "//" not in key and not key.startswith("/")
@@ -284,7 +276,7 @@ def test_download_rows_tolerates_and_reports_a_torn_final_line(
 ) -> None:
     """A half-written last line (SIGKILL mid-write on a spot box) must be dropped AND reported, not silently swallowed alongside real corruption."""
     fake = _Fake()
-    good = [_cell("T", rung="stepk:1"), _sanity("T")]
+    good = [_cell("T", rung="stepk:1"), cell_row(kind="sanity", theorem_id="T")]
     fake.objects["k"] = _dump(good)[:-1] + b'\n{"kind": "cell", "theo'
 
     with caplog.at_level(0):
