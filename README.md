@@ -41,7 +41,6 @@ smolbench/                 the installable library
     _common.py                generation machinery
     periodic.py                the benchmark family
     experiment.py              thin InductionExperiment(Experiment) subclass
-    figures.py                 analysis plotting helpers
   deduction/lean/           the Lean 4 theorem-proving benchmark
     corpus.py, premises.py, context.py, prompt.py   corpus loading + prompt rendering
     runner.py, verify.py, replbackend.py            the sweep runner and lean-interact verification
@@ -80,7 +79,7 @@ scripts/                   operational scripts, grouped by job (see scripts/READ
 tests/                     the offline pytest suite (see tests/README.md), zero AWS credentials needed
   analysis/                  synthetic result trees driving the analysis report scripts
   evals/                     provider round trips against a local stub server
-  induction/                 golden quiz regressions, figures, token-matching
+  induction/                 golden quiz regressions, token-matching
   deduction/                 Lean corpus/context/prompt/runner/verify, S3 archive pins
   tooling/                   fleet/evidence/bucket/arch cross-study contracts
   fixtures/                  shared fixtures (golden quizzes, lean_mini corpus, roster configs)
@@ -113,8 +112,8 @@ installed too, but for corpus tracing and premise slicing, not verification.
 
 `pyproject.toml` declares four optional extras: `dev` (pytest, linters),
 `aws` (boto3/botocore, for the EC2 and SageMaker/Bedrock providers),
-`lean` (the Lean theorem-proving stack), and `notebook` (matplotlib,
-python-dotenv, and other notebook-only dependencies). `smolbench` itself
+`lean` (the Lean theorem-proving stack), and `notebook` (python-dotenv, scipy,
+statsmodels and other notebook-only dependencies). `smolbench` itself
 requires only Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`,
 `huggingface-hub`, and `tokenizers`.
 
