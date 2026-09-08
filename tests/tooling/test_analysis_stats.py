@@ -19,8 +19,7 @@ def _load(name: str, rel: str) -> ModuleType:
     sys.modules[Path(rel).stem] = mod  # siblings import each other by bare name
     return mod
 
-# Both legs ship a power_analysis.py imported by bare name, so every deduction
-# script must exec before the induction ones rebind it; then unbind them all.
+# Both legs use bare ``power_analysis``; load deduction first, then unbind.
 ded_pa = _load("ded_power_analysis", "deduction/analysis/power_analysis.py")
 error_bars = _load("ded_error_bars", "deduction/analysis/error_bars.py")
 hint_vs_noise = _load("ded_hint_vs_noise", "deduction/analysis/hint_vs_noise.py")
@@ -37,28 +36,27 @@ import _power_common as pc  # noqa: E402
 def test_shared_scaffolding_wiring() -> None:
     assert (ind_pa.RESULTS_DIR, ded_pa.RESULTS_DIR) == (
         NOTEBOOKS / "induction" / "results", NOTEBOOKS / "deduction" / "results")
-    # None means "not reached within the cap"; a number prints bare, even at/past it
+    # ``None`` means not reached within the cap.
     assert [pc.fmt_r(*a) for a in ((None, 80), (None, 200), (1, 80), (80, 80), (200, 80))] == [
         ">80", ">200", "1", "80", "200"]
     script = NOTEBOOKS / "induction" / "analysis" / "power_analysis.py"
     assert pc.results_dir(__file__) == Path(__file__).resolve().parent / "results"
     assert pc.results_dir(str(script), up=1) == NOTEBOOKS / "induction" / "results"
     assert pc.results_dir(str(script), up=0) == pc.results_dir(str(script))
-    # no script carries a private copy of a multiplicity procedure
+    # Multiplicity procedures must have one implementation.
     assert (extens_vs_noise.holm, significance.holm, hint_vs_noise.holm) == (
         paired.holm, paired.holm, error_bars.holm)
     assert extens_vs_noise.hochberg is significance.hochberg
 
-#: Each procedure with its verdict on the m=3 case that separates them (thresholds
-#: .0167/.025/.05): Holm stops at the first failure, Hochberg steps up from 0.045.
+#: m=3 distinguishes Holm from Hochberg at .0167/.025/.05 thresholds.
 PROCEDURES = [pytest.param(paired.holm, [True, False, False], id="induction-holm"),
               pytest.param(error_bars.holm, [True, False, False], id="deduction-holm"),
               pytest.param(significance.hochberg, [True, True, True], id="hochberg")]
-FLOOR_P = 2 / 2 ** 30  # the seed sign-flip test's resolution floor at S = 30
+FLOOR_P = 2 / 2 ** 30  # Sign-flip resolution floor for 30 seeds.
 
 @pytest.mark.parametrize("procedure, stepped", PROCEDURES)
 @pytest.mark.parametrize("pvals", [
-    # ties at the floor, and ties exactly on a threshold (alpha/(m-i), m=6)
+    # Ties at the floor and exact m=6 thresholds.
     [FLOOR_P, FLOOR_P, FLOOR_P, 0.02, 0.02, 0.9],
     [0.05 / 6, 0.05 / 6, 0.05 / 4, 0.05 / 4, 0.3, 0.3]],
     ids=["floor-ties", "threshold-ties"])
@@ -70,7 +68,7 @@ def test_tie_order_invariance_and_stepping(
     for perm in map(list, itertools.permutations(range(base.size))):
         assert np.array_equal(procedure(base[perm]), reject[perm]), perm
     assert procedure(np.array([0.01, 0.04, 0.045])).tolist() == stepped
-    # m=4: the tied values sit exactly at 0.05/4; a `<` would reject all four
+    # Exact 0.05/4 ties reject; strict ``<`` would not.
     tie = np.array([0.0125, 0.0125, 0.0125, 0.9])
     assert procedure(tie).tolist() == [True, True, True, False]
 

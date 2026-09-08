@@ -1,14 +1,8 @@
 """KV-cache sizing for the family-ladder roster.
 
-A naive figure assuming every layer holds full-context KV is wrong for most of
-the roster: sliding, linear-attention, hybrid, MLA and shared-latent layers
-each shrink KV differently, and tp replication grows it back except for MLA
-and shared-latent layers (see `kv_bytes`, `_layer_mix`, `_is_shared_latent`).
-
-Box sizing budgets ``weights + 2.0 x KV@131k`` (about 8 concurrent requests)
-against ``0.90 x total VRAM``, since sizing for one sequence goes negative at
-real concurrency. ``kv_budget.py [--ctx 131072]`` prints, per roster model,
-the naive figure against the corrected one at tp=1 and at the deploy spec's tp.
+Account for layer mix, sharing, latent KV, and tp replication. Boxes budget
+``weights + 2.0 x KV@131k`` (about 8 requests) against ``0.90 x total VRAM``
+because one-sequence sizing goes negative at concurrency.
 """
 
 from __future__ import annotations
@@ -48,17 +42,15 @@ def _text_config(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _layer_mix(cfg: Dict[str, Any]) -> List[str]:
     """Return each layer's mixer kind: 'full' | 'sliding' | 'linear' | 'none'.
 
-    Mechanism only. KV *sharing* is a separate question -- see `_kv_layers`.
-
     Parameters
     ----------
     cfg : Dict[str, Any]
-        Model configuration containing layer-mix fields.
+        Layer-mix fields.
 
     Returns
     -------
     List[str]
-        Mixer kind for each layer.
+        Per-layer mixer kinds.
     """
     n_layers = cfg["num_hidden_layers"]
     pattern = cfg.get("hybrid_override_pattern")
@@ -100,18 +92,17 @@ def _layer_mix(cfg: Dict[str, Any]) -> List[str]:
 def _kv_layers(cfg: Dict[str, Any]) -> List[str]:
     """`_layer_mix` with cross-layer KV sharing applied: the KV-allocating mix.
 
-    The last ``num_kv_shared_layers`` layers read an earlier layer's cache and
-    allocate none of their own (Gemma-4-E2B: layers 15-34 of 35).
+    Shared layers allocate no cache because they read an earlier layer's cache.
 
     Parameters
     ----------
     cfg : Dict[str, Any]
-        Model configuration containing KV-sharing fields.
+        KV-sharing fields.
 
     Returns
     -------
     List[str]
-        Mixer kind for each layer after cross-layer KV sharing.
+        Per-layer cache-allocating mixer kinds.
     """
     kinds = _layer_mix(cfg)
     shared = cfg.get("num_kv_shared_layers") or 0
@@ -124,21 +115,19 @@ def _kv_layers(cfg: Dict[str, Any]) -> List[str]:
 def _layer_kv_shape(cfg: Dict[str, Any], kind: str) -> Tuple[int, int]:
     """Return ``(kv_heads, head_dim)`` for one layer of mixer `kind`.
 
-    Gemma-4's global layers cache ``global_head_dim`` 512 rows over
-    ``num_global_key_value_heads``; E2B leaves that head count null, so it
-    falls back to ``num_key_value_heads`` -- both readings give the same figure.
+    Global layers use their own head geometry; null global heads fall back.
 
     Parameters
     ----------
     cfg : Dict[str, Any]
-        Model configuration containing KV-head dimensions.
+        KV-head dimensions.
     kind : str
-        Mixer kind for the layer.
+        Layer mixer kind.
 
     Returns
     -------
     Tuple[int, int]
-        ``(kv_heads, head_dim)`` for one layer of mixer `kind`.
+        KV heads and head dimension.
     """
     n_heads = cfg["num_attention_heads"]
     n_kv = cfg.get("num_key_value_heads") or n_heads
@@ -152,26 +141,18 @@ def _layer_kv_shape(cfg: Dict[str, Any], kind: str) -> Tuple[int, int]:
 def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
     """Return whether `cfg` describes DeepSeek-V4's shared-latent KV cache.
 
-    DeepSeek-V4 caches one ``head_dim + qk_rope_head_dim``-wide row per token
-    per layer, shared by K and V, with no per-head replication -- close to MLA
-    but keyed under different fields (no ``kv_lora_rank``).
-
-    Two independent readings are OR-ed so a later point release that renames
-    ``model_type`` still lands on the right arithmetic: the label
-    (``model_type == "deepseek_v4"``) and the structure (one KV head, a rope
-    split, no MLA latent rank). The ``kv_lora_rank is None`` clause matters: a
-    config that also sets ``kv_lora_rank`` is ordinary MLA (DeepSeek-V3.1,
-    GLM-4.7-Flash) and must fall to `kv_bytes`'s MLA branch instead.
+    Match label or structure so renamed point releases retain the arithmetic.
+    Exclude ``kv_lora_rank`` because it denotes ordinary MLA.
 
     Parameters
     ----------
     cfg : Dict[str, Any]
-        Model configuration to classify.
+        Configuration to classify.
 
     Returns
     -------
     bool
-        Whether `cfg` describes DeepSeek-V4's shared-latent KV cache.
+        Whether the cache is shared-latent.
     """
     if cfg.get("model_type") == "deepseek_v4":
         return True
@@ -188,22 +169,18 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     Parameters
     ----------
     cfg : Dict[str, Any]
-        Model configuration whose cache geometry is calculated.
+        Cache geometry.
     ctx : int
-        Sequence length in tokens.
+        Sequence length.
     tp : int, optional
-        for models that are neither MLA nor shared-latent, KV heads replicate
-        when ``tp > n_kv``, applied per layer since Gemma-4's two blocks hold
-        different KV-head counts (see `_is_shared_latent`); this only ever
-        raises the total above the tp=1 figure.
+        Tensor-parallel shards; ordinary KV heads replicate when ``tp > n_kv``.
     naive : bool, optional
-        assume every layer holds full-context GQA KV at the model-level head
-        geometry -- the uncorrected comparison column.
+        Use full-context GQA at model-level geometry.
 
     Returns
     -------
     int
-        Total KV-cache size in bytes.
+        Cache bytes.
     """
     n_layers = cfg["num_hidden_layers"]
     n_heads = cfg["num_attention_heads"]

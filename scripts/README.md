@@ -1,37 +1,28 @@
 # scripts/
 
-`scripts/arch/` is a separate, already-coherent subpackage with its own
-README (`scripts/arch/README.md`) covering the roster's architecture
-facts; it is not described here.
+`scripts/arch/` documents roster architecture in its [README](arch/README.md).
 
-There is no `__init__.py` under `scripts/` -- the directories are implicit
-namespace packages, so `from scripts.<group>.<module> import ...` works
-from the repo root (pytest sets `pythonpath`). The `scripts/fleet/` scripts
-instead load their siblings by file path, so that the test loader, which
-registers these scripts under private module names, never collides with a
-package import of the same basename.
+`scripts/` uses implicit namespace packages; fleet scripts load siblings by
+path to avoid collisions with test-loader module names.
 
 ## scripts/fleet/ -- launching and babysitting the family-ladder EC2 fleet
 
 | File | What it's for |
 | --- | --- |
-| `run_fleet.py` | The entry point for a 21-lane EC2 fleet run of the family-ladder scaling study: argument parsing, lane selection and the `--dry-run` plan. The launching, supervision and restart classification themselves belong to `lane_env.py`, `supervisor.py` and `policy.py`. |
-| `lane_env.py` | The study's roster -- the lane list and the per-tier instance-type, region and budget tables -- and one lane's complete child environment and argv. Also owns the load-bearing import order the fleet's environment-frozen `EC2_*` constants depend on. |
-| `supervisor.py` | The live supervision loop: pre-flight, staggered launch, the family gate, monitor ticks, restart-policy application, the CoT-ON check, phase advance, S3 spool and shutdown. Also owns the supervisor state file that lets a replacement supervisor resume a running fleet. |
-| `policy.py` | The one reclaim-vs-crash vocabulary: the reclaim patterns, the exit classification, the relaunch caps and the backoff schedule. Shared with `run_shards.py`, so one spot reclaim gets one answer whichever supervisor is watching. |
-| `fleet_status.py` | Read-only listing of the fleet's live EC2 instances. Loaded as a library by `run_fleet.py` and `fleet_teardown.py`, and also runnable standalone. |
-| `fleet_teardown.py` | Lists, and optionally terminates, the fleet's live instances -- the safety net for lanes a `run_fleet.py` run didn't shut down itself. |
-| `run_shards.py` | Babysits direct (supervisor-less) `notebooks/induction/run_study.py` shard fleets: adopts already-running shard processes, relaunches dead ones, and tears down completed shards' boxes. |
-| `shards.py` | One supervised shard of a direct `run_study.py` run -- its child process, log file, EC2 state file and restart counters. The unit `run_shards.py` supervises. |
+| `run_fleet.py` | Fleet entry point: arguments, lane selection, dry-run plan. |
+| `lane_env.py` | Roster, per-lane environment/argv, and required `EC2_*` import order. |
+| `supervisor.py` | Live supervision, gates, restarts, spool, shutdown, and resumable state. |
+| `policy.py` | Shared reclaim/crash classification, relaunch caps, and backoff. |
+| `fleet_status.py` | Read-only live-instance listing; library and standalone CLI. |
+| `fleet_teardown.py` | Lists or terminates instances left by `run_fleet.py`. |
+| `run_shards.py` | Supervises direct induction shard fleets. |
+| `shards.py` | Supervised shard process, logs, state, and restart counters. |
 
-All of these files must stay in this directory together (the sibling
-load resolves via `Path(__file__).parent`).
+Keep these files together: sibling loading resolves via `Path(__file__).parent`.
 
 ## scripts/deduction/ -- the Lean deduction study's sharding and verification passes
 
-`lean_verify_rows.py` is the only script in this repo that needs
-`lean_dojo` (its `--dry-run` mode works without it). Everything here, and
-everywhere else under `scripts/`, runs under `.venv`.
+`lean_verify_rows.py` alone needs `lean_dojo`; its `--dry-run` does not. Run scripts in `.venv`.
 
 | File | What it's for |
 | --- | --- |
@@ -42,17 +33,16 @@ everywhere else under `scripts/`, runs under `.venv`.
 
 | File | What it's for |
 | --- | --- |
-| `provision_results_bucket.py` | ADMIN-credentialed, one-time (idempotent) runbook that provisions the S3-backed replicate results bucket `smolbench.evals.results_store` reads and writes. |
-| `audit_run_completeness.py` | Audits content-level run completeness against S3 (or a local run directory) to catch silent data faults that row/key counts alone would miss. |
-| `audit_lean_pinning.py` | Audits that all 21 deduction lanes were asked the SAME pinned theorems, against S3: config, theorem sets, cell keys, byte-identical prompts (via ETag), and side-run containment. Complements `audit_run_completeness.py` -- this one gates the questions asked, that one gates the data that came back. |
-| `snapshot_analysis_data.py` | Publishes an analysis-ready snapshot of the family-ladder study to S3, carrying the superseded/stale/broken repair audit trail alongside the current data. |
-| `evidence_manifest.py` | Builds and verifies `EVIDENCE.json`, the manifest that pins the artifacts (by sha256) a results writeup cites. |
+| `provision_results_bucket.py` | Idempotently provisions the results bucket. |
+| `audit_run_completeness.py` | Finds data faults that row/key counts miss. |
+| `audit_lean_pinning.py` | Checks all 21 lanes used the same pinned theorems and prompts. |
+| `snapshot_analysis_data.py` | Publishes current data with its repair audit trail. |
+| `evidence_manifest.py` | Builds and verifies sha256-pinned `EVIDENCE.json`. |
 
 ## scripts/smoke/ -- live AWS smoke tests
 
-**These scripts spend real money and touch live AWS accounts.** Never run
-them without explicit user opt-in; they provision real EC2 instances /
-invoke real Bedrock models and are billed accordingly.
+These scripts spend real money and touch live AWS accounts. Never run without
+explicit user opt-in: they provision EC2 or invoke Bedrock and are billed.
 
 | File | What it's for |
 | --- | --- |
@@ -84,7 +74,5 @@ aws ec2 describe-instances --region us-east-1 \
   --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output table
 ```
 
-Even if a smoke step dies mid-run, the instance's own idle watchdog (25
-min) and max-lifetime backstop terminate it. If spot capacity is dry,
-widen the hunt (e.g. `EC2_INSTANCE_TYPES=g6.2xlarge,g5.2xlarge,g6e.2xlarge`
-and `EC2_REGIONS=us-east-1,us-east-2,us-west-2`).
+The 25-minute idle watchdog and max-lifetime backstop terminate a failed run.
+For dry spot capacity, widen `EC2_INSTANCE_TYPES` and `EC2_REGIONS`.

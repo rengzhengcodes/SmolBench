@@ -1,17 +1,9 @@
-"""Fetch and normalise the architecture facts for the family-ladder roster.
+"""Fetch normalized architecture facts for the family-ladder roster.
 
-Fetches each rung's ``config.json`` at the exact commit its deploy spec pinned
-with ``--revision``, never the moving branch tip, since a vendor force-push to
-the tip would silently re-base every KV figure derived from these configs (see
-`spec_revision`). Where a model card disagrees with the config, the config
-wins: it is the only artefact guaranteed to match the weights vLLM served.
-Every record carries both the pinned and hub-resolved SHA so a later reader
-can catch a moved or deleted pin.
-
-Writes two outputs: ``arch_configs_raw.json`` (verbatim audit trail) and
-``arch_facts.json`` (normalised, diagram-ready). ``--check`` cross-checks both
-against ground truth and exits non-zero without writing either, so a failed
-run never overwrites the previous known-good pair (see `cross_check`).
+Use deploy-spec revision pins so moving branch tips cannot alter audited KV
+figures; config wins over model cards because it matches served weights.
+Keep pinned and resolved SHAs to detect moved or deleted pins. ``--check``
+writes nothing so disagreement preserves prior audit files.
 """
 
 from __future__ import annotations
@@ -23,9 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# huggingface_hub (already a dependency) buys auth/retry/caching for free and
-# is the only client that resolves a revision pin to a commit SHA via a
-# documented API (HfApi.repo_info) rather than an undocumented header.
+# Use the documented API to resolve revision pins to commit SHAs.
 from huggingface_hub import HfApi, hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 
@@ -35,17 +25,14 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
-#: The smoke-test entry is not part of the study roster; ``run_fleet`` excludes
-#: it from its own tier check the same way.
+#: Exclude the smoke-test entry from the study roster.
 _SMOKE_KEY = "qwen2.5-1.5b"
 
 _RAW_PATH = _HERE / "arch_configs_raw.json"
 _FACTS_PATH = _HERE / "arch_facts.json"
 _FIXTURE_PATH = _REPO_ROOT / "tests" / "fixtures" / "roster_configs.json"
 
-# Field groupings, intentionally generous: a key unique to one family still
-# lands in the group a reader would look for it in. Anything unlisted goes to
-# ``unclassified``, so a new architectural knob announces itself.
+# Group known keys; retain unknown keys under ``unclassified``.
 
 _SHAPE_KEYS = (
     "model_type", "num_hidden_layers", "hidden_size", "intermediate_size",
@@ -108,49 +95,40 @@ _IGNORED_KEYS = frozenset({
 def _fetch(repo: str, filename: str, revision: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
     """Fetch one JSON file from a Hugging Face repo at a pinned revision.
 
-    The one seam the offline tests monkeypatch (by name and signature), so
-    `collect` never calls `huggingface_hub` directly. Never raises --
-    one rung's fetch failure must not abort the whole roster sweep.
+    Return failures instead of aborting the roster sweep.
 
     Parameters
     ----------
     repo : str
-        Hugging Face repository identifier.
+        Hugging Face repository.
     filename : str
-        JSON filename to retrieve.
+        JSON filename.
     revision : str
-        Pinned repository revision.
+        Pinned revision.
 
     Returns
     -------
     Tuple[Optional[Any], Optional[str], Optional[str]]
-        ``(payload, resolved_revision, error)``; ``error`` is ``"absent"``
-        when the repo ships no such file at this revision (not every repo
-        ships a generation_config.json), otherwise the exception string.
+        Payload, resolved revision, and error; absent files return ``"absent"``.
     """
     try:
         path = hf_hub_download(repo_id=repo, filename=filename, revision=revision)
         payload = json.loads(Path(path).read_text())
     except EntryNotFoundError:
-        # Common base of the hub's 404 and the local-cache-miss error, so
-        # catching it covers both without guessing which one applies.
+        # Covers both hub 404s and local-cache misses.
         return None, None, "absent"
     except Exception as exc:  # noqa: BLE001 -- report, never abort the sweep
         return None, None, f"{type(exc).__name__}: {exc}"
 
     try:
-        # Instantiated per call, not module scope, so importing this module
-        # makes no network call; called only after the payload fetch succeeds
-        # so a metadata-lookup failure never masks a plain 404 on the file.
+        # Delay metadata lookup so import stays offline and 404s stay clear.
         resolved_revision = HfApi().repo_info(repo_id=repo, revision=revision).sha
     except Exception as exc:  # noqa: BLE001 -- report, never abort the sweep
-        # Payload is kept even though the SHA lookup failed; cross_check's
-        # missing-revision check catches the None downstream.
+        # Keep payload so cross_check can report the missing revision.
         return payload, None, f"{type(exc).__name__}: {exc}"
 
     if not resolved_revision:
-        # An empty/falsy .sha (never observed, not guaranteed non-empty) must
-        # not slip through as a silent resolved_revision=None, error=None.
+        # Do not silently accept an empty SHA.
         return payload, None, "repo_info returned no commit sha for this revision"
 
     return payload, resolved_revision, None
@@ -170,20 +148,17 @@ def _rle(items: List[Any]) -> List[Dict[str, Any]]:
 def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     """Find the shortest repeating motif that tiles ``items`` exactly.
 
-    A block diagram draws the repeating unit and an ``x N`` multiplier, not 61
-    individual layers.
+    Diagrams use the motif and multiplier rather than 61 individual layers.
 
     Parameters
     ----------
     items : List[Any]
-        Layer sequence to inspect.
+        Layer sequence.
 
     Returns
     -------
     Optional[Dict[str, Any]]
-        None when the sequence doesn't tile (DeepSeek's leading dense layers,
-        Nemotron's irregular hybrid), which sends the caller to the run-length
-        view instead.
+        Motif metadata, or None for an irregular sequence.
     """
     n = len(items)
     if n == 0:
@@ -200,20 +175,18 @@ def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
 def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """Hoist a multimodal wrapper's ``text_config`` up, returning it and any sibling towers.
 
-    Ten of the 21 rungs ship as ``*ForConditionalGeneration`` wrappers whose
-    language-model fields live in ``text_config``; the study serves them with
-    ``--language-model-only``, exactly that inner model. Top-level keys win on
-    collision, since they describe the wrapper.
+    Serve ``text_config`` for wrappers because the study uses
+    ``--language-model-only``; top-level keys override collisions as wrapper metadata.
 
     Parameters
     ----------
     config : Dict[str, Any]
-        Model configuration, possibly with a ``text_config`` wrapper.
+        Model configuration.
 
     Returns
     -------
     Tuple[Dict[str, Any], List[str]]
-        The hoisted configuration and names of sibling modality towers.
+        Hoisted configuration and sibling tower names.
     """
     text_config = config.get("text_config")
     if not isinstance(text_config, dict):
@@ -259,19 +232,17 @@ def _classify(config: Dict[str, Any]) -> Dict[str, Any]:
 def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
     """Derive the drawable layer sequence: run-length runs plus a motif.
 
-    Normalises the two encodings to one list of strings: ``layer_types`` (a
-    list; Qwen3.5 / Gemma-4 / GLM / EXAONE-4.x) and ``hybrid_override_pattern``
-    (a character string; Nemotron-3).
+    Normalize ``layer_types`` and ``hybrid_override_pattern`` to one sequence.
 
     Parameters
     ----------
     config : Dict[str, Any]
-        Model configuration containing a layer encoding.
+        Model configuration.
 
     Returns
     -------
     Dict[str, Any]
-        Drawable layer sequence metadata.
+        Drawable layer metadata.
     """
     view: Dict[str, Any] = {}
     layer_types = config.get("layer_types")
@@ -282,7 +253,6 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
         pattern = config.get("hybrid_override_pattern")
         if isinstance(pattern, str) and pattern:
             view["source"] = "hybrid_override_pattern"
-            # Nemotron-H's alphabet: M = Mamba-2, * = self-attention, - = MLP.
             view["sequence"] = list(pattern)
     sequence = view.get("sequence")
     if not sequence:
@@ -299,24 +269,22 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
 def spec_revision(spec: Dict[str, Any]) -> str:
     """Return the commit SHA a deploy spec pins with its ``--revision`` flag.
 
-    Deliberately does not fall back to ``"main"``: silently
-    auditing an unpinned rung against a moving branch is exactly the defect
-    this function exists to prevent.
+    Reject missing pins rather than auditing the moving ``main`` branch.
 
     Parameters
     ----------
     spec : Dict[str, Any]
-        Deploy specification containing ``vllm_args``.
+        Deploy specification.
 
     Returns
     -------
     str
-        Commit SHA pinned by ``--revision``.
+        ``--revision`` commit SHA.
 
     Raises
     ------
     ValueError
-        If ``vllm_args`` has no ``--revision`` flag or no SHA after it.
+        Missing ``--revision`` or its SHA.
     """
     vllm_args = spec.get("vllm_args", [])
     repo = spec.get("hf_model_id", "<unknown repo>")
@@ -344,13 +312,12 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
     Parameters
     ----------
     fetch : Optional[_FetchFn], optional
-        injectable in place of `_fetch` so offline tests can pass a fake with
-        no network access, without monkeypatching module globals.
+        Optional fetch implementation.
 
     Returns
     -------
     Dict[str, Any]
-        Fetch timestamp, raw fetch results and normalised architecture facts.
+        Timestamp, raw results, and normalized facts.
     """
     fetch = fetch or _fetch
     roster = {
@@ -363,8 +330,7 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
     for spec_key in sorted(roster):
         spec = roster[spec_key]
         repo = spec["hf_model_id"]
-        # Not caught: an unpinned spec is a roster defect, not a per-rung
-        # fetch failure to record and move on.
+        # An unpinned spec is a roster defect, not a recoverable fetch failure.
         pinned = spec_revision(spec)
         config, revision, error = fetch(repo, "config.json", pinned)
         generation, _, generation_error = fetch(repo, "generation_config.json", pinned)
@@ -374,8 +340,7 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
 
         raw[spec_key] = {
             "repo": repo,
-            # Both SHAs are kept side by side because that pair is the check:
-            # they agree unless the pin moved or was deleted upstream.
+            # Keep both SHAs to detect moved or deleted pins.
             "pinned_revision": pinned,
             "revision": revision,
             "fetched_at": fetched_at,
@@ -385,8 +350,7 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
             "generation_config_error": generation_error,
         }
         if config is None:
-            # `revision` stays a key (as None) on failure too, since
-            # cross_check's missing-revision check relies on it being present.
+            # Keep ``revision`` so cross_check reports missing pins.
             facts[spec_key] = {
                 "repo": repo, "pinned_revision": pinned, "revision": revision, "error": error,
             }
@@ -415,23 +379,17 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
 def cross_check(facts: Dict[str, Any]) -> List[str]:
     """Run both cross-checks: fixture agreement and pin-vs-resolved revision.
 
-    Check 1 compares fetched configs against
-    ``tests/fixtures/roster_configs.json`` on the four fields both hold; a
-    mismatch means the upstream checkpoint moved under the study. Check 2
-    compares each record's own pinned vs. resolved revision -- the
-    vendor-force-push case this whole fix targets -- independently of the
-    fixture, since that invariant holds regardless of what the fixture
-    covers.
+    Compare fixture fields and pinned versus resolved revisions.
 
     Parameters
     ----------
     facts : Dict[str, Any]
-        Fetched architecture facts keyed by roster specification.
+        Facts keyed by roster specification.
 
     Returns
     -------
     List[str]
-        One line per problem found; empty when everything agrees.
+        Problems, if any.
     """
     problems: List[str] = []
 
@@ -462,8 +420,7 @@ def cross_check(facts: Dict[str, Any]) -> List[str]:
                         f"fetched={merged.get(field)!r}"
                     )
 
-    # Own loop over `facts` (not folded into the fixture loop above) so it
-    # still runs on roster keys the fixture doesn't cover.
+    # Check every fact, including keys absent from the fixture.
     for spec_key, record in sorted(facts.items()):
         pinned = record.get("pinned_revision")
         resolved = record.get("revision")
@@ -490,9 +447,7 @@ def main() -> int:
     bundle = collect()
     failures = [k for k, v in bundle["facts"].items() if "error" in v]
 
-    # --check runs before either output is written, so a failed cross-check
-    # leaves the previous known-good files as the audit trail instead of
-    # being overwritten by the fetch that failed to agree.
+    # Check first so mismatches preserve prior audit files.
     if args.check:
         problems = cross_check(bundle["facts"])
         if problems:
@@ -509,9 +464,7 @@ def main() -> int:
         {"fetched_at": bundle["fetched_at"], "models": bundle["facts"]},
         indent=1, sort_keys=True) + "\n")
 
-    # Cosmetic path display; falls back to the raw path if a test
-    # monkeypatches these to a tmp dir outside _REPO_ROOT, so display never
-    # crashes a passing run.
+    # Accept temporary paths outside the repository in tests.
     try:
         facts_display = _FACTS_PATH.relative_to(_REPO_ROOT)
         raw_display = _RAW_PATH.relative_to(_REPO_ROOT)

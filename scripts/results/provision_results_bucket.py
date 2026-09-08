@@ -1,13 +1,8 @@
-"""Provision the S3-backed replicate results bucket (needs ADMIN credentials).
+"""Provision the S3-backed replicate results bucket with ADMIN credentials.
 
-Provisions the bucket named by ``SMOLBENCH_RESULTS_S3`` (or
-``DEFAULT_RESULTS_BUCKET``): public access blocked, versioning enabled, the
-managed read/write policy attached to the day-to-day operator IAM group. Every
-step is idempotent; nothing runs at import time. Exits 1 when a call is
-denied, since day-to-day credentials are EC2-only. The bucket is not seeded:
-any historical import must go through ``S3ResultsStore`` instead.
-
-    .venv/bin/python scripts/results/provision_results_bucket.py
+Uses the configured bucket, blocks public access, enables versioning, and
+attaches the operator policy. Versioning makes accidental overwrite or delete
+recoverable. Exit 1 on denied calls because operator keys are EC2-only.
 """
 
 from __future__ import annotations
@@ -24,31 +19,26 @@ REGION = "us-west-2"
 POLICY_NAME = "SmolbenchResultsBucketRW"
 GROUP_NAME = "smolbench-ec2-operators"
 
-#: `ClientError` codes `_run_step` treats uniformly as access denied.
+#: Access-denied `ClientError` codes.
 _ACCESS_DENIED_CODES = frozenset(
     {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
 )
 
 
-# ---------------------------------------------------------------------------
-# Pure functions (no AWS, no I/O)
-# ---------------------------------------------------------------------------
 def policy_document(bucket: str) -> dict:
     """Build the IAM policy document granting read/write on ``bucket``.
 
-    ``s3:ListBucket`` needs the bucket ARN with no trailing ``/*``; object
-    actions need the ``/*`` wildcard. Key order is pinned: a reviewer diffs
-    the rendered ``json.dumps`` against this shape.
+    ListBucket needs the bucket ARN; object actions need ``/*``.
 
     Parameters
     ----------
     bucket : str
-        Bucket whose ARN the policy grants access to.
+        Bucket receiving access.
 
     Returns
     -------
     dict
-        IAM policy document granting read/write on ``bucket``.
+        Read/write IAM policy.
     """
     return {
         "Version": "2012-10-17",
@@ -78,24 +68,19 @@ def access_denied_message(operation: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# AWS steps. Each takes an already-built client, so each is testable against a
-# fake with no AWS SDK installed.
-# ---------------------------------------------------------------------------
 def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
     """Create ``bucket`` in ``region``, tolerating "already provisioned".
 
-    ``CreateBucketConfiguration`` is required: without it ``create_bucket``
-    always targets ``us-east-1`` regardless of the client's region binding.
+    Supply the location constraint because create_bucket otherwise targets us-east-1.
 
     Parameters
     ----------
     s3 : Any
-        S3 client that creates the bucket.
+        S3 client.
     bucket : str
-        Bucket to create.
+        Bucket name.
     region : str, optional
-        Region for the bucket's location constraint.
+        Location-constraint region.
     """
     from botocore.exceptions import ClientError
 
@@ -114,14 +99,12 @@ def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
 def put_public_access_block(s3: Any, bucket: str) -> None:
     """Block all public access on ``bucket``, setting all four flags to True.
 
-    A PUT (replace), so re-running is idempotent with no error-code handling.
-
     Parameters
     ----------
     s3 : Any
-        S3 client that sets the access block.
+        S3 client.
     bucket : str
-        Bucket whose public access is blocked.
+        Bucket name.
     """
     s3.put_public_access_block(
         Bucket=bucket,
@@ -137,16 +120,14 @@ def put_public_access_block(s3: Any, bucket: str) -> None:
 def enable_versioning(s3: Any, bucket: str) -> None:
     """Enable S3 versioning on ``bucket`` (an idempotent call).
 
-    Replicates are written exactly once and never mutated, so versions cost
-    almost nothing while making a racing overwrite or a destructive
-    ``aws s3 sync --delete`` recoverable.
+    Versioning makes accidental overwrites and deletes recoverable.
 
     Parameters
     ----------
     s3 : Any
-        S3 client that enables versioning.
+        S3 client.
     bucket : str
-        Bucket on which to enable versioning.
+        Bucket name.
     """
     s3.put_bucket_versioning(Bucket=bucket, VersioningConfiguration={"Status": "Enabled"})
 
@@ -154,23 +135,21 @@ def enable_versioning(s3: Any, bucket: str) -> None:
 def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
     """Create the managed policy granting read/write on ``bucket``, or reuse it.
 
-    Create-or-reuse, not create-or-update: refreshing on every run would burn
-    IAM's 5-version budget per managed policy, so a real change is a
-    deliberate manual ``aws iam create-policy-version``.
+    Reuse rather than update to preserve IAM's five-version policy budget.
 
     Parameters
     ----------
     iam : Any
-        IAM client that creates or lists policies.
+        IAM client.
     bucket : str
-        Bucket the policy grants access to.
+        Bucket receiving access.
     name : str, optional
-        Managed policy name.
+        Policy name.
 
     Returns
     -------
     str
-        ARN of the created or existing managed policy.
+        Created or existing policy ARN.
     """
     from botocore.exceptions import ClientError
 
@@ -208,24 +187,18 @@ def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
 def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -> None:
     """Attach ``policy_arn`` (from `ensure_policy`) to IAM group ``group``.
 
-    No "already attached" handling needed: ``attach_group_policy`` is
-    idempotent server-side.
-
     Parameters
     ----------
     iam : Any
-        IAM client that attaches the policy.
+        IAM client.
     policy_arn : str
-        ARN of the managed policy to attach.
+        Managed policy ARN.
     group : str, optional
-        IAM group that receives the policy.
+        Receiving IAM group.
     """
     iam.attach_group_policy(GroupName=group, PolicyArn=policy_arn)
 
 
-# ---------------------------------------------------------------------------
-# Orchestration
-# ---------------------------------------------------------------------------
 class _ProvisionAccessDenied(Exception):
     """Raised by `_run_step` on a denied call, so `main` exits 1 with no traceback."""
 
@@ -233,27 +206,24 @@ class _ProvisionAccessDenied(Exception):
 def _run_step(label: str, operation: str, call: Callable[[], Any]) -> Any:
     """Run one provisioning step with a progress line and AccessDenied handling.
 
-    Exceptions other than a denied ``ClientError`` propagate.
-
     Parameters
     ----------
     label : str
-        Progress label to print.
+        Progress label.
     operation : str
-        AWS operation named in an access-denied message.
+        AWS operation for denial output.
     call : Callable[[], Any]
-        Provisioning operation to invoke.
+        Provisioning operation.
 
     Returns
     -------
     Any
-        Value returned by `call`.
+        `call` result.
 
     Raises
     ------
     _ProvisionAccessDenied
-        After printing the denial if `call` raises a ``ClientError`` in
-        `_ACCESS_DENIED_CODES`.
+        A denied `ClientError` from `call`.
     """
     from botocore.exceptions import ClientError
 
@@ -278,11 +248,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
     ).parse_args(argv)
 
-    # Resolved at call time, or this script could provision one bucket while
-    # the store writes to another.
+    # Resolve at call time so provisioning matches the store destination.
     bucket, _base_prefix = resolve_results_location()
 
-    # Lazy so offline tests can monkeypatch fresh_client before main looks it up.
+    # Delay AWS import so offline tests can patch fresh_client.
     from smolbench.evals._aws import fresh_client
 
     print(f"Provisioning {bucket!r} in {REGION}...")
