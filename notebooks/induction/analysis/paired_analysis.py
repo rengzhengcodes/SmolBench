@@ -1,21 +1,6 @@
-"""Paired re-analysis of the family-ladder induction study (no new data).
+"""Paired re-analysis of the family-ladder induction study.
 
-``power_analysis.py::cmh_stat`` treats the arms as independent binomials,
-but every model answers the same seeds with byte-identical prompts and the
-four info arms at a seed reuse one query/answer set, so all 210 PRIMARY
-contrasts are matched item-for-item. Each is recomputed three ways -- unpaired
-CMH, item-level exact McNemar (descriptive only), and `signflip_exact_p` over
-whole replicates (which carries the inference) -- and the change in Holm
-rejection status reported. `design_effect` measures the variance CMH omits
-by summing the 9 harmonic strata as if independent.
-
-Reads the local tree via ``LocalResultsStore``'s own reader (``Marks.load``),
-so a ``score:``-shaped line inside a CoT trace can never be scraped as a
-phantom mark. A drop-invalid sensitivity pass accompanies every headline,
-since a few percent of marks are ``null`` (scored as incorrect).
-
-Run (repo root):
-    .venv/bin/python notebooks/induction/analysis/paired_analysis.py
+Seed-level sign-flips carry inference because items share seeds; CMH and McNemar are comparisons.
 """
 
 import sys
@@ -23,8 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
-# The analysis dir itself: needed when this module is loaded by path (only
-# __main__ gets it for free); power_analysis inserts notebooks/ itself.
+# Required when loaded by path rather than as ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
@@ -44,33 +28,23 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     build_primary_contrasts,
     build_secondary_contrasts,
     cmh_stat,
-    # DESCRIPTIVE only (it treats the 270 marks as 270 independent pairs, which
-    # they are not); `signflip_exact_p` carries the inference and collapses
-    # onto this test at singleton clusters.
+    # Descriptive only: inference uses seed-level sign-flips.
     mcnemar_exact_p,
 )
 
-#: run_study.N_REPLICATES (user-locked). Depth is gated against this absolute
-#: number, not the tree's own deepest lane, because a uniform shortfall would
-#: otherwise leave no lane looking "short" relative to its neighbours while
-#: silently raising the sign-flip floor (2/2^S) above every Holm threshold.
+#: Absolute depth detects uniform shortfalls that raise the sign-flip floor.
 EXPECTED_R = 30
 
 
 def load_marks() -> tuple[dict, dict, dict]:
-    """Read every landed replicate into per-condition (seed -> 9-vector) maps.
+    """Read replicates into per-condition maps.
 
-    Each replicate is opened exactly once; `correct` (score==1), `valid`
-    (score is not ``null``) and `compliance` are three views of that one
-    parse, so ``significance_report.compliance_census`` reads the same parse
-    the contrasts do rather than re-walking the tree. A replicate skipped as
-    short is skipped from all three maps at once.
+    One parse supplies all views so reports cannot disagree about a replicate.
 
     Raises
     ------
     SystemExit
-        If a condition yields no replicate seeds at all (call
-        ``InductionExperiment.harness.sync_down()`` first).
+        If a condition has no replicate seeds.
     """
     correct: dict = {}
     valid: dict = {}
@@ -78,44 +52,31 @@ def load_marks() -> tuple[dict, dict, dict]:
     store = LocalResultsStore(RESULTS_DIR)
     for model in MODELS:
         for info in INFOS:
-            # tag=model: this study's local directory key is the model id.
-            # model=None: LocalResultsStore ignores addr.model entirely since
-            # this chain never talks to S3, so the field is left unset rather
-            # than filled with a value nothing would read.
+            # Local storage keys by tag; model is unused.
             def addr_of(seed: int, _m: str = model, _i: str = info) -> ReplicateAddress:
-                """Address one replicate of the cell this iteration is on.
+                """Address the current cell's replicate.
 
-                `_m`/`_i` are default-bound rather than closed over, so the
-                function cannot capture a later iteration's cell.
+                Defaults prevent capture of a later loop cell.
 
                 Parameters
                 ----------
                 seed : int
-                    Replicate seed.
+                    Seed.
                 _m : str, optional
-                    Model for the current cell.
+                    Current model.
                 _i : str, optional
-                    Info value for the current cell.
+                    Current info value.
 
                 Returns
                 -------
                 ReplicateAddress
-                    Address for the replicate.
+                    Replicate address.
                 """
                 return ReplicateAddress(tag=_m, info=_i, seed=seed)
 
-            # list_seeds globs rep_*.yaml and skips any name whose seed
-            # segment does not parse as an int.
             seeds = store.list_seeds(None, model, info)
             if not seeds:
-                # Gate on the seed list, not the directory: list_seeds
-                # returns [] for a missing directory too, so this also
-                # catches an existing-but-empty one before `aligned` would
-                # otherwise die on the vaguer "no common seeds" message.
-                #
-                # store._path is the store's own renderer of the layout, used
-                # here read-only just to name a directory for a human. (Seed 0
-                # is arbitrary -- only the parent is used.)
+                # Gate on seeds: missing and empty lanes both lack usable data.
                 cdir = store._path(addr_of(0)).parent
                 raise SystemExit(
                     f"No replicates for ({model}, {info}); expected "
@@ -127,13 +88,11 @@ def load_marks() -> tuple[dict, dict, dict]:
                 )
             c_by_seed, v_by_seed, k_by_seed = {}, {}, {}
             for seed in seeds:
-                # ONE load per replicate, reused for all three maps: reloading
-                # per view is what made the census cost a second full walk.
+                # Reuse one load for every view.
                 marks = store.load_marks(addr_of(seed)).marks
                 scores = [m.score for m in marks]
                 if len(scores) != N_HARMONICS:
-                    # A partially-written replicate: skip it rather than
-                    # silently misaligning the harmonic axis for this seed.
+                    # Skip partial replicates to preserve harmonic alignment.
                     print(
                         f"  WARNING: {store._path(addr_of(seed))} has "
                         f"{len(scores)} scores, expected {N_HARMONICS} "
@@ -153,11 +112,7 @@ def load_marks() -> tuple[dict, dict, dict]:
 def aligned(
     correct: dict, valid: dict, key_a: tuple[str, str], key_b: tuple[str, str], drop_invalid: bool
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Build item-matched mark vectors for one contrast: ``(a, b, seed_index)``.
-
-    Intersects `key_a`'s and `key_b`'s seeds (a still-collecting lane is
-    compared only on the seeds it has), then flattens seed x harmonic into
-    one item axis, preserving the pairing.
+    """Build item-matched vectors for one contrast.
 
     Parameters
     ----------
@@ -166,22 +121,20 @@ def aligned(
     valid : dict
         Per-cell valid-mark mappings.
     key_a : tuple[str, str]
-        First cell key.
+        First cell.
     key_b : tuple[str, str]
-        Second cell key.
+        Second cell.
     drop_invalid : bool
-        Drops item-pairs where either arm's mark is invalid (``score: null``).
+        Drop pairs with invalid marks.
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray]
-        Matched marks for both arms; `seed_index` records each item's
-        replicate, needed to resample whole replicates.
+        Matched marks and replicate indices.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
-        # Content gate: an empty intersection means one lane contributed
-        # nothing usable -- fail with the cause, not a downstream numpy error.
+        # Empty overlap is a data failure, not a NumPy error.
         raise SystemExit(
             f"No common seeds between {key_a} and {key_b}; one lane has no "
             "usable replicates. Check the load warnings above and re-run "
@@ -199,25 +152,21 @@ def aligned(
 
 
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
-    """Per-replicate arm difference, one integer per unique seed in `seed_idx`.
-
-    The per-cluster summary `signflip_exact_p` permutes. ``sum(d_s) == b - c``
-    exactly (the McNemar discordance margin), so both tests read the same
-    signal and differ only in what they treat as exchangeable.
+    """Return one arm difference per seed.
 
     Parameters
     ----------
     a : np.ndarray
-        First arm's matched marks.
+        First-arm marks.
     b : np.ndarray
-        Second arm's matched marks.
+        Second-arm marks.
     seed_idx : np.ndarray
-        Replicate index for each matched mark.
+        Replicate indices.
 
     Returns
     -------
     list[int]
-        Arm differences, one per unique seed.
+        Arm differences.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -227,26 +176,19 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
 
 
 def signflip_exact_p(diffs: Iterable[int]) -> float:
-    """Exact two-sided seed-level sign-flip p over per-seed `diffs` from `seed_diffs`.
+    """Compute an exact seed-level two-sided sign-flip p-value.
 
-    The independent unit is the replicate seed, not the mark: a seed draws
-    one label alphabet and one answer vector, shared by its 9 harmonic items.
-    ``p = P(|T*| >= |T_obs|)`` over the 2^S sign assignments of ``T = sum_s
-    d_s`` is exact, enumerated by dynamic programming over attainable totals
-    (S dict passes, not 2^S draws), so it is deterministic and needs no seed.
-
-    The resolution floor is ``2 / 2^S``; contrasts that saturate it are
-    reported at the floor, not at a fabricated smaller number.
+    Seeds, not marks, are independent because harmonic items share a seed.
 
     Parameters
     ----------
     diffs : Iterable[int]
-        Per-seed arm differences.
+        Per-seed differences.
 
     Returns
     -------
     float
-        Exact two-sided sign-flip p-value. 1.0 for empty `diffs`.
+        Exact p-value; 1.0 for empty input.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -264,32 +206,23 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
 
 
 def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
-    """p-value of the repo's continuity-corrected 2x2xK CMH, strata = harmonic.
-
-    Reuses ``power_analysis.py::cmh_stat`` (same continuity correction,
-    same hypergeometric variance), so the paired-vs-unpaired comparison
-    isolates the pairing. Rebuilt from `aligned`'s flat item arrays, the
-    harmonic index recovered as position-within-seed.
+    """Compute continuity-corrected CMH p-value by harmonic stratum.
 
     Parameters
     ----------
     a : np.ndarray
-        First arm's matched marks.
+        First-arm marks.
     b : np.ndarray
-        Second arm's matched marks.
+        Second-arm marks.
     seed_idx : np.ndarray
-        Replicate index for each matched mark.
+        Replicate indices.
 
     Returns
     -------
     float
-        P-value of the repo's continuity-corrected 2x2xK CMH. 1.0 if no
-        stratum has enough items to contribute variance.
+        P-value; 1.0 with no contributing stratum.
     """
-    # An item's offset inside its own seed block is its harmonic, since items
-    # stay in ascending harmonic order within a replicate. Under drop_invalid
-    # a short replicate shifts later offsets, mislabeling the stratum an item
-    # lands in, but leaves the pairing untouched.
+    # Invalid drops can shift harmonic offsets but preserve pairing.
     order = np.concatenate([np.arange((seed_idx == s).sum()) for s in np.unique(seed_idx)])
     strata = np.unique(order)
     if strata.size == 0:
@@ -301,35 +234,23 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
 
 
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Holm (1979) step-down rejection mask over one family, at FWER `alpha`.
+    """Return Holm's FWER rejection mask.
 
-    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
-    ``method="holm"``. Holm controls FWER under arbitrary dependence, which
-    is why it carries the headline here: the 210 PRIMARY contrasts share
-    models, seeds and harmonics, so no positive-dependence assumption is
-    available to buy the extra power of a step-up procedure
-    (`significance_report.hochberg` is a labelled sensitivity check only).
+    Holm permits arbitrary dependence among shared models, seeds, and harmonics.
 
     Parameters
     ----------
     pvals : np.ndarray
-        P-values in the family.
+        Family p-values.
     alpha : float, optional
-        Familywise error-rate level.
+        FWER level.
 
     Returns
     -------
     np.ndarray
         Rejection mask.
     """
-    # multipletests sorts with a bare np.argsort rather than a stable sort,
-    # which is safe despite pervasive ties (the sign-flip test's hard
-    # resolution floor at 2/2^S, and 1.0 returned verbatim for any contrast
-    # with no discordant pairs): Holm's per-rank threshold alpha/(m-i) is
-    # monotone increasing in rank, so a tied group can never straddle the
-    # accept/reject boundary and tie order cannot move the rejection set.
-    # Executed, not just asserted, by
-    # test_rejection_sets_do_not_depend_on_contrast_build_order.
+    # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=alpha, method="holm"
     )
@@ -337,34 +258,23 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
 
 def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
-    """Benjamini-Hochberg step-up mask over one family, controlling FDR at `q`.
+    """Return Benjamini-Hochberg FDR rejection mask.
 
-    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
-    ``method="fdr_bh"``. BH controls the false discovery rate -- the expected
-    share of rejections that are null -- at `q`, not the familywise rate,
-    and that weaker guarantee is the pre-registered choice for the
-    SECONDARY (Tier 3) family only; the PRIMARY family stays on `holm`.
-
-    `q` defaults to `Q_SECONDARY`, imported from ``power_analysis`` (which
-    owns the SECONDARY tier's level) rather than re-spelled as a literal, so
-    a re-registration of the tier cannot move `ALPHA_SECONDARY` while
-    leaving this default behind.
+    The imported default keeps this secondary-tier level owned by power_analysis.
 
     Parameters
     ----------
     pvals : np.ndarray
-        P-values in the family.
+        Family p-values.
     q : float, optional
-        False discovery-rate level.
+        FDR level.
 
     Returns
     -------
     np.ndarray
         Rejection mask.
     """
-    # Same tie argument as `holm`: q*i/m is monotone increasing in rank, so a
-    # tied group cannot straddle the accept/reject boundary and the unstable
-    # sort cannot move the rejection set.
+    # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=q, method="fdr_bh"
     )
@@ -372,28 +282,23 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
 
 
 def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float | None:
-    """Observed / independence-assumed variance of the per-seed arm difference.
+    """Return observed over independence-assumed variance.
 
-    The cross-stratum covariance term the CMH denominator omits: >1 means
-    the denominator is too small (anticonservative), <1 too large. ``None``
-    uniformly means "no measurable ratio" (fewer than 3 seeds, identical
-    arms, or a stratum too thin for ddof=1), so a NaN never slips past an
-    ``is not None`` filter.
+    ``None`` represents every unmeasurable case, preventing NaNs from passing filters.
 
     Parameters
     ----------
     a : np.ndarray
-        First arm's matched marks.
+        First-arm marks.
     b : np.ndarray
-        Second arm's matched marks.
+        Second-arm marks.
     seed_idx : np.ndarray
-        Replicate index for each matched mark.
+        Replicate indices.
 
     Returns
     -------
     float | None
-        Observed / independence-assumed variance ratio, or ``None`` when no
-        measurable ratio exists.
+        Variance ratio or ``None``.
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
@@ -409,18 +314,9 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
 
 
 def main() -> None:
-    """Run the paired re-analysis and print the report.
-
-    Over the 210-contrast PRIMARY family, for both the pre-registered pass
-    (null == incorrect) and a DROP-INVALID sensitivity pass: rejection counts
-    for unpaired CMH, paired McNemar and (pre-registered pass only) seed
-    sign-flip; contrasts that change status under pairing; the standing
-    intens-vs-noise question per model; the design-effect summary. Then
-    SECONDARY (Benjamini-Hochberg) discoveries under both tests.
-    """
+    """Run the paired re-analysis report."""
     print("Loading marks ...", flush=True)
-    # The compliance view is unused here (this report makes no census); still
-    # loaded, one parse three views, for significance_report's benefit.
+    # Load all views from one parse for the census consumer.
     correct, valid, _compliance = load_marks()
     depths = {k: len(v) for k, v in correct.items()}
     print(
@@ -430,12 +326,7 @@ def main() -> None:
     short = sorted({m for (m, _), n in depths.items() if n < max(depths.values())})
     if short:
         print(f"  still collecting (compared on their common seeds only): {short}")
-    # Gates on the SHALLOWEST lane, not `max`: a contrast is sign-flipped over
-    # the seeds its two arms share, so its resolution floor 2/2^S is set by
-    # the shorter arm, and gating on `max` would let one full-depth lane
-    # suppress this warning for every short lane beside it. Both ends of the
-    # spread are reported, so a uniform shortfall (invisible to `short` above)
-    # can be told apart from a ragged one.
+    # The shallowest lane sets each shared-seed sign-flip resolution floor.
     if min(depths.values()) < EXPECTED_R:
         print(
             f"  WARNING: shallowest lane has {min(depths.values())} replicates "
@@ -450,10 +341,7 @@ def main() -> None:
 
     contrasts = build_primary_contrasts()
     if len(contrasts) != N_PRIMARY:
-        # Not a restatement of power_analysis.check_design_invariants (already
-        # run at import): this guards the LOCAL list driving the row loop
-        # below, whose Bonferroni columns divide ALPHA by N_PRIMARY rather
-        # than len(contrasts). A raise, not an assert, so it survives python -O.
+        # This local list sets correction denominators and must survive ``-O``.
         raise RuntimeError(
             f"build_primary_contrasts() returned {len(contrasts)} contrasts "
             f"but N_PRIMARY is {N_PRIMARY}. This report's Bonferroni columns "
@@ -472,9 +360,7 @@ def main() -> None:
             nc = int((~a & b).sum())
             p_paired = mcnemar_exact_p(nb, nc)
             p_unpaired = cmh_unpaired_p(a, b, sidx)
-            # Cluster test only on the pre-registered pass: dropping invalid
-            # pairs makes the per-seed sum a sum over a VARIABLE number of
-            # items, i.e. a different statistic.
+            # Dropping invalid pairs changes the per-seed statistic.
             p_cluster = (
                 signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
             )

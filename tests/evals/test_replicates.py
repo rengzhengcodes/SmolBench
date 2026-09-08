@@ -1,4 +1,4 @@
-"""Test the replication harness (pooling, resume, forcing) against the local store."""
+"""Test replication pooling, resumption, and forcing with the local store."""
 
 import dataclasses
 import re
@@ -17,7 +17,7 @@ RUN_TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
 
 def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
-    """Two info types of different sizes so pooled slicing is observable."""
+    """Use uneven info types to test pooled slicing."""
     return {
         "intens": (Numeric(prompt=f"i1/{seed}", answer=1), Numeric(prompt=f"i2/{seed}", answer=2)),
         "extens": (Numeric(prompt=f"e1/{seed}", answer=3),),
@@ -34,7 +34,7 @@ def harness(tmp_path: Path) -> ReplicateHarness:
 
 @pytest.fixture
 def fake_evaluate(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Answers every question correctly; records call shapes."""
+    """Record successful evaluation calls."""
     calls = []
 
     def _evaluate(
@@ -92,7 +92,7 @@ def test_run_replicates_resume(
 def test_run_replicates_passes_model_to_quiz_factory(
     tmp_path: Path, fake_evaluate: list[dict[str, Any]],
 ) -> None:
-    """The quiz factory receives (seed, model): the noise arm is token-matched per model."""
+    """Pass the model so each noise arm is token-matched."""
     seen: list = []
 
     def recording_factory(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
@@ -108,7 +108,7 @@ def test_run_replicates_passes_model_to_quiz_factory(
 
 
 def test_force_seeds(harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]]) -> None:
-    """force_seeds bypasses the resume-skip for exactly the forced seeds."""
+    """Forced seeds bypass resumption."""
     harness.run_replicates("stub-model")
     assert not harness.has_outstanding("stub-model")
     n_first = len(fake_evaluate)
@@ -129,7 +129,7 @@ def test_force_seeds(harness: ReplicateHarness, fake_evaluate: list[dict[str, An
 def test_cot_chain_lengths(
     harness: ReplicateHarness, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Word-count stats pool over seeds, skipping falsy reasoning."""
+    """Pool nonempty reasoning across seeds."""
     for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
         marks = tuple(
             Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r,
@@ -147,7 +147,7 @@ def test_cot_chain_lengths(
 def test_store_is_local_and_cached(
     harness: ReplicateHarness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The store resolves once, stays local for a non-repo dir, and honours prefix."""
+    """Cache the local store and honor its prefix."""
     assert isinstance(harness.store, LocalResultsStore)
     assert harness.store.root == tmp_path
     assert harness.store is harness.store
@@ -163,15 +163,12 @@ def test_forcing_a_seed_supersedes_its_stored_run_first(
     harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]], tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A forced re-collection is what a reader returns, on either backend:
-    `ResultsStore.supersede_all` runs before the replacement is collected, and
-    the retired bytes stay on disk under `SUPERSEDED-<ts>`."""
+    """Forced collection supersedes the prior run before replacement."""
     harness.run_replicates("stub-model")
     intens = tmp_path / "decode_intens"
     original = (intens / "rep_1.yaml").read_bytes()
 
-    # A re-run that scores differently, so "which run does the reader return"
-    # has an observable answer.
+    # Different scores make the reader's selected run observable.
     monkeypatch.setattr(provider, "evaluate", lambda quiz, model, seed, **kw: Marks(
         model=model,
         marks=tuple(Mark(query=q.prompt, answer=q.answer, response="0", score=0,
@@ -179,11 +176,8 @@ def test_forcing_a_seed_supersedes_its_stored_run_first(
                     for q in quiz)))
     dataclasses.replace(harness, force_seeds=frozenset({1})).run_replicates("stub-model")
 
-    # The live file is the re-run, and the retired one is still on disk.
     assert Marks.load(intens / "rep_1.yaml").marks[0].score == 0
     retired = list(intens.glob("rep_1.SUPERSEDED-*.yaml"))
     assert len(retired) == 1 and retired[0].read_bytes() == original
-    # Seed 2 was not forced, so nothing about it was retired.
     assert not list(intens.glob("rep_2.SUPERSEDED-*.yaml"))
-    # The analysis-side reader still sees exactly one replicate per seed.
     assert harness.store.list_seeds(None, "decode", "intens") == [1, 2]

@@ -1,10 +1,4 @@
-"""Shared data types used by the eval harness.
-
-The question/answer structs a quiz is built from (``QnA``, ``ToF``,
-``Numeric``), the ``Quiz`` alias, and the ``Mark``/``Marks`` dataclasses
-recording one graded quiz. ``Marks`` round-trips through YAML, as a file or an
-S3 object body; ``smolbench.evals.results_store`` owns that store.
-"""
+"""Question, grading, and YAML result types for evaluations."""
 
 import os
 import re
@@ -20,18 +14,18 @@ Answer: TypeAlias = bool | int | str
 class QnA:
     """A quiz question and its ground truth answer."""
 
-    #: Prompt sent to the LLM.
+    #: Model prompt.
     prompt: str
-    #: Ground truth answer for the prompt.
+    #: Expected answer.
     answer: Answer
 
     @staticmethod
     def condition(ans: str) -> Answer:
-        """Convert a raw model response to this question's answer type; subclasses parse and validate."""
+        """Convert a raw response."""
         return ans
 
     def score(self, ans: Answer) -> bool:
-        """Return whether `ans` (normally `condition`'s output) equals the truth."""
+        """Return whether `ans` is correct."""
         return ans == self.answer
 
 
@@ -47,26 +41,21 @@ class ToF(QnA):
 
     @staticmethod
     def condition(ans: str) -> bool:
-        """Convert a raw model response to a bool.
+        """Convert a raw response to a boolean.
 
-        Case-insensitive, after stripping every non-letter character; raises
-        if the remainder is not exactly "true"/"false" (so ``"Answer: False"``
-        raises). The lenient recovery path is
-        ``smolbench.evals.parsing.parse_tof``.
+        Strip nonletters; accept only ``true`` or ``false``.
 
         Parameters
         ----------
         ans : str
-            Raw model response.
+            Response text.
 
         Returns
         -------
         bool
-            parsed true/false answer.
+            Parsed boolean.
         """
-        # Strips punctuation/markup (e.g. "**True**") rather than a regex sub:
-        # measured equal at answer-sized inputs, and str.isalpha keeps the
-        # Unicode letter class without a charset to maintain.
+        # `isalpha` retains Unicode letters without a maintained charset.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])
         match cleaned_ans.lower():
             case "false":
@@ -87,20 +76,19 @@ class Numeric(QnA):
 
     @staticmethod
     def condition(ans: str) -> int:
-        """Extract the FIRST integer in a raw model response; raises if none.
+        """Extract the first response integer.
 
-        First-match scores an operand when the model shows its working;
-        ``smolbench.evals.parsing.parse_numeric`` is the robust path.
+        First-match handles responses with working.
 
         Parameters
         ----------
         ans : str
-            Raw model response.
+            Response text.
 
         Returns
         -------
         int
-            First integer in the response.
+            First integer.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -111,9 +99,7 @@ class Numeric(QnA):
 Quiz: TypeAlias = Sequence[QnA]
 
 
-#: ``Mark.compliance`` value meaning the response obeyed the output contract.
-#: An explicit label rather than ``None`` so a truthiness test cannot invert
-#: compliant against a violation label.
+#: Compliance label, explicit to prevent truthiness inversions.
 COMPLIANT = "compliant"
 
 
@@ -121,19 +107,17 @@ COMPLIANT = "compliant"
 class Mark:
     """One question's grading result."""
 
-    #: Prompt sent to the model.
+    #: Model prompt.
     query: str
-    #: Ground truth answer.
+    #: Expected answer.
     answer: Answer
-    #: Raw, unprocessed model response (the content field only).
+    #: Raw response content.
     response: str
-    #: Score awarded (1=correct, 0=incorrect, None=invalid/unparseable).
+    #: `1` correct, `0` incorrect, or `None` invalid.
     score: Optional[int]
-    #: A violation label from `smolbench.evals.parsing`, or `COMPLIANT`.
-    #: Separate from ``score`` so an analysis can tell "wrong" from "right
-    #: but broke the format".
+    #: Format label, independent of correctness.
     compliance: str
-    #: Chain-of-thought reasoning returned by the model, or None.
+    #: Returned reasoning, if any.
     reasoning: Optional[str] = None
 
 
@@ -141,18 +125,15 @@ class Mark:
 class Marks:
     """One model's grading result across a full quiz."""
 
-    #: The model that was evaluated.
+    #: Evaluated model.
     model: str
-    #: Per-question marks.
+    #: Per-question results.
     marks: tuple[Mark, ...]
-    #: Date the quiz was run.
+    #: Run date.
     date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    #: Serving-stack snapshot (instance type, GPUs, tensor-parallel degree,
-    #: image, ...) so a result file is self-describing about its hardware.
+    #: Serving-stack snapshot.
     server_config: Optional[dict] = None
-    #: The ``run_ts`` of the run this one RE-GRADES, or ``None`` for an
-    #: original collection. The append-only S3 log can't be edited in place,
-    #: so a re-graded row carries its own provenance instead of a side table.
+    #: Source run timestamp; S3 logs are append-only.
     regraded_from: Optional[str] = None
 
     @property
@@ -172,41 +153,26 @@ class Marks:
 
     @property
     def noncompliant(self) -> int:
-        """Count the marks whose response broke the prompt's output contract.
-
-        Independent of ``correct``/``incorrect``/``invalid``: a correct
-        response can still break the format. ``len(marks)`` is the
-        denominator for a non-compliance rate.
-        """
+        """Count format violations independent of correctness."""
         return sum(1 for m in self.marks if m.compliance != COMPLIANT)
 
-    # -- Serialization ------------------------------------------------------
-    # Plain-dict YAML (safe_dump of dataclasses.asdict), not yaml.dump of the
-    # dataclasses: a python-object tag would weld stored results to this
-    # class's import path and force readers onto yaml.unsafe_load. PyYAML
-    # lives in the notebook extra, so the imports stay inside the methods.
-    #
-    # dumps/loads are str-in/str-out; dump/load are path wrappers, split out
-    # for S3ResultsStore, which round-trips through put_object/get_object
-    # bodies with no path to open().
+    # Plain YAML mappings avoid Python-object tags and unsafe loaders.
 
     def dumps(self) -> str:
-        """Return this result as a ``yaml.safe_load``-able plain-mapping document."""
+        """Return a safe-loadable YAML mapping."""
         import yaml
 
         return yaml.safe_dump(asdict(self), default_flow_style=False, indent=4)
 
     def dump(self, path: Path) -> None:
-        """Write `dumps()`'s document to `path` atomically (tmp + ``os.replace``).
+        """Write YAML atomically.
 
-        Resume-skips gate on bare file presence (``ResultsStore.exists``), so
-        a file that exists must never be a torn write: an interrupted dump
-        would otherwise be skipped as already-collected forever.
+        Resume skips require intact existing files.
 
         Parameters
         ----------
         path : Path
-            Destination path for the YAML document.
+            YAML destination.
         """
         tmp = f"{path}.tmp"
         with open(tmp, "w") as file:
@@ -215,11 +181,10 @@ class Marks:
 
     @classmethod
     def loads(cls, text: str) -> "Marks":
-        """Load a document written by `dumps`/`dump`."""
+        """Load a YAML document written by this class."""
         import yaml
 
-        # libyaml's C loader when available: summaries scan hundreds of MB of
-        # result YAML, and the pure-Python loader runs about 10x slower.
+        # Prefer the C loader for large summaries.
         data = yaml.load(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
         return cls(
             model=data["model"],
@@ -231,7 +196,7 @@ class Marks:
 
     @classmethod
     def load(cls, path: Path) -> "Marks":
-        """Read `path`'s full text and delegate to `loads`."""
+        """Load YAML from `path`."""
         with open(path) as file:
             text = file.read()
         return cls.loads(text)

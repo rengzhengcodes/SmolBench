@@ -1,11 +1,6 @@
-"""Load the committed study config (bucket, fleet regions, checkpoint roster).
+"""Load the committed study configuration.
 
-Environment overrides are left to each consumer: ``providers/ec2.py`` freezes
-``EC2_*`` at import time while ``results_store`` reads
-``SMOLBENCH_RESULTS_S3`` at call time, so baking them in here would freeze
-one timing model into the cached value. The cache is keyed on the resolved
-config path so a ``tmp_path`` fixture never shares the committed file's
-cache entry.
+Consumers resolve environment overrides at different times.
 """
 
 from __future__ import annotations
@@ -23,11 +18,7 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().with_name("study_config.toml")
 
 @dataclass(frozen=True)
 class ResultsConfig:
-    """The provisioned results bucket a study logs to by default.
-
-    region describes THIS bucket only -- ``results_store.resolve_store`` must
-    never apply it to a URI naming a different bucket.
-    """
+    """Results bucket configuration; its region applies only to that bucket."""
 
     bucket: str
     region: str
@@ -36,12 +27,7 @@ class ResultsConfig:
 
 @dataclass(frozen=True)
 class FleetConfig:
-    """Regions and experiment-tag vocabulary for the EC2 spot fleet.
-
-    regions: try-order after whatever region the caller's own ``AWS_REGION``
-    already names. standalone_tag sits outside `tag_prefix`'s namespace so
-    fleet tooling never lists or terminates a standalone box.
-    """
+    """EC2 fleet configuration; standalone tags protect standalone boxes."""
 
     regions: "tuple[str, ...]"
     tag_prefix: str
@@ -50,12 +36,7 @@ class FleetConfig:
 
 @dataclass(frozen=True)
 class RosterConfig:
-    """The family-ladder roster: which checkpoints exist and their tags.
-
-    Both mappings are read-only (:class:`types.MappingProxyType`) so a
-    consumer cannot mutate the shared cached config. `tags` is total over
-    every `families` member and injective, validated at load.
-    """
+    """Read-only roster and tags to protect cached configuration."""
 
     families: "Mapping[str, tuple[str, ...]]"
     tags: "Mapping[str, str]"
@@ -71,24 +52,21 @@ class StudyConfig:
 
 
 def _require(mapping: dict, name: str, within: str = "") -> Any:
-    """Return ``mapping[name]``, raising ``ValueError`` naming it if absent.
-
-    A ``"[table]"``-spelled `name` reads as its unbracketed key but reports as
-    the TOML table the reader has to add.
+    """Return a required mapping value.
 
     Parameters
     ----------
     mapping : dict
-        Mapping containing the required key.
+            Mapping to search.
     name : str
-        Key to retrieve, optionally spelled as a TOML table.
+            Key or TOML table.
     within : str, optional
-        TOML section suffix included in an error message.
+            TOML section.
 
     Returns
     -------
     Any
-        Value associated with `name`.
+            Required value.
     """
     key = name.strip("[]")
     if key not in mapping:
@@ -100,24 +78,21 @@ def _require(mapping: dict, name: str, within: str = "") -> Any:
 
 
 def _parse_study_config(data: dict) -> StudyConfig:
-    """Build and validate a :class:`StudyConfig` from a parsed TOML document.
+    """Build and validate a TOML study configuration.
 
-    Validates that every family member has a tag, every tag names a family
-    member, and tags are unique; the ``ValueError`` message names the
-    offending section, key, or checkpoint/tag.
+    Tags must cover family members, name only members, and remain unique.
 
     Parameters
     ----------
     data : dict
-        Parsed TOML document.
+            Parsed TOML.
 
     Returns
     -------
     StudyConfig
-        Validated study configuration.
+            Validated configuration.
     """
-    # Presence checked before content, so a missing key surfaces as a
-    # ValueError naming it rather than a KeyError three functions downstream.
+    # Report missing keys at the configuration boundary.
     results_raw = _require(data, "[results]")
     results = ResultsConfig(
         bucket=_require(results_raw, "bucket", " [results]"),
@@ -136,18 +111,12 @@ def _parse_study_config(data: dict) -> StudyConfig:
     families_raw = _require(roster_raw, "families", " [roster]")
     tags_raw = _require(roster_raw, "tags", " [roster]")
 
-    # tomllib preserves declaration order, which is the ladder order this
-    # config promises downstream consumers.
+    # TOML declaration order is ladder order.
     families = {name: tuple(rungs) for name, rungs in families_raw.items()}
     tags = dict(tags_raw)
 
-    # Order matters: a family member missing its tag is checked before a tag
-    # missing its family member, so an edit that trips both is reported for
-    # the newly-untagged member first.
     all_members = [key for rungs in families.values() for key in rungs]
 
-    # Without this, a missing tag surfaces only later as a KeyError out of
-    # `tag_for`, wherever that checkpoint's tag is first asked for.
     for key in all_members:
         if key not in tags:
             raise ValueError(
@@ -155,8 +124,6 @@ def _parse_study_config(data: dict) -> StudyConfig:
                 f"{key!r}, which [roster.families] lists as a family member"
             )
 
-    # A tag for a checkpoint no family lists would silently describe a rung
-    # nothing ever runs.
     member_set = set(all_members)
     for key in tags:
         if key not in member_set:
@@ -165,8 +132,7 @@ def _parse_study_config(data: dict) -> StudyConfig:
                 f"family in [roster.families] lists as a member"
             )
 
-    # Two checkpoints sharing one analysis tag would write two lanes' results
-    # into the same results directory, silently merging them.
+    # Unique tags prevent silent merging of two result lanes.
     seen_by_tag: "dict[str, str]" = {}
     for key, tag in tags.items():
         if tag in seen_by_tag:
@@ -188,20 +154,19 @@ def _parse_study_config(data: dict) -> StudyConfig:
 
 @functools.lru_cache(maxsize=None)
 def _load_cached(resolved_path: Path) -> StudyConfig:
-    """Parse and validate `resolved_path`, memoized on the resolved path itself.
+    """Parse and validate a resolved TOML path.
 
-    Split out from :func:`load_study_config` so the cache key is always the
-    resolved path, never the raw ``Path | None`` argument a caller passed in.
+    Cache by resolved path so equivalent paths share one configuration.
 
     Parameters
     ----------
     resolved_path : Path
-        Resolved TOML config path.
+            TOML path.
 
     Returns
     -------
     StudyConfig
-        Parsed and validated study configuration.
+            Parsed configuration.
     """
     with resolved_path.open("rb") as fh:
         data = tomllib.load(fh)
@@ -209,59 +174,52 @@ def _load_cached(resolved_path: Path) -> StudyConfig:
 
 
 def load_study_config(path: "Optional[Path]" = None) -> StudyConfig:
-    """Load and validate the committed study config.
+    """Load and validate the study configuration.
 
-    ``path=None`` (default) resolves to ``study_config.toml`` beside this
-    module; tests pass an explicit `path` to load a scratch fixture. Cached:
-    repeated calls resolving to the same file return the SAME object, so a
-    consumer must never mutate it.
+    Cached configurations remain immutable because they are shared.
 
     Parameters
     ----------
     path : Optional[Path], optional
-        Config path to load.
+            Configuration path.
 
     Returns
     -------
     StudyConfig
-        Loaded and validated study configuration.
+            Loaded configuration.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)
 
 
 def roster_keys() -> "tuple[str, ...]":
-    """Return every roster checkpoint's spec key, in ladder order.
-
-    ``run_study.MODELS`` and ``power_analysis.MODELS``/``FAMILIES`` both
-    derive their own iteration order from this.
-    """
+    """Return checkpoint keys in ladder order."""
     return tuple(
         key for rungs in load_study_config().roster.families.values() for key in rungs
     )
 
 
 def families() -> "Mapping[str, tuple[str, ...]]":
-    """Return the ``{family_name: (spec_key, ...)}`` roster mapping, in ladder order."""
+    """Return roster families in ladder order."""
     return load_study_config().roster.families
 
 
 def tag_for(key: str) -> str:
-    """Return the short analysis tag for roster checkpoint `key`.
+    """Return `key`'s short analysis tag.
 
     Parameters
     ----------
     key : str
-        Roster checkpoint spec key.
+            Checkpoint key.
 
     Returns
     -------
     str
-        Short analysis tag for `key`.
+            Short analysis tag.
 
     Raises
     ------
     KeyError
-        If `key` is not in the roster.
+            Unknown key.
     """
     return load_study_config().roster.tags[key]

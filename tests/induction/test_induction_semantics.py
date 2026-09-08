@@ -1,7 +1,6 @@
-"""Semantic (non-byte) regression checks for the induction generators.
+"""Semantic regression checks for induction generators.
 
-Answers are recomputed from the underlying rule, so a wrong-but-self-consistent
-generation fails here even when tests/induction/test_golden_quizzes.py agrees.
+Recomputed answers catch wrong but self-consistent generation.
 """
 
 import re
@@ -24,10 +23,7 @@ from smolbench.induction.periodic import (
     tof_membership_query_gen,
 )
 
-#: Conditions whose question text states the position range. Zero is excluded:
-#: it needs a range-free template (`Prompter.range_free_template`) these
-#: minimal test templates don't supply; passing this subset also pins that
-#: `conditions` is a real parameter.
+#: Excludes ``zero``, which requires an unavailable range-free template.
 POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 NUM_TMPL = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")
@@ -35,7 +31,7 @@ TOF_TMPL = string.Template("$positive_info\nDoes position $pos include '$label'?
 
 
 def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
-    """Assert every Numeric answer equals a brute-force divisible-position tally."""
+    """Check numeric answers against divisible-position tallies."""
     period_to_label, pos_to_compound = generate_sequence(cfg)
     label_to_period = {label: period for period, label in period_to_label.items()}
     quizzes = get_periodic_numeric_quiz(
@@ -77,7 +73,7 @@ def test_periodic_tof_answers_match_divisibility_rule() -> None:
 
 
 def test_periodic_numeric_answers_and_default_pathway() -> None:
-    """Default (no ``periods``) config yields periods 1..n, seq_len lcm(1..n), exact counts."""
+    """Default periods yield exact counts and their LCM sequence length."""
     cfg = PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=11)
     assert cfg.periods is None
     period_to_label, pos_to_compound = _check_counts(cfg)
@@ -86,7 +82,7 @@ def test_periodic_numeric_answers_and_default_pathway() -> None:
 
 
 def test_coprime_periods_make_sequence_length_the_product() -> None:
-    """A pairwise-coprime period set gives seq_len == prod(periods), order-independently."""
+    """Coprime periods yield their product, independent of order."""
     periods = (1, 2, 3, 7, 11, 13)
     labels = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
     cfg = PeriodicConfig(n=6, labels=labels, seed=13, periods=periods)
@@ -101,10 +97,9 @@ def test_coprime_periods_make_sequence_length_the_product() -> None:
 
 
 def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
-    """A divisor set adds harmonics while seq_len stays at the declared length."""
+    """Divisor harmonics preserve the declared sequence length."""
     base = tuple(range(1, 10))
-    # 2520 = lcm(1..9) = the base sequence length; the rest are its divisors
-    # (2520/2, /3, /4, /5), so each added harmonic fits the length exactly.
+    # Divisors preserve the base sequence length.
     added = (2520, 1260, 840, 630, 504)
     periods = base + added
     cfg = PeriodicConfig(n=len(periods), labels=len(periods), seed=17,
@@ -127,7 +122,7 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
         (dict(n=4, labels=4, periods=(1, 2, 4, 5)), "pairwise coprime"),
         (dict(n=4, labels=4, periods=(1, 2, 3)), "must equal n"),
         (dict(n=4, labels=4, periods=(1, 3, 3, 5)), "distinct"),
-        # lcm(1..9) = 2520, and the extra 11 multiplies it to 27720 != 2520.
+        # Extra 11 changes the LCM.
         (dict(n=10, labels=10, periods=tuple(range(1, 10)) + (11,), expect_seq_len=2520),
          r"lcm\(periods\) is 27720"),
         (dict(n=3, labels=3, periods=(1, 2, 4), expect_seq_len=2520),
@@ -136,24 +131,18 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
     ],
 )
 def test_period_validation(kwargs: dict[str, Any], match: str) -> None:
-    """Malformed period sets must raise at construction, not silently resize the sequence."""
+    """Malformed period sets fail before they can resize a sequence."""
     with pytest.raises(ValueError, match=match):
         PeriodicConfig(seed=3, **kwargs)
 
 
 def test_labels_must_be_distinct() -> None:
-    """A duplicate explicit label is rejected at construction: two rules for one
-    string would give a single prompt two contradictory ground truths."""
+    """Reject duplicate labels with contradictory ground truths."""
     with pytest.raises(ValueError, match="distinct"):
         PeriodicConfig(n=3, labels=("dup", "dup", "zzz"), seed=1)
 
 
-# ---------------------------------------------------------------------------
-# The condition mapping, and the zero arm's range-free rendering
-# ---------------------------------------------------------------------------
-
-#: A minimal range-free counterpart of `NUM_TMPL`: the same question with the
-#: "1..$seq_len" range clause removed, which is what the zero condition needs.
+#: Range-free counterpart required by the zero condition.
 NUM_TMPL_RANGE_FREE = string.Template("$positive_info\nHow many positions include '$label'?")
 
 
@@ -162,8 +151,7 @@ def numeric_prompter(**kwargs: Any) -> Prompter:
 
 
 def test_the_quiz_is_keyed_by_condition_in_mapping_order() -> None:
-    """`get_periodic_numeric_quiz` returns a dict keyed by condition name in the
-    mapping's order, not a positional 3-tuple with a fourth arm bolted on."""
+    """Quiz mappings retain condition names and order."""
     quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=4, labels=4, seed=3),
         numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
@@ -175,8 +163,7 @@ def test_the_quiz_is_keyed_by_condition_in_mapping_order() -> None:
 
 
 def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
-    """`conditions` is a real parameter: a one-entry mapping is a shape the
-    render loop can't produce by ignoring it."""
+    """A one-entry mapping verifies that ``conditions`` controls rendering."""
     quizzes = get_periodic_numeric_quiz(
         PeriodicConfig(n=4, labels=4, seed=3), numeric_prompter(),
         tokenizer=StubTokenizer(), conditions={"intens": CONDITIONS["intens"]},
@@ -185,9 +172,7 @@ def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
 
 
 def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
-    """The zero arm must not print any answer in its prompt: the period-1
-    harmonic's answer is seq_len, so a range-stating question would leak it and
-    inflate the information-gap floor by the resulting free hit (11.1 pp)."""
+    """The zero arm must not leak answers through its range."""
     cfg = PeriodicConfig(n=6, labels=6, seed=5)
     _p2l, p2c = generate_sequence(cfg)
     seq_len = max(p2c)
@@ -201,16 +186,14 @@ def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
         integers = [int(tok) for tok in re.findall(r"\d+", question.prompt)]
         assert seq_len not in integers, question.prompt
         assert question.answer not in integers, question.prompt
-    # Same questions and answers as the informative arms: only the context
-    # (and the range clause) differ.
+    # Only context and range clause differ from informative arms.
     assert [q.answer for q in zero] == [q.answer for q in quizzes["intens"]]
-    # Confirms seq_len is a real possible answer, so the checks above aren't vacuous.
+    # Ensures the leak check is meaningful.
     assert seq_len in [q.answer for q in zero]
 
 
 def test_a_range_free_template_that_still_states_the_range_is_refused() -> None:
-    """The leak gate checks the rendered prompt, not the promised template: any
-    range substitution surviving into the text raises, naming the key."""
+    """Reject range text surviving in a supposedly range-free prompt."""
     leaky = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")
     with pytest.raises(ValueError) as exc:
         get_periodic_numeric_quiz(
@@ -222,8 +205,7 @@ def test_a_range_free_template_that_still_states_the_range_is_refused() -> None:
 
 
 def test_an_omit_range_condition_without_its_template_is_refused() -> None:
-    """No silent fallback to the range-stating template: a zero arm rendered
-    from it would be the leak this condition exists to remove."""
+    """Reject a missing range-free template to prevent answer leaks."""
     with pytest.raises(ValueError) as exc:
         get_periodic_numeric_quiz(
             PeriodicConfig(n=4, labels=4, seed=3), numeric_prompter(),
@@ -237,8 +219,7 @@ def test_an_omit_range_condition_without_its_template_is_refused() -> None:
     ("noise_intens", "noise_intens"),  # names a condition that is itself padded
 ])
 def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
-    """`match_tokens_to` must name a condition that exists and isn't itself
-    padded, or the render loop has no valid count to pad against."""
+    """Token targets must exist and cannot be padded themselves."""
     from smolbench.induction.periodic import Condition
 
     conditions = dict(CONDITIONS)
@@ -254,8 +235,7 @@ def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
 
 
 def test_rendered_queries_carry_the_token_count_of_every_arm() -> None:
-    """Generation already tokenizes each prompt; reporting those counts lets a
-    caller size a completion budget without re-tokenizing the whole quiz."""
+    """Rendered prompts retain token counts for completion budgeting."""
     from smolbench.induction.periodic import get_periodic_prompts
 
     tokenizer = StubTokenizer()
@@ -269,5 +249,5 @@ def test_rendered_queries_carry_the_token_count_of_every_arm() -> None:
         assert set(query.prompts) == set(query.token_counts) == set(CONDITIONS)
         for arm, prompt in query.prompts.items():
             assert query.token_counts[arm] == tokenizer.count(prompt), arm
-        # The noise arm is a length control: its count equals the extens count.
+        # Noise is a length control.
         assert query.token_counts["noise_intens"] == query.token_counts["extens"]
