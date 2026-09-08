@@ -149,16 +149,17 @@ def test_both_audits_follow_smolbench_results_s3(monkeypatch: pytest.MonkeyPatch
             return iter(())
 
     monkeypatch.setattr(audit, "_s3", FakeS3)
+    monkeypatch.setenv("LEAN_SPOOL_PREFIX", "spool")
 
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/base")
     store = audit._induction_store()
     assert (store.bucket, store.base_prefix) == ("redirected-bucket", "base")
     assert store.experiment == audit.INDUCTION_EXPERIMENT
-    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert list(audit.iter_deduction_lanes(local=False)) == []
     assert listed == ["redirected-bucket"]
 
     # ...and unset falls back to the one committed default, not a local copy.
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
     assert audit._induction_store().bucket == DEFAULT_RESULTS_BUCKET
-    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert list(audit.iter_deduction_lanes(local=False)) == []
     assert listed == ["redirected-bucket", DEFAULT_RESULTS_BUCKET]

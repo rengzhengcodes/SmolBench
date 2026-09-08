@@ -77,9 +77,9 @@ def run_snapshot(
 
         fake.head_object = head_object
         monkeypatch.setattr(snap, "_s3", lambda: fake)
+        monkeypatch.setenv("LEAN_SPOOL_PREFIX", "dp")
         monkeypatch.setattr(sys, "argv", [
-            "snapshot_analysis_data.py", "--dest", "analysis/t",
-            "--spool-prefix", "dp", *argv])
+            "snapshot_analysis_data.py", "--dest", "analysis/t", *argv])
         assert snap.main() == 0
         manifest = json.loads(
             [body for _b, key, body in fake.puts if key.endswith("MANIFEST.json")][0])

@@ -18,8 +18,6 @@ NEW = "deduction_postcutoff/runs"
 #: Consumers that expose the prefix as a CLI override.
 READERS = [
     SCRIPTS / "results" / "audit_lean_pinning.py",
-    SCRIPTS / "results" / "audit_run_completeness.py",
-    SCRIPTS / "results" / "snapshot_analysis_data.py",
     NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py",
 ]
 

@@ -33,7 +33,6 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Optional, Sequence
@@ -361,7 +360,7 @@ class _Presence:
         """
         if not self.ever_seen:
             return True
-        return self.lanes is None or key in self.lanes
+        return key in self.lanes
 
 
 @dataclass
@@ -373,9 +372,6 @@ class _LaneRun:
     phases: tuple[str, ...]
     phase_index: int = 0
     proc: Optional[subprocess.Popen] = None
-    #: Most recent (re)launch; not persisted, since a resumed supervisor
-    #: relaunches the current phase anyway, making the stored value stale.
-    started_at: float = 0.0
     #: First launch only, never reset by a relaunch: `_monitor_tick`'s
     #: 2x-budget alert keys on this so it can still fire for a lane stuck
     #: relaunching over and over.
@@ -518,8 +514,8 @@ def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
     """Write every lane's resumable state to `log_dir`'s one supervisor state file.
 
     Atomic: serialised to a sibling ``.tmp`` file and `os.replace`d into
-    position, so a reader never observes a torn file. `_LaneRun.started_at`,
-    `.proc`, `.lane` and `.phases` are not persisted -- they're either stale
+    position, so a reader never observes a torn file. `_LaneRun.proc`, `.lane`
+    and `.phases` are not persisted -- they're either stale
     the instant they'd be read back or rebuilt fresh by `_run_fleet`. The
     `lanes` map is keyed by spec key, the same string
     `fleet_status.fleet_rows` derives from the `smolbench:experiment` tag, so
@@ -552,10 +548,7 @@ def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
         )
         lanes[key] = entry
 
-    document = {
-        "written_at": datetime.now(timezone.utc).isoformat(),
-        "lanes": lanes,
-    }
+    document = {"lanes": lanes}
 
     log_dir.mkdir(parents=True, exist_ok=True)
     path = fleet_state_path(log_dir)
@@ -730,9 +723,9 @@ def _start_phase(run: "_LaneRun", log_dir: Path) -> None:
     # healthy-serve line the moment a relaunch or later phase started.
     with open(log_path, "a") as log_file:
         run.proc = subprocess.Popen(cmd, stdout=log_file, stderr=log_file, env=env)
-    run.started_at = time.monotonic()
+    started_at = time.monotonic()
     if not run.lane_started_at:
-        run.lane_started_at = run.started_at  # first launch only
+        run.lane_started_at = started_at  # first launch only
 
 
 def _launch_batch(runs: dict, keys: Sequence[str], log_dir: Path) -> None:

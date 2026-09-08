@@ -502,7 +502,9 @@ def main() -> int:
             return 1
         print(f"cross-check vs tests/fixtures/roster_configs.json: all {len(bundle['facts'])} agree")
 
-    _RAW_PATH.write_text(json.dumps(bundle["raw"], indent=1, sort_keys=True) + "\n")
+    _RAW_PATH.write_text(
+        json.dumps(bundle["raw"], sort_keys=True, separators=(",", ":")) + "\n"
+    )
     _FACTS_PATH.write_text(json.dumps(
         {"fetched_at": bundle["fetched_at"], "models": bundle["facts"]},
         indent=1, sort_keys=True) + "\n")

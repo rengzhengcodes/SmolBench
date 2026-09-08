@@ -50,9 +50,7 @@ def _s3() -> Any:
     return boto3.client("s3")
 
 
-def iter_deduction_lanes(
-    local: bool, *, deduction_prefix: Optional[str] = None
-) -> Iterable[Tuple[str, str]]:
+def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
     A lane with no ``all_rows.jsonl`` in S3 yields ``""`` -- itself a finding, not
@@ -65,8 +63,6 @@ def iter_deduction_lanes(
     ----------
     local : bool
         Whether to read local deduction run directories.
-    deduction_prefix : Optional[str], optional
-        Defaults to `runner.spool_prefix()`; ignored when `local` is set.
 
     Yields
     ------
@@ -82,10 +78,9 @@ def iter_deduction_lanes(
             if rows.exists():
                 yield d.name, rows.read_text(errors="replace")
         return
-    if deduction_prefix is None:
-        from smolbench.deduction.lean.runner import spool_prefix
+    from smolbench.deduction.lean import runner
 
-        deduction_prefix = spool_prefix() + "/"
+    deduction_prefix = runner.spool_prefix() + "/"
     # base_prefix discarded: the deduction spool has its own prefix scheme.
     bucket, _base_prefix = resolve_results_location()
     s3 = _s3()
@@ -255,8 +250,6 @@ def audit_induction(
 
 def main() -> int:
     """Run the deduction and optional induction completeness audits."""
-    from smolbench.deduction.lean import runner
-
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--lane", default="", help="Audit one lane (substring match).")
     ap.add_argument("--local", action="store_true", help="Audit local run dirs, not S3.")
@@ -265,21 +258,13 @@ def main() -> int:
         "--expect-cells", type=int, required=True,
         help="Cells expected per lane (the post-cutoff pool's size is not a constant).",
     )
-    ap.add_argument(
-        "--spool-prefix", default=None,
-        help="S3 key prefix the deduction lanes spooled under (default: "
-             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
-    )
     args = ap.parse_args()
-
-    # Resolved AFTER parse_args, so `--help` never has to run `spool_prefix()`.
-    deduction_prefix = (args.spool_prefix or runner.spool_prefix()) + "/"
 
     print(f"{'lane':38s} {'cells':>6s} {'INFRA':>6s} {'genuine':>8s} {'status':>8s}")
     total_infra = total_genuine = 0
     audited = 0
     failures: List[str] = []
-    for lane, text in iter_deduction_lanes(args.local, deduction_prefix=deduction_prefix):
+    for lane, text in iter_deduction_lanes(args.local):
         if lane in NON_DATA_LANES or (args.lane and args.lane not in lane):
             continue
         audited += 1

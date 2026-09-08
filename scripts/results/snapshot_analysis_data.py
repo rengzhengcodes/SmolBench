@@ -23,8 +23,9 @@ import concurrent.futures
 import json
 import logging
 import pathlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
+from smolbench.deduction.lean import runner
 from smolbench.evals.results_store import resolve_results_location
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -52,15 +53,13 @@ def _s3() -> Any:
     return boto3.client("s3")
 
 
-def iter_source_keys(
-    client: Any, *, bucket: str, deduction_prefix: Optional[str] = None
-) -> List[Tuple[str, str, str, int]]:
+def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
     The deduction leg carries a ``scaling_`` prefix, stripped here so both legs
     of a model share one name. `bucket` is a parameter, not a module constant,
-    so a redirected ``SMOLBENCH_RESULTS_S3`` is honored. `deduction_prefix`
-    defaults to `runner.spool_prefix()`; `main` always passes it explicitly.
+    so a redirected ``SMOLBENCH_RESULTS_S3`` is honored. The deduction prefix
+    comes from `runner.spool_prefix()`, the runner's single source of truth.
 
     Parameters
     ----------
@@ -68,18 +67,13 @@ def iter_source_keys(
         S3 client that lists the study objects.
     bucket : str
         Bucket containing the study objects.
-    deduction_prefix : Optional[str], optional
-        Prefix containing deduction objects.
 
     Returns
     -------
     List[Tuple[str, str, str, int]]
         Study-object leg, model, source key, and size tuples.
     """
-    if deduction_prefix is None:
-        from smolbench.deduction.lean.runner import spool_prefix
-
-        deduction_prefix = spool_prefix() + "/"
+    deduction_prefix = runner.spool_prefix() + "/"
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
     for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
@@ -156,25 +150,17 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=32,
                     help="concurrent copies; the work is pure network wait (default 32)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument(
-        "--spool-prefix", default=None,
-        help="S3 key prefix the deduction leg spooled under (default: "
-             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
-    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    # Resolved after parse_args, so `--help` never has to run `spool_prefix()`.
-    from smolbench.deduction.lean.runner import spool_prefix
-
-    deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
+    deduction_prefix = runner.spool_prefix() + "/"
 
     # Source and destination are the same bucket (a within-bucket server-side
     # copy), resolved here so a redirected SMOLBENCH_RESULTS_S3 isn't missed.
     bucket, _base_prefix = resolve_results_location()
 
     client = _s3()
-    rows = iter_source_keys(client, bucket=bucket, deduction_prefix=deduction_prefix)
+    rows = iter_source_keys(client, bucket=bucket)
     per_model: Dict[Tuple[str, str], Dict[str, int]] = collections.defaultdict(
         lambda: {"objects": 0, "bytes": 0}
     )

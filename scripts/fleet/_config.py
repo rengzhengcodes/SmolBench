@@ -21,10 +21,10 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import MappingProxyType, ModuleType
+from types import ModuleType
 from typing import Mapping
 
-from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
+from smolbench.evals.study_config import load_study_config, roster_keys
 
 
 def load_module_by_path(name: str, path: Path) -> ModuleType:
@@ -74,7 +74,8 @@ def load_fleet_module(stem: str) -> ModuleType:
 
 # Memoized on the resolved config path, so this is the same object every
 # other consumer in the process holds; re-reading it below costs nothing.
-_FLEET = load_study_config().fleet
+_STUDY = load_study_config()
+_FLEET = _STUDY.fleet
 
 #: Spot-capacity hunt regions, in try-order; read from ``[fleet].regions`` so
 #: the fleet can't hunt a different region set than ``providers/ec2.py`` does.
@@ -107,11 +108,6 @@ STANDALONE_TAG: str = _FLEET.standalone_tag
 #: list to remember to update.
 ROSTER_KEYS: tuple[str, ...] = roster_keys()
 
-#: Spec key -> analysis tag, in ladder order. Built over `ROSTER_KEYS`
-#: rather than aliasing the config's own ``roster.tags`` mapping, which is
-#: only guaranteed to share the same key set, not the same order.
-#: Read-only (``MappingProxyType``): an in-place mutation here would
-#: silently change every other consumer's view of the roster.
-ROSTER_TAGS: Mapping[str, str] = MappingProxyType(
-    {key: tag_for(key) for key in ROSTER_KEYS}
-)
+#: Spec key -> analysis tag, in ladder order. The config loader validates and
+#: makes this mapping read-only before any fleet consumer sees it.
+ROSTER_TAGS: Mapping[str, str] = _STUDY.roster.tags

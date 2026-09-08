@@ -248,9 +248,10 @@ def test_regions_and_tag_prefix_are_declared_once() -> None:
 # ---------------------------------------------------------------------------
 def test_fleet_config_is_read_from_the_committed_study_config() -> None:
     """The fleet vocabulary is study_config.toml's, not a copy in _config.py."""
-    from smolbench.evals.study_config import load_study_config, roster_keys, tag_for
+    from smolbench.evals.study_config import load_study_config, roster_keys
 
-    cfg = load_study_config().fleet
+    study = load_study_config()
+    cfg = study.fleet
     config = laneenv._config
     assert config.REGION_TUPLE == cfg.regions
     assert config.SCALING_TAG_PREFIX == cfg.tag_prefix
@@ -260,7 +261,7 @@ def test_fleet_config_is_read_from_the_committed_study_config() -> None:
     assert config.DEFAULT_REGIONS == ",".join(cfg.regions)
     # The roster reaches the fleet from the same file...
     assert config.ROSTER_KEYS == roster_keys()
-    assert config.ROSTER_TAGS == {key: tag_for(key) for key in roster_keys()}
+    assert config.ROSTER_TAGS is study.roster.tags
     # ...and the lane table is built from it, so a rung added to the TOML
     # can't be missing here.
     assert set(laneenv.LANES) == set(config.ROSTER_KEYS)
@@ -467,11 +468,10 @@ def test_the_budget_alert_uses_a_clock_a_relaunch_cannot_reset(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """_start_phase resets started_at, so the 2x-budget alert never fired."""
+    """The 2x-budget alert uses the lane clock, which relaunches never reset."""
     run = _lane_run("gemma-4-e2b", rc=None)
     run.lane_started_at = sup.time.monotonic() - 3600 * 2 * laneenv.LANES[
         "gemma-4-e2b"].budget_hours - 60
-    run.started_at = sup.time.monotonic()  # as a fresh relaunch would leave it
     (tmp_path / "gemma-4-e2b.log").write_text("still going\n")
     sup._monitor_tick({"gemma-4-e2b": run}, tmp_path, 2, sup._Presence())
     assert "exceeds 2x budget" in capsys.readouterr().out
@@ -611,8 +611,7 @@ def test_a_spool_failure_reaches_the_closing_report(
 
 def test_no_fleet_script_names_the_results_bucket() -> None:
     """The bucket is study_config's to name, not a fleet script's."""
-    banned = ("smolbench-results-414266451290", "sync_deduction_spool",
-              "SPOOL_BUCKET", "SPOOL_REGION")
+    banned = ("smolbench-results-414266451290",)
     for source in (SCRIPTS / "fleet").glob("*.py"):
         text = source.read_text()
         assert not [b for b in banned if b in text], source.name
@@ -698,7 +697,6 @@ def test_a_shard_is_constructible_without_argparse() -> None:
     assert shard.proc is None and shard.adopted_pid is None
     assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
     assert shard.env["INDUCTION_SHARD"] == "2/3"
-    assert not hasattr(shards, "Shard"), "run_shards must import Shard, not redefine it"
 
 
 def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(

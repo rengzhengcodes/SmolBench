@@ -144,16 +144,13 @@ def format_fleet_table(rows: Sequence[dict]) -> str:
         for row in rows
     ]
 
-    widths = {c: len(c) for c in columns}
-    for formatted in formatted_rows:
-        for c in columns:
-            widths[c] = max(widths[c], len(formatted[c]))
-
-    lines = ["  ".join(c.upper().ljust(widths[c]) for c in columns)]
-    lines.append("  ".join("-" * widths[c] for c in columns))
-    for formatted in formatted_rows:
-        lines.append("  ".join(formatted[c].ljust(widths[c]) for c in columns))
-    return "\n".join(lines) + "\n"
+    widths = {c: max([len(c), *(len(row[c]) for row in formatted_rows)]) for c in columns}
+    return "\n".join([
+        "  ".join(c.upper().ljust(widths[c]) for c in columns),
+        "  ".join("-" * widths[c] for c in columns),
+        *("  ".join(formatted[c].ljust(widths[c]) for c in columns)
+          for formatted in formatted_rows),
+    ]) + "\n"
 
 
 def main(argv: Optional[list[str]] = None) -> int:

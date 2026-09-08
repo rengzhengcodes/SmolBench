@@ -72,10 +72,7 @@ VENV_PYTHON: Path = REPO_ROOT / ".venv" / "bin" / "python"
 # desired: it's how AWS, results-store and model-cache variables reach this
 # process, for `lane_env` to pass through to every lane.
 _RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
-_run_study_spec = importlib.util.spec_from_file_location("induction_run_study", _RUN_STUDY_PATH)
-run_study = importlib.util.module_from_spec(_run_study_spec)
-sys.modules[_run_study_spec.name] = run_study
-_run_study_spec.loader.exec_module(run_study)
+run_study = _config.load_module_by_path("induction_run_study", _RUN_STUDY_PATH)
 
 # A sys.modules cache hit, not a second, differently-timed import: run_study
 # already pulled in ec2.py, after its own load_dotenv ran.
