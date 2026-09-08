@@ -1,10 +1,7 @@
 """Shared machinery for the ``statistical_analyses.ipynb`` cell tests.
 
-Sections 0, 7 and 8 define an archive reader, a posterior-power classifier and
-flip-rate estimators inline in the notebook, with no module copy elsewhere to
-pin them, so tests pull each cell's source by a stable needle and ``exec`` it.
-The S3-building cell is handed a stubbed ``_aws.fresh_client`` so no AWS call
-is possible.
+Notebook integration checks address cells by stable content while estimator
+tests import their shared module directly.
 
 Not named ``test_*``: it holds no tests and must not be collected.
 """
@@ -81,8 +78,3 @@ def load_analysis_modules() -> dict:
         os.environ.update(saved_env)
         sys.path[:] = saved_path
     return namespace
-
-
-def load_deduction_power_analysis() -> ModuleType:
-    """Load just the deduction ``power_analysis`` the notebook binds as ``ded_pa``."""
-    return _load("nbt_ded_power_analysis_only", "deduction/analysis/power_analysis.py")

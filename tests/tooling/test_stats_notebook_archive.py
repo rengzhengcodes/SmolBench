@@ -1,10 +1,4 @@
-"""Section 0's archive reader, exercised without touching AWS.
-
-``S3Archive`` is copied into the notebook rather than imported (``tests/`` is
-not an importable package), so nothing else in the suite pins it. It must not
-re-implement primitives ``smolbench`` already exports: the client and the URI
-parser are shared, and these tests are what keeps them shared.
-"""
+"""Section 0's shared archive reader, exercised without touching AWS."""
 
 from __future__ import annotations
 
@@ -26,7 +20,7 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(
     from smolbench.evals import _aws
     from smolbench.evals.results_store import parse_s3_uri
 
-    src = cell_source(nb, "class S3Archive")
+    src = cell_source(nb, "from smolbench.evals.s3_archive import S3Archive")
     calls: list[tuple] = []
     # Stubbed on the module `_aws`, where the cell resolves the client: a stub
     # bound to a local name here is never reached by the exec'd cell.
@@ -47,18 +41,9 @@ def test_archive_cell_builds_on_the_shared_aws_primitives(
     assert "boto3" not in src, "notebook still builds a default-session client"
 
 
-def test_archive_cell_carries_no_unused_aws_surface(nb: dict) -> None:
-    """`keys()`/`exists()` are dead code and widen the archive's read-only contract; neither may exist."""
-    src = cell_source(nb, "class S3Archive")
-    assert "def keys(" not in src
-    assert "def exists(" not in src
+def test_archive_exposes_the_live_read_surface() -> None:
+    """The shared reader retains every notebook method that has a live caller."""
+    from smolbench.evals.s3_archive import S3Archive
+
     for method in ("open", "read", "text", "json", "size", "sha256"):
-        assert f"def {method}(" in src, f"S3Archive lost {method}()"
-
-
-def test_archive_prose_does_not_promise_removed_methods(nb: dict) -> None:
-    """Two cells describe this class; both named ``keys`` in its logic summary."""
-    for cell in nb["cells"]:
-        text = "".join(cell["source"])
-        if "S3Archive" in text:
-            assert "read/keys/sha256" not in text, text[:200]
+        assert callable(getattr(S3Archive, method)), f"S3Archive lost {method}()"

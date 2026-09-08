@@ -1,9 +1,4 @@
-"""Section 8's measurability rule, pinned to the live grader.
-
-``measurable_cell_keys`` selects the population section 8 samples from; these
-tests derive every expectation from ``grade_verdicts``' documented rule so it
-cannot silently drift from ``power_analysis``'s ``UNMEASURABLE_VERDICTS``.
-"""
+"""Section 8's measurability rule, pinned to the live grader."""
 
 from __future__ import annotations
 
@@ -14,10 +9,12 @@ import pytest
 
 from tests.tooling._notebook_cells import (
     STATS_NB,
+    _load,
     cell_source,
-    load_deduction_power_analysis,
     load_notebook,
 )
+
+from notebooks.deduction.analysis import notebook_stats
 
 
 @pytest.fixture(scope="module")
@@ -28,16 +25,7 @@ def nb() -> dict:
 @pytest.fixture(scope="module")
 def ded_pa() -> ModuleType:
     """The live deduction grader, loaded once for the module."""
-    return load_deduction_power_analysis()
-
-
-@pytest.fixture(scope="module")
-def flip_ns(nb: dict[str, Any], ded_pa: ModuleType) -> dict:
-    """The executed namespace of section 8's estimator cell."""
-    src = cell_source(nb, "def measurable_cell_keys")
-    namespace = {"ded_pa": ded_pa}
-    exec(compile(src, str(STATS_NB), "exec"), namespace)
-    return namespace
+    return _load("nbt_ded_power_analysis_only", "deduction/analysis/power_analysis.py")
 
 
 def _rows(
@@ -78,10 +66,11 @@ MEASURABILITY_CASES = [
 
 @pytest.mark.parametrize("verdicts, measurable", MEASURABILITY_CASES)
 def test_measurability_follows_the_live_grader(
-    flip_ns: dict[str, Any], verdicts: tuple[str, ...], measurable: bool
+    ded_pa: ModuleType, verdicts: tuple[str, ...], measurable: bool
 ) -> None:
     """The cell's answer must equal the table, checked apart from the derivation below so cell drift and table drift report separately."""
-    keys = flip_ns["measurable_cell_keys"](_rows(*verdicts))
+    keys = notebook_stats.measurable_cell_keys(
+        _rows(*verdicts), ded_pa.UNMEASURABLE_VERDICTS)
     assert bool(keys) is measurable, (verdicts, keys)
 
 
@@ -96,12 +85,12 @@ def test_measurability_agrees_with_grade_verdicts(
 
 
 def test_no_positive_whitelist_survives(
-    nb: dict[str, Any], flip_ns: dict[str, Any]
+    nb: dict[str, Any]
 ) -> None:
     """The complement of ``UNMEASURABLE_VERDICTS`` must not be re-declared literally."""
     import re
 
-    src = cell_source(nb, "def measurable_cell_keys")
+    src = cell_source(nb, "ported estimators:")
     # Anchored: a bare ``"MEASURABLE_VERDICTS" in src`` also matches every
     # mention of ``UNMEASURABLE_VERDICTS``, i.e. the correct code.
     assert not re.search(r"(?<![A-Z_])MEASURABLE_VERDICTS", src), src
@@ -109,61 +98,64 @@ def test_no_positive_whitelist_survives(
     assert "ded_pa.UNMEASURABLE_VERDICTS" in src, "the live set must be read, not copied"
 
 
-def test_every_selected_cell_is_safe_for_is_pass(flip_ns: dict[str, Any]) -> None:
+def test_every_selected_cell_is_safe_for_is_pass(ded_pa: ModuleType) -> None:
     """`is_pass` raises on `unverified`, so this filter must be the thing that removes it before callers reach is_pass."""
-    is_pass, measurable_cell_keys = flip_ns["is_pass"], flip_ns["measurable_cell_keys"]
     with pytest.raises(ValueError, match="unverified"):
-        is_pass("unverified")
+        notebook_stats.is_pass("unverified")
 
     rows = (_rows("exception", "success", theorem="a")
             + _rows("unverified", theorem="b")
             + _rows("failure", theorem="c"))
-    selected = measurable_cell_keys(rows)
+    selected = notebook_stats.measurable_cell_keys(rows, ded_pa.UNMEASURABLE_VERDICTS)
     assert len(selected) == 2, selected
     assert not any("b" in str(key) for key in selected), selected
     # Every selected cell's surviving verdict must go through is_pass unraised.
     surviving = {"a": "success", "c": "failure"}
     for theorem, verdict in surviving.items():
         assert any(theorem in str(key) for key in selected), theorem
-        is_pass(verdict)
+        notebook_stats.is_pass(verdict)
 
 
-def test_dependency_cells_are_still_excluded(flip_ns: dict[str, Any]) -> None:
+def test_dependency_cells_are_still_excluded(ded_pa: ModuleType) -> None:
     """The Mathlib-only restriction is unchanged by the measurability fix."""
     rows = (_rows("exception", "success", theorem="dep",
                   file_path=".lake/packages/batteries/Batteries/Data/List.lean")
             + _rows("exception", "success", theorem="mathlib"))
-    keys = flip_ns["measurable_cell_keys"](rows)
+    keys = notebook_stats.measurable_cell_keys(rows, ded_pa.UNMEASURABLE_VERDICTS)
     assert len(keys) == 1 and "mathlib" in str(keys[0]), keys
 
 
-def test_selection_is_sorted_and_order_independent(flip_ns: dict[str, Any]) -> None:
+def test_selection_is_sorted_and_order_independent(ded_pa: ModuleType) -> None:
     """`select_sample_keys` is only reproducible over an ALREADY-SORTED population."""
     rows = _rows("success", theorem="t3") + _rows("success", theorem="t1") \
         + _rows("success", theorem="t2")
-    keys = flip_ns["measurable_cell_keys"](rows)
+    keys = notebook_stats.measurable_cell_keys(rows, ded_pa.UNMEASURABLE_VERDICTS)
     assert keys == sorted(keys)
-    assert keys == flip_ns["measurable_cell_keys"](list(reversed(rows)))
+    assert keys == notebook_stats.measurable_cell_keys(
+        list(reversed(rows)), ded_pa.UNMEASURABLE_VERDICTS)
 
 
 def test_ported_estimator_names_all_exist(
-    nb: dict[str, Any], flip_ns: dict[str, Any], capsys: pytest.CaptureFixture[str]
+    nb: dict[str, Any]
 ) -> None:
     """Every name the section advertises (markdown "What was ported" sentence and the cell's print) must be defined; none may dangle."""
     import re
 
-    src = cell_source(nb, "def measurable_cell_keys")
-    exec(compile(src, str(STATS_NB), "exec"), dict(flip_ns))
-    printed = capsys.readouterr().out
-    advertised = printed.split("ported estimators:", 1)[1].strip().split(", ")
-    assert advertised, printed
+    src = cell_source(nb, "ported estimators:")
+    advertised = (
+        "clopper_pearson_interval", "flip_stats", "verifier_drift_stats", "is_pass",
+        "group_rows_by_cell", "surviving_verdict", "measurable_cell_keys",
+        "select_sample_keys",
+    )
+    assert 'print("ported estimators:", ", ".join(sorted(' in src
     for name in advertised:
-        assert callable(flip_ns.get(name)), f"cell advertises {name!r}, which is not defined"
+        assert f'"{name}"' in src
+        assert callable(getattr(notebook_stats, name))
 
     markdown = cell_source(nb, "**What was ported.**")
     sentence = markdown.split("**What was ported.**", 1)[1].split(".\n", 1)[0]
     named = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", sentence))
-    missing = sorted(n for n in named if n not in flip_ns)
+    missing = sorted(n for n in named if not hasattr(notebook_stats, n))
     assert not missing, f"section-8 markdown names undefined helpers: {missing}"
 
 
@@ -181,16 +173,17 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(
             survivors = [v for v in verdicts if v not in ded_pa.UNMEASURABLE_VERDICTS]
             return None if not survivors else int(survivors[-1] == "success")
 
-    src = cell_source(nb, "def measurable_cell_keys")
+    src = cell_source(nb, "ported estimators:")
     with pytest.raises(AssertionError):
         exec(compile(src, str(STATS_NB), "exec"), {"ded_pa": _WrongGrader})
 
 
-def test_a_row_with_no_verdict_is_not_a_measurement(flip_ns: dict[str, Any]) -> None:
+def test_a_row_with_no_verdict_is_not_a_measurement(ded_pa: ModuleType) -> None:
     """A missing verdict must be dropped, not scored 0 like `grade_verdicts` would: this chooses what to SAMPLE, and scoring it would book "never recorded" as "measured and lost"."""
     rows = _rows("success", theorem="ok")
     orphan = _rows("success", theorem="orphan")
     for row in orphan:
         del row["verdict"]
-    keys = flip_ns["measurable_cell_keys"](rows + orphan)
+    keys = notebook_stats.measurable_cell_keys(
+        rows + orphan, ded_pa.UNMEASURABLE_VERDICTS)
     assert len(keys) == 1 and "ok" in str(keys[0]), keys

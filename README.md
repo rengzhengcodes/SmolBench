@@ -36,7 +36,7 @@ smolbench/                 the installable library
     openai_compat.py         the shared HTTP + response-parsing engine
     _aws.py                  the shared AWS primitives
     tokenization.py          text/token helpers, incl. the noise-pad search
-    parsing.py, replicates.py, results_store.py, retired_markers.py
+    parsing.py, replicates.py, results_store.py, retired_markers.py, s3_archive.py
   induction/                the periodic benchmark (see smolbench/induction/README.md)
     _common.py                generation machinery
     periodic.py                the benchmark family

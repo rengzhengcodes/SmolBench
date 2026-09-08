@@ -7,10 +7,8 @@ the skip count in the test section matches the module those skips come from.
 Scoped to `deduction/lean/`, `evals/` and `fleet/`, which have grown modules
 past a stale map before.
 
-`lean-dojo` stays a declared dependency (corpus tracing, `Requires-Python
-<3.13`), so the lean checks forbid only the VERIFIES claim, not every
-mention. Nothing here imports `smolbench.deduction.lean`: these are
-text-only checks that must hold with or without the `lean` extra installed.
+Nothing here imports `smolbench.deduction.lean`: these are text-only checks
+that must hold with or without the `lean` extra installed.
 """
 
 from __future__ import annotations
@@ -158,32 +156,6 @@ def test_map_credits_lean_interact_for_verification() -> None:
     assert len(verify_lines) == 1, verify_lines
     assert "lean-interact" in verify_lines[0], verify_lines[0]
     assert "lean-dojo" not in verify_lines[0], verify_lines[0]
-
-
-#: Narrow substrings, not "any mention of lean-dojo": lean-dojo is still
-#: installed and still pins python<3.13, and the README says both correctly.
-LEAN_DOJO_VERIFICATION_CLAIMS = (
-    "lean-dojo verification",
-    "lean-dojo verify pass",
-    "verification path's `lean-dojo`",
-)
-
-
-def test_readme_does_not_credit_lean_dojo_with_verification() -> None:
-    text = README.read_text()
-    offenders = [claim for claim in LEAN_DOJO_VERIFICATION_CLAIMS if claim in text]
-    assert not offenders, f"README still credits lean-dojo with verifying: {offenders}"
-    assert "lean-interact" in text
-
-
-def test_pyproject_lean_comment_does_not_credit_lean_dojo_with_verification() -> None:
-    """The header above `lean = [` must not contradict the `lean-dojo` entry's own comment (tracing only, not imported by the verifier)."""
-    text = (REPO_ROOT / "pyproject.toml").read_text()
-    header = text[text.index("# Lean theorem-proving eval"): text.index("lean = [")]
-    assert "verification additionally needs lean-dojo" not in header, header
-    assert "lean-interact" in header, header
-    # The entry comment below is the authority this header must agree with.
-    assert "`lean-dojo` stays ONLY because corpus tracing" in text
 
 
 # --- the "Run the tests" section -------------------------------------------

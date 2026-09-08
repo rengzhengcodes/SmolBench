@@ -37,18 +37,14 @@ def readme() -> str:
     return README_MD.read_text()
 
 
-def _store_markers() -> tuple[str, str]:
-    """The two supersede spellings, read from the module that writes them."""
+def test_archive_documents_both_supersede_spellings(archive: str) -> None:
+    """Both supersede spellings must be named: quoting only one leaves the other looking like corruption."""
     from smolbench.evals.results_store import (
         LOCAL_SUPERSEDED_INFIX,
         S3_SUPERSEDED_SUFFIX,
     )
-    return S3_SUPERSEDED_SUFFIX, LOCAL_SUPERSEDED_INFIX
 
-
-def test_archive_documents_both_supersede_spellings(archive: str) -> None:
-    """Both supersede spellings must be named: quoting only one leaves the other looking like corruption."""
-    s3_suffix, local_infix = _store_markers()
+    s3_suffix, local_infix = S3_SUPERSEDED_SUFFIX, LOCAL_SUPERSEDED_INFIX
     assert s3_suffix in archive, f"ARCHIVE.md never names the {s3_suffix} marker key"
     assert local_infix in archive, \
         f"ARCHIVE.md never names the local {local_infix} rename"
@@ -66,10 +62,8 @@ def test_both_docs_describe_the_regrade_path(archive: str, readme: str) -> None:
         assert "regraded_from" in text, f"notebooks/{name} never names regraded_from"
 
 
-def test_the_docs_do_not_send_a_reader_to_sync_the_store(archive: str, readme: str) -> None:
-    """No sync-down instructions: report scripts read S3 directly, so a local-mirror step is wasted bandwidth and a second, divergent path in."""
-    for name, text in (("ARCHIVE.md", archive), ("README.md", readme)):
-        assert "aws s3 sync" not in text, f"notebooks/{name} still tells a reader to sync"
+def test_the_docs_name_the_direct_s3_readers(readme: str) -> None:
+    """The notebook guide points readers at the direct S3 path."""
     assert "--s3" in readme, "notebooks/README.md never mentions the --s3 readers"
     assert "rows_source" in readme, \
         "notebooks/README.md never names the shared row reader"

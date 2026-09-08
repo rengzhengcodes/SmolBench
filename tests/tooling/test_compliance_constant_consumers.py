@@ -53,8 +53,7 @@ def test_the_compliant_label_is_spelled_only_where_it_is_defined(
     assert not offenders, f'the literal "compliant" is spelled at {offenders}'
 
 
-def test_the_statistics_notebook_delegates_compliance_entirely(
-        modules: list[tuple[Path, ast.Module]]) -> None:
+def test_the_statistics_notebook_delegates_compliance_entirely() -> None:
     """The notebook delegates compliance entirely to `significance_report.py`; it must not grow a private census that could disagree with the published one."""
     import json
 

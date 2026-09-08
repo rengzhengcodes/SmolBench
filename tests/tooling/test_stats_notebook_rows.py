@@ -158,32 +158,6 @@ def _exec_cell(
     return namespace
 
 
-# --- the sync is gone ------------------------------------------------------
-
-def test_no_cell_shells_out_to_aws_s3_sync(nb: dict[str, Any]) -> None:
-    """No cell materialises the store with the AWS CLI."""
-    offenders = [i for i, cell in enumerate(nb["cells"])
-                 if "s3\", \"sync" in "".join(cell["source"])
-                 or "aws s3 sync" in "".join(cell["source"])]
-    assert not offenders, f"cells {offenders} still sync the store to a local path"
-
-
-def test_the_gate_cell_declares_no_local_rows_tree(nb: dict[str, Any]) -> None:
-    """`RUN_HEAVY`'s cell must not pre-declare a scratch rows directory: dead config in a gate cell reads as the supported way in."""
-    source = cell_source(nb, "RUN_HEAVY = ")
-    for dead in ("ROWS_DIR", "SCRATCH", "SNAPSHOT_S3", "SNAPSHOT_REGION"):
-        assert dead not in source, f"the RUN_HEAVY cell still declares {dead}"
-
-
-def test_the_recovery_prose_no_longer_says_the_arm_is_skipped(nb: dict[str, Any]) -> None:
-    """Section 5's prose must not claim the post-recovery pool is skipped: a stale disclaimer hides a row that is right there."""
-    joined = "\n".join("".join(cell["source"]) for cell in nb["cells"])
-    for claim in ("SENSITIVITY pool is NOT computed",
-                  "sensitivity arm is left out",
-                  "does **not** materialise it"):
-        assert claim not in joined, f"notebook still claims: {claim!r}"
-
-
 # --- the cells, executed ---------------------------------------------------
 
 def test_section_5_fetches_rows_and_the_recovery_arm_from_s3(

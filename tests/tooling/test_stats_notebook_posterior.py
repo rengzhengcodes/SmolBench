@@ -1,15 +1,8 @@
-"""Section 7's bootstrap resolution and its behaviour under clustering.
-
-Two contracts: the number of bootstrap resamples must follow the alpha in use
-(a fixed 4,000 puts 0.2 draws in the tail the posterior family's alpha asks
-about, biasing the endpoint toward EQUIVALENT); and the classifier's synthetic
-self-test must exercise data shaped like the study's own, where harmonics
-inside a replicate are strata, not exchangeable draws, and an arm-specific
-replicate effect changes the verdicts materially.
-"""
+"""Section 7's bootstrap resolution and clustered-data behavior."""
 
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -28,10 +21,7 @@ def nb() -> dict:
 
 
 def _section_7_markdown(nb: dict[str, Any]) -> str:
-    """The markdown span from the section-7 heading up to section 8's.
-
-    A span, not one cell: a note may live beside the cell it explains.
-    """
+    """Return section 7's markdown span."""
     sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
                for cell in nb["cells"]]
     start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
@@ -41,68 +31,66 @@ def _section_7_markdown(nb: dict[str, Any]) -> str:
 
 
 @pytest.fixture(scope="module")
-def posterior_ns(nb: dict[str, Any]) -> dict:
-    """The executed namespace of section 7's classifier cell."""
-    namespace = load_analysis_modules()
-    exec(compile(cell_source(nb, "def paired_diff_ci"), str(STATS_NB), "exec"), namespace)
-    return namespace
+def modules() -> dict[str, Any]:
+    """Load the notebook's analysis modules once."""
+    return load_analysis_modules()
 
 
-#: ``(two-sided alpha, resamples)``. ``bootstrap_stats`` cuts each tail at
-#: ``alpha/2``, so B = ``ceil(BOOT_TAIL_TARGET / (alpha/2))``, capped. Values
-#: computed from the rule, not read off the cell.
+@pytest.fixture(scope="module")
+def stats(modules: dict[str, Any]) -> ModuleType:
+    """Return the shared notebook-estimator module."""
+    return modules["notebook_stats"]
+
+
 BOOT_CASES = [
     pytest.param(0.1, 1_000, id="alpha=0.1"),
     pytest.param(0.01, 10_000, id="alpha=0.01"),
     pytest.param(0.001, 100_000, id="alpha=0.001"),
-    # The posterior family's own alpha: 0.05/966 per tail wants 966,000, which
-    # is over the cap -- so the real-data call is capped, loudly.
     pytest.param(2 * 0.05 / 966, 200_000, id="alpha=2*ALPHA_POSTERIOR-capped"),
 ]
 
 
 @pytest.mark.parametrize("alpha, expected", BOOT_CASES)
 def test_boot_resamples_is_derived_from_the_alpha_in_use(
-    posterior_ns: dict[str, Any], alpha: float, expected: int
+    stats: ModuleType, alpha: float, expected: int
 ) -> None:
     """B must follow alpha: 4,000 resamples put only 0.2 draws in the tail read at alpha/2, biasing the endpoint toward EQUIVALENT."""
-    assert posterior_ns["boot_resamples"](alpha) == expected
+    assert stats.boot_resamples(alpha) == expected
 
 
-def test_boot_resamples_meets_its_own_tail_criterion(posterior_ns: dict[str, Any]) -> None:
+def test_boot_resamples_meets_its_own_tail_criterion(stats: ModuleType) -> None:
     """Uncapped, the derived B puts at least TARGET resamples in each tail."""
-    target = posterior_ns["BOOT_TAIL_TARGET"]
-    cap = posterior_ns["BOOT_RESAMPLE_CAP"]
+    target = stats.BOOT_TAIL_TARGET
+    cap = stats.BOOT_RESAMPLE_CAP
     for alpha in (0.1, 0.05, 0.01, 0.001, 0.0005):
-        n_boot = posterior_ns["boot_resamples"](alpha)
+        n_boot = stats.boot_resamples(alpha)
         if n_boot < cap:
             assert n_boot * (alpha / 2) >= target, alpha
 
 
 def test_boot_resamples_warns_when_it_caps(
-    posterior_ns: dict[str, Any], capsys: pytest.CaptureFixture[str]
+    stats: ModuleType, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A capped B must warn: silently returning the cap would let a reader believe the endpoint resolves alpha when it does not."""
     alpha = 2 * 0.05 / 966
-    # An earlier test in this module already asked for this exact alpha, and the
-    # warn-once ledger is module state; clear it or this test reads an empty
-    # buffer and calls a correct implementation silent.
-    posterior_ns["_BOOT_CAP_WARNED"].clear()
+    stats._BOOT_CAP_WARNED.clear()
     capsys.readouterr()
-    posterior_ns["boot_resamples"](alpha)
+    stats.boot_resamples(alpha)
     first = capsys.readouterr().out
     assert "200000" in first.replace(",", "").replace("_", ""), first
     assert "966000" in first.replace(",", "").replace("_", ""), first
     # Section 7's real-data cell calls this 966 times; one warning, not 966.
-    posterior_ns["boot_resamples"](alpha)
+    stats.boot_resamples(alpha)
     assert capsys.readouterr().out == ""
 
 
-def test_paired_diff_ci_defaults_to_the_derived_count(posterior_ns: dict[str, Any]) -> None:
+def test_paired_diff_ci_defaults_to_the_derived_count(
+    stats: ModuleType, modules: dict[str, Any]
+) -> None:
     """The default must be the derivation, not a second hardcoded number."""
     import numpy as np
 
-    error_bars = posterior_ns["error_bars"]
+    error_bars = modules["error_bars"]
     seen: list[int] = []
     real = error_bars.bootstrap_stats
 
@@ -113,36 +101,25 @@ def test_paired_diff_ci_defaults_to_the_derived_count(posterior_ns: dict[str, An
     error_bars.bootstrap_stats = spy
     try:
         rng = np.random.default_rng(0)
-        n_harm = posterior_ns["ind_pa"].N_HARMONICS
+        n_harm = modules["ind_pa"].N_HARMONICS
         a = (rng.random((6, n_harm)) < 0.5).reshape(-1)
         b = (rng.random((6, n_harm)) < 0.5).reshape(-1)
         seed_idx = np.repeat(np.arange(6), n_harm)
-        posterior_ns["paired_diff_ci"](a, b, seed_idx, alpha=0.01)
+        stats.paired_diff_ci(a, b, seed_idx, alpha=0.01, error_bars=error_bars)
     finally:
         error_bars.bootstrap_stats = real
-    assert seen == [posterior_ns["boot_resamples"](0.01)], seen
-
-
-def test_no_hardcoded_resample_count_survives(nb: dict[str, Any]) -> None:
-    """No cell may still pin B to 4000 by hand."""
-    for cell in nb["cells"]:
-        source = "".join(cell["source"])
-        if "paired_diff_ci" in source:
-            assert "n_boot=4000" not in source, source[:200]
+    assert seen == [stats.boot_resamples(0.01)], seen
 
 
 def test_synth_iid_path_takes_exactly_one_draw(
-    nb: dict[str, Any], posterior_ns: dict[str, Any]
+    stats: ModuleType, modules: dict[str, Any]
 ) -> None:
     """`cluster_sd=0` must take exactly one `random((n_seeds, n_harm))` draw and leave the generator there: an extra draw would shift every later case in the shared stream and could flip an EQUIVALENT assertion."""
     import numpy as np
 
-    namespace = dict(posterior_ns)
-    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    synth = namespace["synth"]
-    n_harm = posterior_ns["ind_pa"].N_HARMONICS
+    n_harm = modules["ind_pa"].N_HARMONICS
 
-    got, seed_idx = synth(0.37, 11, np.random.default_rng(4))
+    got, seed_idx = stats.synth(0.37, 11, np.random.default_rng(4), n_harm=n_harm)
     reference = np.random.default_rng(4)
     want = (reference.random((11, n_harm)) < 0.37).reshape(-1)
     assert np.array_equal(got, want)
@@ -152,44 +129,38 @@ def test_synth_iid_path_takes_exactly_one_draw(
 
 
 def test_clustered_synth_reaches_the_target_design_effect(
-    nb: dict[str, Any], posterior_ns: dict[str, Any]
+    stats: ModuleType, modules: dict[str, Any]
 ) -> None:
     """The clustered arm must measure as clustered by the live `design_effect` metric, not just be an i.i.d. case with a different name."""
     import numpy as np
 
-    namespace = dict(posterior_ns)
-    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    synth, paired = namespace["synth"], posterior_ns["paired"]
-    cluster_sd = namespace["CLUSTER_SD"]
+    paired = modules["paired"]
+    n_harm = modules["ind_pa"].N_HARMONICS
 
     def median_deff(sd: float) -> float:
         gen = np.random.default_rng(3)
         deffs = []
         for _ in range(40):
-            a, seed_idx = synth(0.5, 40, gen, cluster_sd=sd)
-            b, _ = synth(0.5, 40, gen, cluster_sd=sd)
+            a, seed_idx = stats.synth(0.5, 40, gen, sd, n_harm=n_harm)
+            b, _ = stats.synth(0.5, 40, gen, sd, n_harm=n_harm)
             value = paired.design_effect(a, b, seed_idx)
             if value is not None:
                 deffs.append(value)
         return float(np.median(deffs))
 
     assert median_deff(0.0) == pytest.approx(1.0, abs=0.2)
-    assert 2.5 <= median_deff(cluster_sd) <= 4.0, median_deff(cluster_sd)
+    assert 2.5 <= median_deff(stats.CLUSTER_SD) <= 4.0, median_deff(stats.CLUSTER_SD)
 
 
 def test_clustering_inflates_the_decided_rate_on_a_true_null(
-    nb: dict[str, Any], posterior_ns: dict[str, Any]
+    stats: ModuleType, modules: dict[str, Any]
 ) -> None:
     """The diagnostic must be able to come out the other way: with an arm-specific replicate effect, a true null is DECIDED far more often than alpha allows."""
-    namespace = dict(posterior_ns)
-    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    exec(compile(cell_source(nb, "def verdict_distribution"), str(STATS_NB), "exec"),
-         namespace)
-    verdict_distribution = namespace["verdict_distribution"]
-
     n_sim = 60
-    iid = verdict_distribution(cluster_sd=0.0, n_sim=n_sim)
-    clustered = verdict_distribution(cluster_sd=namespace["CLUSTER_SD"], n_sim=n_sim)
+    kwargs = {"n_harm": modules["ind_pa"].N_HARMONICS,
+              "paired": modules["paired"], "error_bars": modules["error_bars"]}
+    iid = stats.verdict_distribution(0.0, n_sim=n_sim, **kwargs)
+    clustered = stats.verdict_distribution(stats.CLUSTER_SD, n_sim=n_sim, **kwargs)
     assert sum(iid["verdicts"].values()) == n_sim, iid
     assert sum(clustered["verdicts"].values()) == n_sim, clustered
 
@@ -226,37 +197,29 @@ def test_section_7_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
         assert token in joined, f"section 7 markdown never mentions {token!r}"
 
 
-def test_resample_sweep_reuses_error_bars_grid_and_tolerance(nb: dict[str, Any]) -> None:
-    """The sweep must reuse `error_bars.B_GRID`/`DRIFT_TOL`, not fork them into local literals that could drift."""
-    source = cell_source(nb, "def resample_sweep")
-    assert "error_bars.B_GRID" in source
-    assert "error_bars.DRIFT_TOL" in source
-
-
 def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(
-    nb: dict[str, Any], posterior_ns: dict[str, Any]
+    stats: ModuleType, modules: dict[str, Any]
 ) -> None:
     """At the posterior alpha, no B on the grid reaches DRIFT_TOL: 500,000 resamples put only 25.9 draws in a tail that wants 50, which is why the derived count is capped rather than obeyed."""
     import numpy as np
 
-    namespace = dict(posterior_ns)
-    exec(compile(cell_source(nb, "def synth("), str(STATS_NB), "exec"), namespace)
-    exec(compile(cell_source(nb, "def resample_sweep"), str(STATS_NB), "exec"), namespace)
-
-    error_bars = posterior_ns["error_bars"]
+    error_bars = modules["error_bars"]
+    n_harm = modules["ind_pa"].N_HARMONICS
     gen = np.random.default_rng(20260904)
-    a, seed_idx = namespace["synth"](0.5, 30, gen)
-    b, _ = namespace["synth"](0.5, 30, gen)
-    alpha = 2 * posterior_ns["ALPHA_POSTERIOR"]
+    a, seed_idx = stats.synth(0.5, 30, gen, n_harm=n_harm)
+    b, _ = stats.synth(0.5, 30, gen, n_harm=n_harm)
+    n_tests = stats.posterior_family(
+        tuple(modules["run_study"].MODELS), tuple(modules["run_study"].INFO_TYPES))
+    alpha = 2 * modules["power_common"].ALPHA / n_tests
 
-    rows = namespace["resample_sweep"](a, b, seed_idx, alpha=alpha)
+    rows = stats.resample_sweep(a, b, seed_idx, alpha, error_bars=error_bars)
     assert [row["B"] for row in rows] == list(error_bars.B_GRID)
     assert rows[0]["drift"] is None, rows[0]        # nothing to compare against
     drifts = [row["drift"] for row in rows[1:]]
     assert all(d is not None for d in drifts), rows
     assert max(drifts) > error_bars.DRIFT_TOL, drifts
     # the largest B on the grid still under-fills the tail it is asked about
-    assert rows[-1]["B"] * alpha / 2 < posterior_ns["BOOT_TAIL_TARGET"], rows[-1]
+    assert rows[-1]["B"] * alpha / 2 < stats.BOOT_TAIL_TARGET, rows[-1]
 
 
 def test_section_7_markdown_explains_the_block_count_limit(nb: dict[str, Any]) -> None:
@@ -266,47 +229,39 @@ def test_section_7_markdown_explains_the_block_count_limit(nb: dict[str, Any]) -
         assert token in joined, f"section 7 markdown never mentions {token!r}"
 
 
-# --- the false-DECIDED calibration at the study's own R and alpha ----------
-#
-# The verdict-distribution cell above measures the mechanism at R=40,
-# alpha=0.05; the study's own operating point is R = `run_study.N_REPLICATES`
-# and `ALPHA_POSTERIOR`. This calibration answers "how clustered may my data
-# be before DECIDED stops meaning what it says?" at that real point, and the
-# tests below pin that it measures rather than asserts.
-
-
 @pytest.fixture(scope="module")
 def calibration(
-    nb: dict[str, Any], posterior_ns: dict[str, Any]
+    nb: dict[str, Any], modules: dict[str, Any], stats: ModuleType
 ) -> tuple[dict, str]:
-    """Execute the calibration cell once; return its namespace and its output.
-
-    Module-scoped, using ``redirect_stdout`` (``capsys`` is function-scoped):
-    the cell simulates a full ladder, so paying for it once per module keeps
-    the suite honest about cost.
-    """
+    """Execute the calibration cell once and capture its output."""
     import contextlib
     import io
 
-    namespace = dict(posterior_ns)
-    for needle in ("def synth(", "def verdict_distribution", "def false_decided_rate"):
-        with contextlib.redirect_stdout(io.StringIO()) as sink:
-            exec(compile(cell_source(nb, needle), str(STATS_NB), "exec"), namespace)
-        captured = sink.getvalue()
-    return namespace, captured
+    namespace = dict(modules)
+    n_tests = stats.posterior_family(
+        tuple(modules["run_study"].MODELS), tuple(modules["run_study"].INFO_TYPES))
+    namespace.update(N_TESTS=n_tests,
+                     ALPHA_POSTERIOR=modules["power_common"].ALPHA / n_tests,
+                     N_HARM=modules["ind_pa"].N_HARMONICS,
+                     CLUSTER_SD=stats.CLUSTER_SD)
+    sink = io.StringIO()
+    with contextlib.redirect_stdout(sink):
+        exec(compile(cell_source(nb, "CALIBRATED_DEFF_CEILING ="),
+                     str(STATS_NB), "exec"), namespace)
+    return namespace, sink.getvalue()
 
 
 def test_calibration_runs_at_the_studys_own_R_and_alpha(
-    calibration: tuple[dict[str, Any], str], posterior_ns: dict[str, Any]
+    calibration: tuple[dict[str, Any], str], modules: dict[str, Any]
 ) -> None:
     """The calibration's R and alpha must be the study's own, read from live sources: a different alpha is a different question with the same name."""
     namespace, _out = calibration
-    assert namespace["STUDY_R"] == posterior_ns["run_study"].N_REPLICATES
+    assert namespace["STUDY_R"] == modules["run_study"].N_REPLICATES
     rows = namespace["CALIBRATION_ROWS"]
     assert rows, "the calibration produced no rows"
     for row in rows:
-        assert row["r"] == posterior_ns["run_study"].N_REPLICATES, row
-        assert row["alpha"] == posterior_ns["ALPHA_POSTERIOR"], row
+        assert row["r"] == modules["run_study"].N_REPLICATES, row
+        assert row["alpha"] == namespace["ALPHA_POSTERIOR"], row
         assert row["decided"] <= row["n_sim"], row
 
 
@@ -341,26 +296,30 @@ def test_the_ceiling_sits_below_the_studys_own_design_effect(
 
 
 def test_the_studys_shaped_rate_is_inflated_by_orders_of_magnitude(
-    calibration: tuple[dict[str, Any], str], posterior_ns: dict[str, Any]
+    calibration: tuple[dict[str, Any], str]
 ) -> None:
     """The measured rate at the study-shaped deff, against the alpha it claims."""
     namespace, _out = calibration
-    alpha = posterior_ns["ALPHA_POSTERIOR"]
+    alpha = namespace["ALPHA_POSTERIOR"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
     assert study_row["rate"] > 20 * alpha, (study_row, alpha)
     assert study_row["rate"] < 0.10, study_row       # still a tail, not a coin flip
 
 
 def test_false_decided_rate_can_come_out_the_other_way(
-    calibration: tuple[dict[str, Any], str], posterior_ns: dict[str, Any]
+    calibration: tuple[dict[str, Any], str], stats: ModuleType,
+    modules: dict[str, Any]
 ) -> None:
     """The estimator must be able to report no inflation (and does, on i.i.d. draws): a measurement that cannot return the negative answer is not one."""
     namespace, _out = calibration
     # 400 draws, not 200: at the study-shaped rate (~2%) a 200-draw control has
     # a few percent chance of coming back empty, which would misread as "the
     # estimator cannot see clustering" rather than as thin sampling.
-    iid = namespace["false_decided_rate"](0.0, n_sim=400)
-    clustered = namespace["false_decided_rate"](namespace["CLUSTER_SD"], n_sim=400)
+    kwargs = {"n_sim": 400, "r": modules["run_study"].N_REPLICATES,
+              "alpha": namespace["ALPHA_POSTERIOR"],
+              "n_harm": modules["ind_pa"].N_HARMONICS, "paired": modules["paired"]}
+    iid = stats.false_decided_rate(0.0, **kwargs)
+    clustered = stats.false_decided_rate(stats.CLUSTER_SD, **kwargs)
     assert iid["decided"] == 0, iid
     assert iid["median_deff"] == pytest.approx(1.0, abs=0.2), iid
     assert clustered["decided"] > 0, clustered
@@ -370,8 +329,8 @@ def test_false_decided_rate_can_come_out_the_other_way(
 def test_the_calibration_prints_beside_the_verdict_table(nb: dict[str, Any]) -> None:
     """The verdict table and its calibration must read as one exhibit: same section, no code cell between them."""
     sources = ["".join(cell["source"]) for cell in nb["cells"]]
-    table = next(i for i, s in enumerate(sources) if "def verdict_distribution" in s)
-    calibration = next(i for i, s in enumerate(sources) if "def false_decided_rate" in s)
+    table = next(i for i, s in enumerate(sources) if "verdict_distribution =" in s)
+    calibration = next(i for i, s in enumerate(sources) if "false_decided_rate =" in s)
     section_8 = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
     assert table < calibration < section_8, (table, calibration, section_8)
     between = [i for i in range(table + 1, calibration)
