@@ -29,7 +29,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from tests._paths import FIXTURES
+from tests._paths import FIXTURES, SCRIPTS, load_by_path
 
 lean_interact = pytest.importorskip("lean_interact")
 
@@ -581,6 +581,15 @@ def test_try_tail_raises_on_a_repl_level_failure_so_the_caller_maps_it_to_except
         verify.try_tail(session, 0, "rfl", "t")
 
 
+def test_try_tail_maps_an_exception_kind_outcome_to_a_raise() -> None:
+    session = FakeSession(
+        {"rfl": replbackend.StepOutcome("exception", None, "unknown proofState", None)}
+    )
+    with pytest.raises(replbackend.ReplError) as exc:
+        verify.try_tail(session, 0, "rfl", "t")
+    assert "unknown proofState" in str(exc.value)
+
+
 # ---------------------------------------------------------------------------
 # verify.open_at_step
 # ---------------------------------------------------------------------------
@@ -856,17 +865,10 @@ def test_verify_exposes_every_name_the_runner_protocol_needs() -> None:
 # `lean_interact` is absent, which is when that guarantee must not vanish.
 # ---------------------------------------------------------------------------
 def test_verify_rows_script_guard_requires_lean_interact() -> None:
-    import importlib.util
-
-    from tests._paths import SCRIPTS
-
-    spec = importlib.util.spec_from_file_location(
-        "lvr_seam", SCRIPTS / "deduction" / "lean_verify_rows.py"
+    module = load_by_path(
+        SCRIPTS / "deduction" / "lean_verify_rows.py", "lvr_seam"
     )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["lvr_seam"] = module
     try:
-        spec.loader.exec_module(module)
         # The guard passes here because lean_interact is installed in this venv.
         module.require_lean_interact()
     finally:
@@ -1023,17 +1025,10 @@ def test_verify_rows_script_guard_requires_mathlib_root(
     tmp_path: Path,
 ) -> None:
     """Unset SMOLBENCH_MATHLIB_ROOT exits before any work; a real checkout passes."""
-    import importlib.util
-
-    from tests._paths import SCRIPTS
-
-    spec = importlib.util.spec_from_file_location(
-        "lvr_root_seam", SCRIPTS / "deduction" / "lean_verify_rows.py"
+    module = load_by_path(
+        SCRIPTS / "deduction" / "lean_verify_rows.py", "lvr_root_seam"
     )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["lvr_root_seam"] = module
     try:
-        spec.loader.exec_module(module)
         monkeypatch.delenv("SMOLBENCH_MATHLIB_ROOT", raising=False)
         with pytest.raises(SystemExit, match="SMOLBENCH_MATHLIB_ROOT"):
             module.require_mathlib_root()

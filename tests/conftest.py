@@ -24,9 +24,6 @@ from typing import Any
 
 import pytest
 
-from smolbench.deduction.lean.runner import jsonl_line
-
-
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     """Write `rows` with the production JSONL serializer.
 
@@ -40,6 +37,8 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     rows : Iterable[dict[str, Any]]
         JSON-compatible records.
     """
+    from smolbench.deduction.lean.runner import jsonl_line
+
     path.write_text("".join(jsonl_line(row) for row in rows))
 
 

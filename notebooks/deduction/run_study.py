@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# These two `smolbench` imports must stay above the `os.environ.setdefault`
+# These `smolbench` imports must stay above the `os.environ.setdefault`
 # block below (the constants and the GUARD that follows both need them), and
 # are VERIFIED ec2-free -- checked one module per fresh interpreter, since a
 # shared one proves nothing about which import pulled what::
@@ -50,6 +50,7 @@ from typing import Any
 # smolbench import here: one that reached `ec2` would freeze this lane's
 # EC2_* constants from the still-unseeded environment, with nothing raised.
 from smolbench.evals.experiment import validate_experiment_tag
+from smolbench.evals.spool import spool_prefix
 from smolbench.evals.study_config import load_study_config
 from smolbench.evals.retired_markers import is_retired
 
@@ -73,7 +74,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 #: parses nothing and leaves no import-time temporary needing a ``del``.
 SPOOL_BUCKET: str = load_study_config().results.bucket
 SPOOL_REGION: str = load_study_config().results.region
-#: The destination key prefix comes from ``runner.spool_prefix()``, resolved
+#: The destination key prefix comes from ``spool_prefix()``, resolved
 #: at call time inside ``spool_to_s3`` and the GUARD in ``main`` below -- not
 #: a module constant here, so a late ``LEAN_SPOOL_PREFIX`` override takes
 #: effect per-invocation rather than at import.
@@ -258,7 +259,6 @@ def resolve_lean_seed() -> int:
     measures (``runner._select_theorems``); ``cfg["seed"]`` is the decode
     seed ``runner.sweep`` puts on the wire (replicate `i` decodes at
     `seed + i`).
-
     """
     raw = os.environ.get("LEAN_SEED", "").strip()
     if not raw:
@@ -588,7 +588,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     run_dir : Path
         Local run directory to upload and prune.
     key : str
-        The destination prefix ``f"{runner.spool_prefix()}/scaling_{key}/"``
+        The destination prefix ``f"{spool_prefix()}/scaling_{key}/"``
         is built from this, not ``run_dir.name``, so the S3 layout stays
         keyed on the model even when ``LEAN_RUN_NAME`` renamed the run
         directory.
@@ -615,7 +615,7 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     if client is None:
         client = _aws.fresh_client("s3", SPOOL_REGION)
 
-    dest_prefix = f"{runner.spool_prefix()}/scaling_{key}/"
+    dest_prefix = f"{spool_prefix()}/scaling_{key}/"
     files = sorted(p for p in run_dir.rglob("*") if p.is_file())
 
     # Phase 1: upload + verify every file before deleting anything.
@@ -853,7 +853,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(
             f"LEAN_SHARD={config['theorems']['shard']!r} requires --no-s3: a shard "
             f"would overwrite the canonical "
-            f"s3://{SPOOL_BUCKET}/{runner.spool_prefix()}/scaling_{key}/ objects "
+            f"s3://{SPOOL_BUCKET}/{spool_prefix()}/scaling_{key}/ objects "
             "with its partial rows.\n"
             "Fix: re-run this shard with --no-s3, then merge and spool with "
             "`scripts/deduction/merge_lean_shards.py <key> --n <n> "

@@ -33,6 +33,7 @@ timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + e
 
 bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
 bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real REPL replay (see below)
+bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + stub LLMs, real Lean, resume check
 ```
 
 ## Direct invocation (drive internals without the driver)
@@ -95,6 +96,14 @@ The canonical sweep driver is `notebooks/deduction/run_study.py` (one lane per
 invocation, `LEAN_MODEL=<key>`); `notebooks/deduction/lean_eval.ipynb` is the
 interactive companion and `run-sweep` the headless escape hatch for the same
 config schema.
+
+`lean_smoke.sh --e2e` is the credential-free full sweep check. It starts two
+local OpenAI-compatible stubs, materializes the committed post-cutoff
+`Mini.theoremA` fixture in a temporary Lean project, and sends it through the
+production provider and real-Lean paths. It asserts the good stub
+succeeds, the bogus tactic produces `lean_error`, request and row seeds agree,
+provider dispatch is per-model, and an identical rerun resume-skips both
+cells. It needs elan but no provider credentials or external mathlib checkout.
 
 Real-model `run-cell`/`run-sweep` need a provider key
 (`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are

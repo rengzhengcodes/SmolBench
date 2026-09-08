@@ -197,8 +197,8 @@ Every lane's results are spooled to S3, never accumulated locally for the
 long term. Bucket `smolbench-results-414266451290`, region `us-west-2`,
 key layout `deduction_postcutoff/runs/scaling_<spec-key>/<relative path>`
 (e.g. `deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl`) -- from
-`smolbench.deduction.lean.runner.DEDUCTION_SPOOL_PREFIX`, resolved per call
-by `runner.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`.
+`smolbench.evals.spool.DEDUCTION_SPOOL_PREFIX`, resolved per call by
+`smolbench.evals.spool.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`.
 
 `run_study.py`'s `spool_to_s3` runs exactly once, after the sweep returns:
 it uploads every file under the run directory, verifies each upload

@@ -4,7 +4,7 @@
 through `tests/conftest.py`'s `StubServer` (the same one `driver.py` uses) so
 the smoke path's dialect cannot drift from the offline suite's.
 
-`--e2e` itself needs `elan`, a built mathlib4 checkout and a real corpus, so
+`--e2e` itself needs `elan` and drives the committed local Lean project, so
 it cannot run here. What can be checked offline is the contract that script
 depends on -- the ports line, the two fixed answers, the context-length GET
 routes, and the on-disk request log -- by driving the real script in a
@@ -29,12 +29,12 @@ SKILL = REPO_ROOT / ".claude" / "skills" / "run-smolbench"
 STUB = SKILL / "stub_llm.py"
 
 #: The two answers `lean_smoke.sh --e2e` depends on. GOOD is the real
-#: ground-truth tail of ``Lagrange.eval_nodal_at_node`` at k=1, so the sweep row
+#: ground-truth tail of the post-cutoff fixture's ``Mini.theoremA``, so the sweep row
 #: must come back ``verdict: success``; BAD names a lemma that does not exist,
 #: which is what makes real Lean return ``lean_error`` rather than a failed
 #: goal. Spelled out here rather than imported from the script: the point is
 #: that they survived the rewrite byte for byte.
-GOOD = "Here is the proof:\n```lean\nexact s.prod_eq_zero hi (sub_self (v i))\n```"
+GOOD = "Here is the proof:\n```lean\nexact Mini.premiseA h (Mini.premiseB n)\n```"
 BAD = "```lean\nexact nonexistent_lemma_xyz42\n```"
 
 

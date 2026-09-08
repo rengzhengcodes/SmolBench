@@ -34,7 +34,6 @@ import rows_source  # noqa: E402
 from error_bars import holm  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
-    FAMILIES,
     MODELS,
     grade_verdicts,
     mcnemar_exact_p,
@@ -201,8 +200,9 @@ def main(argv: list[str] | None = None) -> int:
            f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}")
     print(hdr)
     print("-" * len(hdr))
-    order = MODELS
-    for m, r, rejected in zip(order, rows, rej):
+    if tuple(r["model"] for r in rows) != tuple(MODELS):
+        raise ValueError("report rows must follow the configured MODELS order")
+    for r, rejected in zip(rows, rej):
         print(f"{r['model']:30s} {r['n']:5d} {r['acc_i']:7.3f} {r['acc_n']:8.3f} "
               f"{r['acc_i'] - r['acc_n']:+7.3f} {r['b']:4d}/{r['c']:<4d} "
               f"{r['p']:10.2e} {' yes ' if rejected else '  .  '}")
@@ -228,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     print("-" * 80)
     boundaries, mde80s = [], []
     thresh = ALPHA / len(rows)
-    for m, r in zip(order, rows):
+    for r in rows:
+        model = r["model"]
         nd = r["b"] + r["c"]
         need = None
         for k in range(nd // 2, -1, -1):
@@ -236,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
                 need = k
                 break
         if need is None:
-            print(f"{m:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>9s} {'--':>7s} "
+            print(f"{model:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>9s} {'--':>7s} "
                   f"{r['acc_i'] - r['acc_n']:+9.3f}")
             continue
         boundary = (nd - 2 * need) / r["n"]
@@ -244,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         mde80 = nd * (2 * pi - 1) / r["n"]
         boundaries.append(boundary)
         mde80s.append(mde80)
-        print(f"{m:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {boundary:9.3f} "
+        print(f"{model:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {boundary:9.3f} "
               f"{mde80:7.3f} {r['acc_i'] - r['acc_n']:+9.3f}")
     if boundaries:
         print(f"\nMedian significance boundary (~50% power): "

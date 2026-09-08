@@ -1,4 +1,4 @@
-"""Load LeanDojo Benchmark 4 splits (per-theorem tactic traces).
+"""Load required post-cutoff LeanDojo-v2 theorem traces.
 
 `LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a mathlib4
 snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; its parallel
@@ -7,13 +7,11 @@ bootstrap instructions: ``notebooks/deduction/README.md``.
 
 Loaders are keyed by ``(kind, split)``; the sole ``"random"`` family is i.i.d.
 The ~700 MB dataset is not shipped here; loaders raise ``FileNotFoundError``
-naming the remedy when a file is missing.
-
-Loaders also accept a *post-cutoff* corpus: one traced at a recent mathlib4
-commit and restricted, by declaration-name set difference against an older
-commit, to theorems provably absent from that older snapshot. Such a corpus
-carries an extra ``postcutoff`` block in `metadata()` and a per-row
-``"postcutoff": true`` flag; see `postcutoff_metadata`.
+naming the remedy when a file is missing. A corpus must be traced at a recent
+mathlib4 commit, restricted by declaration-name set difference against an
+older commit, and carry both the `metadata()` ``postcutoff`` block and each
+row's ``"postcutoff": true`` flag. A plain LeanDojo Benchmark 4 export is
+refused; see `postcutoff_metadata`.
 """
 
 from __future__ import annotations

@@ -500,15 +500,13 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
 
         # ---- check 2+3: resolution, then sha256 --------------------------
         try:
-            with _open_reference(mdir, relpath) as stream:
-                content = stream.read()
+            actual = _sha256_of_reference(mdir, relpath)
         except ResolutionError as exc:
             failures.append(str(exc))
             continue  # nothing further is knowable about this entry
         except (OSError, tarfile.TarError) as exc:
             failures.append(f"{relpath}: unreadable: {exc}")
             continue
-        actual = hashlib.sha256(content).hexdigest()
         if actual != entry["sha256"]:
             failures.append(f"{relpath}: sha256 mismatch: "
                             f"manifest={entry['sha256']} actual={actual}")
@@ -516,9 +514,13 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
         # ---- check 4: citation coverage (writeups only) ------------------
         if entry["role"] != "writeup":
             continue
-        # Decode the exact bytes hashed above, so a changing reference cannot
-        # pass one check and supply different text to citation coverage.
-        cited = cited_artifacts(content.decode("utf-8", errors="replace"))
+        try:
+            with _open_reference(mdir, relpath) as stream:
+                text = stream.read().decode("utf-8", errors="replace")
+        except (ResolutionError, OSError, tarfile.TarError) as exc:
+            failures.append(f"{relpath}: unreadable writeup: {exc}")
+            continue
+        cited = cited_artifacts(text)
         citations[relpath] = cited
         # Name match only; whether it's the *right* artifact is for the entry's note.
         for name in cited:

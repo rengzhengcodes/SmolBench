@@ -119,6 +119,21 @@ class ReplayResult:
     final_state_pp: str | None = None
 
 
+def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
+    """Re-raise a REPL-level outcome as `replbackend.ReplError`.
+
+    The production session raises these failures directly, but the session is
+    an injectable seam whose substitutes may return an exception outcome.
+
+    Parameters
+    ----------
+    outcome : replbackend.StepOutcome
+        REPL-level outcome to inspect.
+    """
+    if outcome.kind == "exception":
+        raise replbackend.ReplError(outcome.error or "REPL-level failure with no message")
+
+
 def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResult:
     """Open a REPL session, apply the recorded tactics in order, report verdict.
 
@@ -154,6 +169,7 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
             outcome = None
             for i, tac in enumerate(tactics):
                 outcome = session.step(state, tac)
+                _raise_if_repl_failure(outcome)
                 if outcome.kind == "lean_error":
                     # `i` counts the tactics applied BEFORE the failure.
                     return ReplayResult(
@@ -280,6 +296,7 @@ def try_tail(
     outcome = None
     for i, tac in enumerate(tactics):
         outcome = session.step(state, tac)
+        _raise_if_repl_failure(outcome)
         if outcome.kind == "success":
             return ProofResult(theorem_name, "success", tail)
         if outcome.kind == "lean_error":

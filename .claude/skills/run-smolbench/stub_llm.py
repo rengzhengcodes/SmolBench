@@ -2,7 +2,7 @@
 
 Used by `lean_smoke.sh --e2e`: fake models, real Lean verification. Port A
 (model "stub-good-model") always answers with the correct ground-truth tactic
-for Lagrange.eval_nodal_at_node at k=1, so the row must verify. Port B
+for the post-cutoff fixture's `Mini.theoremA`, so the row must verify. Port B
 (model "stub-bad-model") answers with a bogus tactic, so the row must come
 back `lean_error`. Both also answer the providers' context-length GETs
 (OpenRouter's `/endpoints`, Prime Intellect's `/models/<id>`). Every request
@@ -41,9 +41,9 @@ except ImportError as err:
 #: passes a path inside its mktemp working directory.
 REQLOG = sys.argv[1]
 
-#: GOOD is the real proof tail for Lagrange.eval_nodal_at_node at k=1; BAD
+#: GOOD is the real final proof step for `Mini.theoremA`; BAD
 #: names a lemma that does not exist, so real Lean returns `lean_error`.
-GOOD = "Here is the proof:\n```lean\nexact s.prod_eq_zero hi (sub_self (v i))\n```"
+GOOD = "Here is the proof:\n```lean\nexact Mini.premiseA h (Mini.premiseB n)\n```"
 BAD = "```lean\nexact nonexistent_lemma_xyz42\n```"
 
 #: `StubServer` is a `ThreadingHTTPServer`, so handlers run concurrently;

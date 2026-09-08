@@ -151,6 +151,7 @@ include-package-data = false
 # without this entry a non-editable install would drop the .toml and every
 # importer of smolbench.evals.study_config would fail at import.
 "smolbench.evals" = ["*.toml"]
+
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.
 where = ["."]

@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 from types import ModuleType
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from tests._paths import LEAN_MINI_POSTCUTOFF as POSTCUTOFF, REPO_ROOT, SCRIPTS
+from tests._paths import (
+    LEAN_MINI_POSTCUTOFF as POSTCUTOFF,
+    REPO_ROOT,
+    SCRIPTS,
+    load_by_path,
+)
 
 #: The post-cutoff fixture's own provenance, for the freshly-emitted manifest.
 FIXTURE_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
@@ -61,13 +66,13 @@ def test_emitted_manifest_identity(emitted: dict[str, Any]) -> None:
 
 
 @pytest.fixture(scope="module")
-def audit() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def audit() -> Iterator[ModuleType]:
+    name = "_audit"
+    module = load_by_path(SCRIPTS / "results" / "audit_lean_pinning.py", name)
+    try:
+        yield module
+    finally:
+        sys.modules.pop(name, None)
 
 
 def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType) -> None:

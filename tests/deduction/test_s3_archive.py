@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import io
 import json
 import posixpath
@@ -19,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from tests._paths import SCRIPTS
+from tests._paths import SCRIPTS, load_by_path
 
 RESULTS = "notebooks/deduction/results"
 
@@ -27,15 +26,12 @@ RESULTS = "notebooks/deduction/results"
 @pytest.fixture(scope="module")
 def em() -> Iterator[Any]:
     """Load scripts/results/evidence_manifest.py by path."""
-    spec = importlib.util.spec_from_file_location(
-        "evidence_manifest_s3", SCRIPTS / "results" / "evidence_manifest.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    name = "evidence_manifest_s3"
+    module = load_by_path(SCRIPTS / "results" / "evidence_manifest.py", name)
     try:
-        spec.loader.exec_module(module)
         yield module
     finally:
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(name, None)
 
 
 @pytest.fixture(scope="module")

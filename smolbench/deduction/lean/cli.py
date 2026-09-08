@@ -154,7 +154,8 @@ def cmd_filter(args: argparse.Namespace) -> int:
 
     done: dict[str, str] = {}
     if out_path.exists() and not args.fresh:
-        for rec in read_jsonl_tolerating_torn_tail(out_path):
+        for line in out_path.open():
+            rec = json.loads(line)
             done[rec["full_name"]] = rec["verdict"]
         print(f"resume: {len(done)} already recorded in {out_path.name}", flush=True)
 
@@ -546,7 +547,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         return 2
 
     by_thm: dict[str, dict[str, dict]] = {}
-    for r in read_jsonl_tolerating_torn_tail(all_rows):
+    for r in read_jsonl_tolerating_torn_tail(all_rows, skip_bad=True):
         if r.get("kind") != "cell":
             continue
         if r.get("model") != args.model:
@@ -669,7 +670,7 @@ def cmd_show(args: argparse.Namespace) -> int:
             jsonl_files = sorted(out_dir.glob("*.jsonl"))
             reject_superseded_rows(jsonl_files)
             for f in jsonl_files:
-                for r in read_jsonl_tolerating_torn_tail(f):
+                for r in read_jsonl_tolerating_torn_tail(f, skip_bad=True):
                     n_total += 1
                     if r.get("verdict") == "success":
                         n_ok += 1

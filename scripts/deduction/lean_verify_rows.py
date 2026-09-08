@@ -46,10 +46,10 @@ from smolbench.deduction.lean.runner import (
     group_cell_rows,
     jsonl_line,
     read_jsonl_tolerating_torn_tail,
-    spool_prefix,
 )
 from smolbench.evals import _aws
 from smolbench.evals.results_store import parse_s3_uri
+from smolbench.evals.spool import spool_prefix
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,7 +60,7 @@ _error_code = _aws.error_code
 # Constants
 # ---------------------------------------------------------------------------
 #: Same bucket every other deduction spool writer/reader in this study uses.
-#: The key prefix comes from `runner.spool_prefix()`, read at call time.
+#: The key prefix comes from `spool_prefix()`, read at call time.
 SPOOL_BUCKET: str = "smolbench-results-414266451290"
 DEFAULT_RUNS_GLOB: str = "scaling_*"
 S3_REGION: str = "us-west-2"

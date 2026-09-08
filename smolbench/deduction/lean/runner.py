@@ -37,7 +37,6 @@ from typing import Any, TextIO
 import smolbench
 from smolbench.evals.provider import provider_module
 from smolbench.evals.retired_markers import is_retired
-from smolbench.evals.spool import DEDUCTION_SPOOL_PREFIX, spool_prefix
 
 from . import lean3
 from .context import Chain, is_trivial_rung, render, validate as validate_rung
@@ -289,7 +288,7 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
     shown = ", ".join(bad[:5])
     suffix = f", and {len(bad) - 5} more" if len(bad) > 5 else ""
     raise ValueError(
-        f"{len(bad)} theorem(s) are not flagged "
+        f"Post-cutoff gate: {len(bad)} theorem(s) are not flagged "
         f"postcutoff: {shown}{suffix}"
     )
 
@@ -600,8 +599,8 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
     return discarded
 
 
-def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
-    """Parse `path`'s rows, dropping a torn FINAL line; missing file -> ``[]``.
+def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> list[dict]:
+    """Parse `path`'s rows, optionally skipping corrupt records.
 
     Single reader for `all_rows.jsonl`-shaped files. Only the last line can be
     torn (a SIGKILL mid-append); dropped with a WARNING, not silently, so real
@@ -611,11 +610,14 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
     ----------
     path : Path
         JSONL file to parse.
+    skip_bad : bool, optional
+        Skip every undecodable record for read-only reporting. Otherwise only
+        a torn final record is dropped and interior corruption raises.
 
     Returns
     -------
     list[dict]
-        Parsed rows, dropping a torn FINAL line; missing file -> ``[]``.
+        Parsed rows; missing file returns ``[]``.
     """
     if not path.exists():
         return []
@@ -632,6 +634,8 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError as exc:
+            if skip_bad:
+                continue
             if lineno != len(lines) - 1:
                 raise json.JSONDecodeError(
                     f"corrupt row mid-file at line {lineno + 1}", line, exc.pos
@@ -644,9 +648,10 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
 
 
 def _cell_key(r: dict) -> tuple:
-    """Return `_row_key` for a schema-complete cell row."""
+    """Return `_row_key` with the tolerant defaults resume decisions use."""
     return _row_key(
-        r["model"], r["theorem_id"], int(r["k"]), r["rung"], int(r["replicate_idx"]),
+        r.get("model", ""), r.get("theorem_id", ""), int(r.get("k", -1)),
+        r.get("rung", ""), int(r.get("replicate_idx", -1)),
     )
 
 
@@ -901,7 +906,7 @@ def write_theorem_summary(theorem_dir: Path) -> None:
         stem = jl.stem
         if "__" not in stem:
             continue
-        for r in read_jsonl_tolerating_torn_tail(jl):
+        for r in read_jsonl_tolerating_torn_tail(jl, skip_bad=True):
             cells[(r["rung"], r["model"])].append(r)
 
     rungs = sorted({r for r, _ in cells.keys()}, key=_rung_sort_key)
@@ -997,7 +1002,7 @@ def analyze_rows(
     # an exception-then-retry pair before counts or pass@N groups see it.
     cell_rows: list[dict] = []
     for row in read_jsonl_tolerating_torn_tail(path):
-        if row["kind"] != "sanity":
+        if row.get("kind", "cell") != "sanity":
             cell_rows.append(row)
         elif row.get("verdict") == "success":
             sanity[0] += 1

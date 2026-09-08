@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from smolbench.deduction.lean.cli import cmd_analyze
+from smolbench.deduction.lean import runner
 from conftest import cell_row, write_jsonl
 
 
@@ -42,6 +43,16 @@ def _section_rows(out: str, marker: str) -> list[str]:
     lines = out.splitlines()
     idx = next(i for i, line in enumerate(lines) if line.strip() == marker)
     return _rows_after(lines, idx + 1)
+
+
+def test_analyze_and_cell_key_tolerate_a_minimal_legacy_row(tmp_path: Path) -> None:
+    """Missing ``kind`` means cell, and absent resume-key fields use defaults."""
+    row = {"model": "model-a", "verdict": "success"}
+    path = tmp_path / "rows.jsonl"
+    write_jsonl(path, [row])
+    cells, _groups, _sanity = runner.analyze_rows(path)
+    assert cells[("?", "model-a")]["n"] == 1
+    assert runner._cell_key(row) == ("model-a", "", -1, "", -1)
 
 
 def test_single_replicate_omits_passn_table(

@@ -13,9 +13,6 @@ verdicts are all the ``"unverified"`` placeholder, so every rate would read at o
 0.000, indistinguishable from a genuine "every model failed everything" result -- hence
 `load_joint_cells` prints a loud stderr banner instead of falling back silently.
 
-`S3_BUCKET` is read from ``smolbench/evals/study_config.toml``, never spelled out in
-prose, so this can't drift from the bucket a run actually reads.
-
     .venv/bin/python notebooks/deduction/analysis/power_analysis.py --s3
 """
 
@@ -62,15 +59,14 @@ from _power_common import (
     POWER_TARGETS,
     SEED,
     fmt_r,
+    results_dir,
 )
 
 from smolbench.evals.study_config import families as _study_families
 from smolbench.evals.study_config import roster_keys as _study_roster_keys
 
 from rows_source import (  # noqa: E402
-    S3_BUCKET,
     _banner,
-    add_source_args,
     reject_superseded,
     resolve_rows_dir,
     spool_prefix,
@@ -138,6 +134,8 @@ ALPHA_PRIMARY = ALPHA / N_PRIMARY
 N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
+
+RESULTS_DIR = results_dir(__file__, up=1)
 
 _Contrast = tuple[str, str, str]  # (label, model_a, model_b)
 
@@ -1130,7 +1128,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    add_source_args(p)
+    p.add_argument(
+        "--results-dir",
+        type=Path,
+        default=RESULTS_DIR,
+        help="local results root containing runs/scaling_*/verified_rows.jsonl "
+             "(default: %(default)s)",
+    )
+    p.add_argument(
+        "--s3",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="PREFIX",
+        help="download rows from S3; PREFIX defaults to the study spool prefix",
+    )
     p.add_argument(
         "--models",
         type=str,
@@ -1169,17 +1181,28 @@ def main(argv: list[str] | None = None) -> int:
         tuple(m.strip() for m in args.models.split(",")) if args.models else None
     )
 
+    local = args.s3 is None
     rows_dir = resolve_rows_dir(
-        rows_dir=args.rows_dir,
+        rows_dir=args.results_dir / "runs" if local else None,
         s3_prefix=None if args.s3 is None else (args.s3 or spool_prefix()),
         candidates=("verified_rows.jsonl", "all_rows.jsonl"),
     )
-    row_files = sorted(rows_dir.glob("*/verified_rows.jsonl"))
+    prefix = "scaling_*" if local else "*"
+    row_files = sorted(rows_dir.glob(f"{prefix}/verified_rows.jsonl"))
     verified_dirs = {path.parent for path in row_files}
     row_files.extend(sorted(
-        path for path in rows_dir.glob("*/all_rows.jsonl")
+        path for path in rows_dir.glob(f"{prefix}/all_rows.jsonl")
         if path.parent not in verified_dirs
     ))
+
+    if not row_files:
+        print(
+            "No deduction row files found. Use --s3 [PREFIX] or point "
+            "--results-dir at a local tree containing "
+            "runs/scaling_*/verified_rows.jsonl.",
+            file=sys.stderr,
+        )
+        return 1
 
     models, blocks, prompt_rungs = load_joint_cells(row_files, models=models_filter)
     if not blocks:

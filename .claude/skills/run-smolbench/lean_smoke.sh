@@ -3,7 +3,8 @@
 # Lean-free: import generation/analysis, sync the environment, then run
 # metadata/list against the committed post-cutoff fixture. It does not
 # download a corpus. ``--replay`` additionally drives one theorem through a
-# configured real Lean checkout.
+# configured real Lean checkout. ``--e2e`` runs two stub LLMs through a full
+# sweep against the post-cutoff fixture and its local Lean project.
 #
 # The old 2024-03-24 corpus is invalid for the roster because every model
 # cutoff postdates it; build a real post-cutoff corpus with
@@ -11,6 +12,7 @@
 #
 #   bash .claude/skills/run-smolbench/lean_smoke.sh
 #   bash .claude/skills/run-smolbench/lean_smoke.sh --replay
+#   bash .claude/skills/run-smolbench/lean_smoke.sh --e2e
 #
 # Replay needs elan, a BUILT mathlib4 checkout in SMOLBENCH_MATHLIB_ROOT, and
 # a REAL corpus in SMOLBENCH_LEAN_DATA. The fixture's Mini.theoremA/B are
@@ -74,6 +76,119 @@ if [ "${1:-}" = "--replay" ]; then
     }
     .venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
     echo "PASS — real Lean replay."
+elif [ "${1:-}" = "--e2e" ]; then
+    export PATH="$HOME/.elan/bin:$PATH"
+    command -v elan >/dev/null || {
+        echo "FAIL: elan not found; install it before --e2e" >&2
+        exit 1
+    }
+    SKILL=.claude/skills/run-smolbench
+    WORK=$(mktemp -d)
+    STUB_PID=""
+    trap '[ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; rm -rf "$WORK"' EXIT
+
+    # The committed corpus fixture is intentionally source-free; materialize
+    # its theorem in a temporary Lean project so this tier exercises real Lean.
+    mkdir -p "$WORK/lean_project/Mini" "$WORK/corpus/random"
+    cp tests/fixtures/lean_repl_project/{lakefile.toml,lean-toolchain} "$WORK/lean_project/"
+    cp "$FIXTURE/metadata.json" "$WORK/corpus/metadata.json"
+    cat > "$WORK/lean_project/Mini/A.lean" <<'LEAN'
+axiom P Q R : Nat → Prop
+@[simp] axiom q_iff_r (n : Nat) : Q n = R n
+
+namespace Mini
+axiom premiseA {n : Nat} (h : P n) (m : Nat) : R n
+def premiseB (n : Nat) : Nat := n
+end Mini
+
+theorem theoremA {n : Nat} (hn : n > 0) : P n → Q n := by
+  intro h
+  simp
+  exact Mini.premiseA h (Mini.premiseB n)
+LEAN
+    .venv/bin/python - "$FIXTURE/random/val.json" "$WORK/corpus/random/val.json" <<'PY'
+import json, sys
+rows = json.load(open(sys.argv[1]))
+row = next(row for row in rows if row["full_name"] == "Mini.theoremA")
+row["start"] = [9, 1]
+open(sys.argv[2], "w").write(json.dumps([row]))
+PY
+
+    .venv/bin/python "$SKILL/stub_llm.py" "$WORK/reqlog.jsonl" > "$WORK/ports.json" &
+    STUB_PID=$!
+    for _ in $(seq 50); do [ -s "$WORK/ports.json" ] && break; sleep 0.1; done
+    [ -s "$WORK/ports.json" ] || {
+        echo "FAIL: stub_llm.py never printed its ports" >&2
+        exit 1
+    }
+    PI_PORT=$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["pi"])' "$WORK/ports.json")
+    OR_PORT=$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["or"])' "$WORK/ports.json")
+
+    cat > "$WORK/sweep.yaml" <<'YAML'
+run_name: e2e_stub_smoke
+seed: 4242
+n_replicates: 1
+temperature: 0.7
+max_tokens: 512
+request_timeout: 30
+max_retries: 2
+dojo_timeout: 300
+concurrent_gen: false
+skip_trivial: false
+theorem_workers: 1
+models:
+  - provider: primeintellect
+    model: stub-good-model
+    display_name: stub-good
+  - provider: openrouter
+    model: stub-bad-model
+    display_name: stub-bad
+theorems:
+  source: explicit
+  kind: random
+  split: val
+  full_names:
+    - Mini.theoremA
+k:
+  strategy: last
+rungs:
+  - "stepk:1"
+YAML
+
+    run_sweep() {
+        SMOLBENCH_LEAN_DATA="$WORK/corpus" \
+        SMOLBENCH_MATHLIB_ROOT="$WORK/lean_project" \
+        SMOLBENCH_LEAN_RESULTS="$WORK/results" \
+        PRIME_INTELLECT_BASE_URL="http://127.0.0.1:$PI_PORT/v1" PRIME_INTELLECT_API_KEY=dummy \
+        OPENROUTER_BASE_URL="http://127.0.0.1:$OR_PORT/v1" OPENROUTER_API_KEY=dummy \
+        .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config "$WORK/sweep.yaml"
+    }
+    run_sweep
+
+    .venv/bin/python - "$WORK/results/runs/e2e_stub_smoke/all_rows.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+sanity = [row for row in rows if row.get("kind") == "sanity"]
+cells = {row["model"]: row for row in rows if row.get("kind") == "cell"}
+assert sanity and all(row["verdict"] == "success" for row in sanity), sanity
+assert cells["stub-good"]["verdict"] == "success", cells["stub-good"]
+assert cells["stub-bad"]["verdict"] == "lean_error", cells["stub-bad"]
+assert "nonexistent_lemma_xyz42" in (cells["stub-bad"]["lean_error"] or "")
+assert all(row["seed"] == 4242 for row in cells.values())
+reqs = [json.loads(line) for line in open(sys.argv[1].replace(
+    "results/runs/e2e_stub_smoke/all_rows.jsonl", "reqlog.jsonl"))]
+gens = [row for row in reqs if row["path"].endswith("/chat/completions")]
+assert {row["body"]["model"] for row in gens} == {"stub-good-model", "stub-bad-model"}
+assert all(row["body"].get("seed") == 4242 for row in gens)
+PY
+
+    resume_out=$(run_sweep)
+    grep -q "(2 skipped)" <<<"$resume_out" || {
+        echo "FAIL: resume rerun did not skip both cells:" >&2
+        echo "$resume_out" >&2
+        exit 1
+    }
+    echo "PASS — end-to-end stub sweep (post-cutoff fixture, real Lean, resume skips)."
 elif [ -n "${1:-}" ]; then
     echo "unknown argument: $1" >&2
     exit 2

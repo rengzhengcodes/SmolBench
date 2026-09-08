@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from smolbench.deduction.lean import runner
 from smolbench.evals._aws import fresh_client
+from smolbench.evals.spool import spool_prefix
 from smolbench.evals.study_config import load_study_config, roster_keys
 
 #: From the committed ``study_config.toml`` -- the same file the study writes
@@ -156,8 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--reproduce", action="store_true",
                     help="also re-derive the pin from corpus data (needs --val-json/--replay-jsonl)")
-    ap.add_argument("--val-json", type=Path, required=True)
-    ap.add_argument("--replay-jsonl", type=Path, required=True)
+    ap.add_argument("--val-json", type=Path, default=None)
+    ap.add_argument("--replay-jsonl", type=Path, default=None)
     ap.add_argument(
         "--metadata", type=Path, default=None,
         help="corpus metadata.json to embed verbatim in the emitted manifest's "
@@ -201,10 +201,14 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--expect-theorems and --expect-cells are required without --offline")
     if (args.reproduce or args.emit_manifest) and args.limit is None:
         ap.error("--limit is required with --reproduce/--emit-manifest")
+    if (args.reproduce or args.emit_manifest) and (
+        args.val_json is None or args.replay_jsonl is None
+    ):
+        ap.error("--val-json and --replay-jsonl are required with --reproduce/--emit-manifest")
 
     # Corpus root = split file's grandparent; resolved after parsing so an
     # explicit --metadata always wins.
-    if args.metadata is None:
+    if args.metadata is None and args.val_json is not None:
         args.metadata = args.val_json.parent.parent / "metadata.json"
 
     failures: list[str] = []
@@ -214,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[offline] --offline set: skipping all four S3 audit layers "
               "(no boto3 client constructed, no AWS call made)")
     else:
-        run_prefix = args.spool_prefix or runner.spool_prefix()
+        run_prefix = args.spool_prefix or spool_prefix()
         s3 = fresh_client("s3", REGION)
 
         # -- Layer 1: as-run config --------------------------------------
@@ -259,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
             print("[+  ] reproduce   : --offline set, skipping the reproduced-pin-vs-"
                   f"spooled-set comparison (no spool to compare against); sha256={digest[:16]}")
         else:
+            # The audit deliberately shares the production artifact slug.
+            from smolbench.deduction.lean import runner
+
             slugged = {runner.slug_theorem(n) for n in names}
             if slugged != inter:
                 failures.append(f"reproduced pin != spooled set "

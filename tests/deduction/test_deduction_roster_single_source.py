@@ -30,6 +30,7 @@ from tests._paths import NOTEBOOKS, SCRIPTS, load_by_path
 
 INDUCTION_DRIVER = NOTEBOOKS / "induction" / "run_study.py"
 POWER_ANALYSIS = NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py"
+ROWS_SOURCE = POWER_ANALYSIS.parent / "rows_source.py"
 AUDIT = SCRIPTS / "results" / "audit_lean_pinning.py"
 DEDUCTION_DRIVER = NOTEBOOKS / "deduction" / "run_study.py"
 
@@ -88,6 +89,17 @@ def test_power_analysis_roster_is_the_config_roster(power_analysis: ModuleType) 
     assert tuple(power_analysis.MODELS) == tuple(roster_keys())
 
 
+def test_power_analysis_module_scope_guards_survive_dash_O() -> None:
+    """Module-scope drift guards use explicit raises because ``-O`` strips asserts."""
+    source = POWER_ANALYSIS.read_text()
+    head = source.split("# Design constants.", 1)[0]
+    assert "\nassert " not in head, (
+        "a module-scope `assert` guard survives above the design constants; "
+        "`python -O` would delete it"
+    )
+    assert "raise ValueError(" in head
+
+
 def test_audit_lanes_are_the_config_roster(roster: tuple[str, ...]) -> None:
     """LANES is study_config's roster, in order (and so still equals the driver's)."""
     if not AUDIT.exists():
@@ -96,10 +108,11 @@ def test_audit_lanes_are_the_config_roster(roster: tuple[str, ...]) -> None:
     assert list(audit.LANES) == list(roster_keys()) == list(roster)
 
 
-def test_bucket_and_region_come_from_the_config(power_analysis: ModuleType) -> None:
+def test_bucket_and_region_come_from_the_config() -> None:
     """Every consumer's bucket/region constant equals the committed config's."""
     results = load_study_config().results
-    assert power_analysis.S3_BUCKET == results.bucket
+    rows_source = _load(ROWS_SOURCE, "deduction_rows_source_for_bucket_pin")
+    assert rows_source.S3_BUCKET == results.bucket
     if AUDIT.exists():
         audit = _load(AUDIT, "audit_lean_pinning_for_bucket_pin")
         assert (audit.BUCKET, audit.REGION) == (results.bucket, results.region)

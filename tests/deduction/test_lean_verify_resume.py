@@ -221,7 +221,7 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """--s3-prefix's default; every other test passes a prefix explicitly, so a wrong default would only surface on a live run."""
-    from smolbench.deduction.lean.runner import DEDUCTION_SPOOL_PREFIX
+    from smolbench.evals.spool import DEDUCTION_SPOOL_PREFIX
 
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
 
