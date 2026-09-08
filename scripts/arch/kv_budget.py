@@ -3,6 +3,7 @@
 Account for layer mix, sharing, latent KV, and tp replication. Boxes budget
 ``weights + 2.0 x KV@131k`` (about 8 requests) against ``0.90 x total VRAM``
 because one-sequence sizing goes negative at concurrency.
+    kv_budget.py [--ctx 131072]
 """
 
 from __future__ import annotations
@@ -92,7 +93,8 @@ def _layer_mix(cfg: Dict[str, Any]) -> List[str]:
 def _kv_layers(cfg: Dict[str, Any]) -> List[str]:
     """`_layer_mix` with cross-layer KV sharing applied: the KV-allocating mix.
 
-    Shared layers allocate no cache because they read an earlier layer's cache.
+    The last ``num_kv_shared_layers`` layers read an earlier layer's cache and
+    allocate none of their own; Gemma-4-E2B shares layers 15-34 of 35.
 
     Parameters
     ----------
@@ -141,8 +143,9 @@ def _layer_kv_shape(cfg: Dict[str, Any], kind: str) -> Tuple[int, int]:
 def _is_shared_latent(cfg: Dict[str, Any]) -> bool:
     """Return whether `cfg` describes DeepSeek-V4's shared-latent KV cache.
 
-    Match label or structure so renamed point releases retain the arithmetic.
-    Exclude ``kv_lora_rank`` because it denotes ordinary MLA.
+    Cache one ``head_dim + qk_rope_head_dim``-wide row per token per layer,
+    shared by K and V with no per-head replication. Match label or structure so
+    renamed releases retain the arithmetic; exclude ``kv_lora_rank`` as ordinary MLA.
 
     Parameters
     ----------
@@ -173,7 +176,7 @@ def kv_bytes(cfg: Dict[str, Any], ctx: int, tp: int = 1, naive: bool = False) ->
     ctx : int
         Sequence length.
     tp : int, optional
-        Tensor-parallel shards; ordinary KV heads replicate when ``tp > n_kv``.
+        Apply replication per layer because Gemma-4 blocks have different KV-head counts; it can only raise the tp=1 total.
     naive : bool, optional
         Use full-context GQA at model-level geometry.
 

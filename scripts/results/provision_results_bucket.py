@@ -1,8 +1,10 @@
 """Provision the S3-backed replicate results bucket with ADMIN credentials.
 
-Uses the configured bucket, blocks public access, enables versioning, and
-attaches the operator policy. Versioning makes accidental overwrite or delete
-recoverable. Exit 1 on denied calls because operator keys are EC2-only.
+Use the configured bucket, block public access, enable versioning, and attach
+the operator policy; every step is idempotent and nothing runs at import time.
+Versioning makes deletes recoverable; denied calls exit 1 because keys are EC2-only.
+The bucket is not seeded: historical imports must go through ``S3ResultsStore`` instead.
+    .venv/bin/python scripts/results/provision_results_bucket.py
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ _ACCESS_DENIED_CODES = frozenset(
 def policy_document(bucket: str) -> dict:
     """Build the IAM policy document granting read/write on ``bucket``.
 
-    ListBucket needs the bucket ARN; object actions need ``/*``.
+    ListBucket needs the bucket ARN; object actions need ``/*``. Key order is
+    pinned because reviewers diff the rendered ``json.dumps`` against this shape.
 
     Parameters
     ----------
@@ -98,6 +101,8 @@ def ensure_bucket(s3: Any, bucket: str, region: str = REGION) -> None:
 
 def put_public_access_block(s3: Any, bucket: str) -> None:
     """Block all public access on ``bucket``, setting all four flags to True.
+
+    This is a PUT replacement, so re-running is idempotent without error-code handling.
 
     Parameters
     ----------
@@ -186,6 +191,8 @@ def ensure_policy(iam: Any, bucket: str, name: str = POLICY_NAME) -> str:
 
 def attach_policy_to_group(iam: Any, policy_arn: str, group: str = GROUP_NAME) -> None:
     """Attach ``policy_arn`` (from `ensure_policy`) to IAM group ``group``.
+
+    No "already attached" handling is needed because ``attach_group_policy`` is idempotent.
 
     Parameters
     ----------

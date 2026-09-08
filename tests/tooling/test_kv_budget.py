@@ -1,4 +1,8 @@
-"""Pin roster KV@131k figures from ``arch_configs_raw.json``."""
+"""Pin roster KV@131k figures from ``arch_configs_raw.json``.
+
+Every expected value was hand-derived with the formulas below and only then
+compared against the tool, so the table is not pinned against its own output.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +28,34 @@ def _kv_gb(model: str, tp: int = 1, naive: bool = False) -> float:
     return kv_bytes(_text_config(RAW[model]), CTX, tp=tp, naive=naive) / GB
 
 
-# Naive figures bill full-context GQA; corrected figures apply cache geometry.
+# Hand derivations at 131,072 tokens and tp=1; naive is
+# ``layers x 2(K,V) x kv_heads x head_dim x 2B x 131072``.
+# gemma-4-31b: naive 60x2x16x256x2Bx131072 = 128.85 GB; corrected
+# 50x2x16x256x2Bx1024 + 10x2x4x512x2Bx131072 = 0.839+10.737 = 11.58 GB.
+# gemma-4-12b: naive 48x2x8x256x2Bx131072 = 51.54 GB; corrected
+# 40x2x8x256x2Bx1024 + 8x2x1x512x2Bx131072 = 0.336+2.147 = 2.48 GB.
+# gemma-4-e2b: 35 = 28 sliding@512 + 7 full; the last 20 share KV, so only
+# layers 0-14 allocate, with full layers 4, 9, 14. Naive is 4.70 GB; corrected
+# 12x2x1x256x2Bx512 + 3x2x1x512x2Bx131072 = 0.006+0.805 = 0.81 GB.
+# glm-4.7-flash: naive head_dim is 2048//20 = 102, so
+# 47x2x20x102x2Bx131072 = 50.27 GB; MLA is 47x(512+64)x2Bx131072 = 7.10 GB.
+# qwen3.5-27b: 64 = 48 linear + 16 full; naive 64x2x4x256x2Bx131072 =
+# 34.36 GB, while 16 full layers allocate 16x536.9e6 = 8.59 GB.
+# exaone-4.0-32b and exaone-4.5-33b: head_dim is 128 (4.5: 5120//40), and
+# 64 = 48 sliding@4096 + 16 full. Naive is 34.36 GB; corrected is 0.805+8.59 = 9.40 GB.
+# deepseek-v3.1: naive head_dim is 7168//128 = 56, so
+# 61x2x128x56x2Bx131072 = 229.24 GB; MLA is 61x(512+64)x2Bx131072 = 9.21 GB.
+# nemotron-3-nano-4b: naive 42x2x8x128x2Bx131072 = 22.55 GB; its
+# 21 M + 17 '-' + 4 '*' pattern leaves 4x536.9e6 = 2.15 GB.
+# nemotron-3-nano-30b-a3b: naive 52x2x2x128x2Bx131072 = 6.98 GB; its
+# 23 M + 23 E + 6 '*' pattern leaves 6x134.2e6 = 0.81 GB.
+# nemotron-3-super-120b-a12b: naive 88x2x2x128x2Bx131072 = 11.81 GB; its
+# 40 M + 40 E + 8 '*' pattern leaves 8x134.2e6 = 1.07 GB.
+# deepseek-v4-pro/-flash: a 576-wide latent row is shared by K and V, with no x2
+# or tp replication. It costs (512+64)x2Bx131072 = 150.99e6 per layer, so 61/43 layers use 9.21/6.49 GB;
+# naive 2x1x512x2Bx131072 = 268.44e6 per layer gives 16.37/11.54 GB.
+# Pro's 9.21 GB matching deepseek-v3.1 is arithmetic, not copy-paste: both are
+# 61x576x2Bx131072, via V3.1's latent 512+rope 64 and V4's head 512+rope 64.
 AUDIT_TABLE = {
     "gemma-4-31b": (128.85, 11.58),
     "gemma-4-12b": (51.54, 2.48),

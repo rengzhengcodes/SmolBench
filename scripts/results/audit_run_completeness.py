@@ -1,8 +1,10 @@
-"""Audit content-level run completeness.
+"""Audit content-level completeness to catch silent data faults.
 
-INFRA empty cells are lost data; genuine empty answers are retained to avoid
-inflating results by resampling and do not fail the run. Exits 1 for loss,
-short lanes, missing sanity, or empty selection.
+A row can be EMPTY after a box dies and the driver logs an ordinary ``exception``,
+passing row counts and shard-merge gates. INFRA empties are lost data; genuine
+empty answers never fail or trigger repair because resampling would inflate results.
+Exits 1 for loss, short lanes, missing sanity, or empty selection.
+    scripts/results/audit_run_completeness.py --expect-cells N [--lane L] [--local] [--induction]
 """
 
 import argparse
@@ -23,6 +25,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: Induction study ``S3ResultsStore.experiment`` segment.
 INDUCTION_EXPERIMENT = "induction"
 
+#: Substrings marking a failure as infrastructure, not model behavior.
 #: Deliberately broad: a false "genuine" silently keeps a hole in the dataset.
 INFRA_PATTERNS = re.compile(
     r"spot interruption|shutting-down|idle watchdog|unreachable|Connection|"
@@ -30,6 +33,7 @@ INFRA_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+#: Lanes that are not study data.
 NON_DATA_LANES = {"scaling_canary"}
 
 
@@ -42,7 +46,8 @@ def _s3() -> Any:
 def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
     """Yield ``(lane_name, all_rows_text)`` for every deduction lane.
 
-    Missing S3 rows yield ``""`` so a missing lane remains a finding.
+    Missing S3 rows yield ``""`` so a missing lane remains a finding. Resolve
+    the bucket through `resolve_results_location` so redirected stores are audited too.
 
     Parameters
     ----------
@@ -166,7 +171,8 @@ def audit_induction(
     """Report induction ``(model, arm)`` seed-set mismatches against the pinned grid.
 
     Walk the expected grid so absent S3 cells are reported; backend errors
-    propagate rather than reading as zero seeds.
+    propagate rather than reading as zero seeds. Unrecognized `models` raise
+    `SystemExit` rather than silently auditing nothing.
 
     Parameters
     ----------

@@ -3,6 +3,8 @@
 Copy into ``<dest>/<leg>/<model>/...`` without modifying sources; matching-size
 objects resume safely. Server-side copying keeps ~4.5 GB across ~55k objects
 off this host. Include superseded, stale, and broken files as the repair audit trail.
+Write ``<dest>/MANIFEST.json`` with computed counts only, no prose.
+    scripts/results/snapshot_analysis_data.py [--dry-run] [--dest analysis/2026-08-16]
 """
 
 import argparse
@@ -43,7 +45,8 @@ def _s3() -> Any:
 def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
-    Strip deduction's ``scaling_`` prefix so both legs share a model name.
+    Strip deduction's ``scaling_`` prefix so both legs share a model name. Keep
+    `bucket` parameterized for redirects and derive the prefix from `runner.spool_prefix()`.
 
     Parameters
     ----------

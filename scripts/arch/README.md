@@ -19,8 +19,9 @@ tests. Regenerate untracked `arch_facts.json` with `fetch_arch_facts.py` (networ
 ## Where each claim comes from
 
 Structural values come from each served repo's `config.json` and resolved SHA;
-the table sources mechanism names and implementation behavior. Config wins on
-disagreement; divergences identify ignored fields.
+nothing structural is transcribed by hand. The table sources mechanism names
+and implementation behavior. Config wins on disagreement; divergences identify
+ignored fields such as Nemotron-3's declared RoPE fields that nothing reads.
 
 ## Family facts
 
@@ -43,6 +44,8 @@ One row per family.
 .venv/bin/python -m pytest tests/tooling/test_kv_budget.py  # KV formulas vs the audit table
 ```
 
-`--check` compares four shared fields with `tests/fixtures/roster_configs.json`;
-a mismatch means an upstream checkpoint moved. Built presentation output lives
-only in release archives (`notebooks/ARCHIVE.md`).
+`--check` compares four shared fields with `tests/fixtures/roster_configs.json`,
+which `tests/evals/test_deploy_specs.py` also pins; a mismatch means an upstream
+checkpoint moved. There is no page builder because the page was a presentation
+artifact, not study tooling; built output lives only in release archives
+(`notebooks/ARCHIVE.md`).

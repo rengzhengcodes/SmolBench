@@ -33,7 +33,7 @@ Keep these files together: sibling loading resolves via `Path(__file__).parent`.
 
 | File | What it's for |
 | --- | --- |
-| `provision_results_bucket.py` | Idempotently provisions the results bucket. |
+| `provision_results_bucket.py` | ADMIN-credentialed, one-time idempotent runbook that provisions the S3-backed results bucket. |
 | `audit_run_completeness.py` | Finds data faults that row/key counts miss. |
 | `audit_lean_pinning.py` | Checks all 21 lanes used the same pinned theorems and prompts. |
 | `snapshot_analysis_data.py` | Publishes current data with its repair audit trail. |

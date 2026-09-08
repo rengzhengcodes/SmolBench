@@ -48,7 +48,8 @@ def test_shared_scaffolding_wiring() -> None:
         paired.holm, paired.holm, error_bars.holm)
     assert extens_vs_noise.hochberg is significance.hochberg
 
-#: m=3 distinguishes Holm from Hochberg at .0167/.025/.05 thresholds.
+#: The m=3 verdicts differ because Holm stops at the first failure while Hochberg
+#: steps up from 0.045, at .0167/.025/.05 thresholds.
 PROCEDURES = [pytest.param(paired.holm, [True, False, False], id="induction-holm"),
               pytest.param(error_bars.holm, [True, False, False], id="deduction-holm"),
               pytest.param(significance.hochberg, [True, True, True], id="hochberg")]

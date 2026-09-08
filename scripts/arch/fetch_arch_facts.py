@@ -95,7 +95,8 @@ _IGNORED_KEYS = frozenset({
 def _fetch(repo: str, filename: str, revision: str) -> Tuple[Optional[Any], Optional[str], Optional[str]]:
     """Fetch one JSON file from a Hugging Face repo at a pinned revision.
 
-    Return failures instead of aborting the roster sweep.
+    This is the named seam offline tests patch, so `collect` never calls
+    `huggingface_hub` directly. Never raise: one failure must not abort the roster sweep.
 
     Parameters
     ----------
@@ -253,6 +254,7 @@ def _layer_view(config: Dict[str, Any]) -> Dict[str, Any]:
         pattern = config.get("hybrid_override_pattern")
         if isinstance(pattern, str) and pattern:
             view["source"] = "hybrid_override_pattern"
+            # Nemotron-H alphabet: M = Mamba-2, * = self-attention, - = MLP.
             view["sequence"] = list(pattern)
     sequence = view.get("sequence")
     if not sequence:
@@ -379,7 +381,8 @@ def collect(*, fetch: Optional[_FetchFn] = None) -> Dict[str, Any]:
 def cross_check(facts: Dict[str, Any]) -> List[str]:
     """Run both cross-checks: fixture agreement and pin-vs-resolved revision.
 
-    Compare fixture fields and pinned versus resolved revisions.
+    Compare the four fields shared with the fixture; a mismatch means the upstream
+    checkpoint moved under the study. Independently compare pinned and resolved revisions.
 
     Parameters
     ----------
