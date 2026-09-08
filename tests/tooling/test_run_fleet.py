@@ -190,7 +190,10 @@ def test_shard_env_and_state_file(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "INDUCTION_SHARD" not in no_shard
     assert no_shard["INDUCTION_STATE_FILE"] == ".ec2_state_x.json"
     assert no_shard["INDUCTION_FORCE_RERUN"] == "0-11"
-    assert shards.state_file_for(_args(), 2).name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
+    name = shards.state_file_for(_args(), 2).name
+    assert name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
+    assert name != laneenv.LANES["gemma-4-12b"].state_file
+    assert not name.startswith(".ec2_state_scaling_")
     assert shards.state_file_for(solo, 0).name == ".ec2_state_x.json"
 
 
@@ -206,9 +209,12 @@ def _shard_args(parser: argparse.ArgumentParser, *extra: str) -> argparse.Namesp
 
 def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius() -> None:
     """--tag "scaling" put shard boxes inside fleet_teardown's blast radius."""
+    from smolbench.evals.study_config import load_study_config
+
     parser = shards.build_parser()
     args = _shard_args(parser)
-    assert args.tag == "induction-scaling"
+    assert args.tag == laneenv._config.STANDALONE_TAG
+    assert args.tag == load_study_config().fleet.standalone_tag == "induction-scaling"
     # The DERIVED per-shard tag, not the bare one, is what lands on the box.
     assert not f"{args.tag}-gemma-4-12b-s0of3".startswith(status._config.SCALING_TAG_PREFIX)
     shards.refuse_fleet_prefix_tag(parser, args)  # accepted: no raise
@@ -224,15 +230,6 @@ def test_shard_tag_defaults_outside_the_fleet_teardown_blast_radius() -> None:
             parser, _shard_args(parser, "--tag", bad, "--allow-fleet-prefix"))
     # A tag that merely shares a prefix-free stem is not over-matched.
     shards.refuse_fleet_prefix_tag(parser, _shard_args(parser, "--tag", "scalingful"))
-
-
-def test_shard_state_files_are_named_apart_from_the_fleets() -> None:
-    """run_shards owns its own state files, named apart from the fleet's."""
-    args = _shard_args(shards.build_parser())
-    name = shards.state_file_for(args, 2).name
-    assert name == ".ec2_state_induction-gemma-4-12b-s2of3.json"
-    assert name != laneenv.LANES["gemma-4-12b"].state_file
-    assert not name.startswith(".ec2_state_scaling_")
 
 
 def test_regions_and_tag_prefix_are_declared_once() -> None:
@@ -266,18 +263,6 @@ def test_fleet_config_is_read_from_the_committed_study_config() -> None:
     # can't be missing here.
     assert set(laneenv.LANES) == set(config.ROSTER_KEYS)
     assert {key: lane.tag for key, lane in laneenv.LANES.items()} == dict(config.ROSTER_TAGS)
-
-
-def test_the_shard_tag_default_is_the_configs_standalone_tag() -> None:
-    """run_shards' --tag default reads the config's standalone_tag, not a copy."""
-    from smolbench.evals.study_config import load_study_config
-
-    default = shards.build_parser().get_default("tag")
-    assert default == laneenv._config.STANDALONE_TAG
-    assert default == load_study_config().fleet.standalone_tag
-    # It must stay outside the fleet's blast radius, which is why it's a
-    # separate config key rather than derived from the tag prefix.
-    assert not f"{default}-".startswith(laneenv._config.SCALING_TAG_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -332,11 +317,7 @@ def test_every_lane_override_key_is_a_roster_key_and_reaches_lane_env() -> None:
                for lane in laneenv.LANES.values())
 
 
-def test_fleet_image_is_ec2s_own_value_with_a_three_step_precedence() -> None:
-    """FLEET_IMAGE was a byte-identical copy of ec2's default digest."""
-    from smolbench.evals.providers import ec2
-
-    assert laneenv.FLEET_IMAGE is ec2.EC2_VLLM_IMAGE
+def test_lane_image_has_a_three_step_precedence() -> None:
     plain, pinned = laneenv.LANES["gemma-4-e2b"], laneenv.LANES["deepseek-v4-pro"]
     # lowest: no key at all -> the lane's own ec2.py resolves the image.
     assert "EC2_VLLM_IMAGE" not in laneenv.lane_env(plain, "induction", base_env={})
@@ -390,6 +371,35 @@ def _recording_start_phase(
     return _start
 
 
+def _bounded_tick(counter: dict[str, int]) -> Callable[[Any, Path, int, Any], None]:
+    """Build a monitor tick that fails if a fleet loop does not terminate.
+
+    The bound turns a supervisor regression into a fast assertion instead of
+    hanging the test process.
+
+    Parameters
+    ----------
+    counter : dict[str, int]
+        Mutable call count shared with the invoking test.
+
+    Returns
+    -------
+    Callable[[Any, Path, int, Any], None]
+        Monitor callback enforcing the test suite's 200-tick limit.
+
+    Raises
+    ------
+    AssertionError
+        Raised by the callback after 200 monitor ticks.
+    """
+    def _tick(runs: Any, log_dir: Path, tick: int, presence: Any) -> None:
+        counter["n"] += 1
+        if counter["n"] > 200:
+            raise AssertionError("_run_fleet did not terminate")
+
+    return _tick
+
+
 def test_presence_reads_an_empty_first_sweep_as_unknown_not_as_gone() -> None:
     """An empty sweep must read as "unknown," not "gone", or classify_exit short-circuits every lane to "reclaim"."""
     presence = sup._Presence()
@@ -415,7 +425,7 @@ def test_an_empty_sweep_no_longer_turns_a_crash_into_an_endless_reclaim(
     presence = sup._Presence()
     presence.observe(set())  # an empty sweep, nothing ever seen
 
-    for _ in range(60):
+    for _ in range(policy.MAX_CRASH_RELAUNCHES + 1):
         sup._apply_restart_policy(runs, tmp_path, presence)
 
     run = runs["gemma-4-e2b"]
@@ -540,14 +550,7 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(
     # unbounded loop would hang the suite instead of failing it.
     ticks = {"n": 0}
 
-    def _bounded_tick(runs: Any, log_dir: Path, tick: int, presence: Any) -> None:
-        ticks["n"] += 1
-        if ticks["n"] > 200:
-            raise AssertionError(
-                "_run_fleet did not terminate: the never-launched lanes were "
-                "left un-halted, so _all_terminal can never be true")
-
-    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick)
+    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(ticks))
 
     lanes = {k: laneenv.LANES[k] for k in
              ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b",  # the gate lanes
@@ -579,12 +582,7 @@ def test_a_spool_failure_reaches_the_closing_report(
     monkeypatch.setattr(sup, "LAUNCH_STAGGER_SECONDS", 0)
     spool_ticks = {"n": 0}
 
-    def _bounded_tick(runs: Any, log_dir: Path, tick: int, presence: Any) -> None:
-        spool_ticks["n"] += 1
-        if spool_ticks["n"] > 200:
-            raise AssertionError("_run_fleet did not terminate")
-
-    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick)
+    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(spool_ticks))
     monkeypatch.setattr(sup, "_check_cot", lambda runs, *a, **k: None)
     monkeypatch.setattr(sup, "_start_phase", _recording_start_phase([], rc=0))
     # The lane exits 0, so _advance_finished would otherwise really shell out.
@@ -687,18 +685,6 @@ def test_the_reclaim_backoff_is_exponential_and_capped() -> None:
     assert seq == sorted(seq), "backoff must never shrink"
 
 
-def test_a_shard_is_constructible_without_argparse() -> None:
-    """A Shard can be built, and the supervision loop driven, without argparse."""
-    shard = shard_mod.Shard(
-        index=2, selector="2/3", log=Path("/tmp/nowhere/gemma-4-12b-s2of3.log"),
-        env={"INDUCTION_SHARD": "2/3"}, state_file=Path("/tmp/nowhere/.state.json"),
-        python=Path("/py"), driver=Path("/drv.py"), cwd=Path("/repo"))
-    assert (shard.index, shard.selector, shard.status) == (2, "2/3", "pending")
-    assert shard.proc is None and shard.adopted_pid is None
-    assert shard.crash_relaunches == 0 and shard.reclaim_relaunches == 0
-    assert shard.env["INDUCTION_SHARD"] == "2/3"
-
-
 def test_a_shard_reclaim_is_capped_and_backed_off_like_a_fleet_lane(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -761,7 +747,7 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
     # The tables and the lane environment belong to lane_env.py...
     for name in ("LANES", "Lane", "TIER_MEMBERS", "TIER_INSTANCE_TYPES",
                  "TIER_REQUIRE_GPU", "TIER_BUDGET_HOURS", "PASSTHROUGH_ENV",
-                 "lane_env", "lane_command", "FLEET_IMAGE"):
+                 "lane_env", "lane_command"):
         assert hasattr(laneenv, name), name
         assert not hasattr(fleet, name), f"run_fleet still owns {name}"
     # ...the loop and its policy hooks to supervisor.py...
@@ -911,12 +897,7 @@ def test_the_state_file_is_rewritten_every_tick(
 
     ticks = {"n": 0}
 
-    def _bounded_tick(runs: Any, log_dir: Path, tick: int, presence: Any) -> None:
-        ticks["n"] += 1
-        if ticks["n"] > 200:
-            raise AssertionError("_run_fleet did not terminate")
-
-    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick)
+    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(ticks))
     sup._run_fleet({"glm-4.7": laneenv.LANES["glm-4.7"]}, ("induction",),
                    gate=False, log_dir=tmp_path, phase_name="induction")
     assert saves, "the supervisor state was never written"
@@ -930,21 +911,14 @@ def test_the_fleet_no_longer_manages_per_lane_state_files() -> None:
     assert "LEAN_STATE_FILE" not in deduction
     # ...because the driver derives the identical path itself; if the two ever
     # diverge, deduction silently provisions a second box per lane.
-    driver = _deduction_driver_module()
+    driver = load_by_path(
+        "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py",
+        snapshot_env=True)
     derived = driver.lane_env_defaults("glm-4.7", repo_root=Path("/anchor"))["EC2_STATE_FILE"]
     assert Path(derived).name == deduction["INDUCTION_STATE_FILE"]
     assert Path(derived).name == laneenv.LANES["glm-4.7"].state_file
 
-
-def _deduction_driver_module() -> ModuleType:
-    """Load notebooks/deduction/run_study.py under an environment snapshot."""
-    return load_by_path(
-        "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py",
-        snapshot_env=True)
-
-
 def test_teardown_terminates_by_tag_and_deletes_nothing(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:

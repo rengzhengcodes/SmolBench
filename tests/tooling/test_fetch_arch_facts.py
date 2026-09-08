@@ -14,11 +14,9 @@ from typing import Any
 
 import pytest
 
-from tests._paths import SCRIPTS
+from tests._paths import SCRIPTS, load_by_path
 
-sys.path.insert(0, str(SCRIPTS / "arch"))
-
-import fetch_arch_facts as faf  # noqa: E402
+faf = load_by_path("fetch_arch_facts", SCRIPTS / "arch" / "fetch_arch_facts.py")
 from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
 #: Minimal config.json: enough for _hoist/_classify/_layer_view and for the

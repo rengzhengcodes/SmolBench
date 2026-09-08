@@ -47,21 +47,9 @@ class FakeAwsClient:
 
         return _unknown
 
-    def create_bucket(self, **kwargs: Any) -> None:
-        self._record("create_bucket", **kwargs)
-
-    def put_public_access_block(self, **kwargs: Any) -> None:
-        self._record("put_public_access_block", **kwargs)
-
-    def put_bucket_versioning(self, **kwargs: Any) -> None:
-        self._record("put_bucket_versioning", **kwargs)
-
     def create_policy(self, **kwargs: Any) -> dict[str, dict[str, str]]:
         self._record("create_policy", **kwargs)
         return {"Policy": {"Arn": f"arn:aws:iam::414266451290:policy/{kwargs['PolicyName']}"}}
-
-    def attach_group_policy(self, **kwargs: Any) -> None:
-        self._record("attach_group_policy", **kwargs)
 
     def list_policies(self, **kwargs: Any) -> dict[str, list[Any]]:
         self._record("list_policies", **kwargs)

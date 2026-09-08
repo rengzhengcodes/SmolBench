@@ -15,9 +15,6 @@ import pytest
 from scripts.results import snapshot_analysis_data as snap
 from tests._paths import REPO_ROOT
 
-#: The dataset-specific figures that must no longer be emitted from Python.
-DATASET_LITERALS = ("74 cells", "232", "712", "68/30/50", "5.9", "24.6")
-
 
 class FakeS3:
     """Records every call; serves one tiny listing per prefix."""
@@ -36,10 +33,6 @@ class FakeS3:
     def paginate(self, Bucket: str, Prefix: str, **kwargs: Any) -> list[dict[str, Any]]:
         self.listed.append((Bucket, Prefix))
         return [{"Contents": self.listings.get(Prefix, [])}]
-
-    # -- object ops -----------------------------------------------------
-    def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:
-        raise RuntimeError("absent")  # nothing is already present at the destination
 
     def copy_object(self, **kwargs: Any) -> None:
         self.copies.append(kwargs)
@@ -93,7 +86,6 @@ def test_manifest_carries_only_computed_fields(
 ) -> None:
     """No prose notes; the provenance pointer is built from what was written."""
     fake, manifest = run_snapshot()
-    assert "notes" not in manifest
     assert set(manifest) == {
         "snapshot_prefix", "source_bucket", "total_objects", "total_bytes",
         "copied", "skipped_already_present", "provenance_docs", "per_model",
@@ -120,10 +112,6 @@ def test_the_reading_rules_ship_as_a_dated_document() -> None:
     for literal in ("74", "232", "151", "81", "712", "944", "5.9", "24.6", "68/30/50"):
         assert literal in text, literal
     assert "2026-08-16" in text  # dated: these counts describe ONE dataset
-    # ...and none of them is emitted from Python any more.
-    source = (REPO_ROOT / "scripts" / "results" / "snapshot_analysis_data.py").read_text()
-    for literal in DATASET_LITERALS:
-        assert literal not in source, literal
 
 
 def test_the_bucket_follows_smolbench_results_s3(

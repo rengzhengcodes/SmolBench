@@ -8,13 +8,12 @@ the arithmetic is written out per row as ``layers x kv_heads x head_dim x 2
 from __future__ import annotations
 
 import json
-import sys
 
 import pytest
 
-from tests._paths import SCRIPTS
+from tests._paths import SCRIPTS, load_by_path
 
-sys.path.insert(0, str(SCRIPTS / "arch"))
+load_by_path("kv_budget", SCRIPTS / "arch" / "kv_budget.py")
 
 from kv_budget import (  # noqa: E402
     kv_bytes, _is_shared_latent, _kv_layers, _layer_kv_shape, _layer_mix,
