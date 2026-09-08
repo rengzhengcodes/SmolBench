@@ -152,7 +152,7 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     Returns
     -------
     str
-        Contrast bucket.
+        One of ``"finding"``, ``"arm-vs-floor"``, or ``"zero-vs-zero"``.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:

@@ -108,7 +108,7 @@ class PeriodicConfig:
                 raise ValueError(
                     f"When labels is int it must equal n ({self.n}), got {self.labels}."
                 )
-            # Keep labels distinct from position numbers.
+            # Multi-character even at small n, where the information-theoretic minimum allows one letter.
             object.__setattr__(
                 self,
                 "labels",
@@ -132,7 +132,8 @@ class PeriodicConfig:
                 )
 
 
-# Lowercase labels avoid visual confusion with positions.
+# Lowercase labels avoid visual confusion with positions and must contain no
+# separator character (enforced in PeriodicConfig.__post_init__).
 _LABEL_CHARSET: str = string.ascii_lowercase
 
 
@@ -199,11 +200,11 @@ def _render_extensional(pos_to_compound: PosToCompound) -> str:
 
 @dataclass(frozen=True)
 class Contexts:
-    """The two rendered context bodies one sequence produces.
+    """Hold the two rendered context bodies one sequence produces."""
 
-    """
-
+    #: Compact rule list.
     intensional: str
+    #: Enumerated position -> compound-label table.
     extensional: str
 
 
@@ -520,6 +521,7 @@ def tof_membership_query_gen(
     if n == 0:
         return
 
+    # True block then False block, unshuffled: each query is a separate prompt, so order leaks nothing.
     for idx in rng.choice(len(true_qs), n, replace=False):
         yield true_qs[idx]
     for idx in rng.choice(len(false_qs), n, replace=False):

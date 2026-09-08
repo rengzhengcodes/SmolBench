@@ -31,7 +31,6 @@ from tests.analysis._trees import (  # noqa: F401
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 
 
-
 def test_power_analysis_roster_comes_from_the_study_config(power_analysis: ModuleType) -> None:
     """Analysis roster derives from the study configuration."""
     from smolbench.evals import study_config
@@ -43,7 +42,6 @@ def test_power_analysis_roster_comes_from_the_study_config(power_analysis: Modul
         family: tuple(study_config.tag_for(key) for key in rungs)
         for family, rungs in study_config.families().items()
     }
-
 
 
 def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
@@ -84,7 +82,6 @@ def test_mcnemar_is_defined_once(power_analysis: ModuleType, paired_analysis: Mo
     ref = np.minimum(1.0, 2 * binom.cdf(np.minimum(b, c), b + c, 0.5))
     np.testing.assert_allclose(power_analysis.mcnemar_exact_p(b, c), ref, rtol=1e-12)
     assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
-
 
 
 def test_design_invariants_are_checked_at_module_scope_and_raise(
@@ -138,7 +135,6 @@ def test_no_bare_assert_gates_remain(module: str) -> None:
     offenders = [ln for ln in source.splitlines()
                  if ln.lstrip().startswith("assert ")]
     assert not offenders, offenders
-
 
 
 @pytest.fixture(scope="module")
@@ -229,7 +225,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         extens_vs_noise.main()
 
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
-
 
 
 def test_design_constants_are_imported_not_re_declared(multiplicity_sim: ModuleType,
@@ -356,7 +351,6 @@ def test_omnibus_interaction_power_is_cheaper_by_default(power_analysis: ModuleT
     default = inspect.signature(
         power_analysis.omnibus_interaction_power).parameters["n_sims"].default
     assert default < 1000, default
-
 
 
 def test_icc_zero_is_the_published_simulation_byte_for_byte(multiplicity_sim: ModuleType) -> None:

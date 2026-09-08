@@ -243,8 +243,6 @@ def _clear_provider_context_length_caches() -> Iterator[None]:
     _clear()
 
 
-
-
 class S3Archive:
     """Read-only S3 archive access.
 

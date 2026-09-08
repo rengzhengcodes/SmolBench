@@ -37,7 +37,7 @@ FAMILIES: dict[str, tuple[str, ...]] = {
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
 N_HARMONICS = 9
-PILOT_SEED = 0
+PILOT_SEED = 0  # Equals _power_common.SEED only because the study is locked to BASE_SEED=0; unrelated.
 
 RESULTS_DIR = results_dir(__file__, up=1)
 
@@ -55,16 +55,16 @@ if _writer_results.resolve() != RESULTS_DIR.resolve():
     )
 
 # Replicates are the sampling unit; more harmonics change the task.
-N_SIMS = 10_000
-MAX_REPLICATES = 200
-SHRINKAGE = 1.0  # Avoid degenerate sparse-pilot rates.
+N_SIMS = 10_000  # Monte Carlo SE of a power estimate <= 0.005.
+MAX_REPLICATES = 200  # Search ceiling only: still-unpowered contrasts are censored, not sized.
+SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
 
-N_PRIMARY = 210
+N_PRIMARY = 210  # 84 ladder (7x4x3) + 126 info (21x6).
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
 # Size BH contrasts at the conservative rank-1 threshold.
 Q_SECONDARY = 0.05
-N_SECONDARY = 63
+N_SECONDARY = 63  # 3 rung levels x C(7,2)=21 family pairs.
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
 N_FAMILIES = len(FAMILIES)  # 7
@@ -135,6 +135,7 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     nd = b + c
     # NumPy evaluates both branches.
     p = 2.0 * binom.cdf(np.minimum(b, c), np.maximum(nd, 1), 0.5)
+    # Doubling the one-sided tail exceeds 1 when b == c.
     p = np.where(nd == 0, 1.0, np.clip(p, 0.0, 1.0))
     # Preserve scalar output for serialization.
     return p[()] if p.ndim == 0 else p
@@ -677,6 +678,9 @@ def check_design_invariants() -> None:
 
     Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
     ``python -O`` removes assertions.
+
+    Reads the module globals on each call so a patched constant re-checks; that
+    is how a test demonstrates the gate fires.
     """
     # Literal protocol denominators prevent silent redesign.
     if N_PRIMARY != 210 or N_SECONDARY != 63:

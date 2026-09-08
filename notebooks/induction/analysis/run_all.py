@@ -2,6 +2,7 @@
 
 Run in process so imports share one results directory. Exclude the costly,
 result-free simulation unless ``--with-sim`` is passed.
+CHAIN order is fixed: each later script import-time-checks invariants against the earlier ones.
 """
 
 import argparse

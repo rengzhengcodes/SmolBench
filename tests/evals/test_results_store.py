@@ -358,7 +358,6 @@ def test_harness_runs_summarizes_and_syncs_down(
     assert len(stamps_of[1]) == len(stamps_of[2]) == 1 and stamps_of[1] != stamps_of[2]
 
 
-
 SUPERSEDED_REASON = "re-collected past the resume-skip"
 
 

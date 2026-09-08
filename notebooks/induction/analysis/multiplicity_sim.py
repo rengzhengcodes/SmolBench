@@ -28,15 +28,15 @@ ALPHA_BONF = ALPHA_PRIMARY
 
 R_DEFAULT = 30  # Avoid importing run_study, which freezes EC2 configuration.
 
-# Equivalent-R search ladder, roughly geometric for efficient matching.
+# Equivalent-R search ladder, roughly geometric for efficient matching and
+# starting at R_DEFAULT so "pairing bought nothing" stays reachable.
 EQ_R_GRID = (R_DEFAULT, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210,
              250, 300, 360, 430, 520, 620, 750, 900)
 
 # Include the unclustered baseline and plausible clustering range.
 ICC_GRID = (0.0, 0.2, 0.4)
 
-# Reduced family replaces pairwise ladder tests while retaining info contrasts.
-N_REDUCED = 154
+N_REDUCED = 154  # 28 trend tests replacing 84 ladder contrasts + the 126 shared info contrasts.
 
 OUT = {}
 # Anchor checkpoints to the study results tree.
@@ -385,7 +385,8 @@ def part2(
 ) -> None:
     """Measure pairing gains over unpaired testing.
 
-    Compare simulated `design_effect` at each `icc` with the study estimate.
+    Compare simulated `design_effect` at each `icc` with the study
+    estimate.
 
     Parameters
     ----------
@@ -485,9 +486,11 @@ def part2(
                         icc=icc_blocks)
 
 
-# ============================================================== PART 4: correction cost
 def build_rate_matrix() -> np.ndarray:
-    """Build the stylized true-rate matrix for PART 4."""
+    """Build the stylized true-rate matrix for PART 4.
+
+    30 true effects near ceiling and mid-range; the remaining 180 contrasts are exact nulls.
+    """
     rates = np.zeros((7, 3, 4))
     flat = [0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62]
     for f in range(7):

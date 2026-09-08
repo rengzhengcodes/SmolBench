@@ -159,6 +159,7 @@ def random_unique_strings(
 
 
 # Headroom above the unique-label minimum prevents a full sample space.
+# Changing this changes label length, and so prompt length, for every config.
 LABEL_LENGTH_SAFETY_FACTOR: int = 2
 
 

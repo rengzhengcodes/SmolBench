@@ -14,7 +14,9 @@ POWER_TARGETS = (0.80, 0.90)
 def results_dir(file: str, up: int = 0) -> Path:
     """Resolve a study results directory from `file`.
 
-    `up` is a level count because an incorrect path would mint an S3 prefix.
+    `up` is a level count, not a path: ``experiment_name`` matches
+    ``notebooks/<study>/results`` exactly three deep, so a typo'd path would
+    mint a new S3 prefix.
 
     Parameters
     ----------

@@ -1,7 +1,10 @@
 """Compare extensional and noise-padded intensional prompts per model.
 
 Token matching separates information from length; non-compliance identifies broken controls.
-Seed-level tests stay in the 210-contrast family because the subset follows measurement.
+Seed-level tests: the 30 seeds are the independent unit; item-level McNemar would treat each
+seed's 9 harmonic items, which share one answer vector, as independent. They stay in the
+210-contrast family because re-correcting at m=21 after picking the subset would be
+data-dependent family sizing.
 """
 
 import sys

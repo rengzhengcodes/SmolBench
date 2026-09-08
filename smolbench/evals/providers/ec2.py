@@ -48,7 +48,9 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
         r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()
     )
 )
-# Cache weights on instance-store NVMe to avoid gp3's 1000 MB/s ceiling.
+# Cache weights on instance-store NVMe to avoid gp3's 1000 MB/s ceiling. Root
+# holds OS and image only; on a type with no instance store the cache falls
+# back here and 300 GB is too small (deepseek-v4-pro is ~865 GB).
 EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
 EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
@@ -138,7 +140,15 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # _base_url/_api_key/_connection, not here; so are EC2_INFO and
 # EC2_INFO_RESPONSE (verbose logging), by the shared ChatClient.
 
-# Specs use model keys as served names; revision and determinism pins prevent configuration drift.
+# Each spec key is ``--served-model-name``; prefix caching is off everywhere
+# because it is a nondeterminism source, so these results must never pool with
+# stock-config data, and ``max_model_len`` is uniformly 131072, the roster's
+# smallest native window, so context cannot vary with vendor YaRN generosity.
+# Gemma-4 and EXAONE-4.0-32B ship ``enable_thinking=False`` and Gemma's tags
+# escape the client-side ``</think>`` split, so the driver must pass it true;
+# Ministral gets its think protocol from an injected ``system_prompt`` and
+# must never switch to ``--tokenizer-mode mistral``, which bypasses the Jinja
+# template, while GLM-4.7-Flash's 20 attention heads require tp to divide 20.
 
 # DeepSeek V4 lacks a template; this matches its vendored encoder.
 DSV4_CHAT_TEMPLATE: str = (
@@ -153,7 +163,9 @@ DSV4_CHAT_TEMPLATE: str = (
     "{%- endif -%}"
 )
 
-# Inject this shipped default when an evaluation supplies a system prompt, preserving thinking.
+# Ministral's [THINK] protocol lives only in the template's
+# default_system_message, which the template drops once any system message is
+# supplied; injecting it as the spec system_prompt keeps thinking on either way.
 MINISTRAL_THINK_SYSTEM: str = (
     "# HOW YOU SHOULD THINK AND ANSWER\n\n"
     "First draft your thinking process (inner monologue) until you arrive at a "
@@ -287,6 +299,7 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
 #: under this bundle are NOT comparable with stock-config data. The four
 #: flags were never attributed individually: relax any one of them only
 #: after re-certifying with a byte-agreement probe.
+#: Prefix caching stays off because it is a source of nondeterminism.
 DETERMINISM_ARGS: List[str] = [
     "--no-enable-prefix-caching", "--max-num-seqs", "1",
     "--enforce-eager", "--seed", "0",
@@ -578,7 +591,8 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     Returns
     -------
     Optional[Dict[str, Any]]
-        Full schema, with None for unavailable fields.
+        Full schema; None for unavailable fields. ``gpu``, ``vllm_image`` and
+        ``hf_model_id`` are configured values, not observations.
 
     Notes
     -----
@@ -727,7 +741,8 @@ def _clear_state(instance_id: Optional[str] = None) -> None:
     Parameters
     ----------
     instance_id : Optional[str]
-        Instance being torn down; None clears unconditionally.
+        Instance being torn down; a different recorded id is left alone so a
+        live, billing box is not stranded. None clears unconditionally.
     """
     try:
         if instance_id is not None:

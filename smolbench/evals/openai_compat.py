@@ -32,7 +32,8 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     api_key : str
         Bearer token for the request.
     check_status : bool
-        Raise before parsing; callers needing error bodies pass False.
+        Raise before parsing; False parses error bodies. Keyword-only with no
+        default so the split cannot be silently unified.
     timeout : float, optional
         Request timeout in seconds.
 
@@ -301,7 +302,8 @@ class ChatClient:
     connect_timeout_s: float = 10.0
     #: Default read timeout; long generations may override it.
     read_timeout_s: int = 120
-    #: Connection-failure cap for vanish-prone self-managed endpoints.
+    #: Consecutive ConnectionError cap for vanish-prone endpoints; ReadTimeout
+    #: and HTTP errors never count.
     max_connection_failures: Optional[int] = None
     #: Diagnosis hook for an unreachable endpoint.
     on_unreachable: Optional[Callable[[Exception], None]] = None
@@ -365,7 +367,8 @@ class ChatClient:
         request_timeout : int, optional
             Read-timeout override.
         max_retries : int, optional
-            Retryable-failure cap; None retries indefinitely.
+            Retryable-failure cap; None retries indefinitely. ``on_unreachable``
+            still fires first on a connection-level failure.
 
         Returns
         -------
@@ -619,7 +622,8 @@ class ChatClient:
         extra_args : dict, optional
             Request-body additions.
         max_parallel : int, optional
-            Thread fan-out.
+            Thread fan-out; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS``
+            (8). Lower it for CoT or contention censors the length distribution.
         request_timeout : Optional[int], optional
             Read-timeout override.
         show_progress : bool

@@ -109,7 +109,8 @@ class ReplicateHarness:
         max_parallel : Optional[int], optional
             Parallel-request limit.
         request_timeout : Optional[int], optional
-            Request timeout.
+            Request timeout; it must cover the longest CoT chain on attempt 1
+            or the request is censored into top-truncated output.
         server_config : Optional[Mapping], optional
             Persisted server configuration.
         """

@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO)
 
 # EC2 reads environment constants at import time, so mutations precede its import.
+# Not ``override=True``: the fleet exports a per-lane environment that
+# ``keys.env`` must not clobber.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
 
@@ -199,10 +201,12 @@ INFO_TYPES: tuple[str, ...] = tuple(CONDITIONS)
 #: Covers special tokens and cross-seed prompt variation missed by probes.
 TEMPLATE_RESERVE: int = 8_000
 
-#: Must be at least 2 for evenly spaced endpoint probes.
+#: Endpoints plus four interior seeds: 6 tokenizer passes instead of 30. Must be >= 2.
 PROBE_SEEDS: int = 6
 
-#: Avoids CoT truncation that yields unscorable responses.
+#: Avoids CoT truncation that yields unscorable responses; periodic_moe's
+#: qwen3.5 needed a 65,536-token budget on a comparable listing, so under
+#: ~48k is deep truncation territory.
 MIN_VIABLE_BUDGET: int = 48_000
 
 #: Conservative per-request decode rate under shared-box fan-out.
@@ -260,6 +264,8 @@ def _zero_template(base: string.Template) -> string.Template:
 
 
 # Explicit per-model entries prevent incorrect family-prefix inference.
+# Gemma-4-* and EXAONE-4.0-32B default thinking OFF, so their True is
+# load-bearing; DeepSeek uses ``thinking``, not ``enable_thinking``.
 COT_ARGS: dict[str, dict] = {
     "qwen3.5-27b": {"chat_template_kwargs": {"enable_thinking": True}},
     "qwen3.5-122b-a10b": {"chat_template_kwargs": {"enable_thinking": True}},
@@ -377,7 +383,8 @@ def completion_budget(model: str, seeds: range) -> int:
     Returns
     -------
     int
-        Model completion budget.
+        Per-model budget; a per-family cap would confound accuracy with room
+        to reason.
 
     Raises
     ------

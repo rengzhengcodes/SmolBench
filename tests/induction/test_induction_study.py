@@ -329,7 +329,6 @@ def test_unsharded_runs_set_the_study_tag() -> None:
     assert env["EC2_EXPERIMENT_TAG"] == "induction-scaling"
 
 
-
 def test_the_shard_lane_tag_is_canonical_order_independent() -> None:
     """Model ordering cannot create a second lane or instance."""
     forward, err_f, env_f = import_run_study(

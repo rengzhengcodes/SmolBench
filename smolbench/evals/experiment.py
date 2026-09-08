@@ -204,7 +204,8 @@ class Experiment:
     def teardown(self) -> None:
         """Terminate this experiment's EC2 spot instance and clear its state.
 
-        Do not call under an external lifecycle supervisor.
+        Do not call under an external lifecycle supervisor: it owns the
+        instance and may have lanes queued.
         """
         self._apply_env()
         # Read EC2 environment after ``_apply_env()``.

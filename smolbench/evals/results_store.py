@@ -172,6 +172,8 @@ class ResultsStore(abc.ABC):
     def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
+        No existence check; a caller wanting resume-skip calls ``exists`` first.
+
         Parameters
         ----------
         marks : Marks
@@ -364,7 +366,8 @@ class LocalResultsStore(ResultsStore):
     def supersede(self, addr: ReplicateAddress, reason: str) -> Optional[Path]:
         """Retire a local run by renaming it to an ignored filename.
 
-        Same-second supersedes share a destination, preserving the one-file-per-address layout.
+        Same-second supersedes share a destination, preserving the one-file-per-address layout;
+        the bytes survive on disk, so an operator can restore them by renaming back.
 
         Parameters
         ----------
@@ -712,6 +715,7 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
 
     Validate an S3 URI before the hermetic local fallback so typos do not silently lose results.
     Configured regions apply only to the project's bucket.
+    Read at call time, not import: a notebook runs ``load_dotenv`` after importing smolbench.
 
     Parameters
     ----------
@@ -814,6 +818,8 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
 
     Selection must match ``load_marks``; collect markers and candidates in one listing to use a
     consistent snapshot. Skip only matching single-part ETag MD5s, since size can match regrades.
+    One-way and destructive: overwrites local files and never touches the log, so a local-only
+    regrade is silently destroyed.
 
     Parameters
     ----------
