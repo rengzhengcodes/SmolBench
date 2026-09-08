@@ -2,12 +2,12 @@
 
 SmolBench measures how positive-utility context representation affects LLM performance.
 
-- **Induction** (`smolbench/induction/`): generalized FizzBuzz rule inference with compact, enumerated, and token-matched noise contexts.
+- **Induction** (`smolbench/induction/`): generalized FizzBuzz rule inference comparing an intensional (compact rule) representation with an extensional (fully enumerated) one and token-matched noise contexts.
 - **Deduction** (`smolbench/deduction/lean/`): Lean 4 next-tactic completion as proof-state and premise context grows.
 
 ## Package layout
 
-Repository map.
+Each subsystem has its own README with full detail.
 
 ```
 smolbench/                 the installable library
@@ -84,7 +84,7 @@ tests/                     the offline pytest suite (see tests/README.md), zero 
 
 ## Install
 
-Install the Python 3.12 environment; `lean-dojo` pins `Requires-Python <3.13`.
+Install the environment (`.venv`, Python 3.12, pinned by `.python-version` because `lean-dojo` pins `Requires-Python <3.13`).
 
 ```bash
 uv sync --all-extras
@@ -92,7 +92,7 @@ uv sync --all-extras
 
 This installs `lean-interact` for verification; `lean-dojo` remains for corpus tracing and premise slicing.
 
-Extras: `dev`, `aws`, `lean`, and `notebook`. Base dependencies are Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`, `huggingface-hub`, and `tokenizers`.
+The four optional extras carry `dev`: pytest and linters; `aws`: boto3/botocore for the EC2 and SageMaker/Bedrock providers; `lean`: the Lean theorem-proving stack; and `notebook`: python-dotenv, scipy, and statsmodels. Base dependencies are Python 3.12, `joblib`, `numpy`, `ordered-set`, `requests`, `huggingface-hub`, and `tokenizers`.
 
 ## Run the tests
 
@@ -100,6 +100,6 @@ Extras: `dev`, `aws`, `lean`, and `notebook`. Base dependencies are Python 3.12,
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
 ```
 
-The suite uses a local OpenAI-compatible stub, so it needs no AWS credentials or network access. This prints `1204 passed, 5 skipped`.
+The suite uses a local OpenAI-compatible stub, so it needs no AWS credentials or network access. This prints `1196 passed, 5 skipped`.
 
-All 5 skips are `tests/deduction/test_s3_archive.py`: archived S3 evidence requires `SMOLBENCH_ARCHIVE_S3`. `notebooks/ARCHIVE.md` documents `## S3` and archive sha256s.
+All 5 skips are `tests/deduction/test_s3_archive.py`: archived S3 evidence requires `SMOLBENCH_ARCHIVE_S3`. See `notebooks/ARCHIVE.md` `## GitHub releases` for the archive sha256s, and `## S3` for archived S3 evidence.

@@ -1,4 +1,8 @@
-"""Pin notebook README and archive claims against code."""
+"""Pin notebook README and archive claims against code.
+
+Readers skip retired runs, then apply earliest-wins to what survives.
+Import marker spellings from the store module so stale quoted markers fail here.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ def readme() -> str:
 
 
 def test_archive_documents_both_supersede_spellings(archive: str) -> None:
-    """Both supersede spellings must be documented."""
+    """Document both spellings because naming only one makes the other look corrupt."""
     from smolbench.evals.results_store import (
         LOCAL_SUPERSEDED_INFIX,
         S3_SUPERSEDED_SUFFIX,
@@ -67,7 +71,7 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> N
 
 
 def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) -> None:
-    """Archive names the live ``rows_source.spool_prefix()`` default."""
+    """Name the re-collection prefix ``rows_source.spool_prefix()`` defaults to, not the retired one."""
     import importlib.util
     import sys
 
@@ -83,7 +87,7 @@ def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) 
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme: str) -> None:
-    """README file paths resolve in the tree."""
+    """README paths resolve, as the counterpart to the root README map check."""
     named = sorted(set(re.findall(r"[\w./-]*[\w-]+\.(?:py|ipynb|md|yaml|toml)", readme)))
     assert named, "the README names no files at all"
     skip = {"pyproject.toml"}  # Named as a root-level concept.

@@ -31,16 +31,18 @@ def ded_pa() -> ModuleType:
 def _rows(
     *verdicts: str, theorem: str = "t1", file_path: str = "Mathlib/Data/Nat/Defs.lean"
 ) -> list[dict[str, Any]]:
-    """Build chronological cell rows from verdicts."""
+    """Build cell rows in file order, which is chronological."""
     return [{"kind": "cell", "model": "m1", "theorem_id": theorem, "k": 1,
              "rung": "stepk:1", "replicate_idx": 0, "verdict": v,
              "file_path": file_path} for v in verdicts]
 
 
-#: ``(verdicts, measurable)`` follows ``grade_verdicts``: earliest surviving attempts win.
+#: ``(verdicts, measurable)`` follows ``grade_verdicts``, not current notebook behavior.
+#: Earliest surviving attempts win.
 MEASURABILITY_CASES = [
     pytest.param(("success",), True, id="success"),
     # Use the complement so new verdicts are measurable by default.
+    # ``failure`` stands in for an unknown graded verdict here.
     pytest.param(("failure",), True, id="unknown-graded-verdict"),
     pytest.param(("lean_error",), True, id="lean_error"),
     pytest.param(("incomplete",), True, id="incomplete"),
@@ -62,7 +64,10 @@ MEASURABILITY_CASES = [
 def test_measurability_follows_the_live_grader(
     ded_pa: ModuleType, verdicts: tuple[str, ...], measurable: bool
 ) -> None:
-    """The cell agrees with the independently derived table."""
+    """Compare the cell with an independently derived table.
+
+    The separate check makes cell drift and table drift report separately.
+    """
     keys = notebook_stats.measurable_cell_keys(
         _rows(*verdicts), ded_pa.UNMEASURABLE_VERDICTS)
     assert bool(keys) is measurable, (verdicts, keys)
@@ -92,7 +97,10 @@ def test_no_positive_whitelist_survives(
 
 
 def test_every_selected_cell_is_safe_for_is_pass(ded_pa: ModuleType) -> None:
-    """Filter ``unverified`` because ``is_pass`` raises on it."""
+    """Drop ``unverified`` rather than score it zero as ``grade_verdicts`` would.
+
+    This is required because ``is_pass`` raises on that sentinel.
+    """
     with pytest.raises(ValueError, match="unverified"):
         notebook_stats.is_pass("unverified")
 

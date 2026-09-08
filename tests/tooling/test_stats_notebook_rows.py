@@ -1,4 +1,8 @@
-"""Test Sections 5–6 S3 row loading with injected production-path S3."""
+"""Test Sections 5–6 S3 row loading with injected production-path S3.
+
+``rows_source.resolve_rows_dir`` fetches 21 verified lanes from the study spool
+and, one directory over with run-marker and filename overrides, the recovery rows.
+"""
 
 from __future__ import annotations
 
@@ -59,7 +63,10 @@ def _fake_bucket(models: tuple[str, ...]) -> dict[str, str]:
 
 
 class FakePaginator:
-    """Two-page in-memory ``list_objects_v2``; production caps pages at 1000 keys."""
+    """Use two pages because S3 ``ListObjectsV2`` caps responses at 1000 keys.
+
+    A single-page fake could hide a reader that truncates after its first response.
+    """
 
     def __init__(self, objects: dict[str, str], calls: list) -> None:
         self._objects = objects
@@ -115,7 +122,10 @@ def modules() -> dict:
 def fake_s3(
     modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> FakeS3:
-    """Inject fake ``boto3`` because production imports it inside downloads."""
+    """Inject fake ``boto3`` because production imports it inside downloads.
+
+    The notebook must not carry a test-only injection hook.
+    """
     client = FakeS3(_fake_bucket(modules["ded_pa"].MODELS))
     monkeypatch.setitem(sys.modules, "boto3",
                         types.SimpleNamespace(client=lambda *a, **kw: client))
@@ -174,7 +184,7 @@ def test_section_6_reuses_the_rows_section_5_already_fetched(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Hint-vs-noise reuses Section 5 rows."""
+    """Reuse Section 5 rows instead of downloading all 21 lanes a second time."""
     namespace = dict(modules, RUN_HEAVY=True)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     downloads_after_section_5 = len(fake_s3.downloads)
@@ -190,7 +200,7 @@ def test_the_heavy_cells_stay_gated(
     nb: dict[str, Any], modules: dict[str, Any], fake_s3: FakeS3,
     capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``RUN_HEAVY`` must gate S3 before downloads."""
+    """When ``RUN_HEAVY`` is false, cells must avoid S3 entirely and say so."""
     namespace = dict(modules, RUN_HEAVY=False)
     _exec_cell(nb, "RECOVERY_RUN", namespace)
     _exec_cell(nb, "hint_vs_noise.main(", namespace)

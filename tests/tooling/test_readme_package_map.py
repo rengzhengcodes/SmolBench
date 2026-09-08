@@ -1,4 +1,8 @@
-"""Pin root README tree and operational claims without the Lean extra."""
+"""Pin the root README tree in both directions and its operational claims.
+
+The checks hold with or without the ``lean`` extra, and index ``evals/``,
+``fleet/``, and ``deduction/lean/`` because each can outgrow an unpinned map.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ def _package_map() -> str:
 
 
 def _map_block(*path: str) -> str:
-    """Return nested map block at `path`; walking avoids repeated directory-name matches."""
+    """Raise unless each path segment matches one line, avoiding a silently wrong block."""
     lines = _package_map().splitlines()
     for entry in path:
         starts = [i for i, line in enumerate(lines) if line.strip().startswith(entry)]
@@ -38,7 +42,8 @@ def _map_block(*path: str) -> str:
     return "\n".join(lines)
 
 
-#: Indexed packages; ``.toml`` is module configuration, not data.
+#: Index these packages because their module sets can outgrow an unpinned map;
+#: ``.toml`` is module configuration, not data.
 MAPPED_PACKAGES = [
     (("smolbench/", "deduction/lean/"),
      REPO_ROOT / "smolbench" / "deduction" / "lean", (".py", ".toml")),
@@ -51,7 +56,7 @@ MAPPED_PACKAGES = [
                          ids=["".join(p[0]) for p in MAPPED_PACKAGES])
 def test_readme_map_names_every_module_in_a_mapped_package(
         entry: tuple[str, ...], directory: Path, suffixes: tuple[str, ...]) -> None:
-    """Mapped files appear in their block; exclude ``__init__.py``."""
+    """Map files while deliberately excluding ``__init__.py`` and one-line-indexed subdirectories."""
     block = _map_block(*entry)
     names = sorted(p.name for p in directory.iterdir()
                    if p.suffix in suffixes and not p.name.startswith("__"))
@@ -80,7 +85,7 @@ def test_readme_map_names_no_file_a_mapped_package_lost(
 
 
 def test_every_file_the_map_names_exists_somewhere_in_the_tree() -> None:
-    """Every map filename exists somewhere in the tree."""
+    """This weaker basename-only check covers blocks indexed by job rather than file by file."""
     tree = _package_map()
     named = sorted(set(re.findall(r"[\w.-]+\.(?:py|toml|yaml|ipynb|sh|md)", tree)))
     assert named, "the package map names no files at all"
@@ -100,7 +105,8 @@ def test_readme_map_names_every_test_group() -> None:
     assert not missing, f"README package map omits test groups {missing}"
 
 
-#: The guide points to the driver and direct S3 readers.
+#: Point to the driver rather than four hand-run scripts, and to direct S3 readers
+#: rather than a locally synced tree.
 WHERE_DO_I_GO_POINTERS = ["run_all.py", "--s3"]
 
 
@@ -154,3 +160,4 @@ def test_readme_skip_count_matches_the_gated_module() -> None:
     assert summary, "README's test section no longer quotes a pytest summary line"
     assert int(summary.group(1)) == int(stated.group(1))
     assert "test_s3_archive.py" in text and "SMOLBENCH_ARCHIVE_S3" in text
+    # Do not pin the pass count here because a test that pins it changes that count.

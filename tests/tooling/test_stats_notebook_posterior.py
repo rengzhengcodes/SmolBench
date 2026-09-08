@@ -177,7 +177,7 @@ def test_clustering_inflates_the_decided_rate_on_a_true_null(
 
 
 def test_self_test_asserts_no_equivalence_under_clustering(nb: dict[str, Any]) -> None:
-    """Report clustered cases: EQUIVALENT assertions failed 38/60 at deff 3.19."""
+    """The clustered case must be reported, never asserted."""
     import ast
 
     source = cell_source(nb, "self-test PASSED")
@@ -286,7 +286,7 @@ def test_calibration_states_its_detection_floor(calibration: tuple[dict[str, Any
 def test_the_ceiling_sits_below_the_studys_own_design_effect(
     calibration: tuple[dict[str, Any], str]
 ) -> None:
-    """At study deff ~3, ``DECIDED`` is invalid."""
+    """At study deff ~3, calibrated from ``CLUSTER_SD``, ``DECIDED`` is invalid."""
     namespace, _out = calibration
     ceiling = namespace["CALIBRATED_DEFF_CEILING"]
     study_row = namespace["CALIBRATION_ROWS"][-1]
@@ -310,7 +310,7 @@ def test_false_decided_rate_can_come_out_the_other_way(
     calibration: tuple[dict[str, Any], str], stats: ModuleType,
     modules: dict[str, Any]
 ) -> None:
-    """The estimator can report no inflation on i.i.d. draws."""
+    """Allow no inflation because a measurement must be able to return the negative answer."""
     namespace, _out = calibration
     # Use 400 draws: a 200-draw ~2% control has a few-percent empty chance,
     # which would mimic thin sampling.
@@ -326,7 +326,7 @@ def test_false_decided_rate_can_come_out_the_other_way(
 
 
 def test_the_calibration_prints_beside_the_verdict_table(nb: dict[str, Any]) -> None:
-    """Keep the verdict table and calibration adjacent."""
+    """Keep both in the same section with no code cell between them."""
     sources = ["".join(cell["source"]) for cell in nb["cells"]]
     table = next(i for i, s in enumerate(sources) if "verdict_distribution =" in s)
     calibration = next(i for i, s in enumerate(sources) if "false_decided_rate =" in s)

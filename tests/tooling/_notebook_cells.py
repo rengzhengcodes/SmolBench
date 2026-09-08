@@ -1,6 +1,7 @@
 """Shared helpers for ``statistical_analyses.ipynb`` cell tests.
 
 Cells use stable content because indexes can silently target another cell.
+This module is not named ``test_*`` because it holds no tests and must not be collected.
 """
 
 from __future__ import annotations
@@ -42,7 +43,8 @@ def _load(name: str, rel: str) -> ModuleType:
 def load_analysis_modules() -> dict:
     """Execute the notebook loader cell and return its namespace.
 
-    Execute it to preserve load order; restore process state because ``load_dotenv`` mutates unknown keys.
+    Run from the repo root because ``find_repo()`` walks up from cwd; preserve load order
+    because siblings use bare imports, and restore state because ``load_dotenv`` mutates unknown keys.
     """
     namespace: dict = {}
     saved_modules = {k: sys.modules.get(k)
