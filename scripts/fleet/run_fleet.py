@@ -16,7 +16,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Optional
 
-# `lane_env` configures logging before importing the driver, whose first handler wins.
+# Never call logging.basicConfig here: lane_env must configure it before importing
+# the driver, whose first handler wins.
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
@@ -34,7 +35,9 @@ def _load_fleet_config() -> ModuleType:
 
 _config = _load_fleet_config()
 
-# Load `lane_env` first so dotenv precedes frozen ``EC2_*`` constants.
+# Load `lane_env` first so dotenv precedes frozen ``EC2_*`` constants. Keep these
+# exact private module names, never unpacked aliases, so moved symbols retain one
+# home and tests reach both modules the same way.
 _lane_env = _config.load_fleet_module("lane_env")
 _supervisor = _config.load_fleet_module("supervisor")
 
@@ -150,7 +153,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     Returns
     -------
     int
-        ``0`` after the live fleet reaches terminal states.
+        ``0`` at all-terminal; individual lanes may still be halted as the printed summary reports.
     """
     args = _build_arg_parser().parse_args(argv)
     lanes = _selected_lanes(args.lanes)

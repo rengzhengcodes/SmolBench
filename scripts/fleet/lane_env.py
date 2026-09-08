@@ -51,24 +51,28 @@ from smolbench.evals.providers.ec2 import (  # noqa: E402
     _INSTANCE_GPU_NAMES as _EC2_INSTANCE_GPU_NAMES,
 )
 
+# Exact constant names and values are pinned by tests/tooling/test_run_fleet.py.
 #: Shared source avoids a second region list.
 DEFAULT_REGIONS = _config.DEFAULT_REGIONS
-# Alias ec2's resolved image so fleet and provider cannot pin different digests.
+# Alias ec2's resolved image so fleet and provider cannot pin different digests; bump it in ec2.py.
 FLEET_IMAGE = EC2_VLLM_IMAGE
-# V4 requires this digest's known SM90 serving path.
+# V4 runs digest-pinned v0.27.1 because its SM90 serving path uses Marlin MXFP4
+# plus FLASHMLA_SPARSE_DSV4; see the DeepSeek block in EC2_DEPLOY_SPECS.
 LANE_IMAGE_OVERRIDES = {
     "deepseek-v4-flash": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
     "deepseek-v4-pro": "vllm/vllm-openai@sha256:0e1ee52750c67718a596ba63176034aa18b439c4a69896ac5a0a8393919aa4df",
 }
 MAX_LIFETIME_MIN = "2160"  # 36h absolute backstop, as a string (env value)
 REQUEST_TIMEOUT_SECONDS = "3600"  # long CoT generations, as a string (env value)
-# Eager Pro can take over an hour for 87k tokens; 14400s avoids retry loops.
+# Eager Pro can take >1h for 87k tokens, so 14400s avoids retry loops. The box
+# watchdog keys on vLLM metrics, so long generations cannot trip it; every other lane fits 3600s at in-flight count 1.
 LANE_REQUEST_TIMEOUT_OVERRIDES = {
     "deepseek-v4-pro": "14400",
 }
 
 TIER_INSTANCE_TYPES = {
-    # One GPU count preserves derive_tp across capacity reclaims.
+    # One GPU count preserves ec2.derive_tp = gcd(attention heads, GPU count)
+    # across reclaims; a tier-A reclaim may therefore wait for 1-GPU g6e capacity.
     "A": "g6e.4xlarge,g6e.8xlarge",
     "B": "g6e.12xlarge,g6e.24xlarge",
     "C": "p5.48xlarge,p5e.48xlarge",
@@ -80,7 +84,8 @@ TIER_INSTANCE_TYPES = {
 def _tier_gpu_pin(tier: str) -> str:
     """Derive a GPU pin from ec2's hardware tables to catch roster drift.
 
-    Count-only pins permit tier C's H100/H200 alternatives while preserving TP.
+    An empty-name pin passes ec2's substring check for any silicon, so tier C's
+    8-GPU pin blocks TP changes but cannot catch numeric-changing H100/H200 substitutions.
 
     Parameters
     ----------
@@ -130,7 +135,8 @@ def _tier_gpu_pin(tier: str) -> str:
 #: Per-tier GPU pins; a count-only pin allows tier C silicon alternatives.
 TIER_REQUIRE_GPU: dict[str, str] = {tier: _tier_gpu_pin(tier) for tier in TIER_INSTANCE_TYPES}
 
-# Tier D retains all study regions because B200 placement is shifting.
+# Tier D retains DEFAULT_REGIONS rather than a literal because B200 placement is
+# shifting; unlike p5e, which is limited to us-east-2/us-west-2, this cannot drift independently.
 TIER_REGIONS = {"D": DEFAULT_REGIONS}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 
@@ -153,7 +159,11 @@ TIER_MEMBERS = {
 
 @dataclass(frozen=True)
 class Lane:
-    """A checkpoint's spec key, analysis tag, and hardware tier."""
+    """A checkpoint's spec key, analysis tag, and hardware tier.
+
+    ``key`` also names vLLM's ``--served-model-name``; everything else is derived
+    below so a tier constant cannot go stale in a per-lane copy.
+    """
 
     key: str
     tag: str
@@ -176,7 +186,10 @@ class Lane:
 
     @property
     def state_file(self) -> str:
-        """Return the driver's state-file basename so deduction reattaches."""
+        """Return the state basename that must match deduction's ``lane_env_defaults`` or it silently provisions a second box.
+
+        The tag's ``scaling-`` and this file's ``scaling_`` prefixes are independent by construction, not a typo.
+        """
         return f".ec2_state_scaling_{self.key}.json"
 
     @property
@@ -186,7 +199,10 @@ class Lane:
 
 
 def _drift_guard() -> None:
-    """Reject tier overlap or drift from the config and deployment roster."""
+    """Reject tier overlap or drift from the config and deployment roster.
+
+    Raises ``SystemExit``, never ``assert`` because ``python -O`` strips assertions.
+    """
     flat = [key for keys in TIER_MEMBERS.values() for key in keys]
     flat_set = set(flat)
     if len(flat) != len(flat_set):
@@ -253,7 +269,9 @@ def lane_env(
     """Build an isolated lane environment.
 
     Share the derived state-file path so deduction reattaches; lane image pins
-    override operator exports, which override ec2's default.
+    override operator exports, which override ec2's default. Always return a new
+    dict and never mutate ``base_env``: across 21 lanes, lane N+1 could otherwise
+    inherit lane N's tag and state file and reattach both to one instance.
 
     Parameters
     ----------
@@ -262,7 +280,7 @@ def lane_env(
     phase : str
         Subprocess phase.
     base_env : Optional[Mapping[str, str]], optional
-        Source environment; ``None`` reads ``os.environ``.
+        Source environment; ``None`` reads ``os.environ``. ``LEAN_RUN_NAME`` must equal the ``scaling_<key>`` path rebuilt by ``supervisor._advance_finished`` or its confirming re-spool silently does nothing.
 
     Returns
     -------
@@ -318,7 +336,8 @@ _SHUTDOWN_SNIPPET = (
 def lane_command(lane: Lane, phase: str) -> list[str]:
     """Build a lane subprocess command.
 
-    Shutdown requires the lane environment to resolve its state file.
+    Shutdown requires the lane environment so ``EC2_EXPERIMENT_TAG`` and
+    ``EC2_STATE_FILE`` resolve to this lane's box.
 
     Parameters
     ----------

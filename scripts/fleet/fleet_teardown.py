@@ -1,7 +1,8 @@
 """List or explicitly terminate the scaling study's EC2 fleet.
 
-Local state-file deletion cannot stop billing; termination can. Re-check each
-AWS tag before termination because callers do not control those values.
+Deleting state cannot stop billing because ec2.py recovers boxes from their
+``smolbench:experiment`` tags; only termination reclaims them. Re-check each AWS
+tag before termination because callers do not control those values.
 """
 
 from __future__ import annotations

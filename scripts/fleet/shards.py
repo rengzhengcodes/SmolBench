@@ -15,7 +15,11 @@ class Shard:
 
     A shard is launched (``proc``) or adopted (``adopted_pid``), never both.
     Adopted PID reuse can falsely report liveness; identity matching requires
-    ``/proc/<pid>/environ``.
+    ``/proc/<pid>/environ``; ``launch`` clears ``adopted_pid`` because it owns a real handle.
+    ``selector`` is the ``"i/n"`` value ``find_adoptable`` matches, or meaningful
+    ``None`` for an unsharded run. ``env`` is the complete child environment, not
+    a parent overlay; ``state_file`` is not read here but lets
+    ``run_shards.terminate_shard_box`` reclaim the box from this shard alone.
     """
 
     index: int
@@ -61,14 +65,16 @@ class Shard:
         """Start the driver for this shard, appending to its log.
 
         Append preserves prior failure evidence. A new session prevents a
-        supervisor-group signal from killing a paid GPU run.
+        supervisor-group signal from killing a paid GPU run. Clear ``adopted_pid``
+        because this process now owns a real handle and must stop consulting ``/proc``.
         """
         self.log.parent.mkdir(parents=True, exist_ok=True)
         with self.log.open("ab") as sink:
             self.proc = subprocess.Popen(
                 [str(self.python), "-u", str(self.driver)],
                 stdout=sink, stderr=subprocess.STDOUT,
-                # Copy shared environments before subprocess handling.
+                # Copy the environment; never mutate an object the caller may
+                # still hold or share between shards.
                 env=dict(self.env),
                 cwd=str(self.cwd), start_new_session=True,
             )

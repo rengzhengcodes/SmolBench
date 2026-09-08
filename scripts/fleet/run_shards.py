@@ -3,6 +3,8 @@
 Adopt or relaunch shards with the shared policy; terminate clean-exit boxes
 because direct runs have no teardown and would idle about 30 minutes for the watchdog.
 Default tags stay outside fleet teardown's scope.
+Launch detached (``setsid nohup ... &``) after sourcing ``notebooks/induction/keys.env``
+and ``notebooks/ec2-operator.env`` because children inherit this environment and `shard_env` only layers onto it.
 """
 
 from __future__ import annotations
@@ -86,6 +88,9 @@ def shard_env(args: argparse.Namespace, index: int) -> Dict[str, str]:
 def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
     """Return the PID of a live ``run_study.py`` process for (`model`, `shard`), or None.
 
+    Match ``INDUCTION_MODELS`` and ``INDUCTION_SHARD`` in ``/proc/<pid>/environ``;
+    first match wins because launch discipline permits at most one per pair.
+
     Parameters
     ----------
     model : str
@@ -122,7 +127,8 @@ def find_adoptable(model: str, shard: Optional[str]) -> Optional[int]:
 def state_file_for(args: argparse.Namespace, index: int) -> Path:
     """Return shard `index`'s EC2 state file path, anchored at the repo root.
 
-    Keep shard state separate from fleet state and independent of tags.
+    Shards use ``.ec2_state_induction-<model>-s<i>of<n>.json``, mirroring the
+    driver's ``_LANE`` suffix, so state stays separate from fleet tags.
 
     Parameters
     ----------
@@ -144,7 +150,9 @@ def state_file_for(args: argparse.Namespace, index: int) -> Path:
 def terminate_shard_box(shard: _shards.Shard) -> None:
     """Best-effort terminate of a completed `shard`'s instance, via its state file.
 
-    Reclaim direct-run boxes immediately; the watchdog remains the failure backstop.
+    Use the shard's carried file so termination provably targets what it launched,
+    not arguments that may have moved on. Unlink it after success so reattach cannot
+    latch onto an instance id that no longer exists.
 
     Parameters
     ----------
@@ -170,7 +178,6 @@ def terminate_shard_box(shard: _shards.Shard) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build this script's CLI parser.
-
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True, help="Spec key, e.g. gemma-4-12b.")
@@ -196,7 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
              "anyway. See refuse_fleet_prefix_tag for the blast-radius reason "
              "this is refused by default.",
     )
-    # Skip empty shards so they do not consume vCPU quota before exiting.
+    # Skip empty shards so they do not consume vCPU quota before exiting;
+    # --count still fixes seed-to-shard mapping, and this only skips their launch.
     parser.add_argument(
         "--only-shards", default="",
         help="Comma-separated shard indices to run (default: all). "
@@ -208,7 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
 def refuse_fleet_prefix_tag(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     """Refuse a ``--tag`` whose derived per-shard tag falls in the fleet's blast radius.
 
-    Check the derived tag so fleet teardown cannot reach shard boxes.
+    Check the derived tag so fleet teardown cannot reach shard boxes. The
+    ``f"{args.tag}-"`` form catches ``"scaling"``, one character short of the prefix
+    although its derived tag matches, without over-matching ``"scalingful"``.
 
     Parameters
     ----------
@@ -279,6 +289,8 @@ def supervise(shard_list: list) -> int:
 
             logging.warning(f"shard {shard.index}: {decision.reason}")
             if decision.delay_seconds:
+                # Skip sleep(0): it still costs a scheduling round-trip and reads
+                # as though a delay were intended.
                 time.sleep(decision.delay_seconds)
             shard.launch()
 
@@ -297,6 +309,8 @@ def supervise(shard_list: list) -> int:
 def main() -> int:
     """Parse the command line, build and start the shards, then `supervise` them.
 
+    Return ``supervise``'s exit code. Raise ``SystemExit`` for an invalid ``--no-shard``
+    combination, an out-of-range ``--only-shards`` index, or a tag inside the fleet's blast radius.
     """
     parser = build_parser()
     args = parser.parse_args()
@@ -336,6 +350,7 @@ def main() -> int:
             cwd=REPO,
         ))
 
+    # Log here, not in supervise, which never sees args, so the model precedes shard lines.
     logging.info(f"run_shards[{args.model}]: supervising {len(shard_list)} shard(s)")
 
     for shard in shard_list:

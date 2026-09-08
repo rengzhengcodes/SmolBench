@@ -1,6 +1,8 @@
 """Supervise fleet launch, monitoring, restart, gating, spooling, and shutdown.
 
-Persisted state preserves relaunch budgets across supervisor replacement.
+Persisted state stops a replacement supervisor from re-granting 21 billing boxes
+fresh relaunch budgets. No AWS SDK is imported at module scope here or in
+``lane_env.py``, so its dotenv load cannot be followed by a stale frozen value.
 Fleet modules load by path because ``scripts/fleet`` is not a package.
 """
 
@@ -48,7 +50,8 @@ _policy = _config.load_fleet_module("policy")
 # Anchor logs at the repo root because entry points may use any cwd.
 LOG_DIR: Path = _lane_env.REPO_ROOT / "notebooks" / "induction" / "results" / "fleet_logs"
 
-#: Read enough tail data to retain reclaim patterns.
+#: Read enough tail data that a reclaim pattern cannot fall outside the window
+#: and be misclassified as a crash.
 TAIL_MAX_BYTES = 262144
 
 
@@ -96,7 +99,8 @@ def is_serve_healthy(line: str) -> bool:
     return SERVE_HEALTHY_RE.search(line) is not None
 
 
-# 0.5 separates failed 0–11% toggles from working 78–100% protocols.
+# 0.5 separates failed 0–11% toggles from working 78–100% protocols without a
+# 0.9 threshold misfiring on one or two direct answers among only 9 intens marks.
 COT_MIN_FRACTION = 0.5
 #: Longer responses carry reasoning because quiz answers are bare integers.
 COT_CONTENT_REASONING_MIN_CHARS = 200
@@ -157,7 +161,7 @@ def build_results_store() -> Any:
     """Build the production results store; kept separate for test fakes."""
     return resolve_store(_lane_env.run_study.EXPERIMENT.results_dir)
 
-
+# Exact names and values are pinned by tests/tooling/test_run_fleet.py.
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
 LAUNCH_STAGGER_SECONDS = 30
 MONITOR_INTERVAL_SECONDS = 60
@@ -230,7 +234,8 @@ def fleet_image_digest() -> Optional[str]:
 
     digest = manifest.get("config", {}).get("digest")
     if not digest:
-        # A multi-arch manifest exposes architecture digests here.
+        # A multi-arch manifest exposes per-architecture digests here, which do
+        # not match the index digest.
         entries = manifest.get("manifests") or []
         if entries:
             digest = entries[0].get("digest")
@@ -253,7 +258,11 @@ def _deduction_driver() -> ModuleType:
 
 @dataclass
 class _Presence:
-    """Describe sweep state that distinguishes unknown from confirmed empty."""
+    """Describe sweep state that distinguishes unknown from confirmed empty.
+
+    Treating either as gone would give every lane unlimited reclaim retries
+    before a single box had been described successfully.
+    """
 
     lanes: Optional[set] = None
     ever_seen: bool = False
@@ -321,7 +330,8 @@ class _LaneRun:
         return self.phases[self.phase_index]
 
 
-# Rewrite one state file each tick to preserve relaunch budgets after replacement.
+# Rewrite one state file each tick so a replacement cannot re-grant full crash
+# and reclaim budgets while 21 GPU boxes keep billing.
 FLEET_STATE_FILENAME = "fleet_state.json"
 
 #: Shared persisted fields prevent save/load drift.
@@ -338,12 +348,15 @@ _STATE_PLAIN_FIELDS = (
     "spool_error",
 )
 
-#: Monotonic fields persisted as epoch timestamps for cross-process resume.
+#: Monotonic fields use an ``_epoch`` suffix on disk so nobody reads one into a
+#: monotonic field without noticing the conversion.
 _STATE_CLOCK_FIELDS = ("lane_started_at_epoch", "pending_relaunch_at_epoch")
 
 
 def fleet_state_path(log_dir: Path) -> Path:
     """Return the state path beside its lane logs.
+
+    The same ``--log-dir`` resumes a supervisor; a different one correctly starts fresh.
 
     Parameters
     ----------
@@ -362,6 +375,9 @@ def _monotonic_to_epoch(
     value: Optional[float], *, monotonic_now: float, epoch_now: float
 ) -> Optional[float]:
     """Convert monotonic time to epoch time for cross-process persistence.
+
+    Its epoch is arbitrary per process, so persisting the raw value would compare
+    it with an unrelated origin in a replacement supervisor.
 
     Parameters
     ----------
@@ -387,6 +403,9 @@ def _epoch_to_monotonic(
 ) -> Optional[float]:
     """Convert persisted epoch time to this process's monotonic frame.
 
+    An NTP or manual wall-clock step shifts the recovered age; this is accepted
+    because the alternative is no resume at all.
+
     Parameters
     ----------
     value : Optional[float]
@@ -409,7 +428,9 @@ def _epoch_to_monotonic(
 def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
     """Atomically save resumable lane state.
 
-    Processes and static lane fields are rebuilt rather than persisted.
+    Write a sibling ``.tmp`` and use ``os.replace`` so readers never see a torn
+    file. The lanes map uses the spec key derived by ``fleet_status.fleet_rows``
+    from ``smolbench:experiment``, so state and describe sweeps agree on identity.
 
     Parameters
     ----------
@@ -450,7 +471,8 @@ def save_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> None:
 def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
     """Restore persisted lane state in place.
 
-    Processes relaunch; the driver skips already-landed work.
+    Processes relaunch; the driver's own ``ResultsStore.exists`` resume-skip, not
+    this file, prevents already-landed work from being re-billed.
 
     Parameters
     ----------
@@ -467,7 +489,7 @@ def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
     Raises
     ------
     ValueError
-        Unreadable, invalid, or malformed state file; name it for deletion.
+        Unreadable, invalid, or malformed state names the file for deletion and is loud because silently resetting 21 lanes would re-grant already-burned relaunch budgets.
     """
     path = fleet_state_path(log_dir)
     if not path.exists():
@@ -697,7 +719,8 @@ def _monitor_tick(
         run = runs[key]
         alive = run.proc is not None and run.proc.poll() is None
         status = "halted" if run.halted else ("done" if run.done else (run.current_phase or "?"))
-        # A larger tail avoids blank output after a mid-line seek.
+        # _tail_log drops its first line after a seek; a newline-free 4 KiB
+        # window blanked this, so use 65536 bytes.
         last_line = _tail_log(log_dir, key, n=1, max_bytes=65536)
         print(f"{key:<28} status={status:<10} alive={str(alive):<5} last: {last_line[-120:]}")
 
@@ -722,6 +745,8 @@ def _monitor_tick(
 def _apply_restart_policy(runs: dict[str, _LaneRun], log_dir: Path, presence: _Presence) -> None:
     """Apply restart policy to non-zero exits without blocking other lanes.
 
+    This and ``run_shards`` call the one relaunch-cap enforcement point in
+    ``policy.decide_relaunch`` so neither can carry a second, laxer rule.
     Backoff becomes a later deadline so one lane cannot stall the fleet.
 
     Parameters
@@ -781,7 +806,8 @@ def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = bui
         return
     for key, run in pending:
         try:
-            # Intens checks toggle wiring, not performance on extens listings.
+            # Intens checks toggle wiring; an all-arms pool would halt lanes that
+            # collapse on the long extens listing that the study measures.
             fraction = reasoning_fraction(
                 store, run.lane.key, run.lane.tag, infos=("intens",)
             )
@@ -820,7 +846,8 @@ def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
             continue  # not a clean exit (still running, or handled by the restart policy)
 
         if run.current_phase == "deduction":
-            # Match the lane subprocess's repo-root result path.
+            # Match the lane subprocess's repo-root result path, never the
+            # driver's runner.results_root(), which reads this supervisor's environment.
             run_dir = (
                 _lane_env.REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
                 / f"scaling_{run.lane.key}"
@@ -885,7 +912,8 @@ def _run_fleet(
 ) -> None:
     """Launch and supervise lanes to completion or halt.
 
-    Gate tiers D/A before B/C so unhealthy image families limit provisioning.
+    Launch tier D, the scarcest capacity, then tier A, staggered, and wait for selected ``GATE_MODELS``
+    before B/C. That wait runs full monitor ticks so gate crashes are retried or halted promptly.
 
     Parameters
     ----------
@@ -894,7 +922,7 @@ def _run_fleet(
     phase_sequence : tuple[str, ...]
         Ordered lane phases.
     gate : bool
-        Gate B/C on healthy D/A lanes.
+        Wait for selected gate lanes before launching tiers B and C.
     log_dir : Path
         Logs and state directory.
     phase_name : str

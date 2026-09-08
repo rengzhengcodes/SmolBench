@@ -62,7 +62,8 @@ RECLAIM_BACKOFF_CAP_SECONDS = 1800
 def reclaim_backoff_seconds(attempt: int) -> float:
     """Return the delay to wait before reclaim relaunch number `attempt` (1-based).
 
-    Use 60, 120, 240, 480, 960, then 1800 seconds for persistent capacity shortages.
+    Use 60, 120, 240, 480, 960, then 1800 seconds for persistent capacity
+    shortages; the schedule must never decrease for a persistently dry pool.
 
     Parameters
     ----------
@@ -92,6 +93,8 @@ class Decision:
     """What a supervisor should do about one non-zero exit.
 
     Frozen so logged reasons cannot diverge from actions; halts name exceeded caps.
+    ``action`` is ``"relaunch"`` or ``"halt"``; ``delay_seconds`` is ``0.0``
+    for halts or immediate crashes, and ``reason`` has no supervisor prefix.
     """
 
     action: str
@@ -103,7 +106,8 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     """Decide whether to relaunch after a `verdict` exit, and after how long.
 
     Crash relaunches are immediate because waiting cannot fix them; only capacity
-    reclaims back off.
+    reclaims back off. This is the one cap enforcement point: both supervisors
+    pass their counters here, so a raised cap applies to both and neither carries a laxer rule.
 
     Parameters
     ----------
@@ -112,7 +116,7 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     attempt : int
         Post-increment relaunch count for this verdict.
     rc : int | None
-        Child exit status for the operator-facing reason.
+        Child exit status for the reason; never compared because callers supply either ``Popen.poll()`` or inferred 0/1 without a waitable handle.
 
     Returns
     -------
@@ -122,7 +126,7 @@ def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     Raises
     ------
     ValueError
-        A verdict outside ``"reclaim"`` or ``"crash"``.
+        Raised, never asserted because ``python -O`` strips assertions; accepting another verdict would apply the wrong cap to a real failure.
     """
     if verdict == "reclaim":
         if attempt > MAX_RECLAIM_RELAUNCHES:

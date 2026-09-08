@@ -54,7 +54,8 @@ def test_lane_env_and_commands() -> None:
     env = laneenv.lane_env(laneenv.LANES["gemma-4-e2b"], "induction",
                          base_env={**_CREDS, "IRRELEVANT": "dropped"})
     assert laneenv.TIER_REGIONS["D"] == "us-east-1,us-east-2,us-west-2"
-    # Keep image resolution in ec2.py so stale fleet copies cannot shadow it.
+    # Exact equality: every lane_env key must appear here; image resolution stays
+    # in ec2.py so stale fleet copies cannot shadow it.
     assert env == {
         **_CREDS, "INFERENCE_PROVIDER": "ec2", "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
         "INDUCTION_STATE_FILE": ".ec2_state_scaling_gemma-4-e2b.json",
@@ -330,6 +331,9 @@ def _recording_start_phase(
 def _bounded_tick(counter: dict[str, int]) -> Callable[[Any, Path, int, Any], None]:
     """Build a bounded monitor tick.
 
+    The bound turns a supervisor regression into a fast assertion instead of
+    hanging the test process.
+
     Parameters
     ----------
     counter : dict[str, int]
@@ -580,6 +584,8 @@ def test_both_supervisors_share_one_policy_module() -> None:
 
 def test_the_shared_patterns_cover_the_marker_they_replaced() -> None:
     """Shared patterns must match the producer's capacity marker."""
+    # Match the phrase alone, not its trailing newline, to pin produced wording
+    # rather than the source line break.
     produced = "No spot capacity for any (instance type, region) combination:"
     assert produced in (REPO_ROOT / "smolbench" / "evals" / "providers" / "ec2.py").read_text()
     rendered = f"ERROR:root:{produced}\n  g6e.12xlarge in us-east-2 -- no capacity"
@@ -730,7 +736,10 @@ def _persisted_runs() -> dict[str, Any]:
 
 
 def test_the_supervisor_state_file_lives_under_the_log_dir(tmp_path: Path) -> None:
-    """State lives beside lane logs and is atomically rewritten without a temp file."""
+    """State lives beside lane logs and is rewritten through a sibling temp file.
+
+    Atomic replacement must leave no temporary file behind.
+    """
     runs = _persisted_runs()
     sup.save_fleet_state(runs, tmp_path)
     path = tmp_path / "fleet_state.json"

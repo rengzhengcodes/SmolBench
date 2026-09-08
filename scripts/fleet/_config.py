@@ -20,7 +20,8 @@ def load_module_by_path(name: str, path: Path) -> ModuleType:
     """Execute `path` as a module under `name`, cached in ``sys.modules``.
 
     Cache before execution: dataclasses resolve their module through
-    ``sys.modules`` during class creation.
+    ``sys.modules`` during class creation. Cache hits return the same object so
+    both supervisors share one restart policy rather than copies.
 
     Parameters
     ----------
@@ -56,11 +57,14 @@ def load_fleet_module(stem: str) -> ModuleType:
         f"smolbench_fleet_{stem}", Path(__file__).resolve().parent / f"{stem}.py"
     )
 
-# The loader cache gives every fleet consumer the same config object.
+# load_study_config is memoized on the resolved config path, so every consumer
+# receives this same config object.
 _STUDY = load_study_config()
 _FLEET = _STUDY.fleet
 
-#: Fleet region order from config, preventing divergence from EC2 provisioning.
+#: Fleet region order from config; ec2._DEFAULT_REGIONS deliberately adds its
+#: own AWS_REGION first for non-fleet callers because nearest-first is right there,
+#: so that third spelling is out of scope here.
 REGION_TUPLE: tuple[str, ...] = _FLEET.regions
 
 #: Comma-joined ``REGION_TUPLE``; derived so the forms cannot disagree.

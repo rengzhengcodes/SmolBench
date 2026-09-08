@@ -60,7 +60,7 @@ def fleet_rows(
     Returns
     -------
     list[dict]
-        Instance rows with the keys required by ``format_fleet_table``.
+        Rows with exactly region/experiment_tag/lane/instance_id/instance_type/availability_zone/state/launch_time/age_hours, as ``format_fleet_table`` requires.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
