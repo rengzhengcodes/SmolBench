@@ -1,55 +1,11 @@
-"""
-Serve models from a self-provisioned EC2 Spot instance.
+"""Serve models from a self-provisioned EC2 Spot instance.
 
-One large Spot box per experiment runs vLLM's OpenAI-compatible server in
-Docker; sections swap WHICH model it serves rather than provisioning new
-hardware, because multi-GPU SageMaker endpoint quotas default to 0 while Spot
-P5 capacity is available. One lifecycle step per notebook cell::
-
-    state = provision_spot_instance()   # idempotent; once at notebook start
-    with serve_model(DENSE_MODEL):      # per archetype section
-        marks = evaluate(quiz, DENSE_MODEL, SEED)
-    shutdown_instance()                 # once at notebook end
-
-Provisioning records the box in ``EC2_STATE_FILE`` (repo root, mode 0600,
-gitignored) and tags it ``smolbench:experiment``, so a re-run reattaches --
-rebuilding lost state from the tagged instance's user-data -- instead of
-launching a second box. ``serve_model`` tears NOTHING down on exit;
-abandonment is covered by the on-instance idle watchdog
-(``EC2_IDLE_TIMEOUT_MIN`` without requests, after an ``EC2_STARTUP_GRACE_MIN``
-load grace), a boot-scheduled ``shutdown -h +EC2_MAX_LIFETIME_MIN``, and
-one-time Spot with InstanceInitiatedShutdownBehavior=terminate, so any OS
-shutdown terminates the box and deletes its EBS volume.
-
-Why EC2 rather than SageMaker
-    The SageMaker path still exists (``providers/aws.py``'s
-    ``provision_endpoint``) but multi-GPU endpoint quotas default to 0 (one
-    Service Quotas ticket per instance type), endpoints bill on-demand with
-    no spot market, and its vLLM DLC is configured only through a few env
-    vars -- no argv plumbing -- so it cannot serve this module's
-    digest-pinned image, per-spec ``--revision`` pins, or
-    ``DETERMINISM_ARGS``.
-
-Env-read timing
-    Provisioning ``EC2_*`` constants are captured at IMPORT time -- set them
-    before the first import (e.g. keys.env). Read at CALL time:
-    ``EC2_INFERENCE_BASE_URL``, ``EC2_VLLM_API_KEY``, ``EC2_STATE_FILE``,
-    ``EC2_CAPACITY_RESERVATION`` (and ``EC2_CAPACITY_RESERVATION_REGION``),
-    ``HF_TOKEN``, and the shared client's own ``EC2_MAX_PARALLEL_REQUESTS`` /
-    ``EC2_STREAM_COMPLETIONS`` / ``EC2_INFO`` / ``EC2_INFO_RESPONSE``.
-    Setup needs ``INFERENCE_PROVIDER=ec2``, ``AWS_REGION`` (first region
-    tried, more via ``EC2_REGIONS``), boto3-resolvable credentials, and
-    ``HF_TOKEN`` only for gated repos (baked into user-data at provision
-    time). boto3/botocore import lazily, so the inference path needs neither.
-    The ``model`` argument to query()/evaluate() is an ``EC2_DEPLOY_SPECS``
-    key, which is also vLLM's ``--served-model-name``.
-
-Security model
-    Ports 8000 (vLLM) and 9000 (agent) are open ONLY to the caller's public IP
-    /32, re-asserted by every provisioning call -- re-run it if your IP
-    changes. Both are plain HTTP behind a per-experiment random token held in
-    the state file and in user-data (readable in-account via
-    DescribeInstanceAttribute); accepted for a short-lived single-user box.
+One box swaps models because multi-GPU SageMaker quotas are often zero. State
+and an experiment tag allow reattachment; watchdog, lifetime halt, and Spot
+shutdown termination prevent abandoned instances. Provisioning ``EC2_*``
+settings are import-time; endpoint, state, reservation, and token settings
+are call-time. Ports 8000 and 9000 admit only the caller's /32 and require a
+per-experiment token.
 """
 
 import contextlib
@@ -75,11 +31,7 @@ from smolbench.evals.results_store import parse_s3_uri, repo_root
 from smolbench.evals.study_config import load_study_config
 
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
-# Spot capacity hunt order, tried TYPE-MAJOR: each type across every region
-# before falling back to the next type. p5e = 8xH200/1128 GB VRAM, p5 =
-# 8xH100/640 GB. Both lists are runtime-filtered against
-# describe_instance_type_offerings, so listing a region a type has not
-# reached yet is harmless.
+# Hunt each type across regions before trying the next; unavailable offerings are filtered.
 EC2_INSTANCE_TYPES: Tuple[str, ...] = tuple(
     dict.fromkeys(
         t.strip()
@@ -87,11 +39,7 @@ EC2_INSTANCE_TYPES: Tuple[str, ...] = tuple(
         if t.strip()
     )
 )
-# Default region list comes from the committed study config's [fleet].regions
-# (smolbench/evals/study_config.toml), not a second hand-copied literal here.
-# AWS_REGION still leads (a caller's own region is tried first, exactly as
-# before) and the EC2_REGIONS environment override below is unchanged;
-# study_config imports only the stdlib, so importing it here adds no cycle.
+# Share the study region list to prevent roster/config drift.
 _DEFAULT_REGIONS: str = ",".join(
     dict.fromkeys((AWS_REGION, *load_study_config().fleet.regions))
 )
@@ -100,52 +48,30 @@ EC2_REGIONS: Tuple[str, ...] = tuple(
         r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()
     )
 )
-# Root gp3 volume: OS and docker image only. The model cache lives on
-# instance-store NVMe (bootstrap formats and mounts the first device at
-# /opt/hf-cache) to dodge gp3's 1000 MB/s ceiling; every targeted type has
-# one (p5e/p5/p4de/g5/g6). On a type WITHOUT instance store the cache falls
-# back to the root volume -- raise EC2_ROOT_VOLUME_GB to hold your
-# checkpoints (the largest roster entry, deepseek-v4-pro, is ~865 GB).
+# Cache weights on instance-store NVMe to avoid gp3's 1000 MB/s ceiling. Root
+# holds OS and image only; on a type with no instance store the cache falls
+# back here and 300 GB is too small (deepseek-v4-pro is ~865 GB).
 EC2_ROOT_VOLUME_GB: int = int(os.getenv("EC2_ROOT_VOLUME_GB", "300"))
 EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "500"))
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
 # Digest-pinned on purpose: the :nightly tag is mutable. Bump this digest
 # deliberately; never fall back to a moving tag.
 EC2_VLLM_IMAGE: str = os.getenv("EC2_VLLM_IMAGE", "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7")
-# Deep Learning Base GPU AMI (Ubuntu 22.04): it preinstalls the NVIDIA
-# driver, Docker, and the NVIDIA container toolkit, so boot installs
-# nothing. The SSM parameter resolves to the latest build per region.
+# This AMI has NVIDIA, Docker, and the toolkit, avoiding boot installs.
 EC2_AMI_SSM_PARAM: str = os.getenv(
     "EC2_AMI_SSM_PARAM",
     "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id",
 )
 EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-inference")
-# Fixed ports for the two on-instance HTTP planes -- see the module
-# docstring's "Security model" section for what each guards. Deliberately NOT
-# env-configurable: changing either needs coordinated changes beyond this
-# client (the security-group ingress rule, the payload scripts' docker
-# port-publish/probe URLs, vLLM's own listen port), so an override belongs in
-# code, not in a stray env var.
+# Fixed ports require coordinated security-group, payload, and vLLM changes.
 EC2_VLLM_PORT: int = 8000
 EC2_AGENT_PORT: int = 9000
-# Value of the ``smolbench:experiment`` tag, used to find, reattach to and
-# terminate this experiment's instance. Import-time capture: set
-# EC2_EXPERIMENT_TAG before the first import of this module (see "Env-read
-# timing" in the module docstring); setting it later has no effect.
+# Import-time tag identifies the instance for reattach and termination.
 EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
-# Anchored to the repo root via `repo_root()`, not the cwd and not a
-# hand-counted depth off this file. Gitignored: it holds the control token
-# and the vLLM key. The EC2_STATE_FILE override is read at call time, in
-# `_state_path`.
+# State holds secrets; its override is read at call time.
 _DEFAULT_STATE_FILE: Path = repo_root() / ".ec2_state.json"
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
-# The serve timeout and the watchdog's loading-counts-as-active grace must
-# cover a COLD checkpoint pull from HF: a ~410 GB download on a live 405B
-# serve outran both 90 and 120 min. A warm S3 cache takes minutes, but the
-# first-ever pull sets the bound.
-# INVARIANT: the watchdog payload's own STARTUP_GRACE_MIN env fallback
-# (payloads/watchdog.py.txt, used only if the env var fails to propagate to
-# the instance) must match this default -- keep both at "180".
+# Cold checkpoint pulls require this grace; match the watchdog fallback at "180".
 EC2_STARTUP_GRACE_MIN: int = int(os.getenv("EC2_STARTUP_GRACE_MIN", "180"))
 EC2_MAX_LIFETIME_MIN: int = int(os.getenv("EC2_MAX_LIFETIME_MIN", "1440"))
 EC2_PROVISION_TIMEOUT_MIN: int = int(os.getenv("EC2_PROVISION_TIMEOUT_MIN", "15"))
@@ -214,89 +140,17 @@ EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2
 # _base_url/_api_key/_connection, not here; so are EC2_INFO and
 # EC2_INFO_RESPONSE (verbose logging), by the shared ChatClient.
 
-# Per-model deployment spec. The dict key is both (a) the ``model`` argument
-# the notebook passes to query()/evaluate() and (b) vLLM's
-# ``--served-model-name``, so the OpenAI request body carries it verbatim.
-# ``_aws.EC2_SPEC_KEYS`` is the authoritative key list (and what
-# tests/evals/test_aws_shared.py pins every spec against); ``_aws.DeploySpec``
-# documents each field.
-#
-# --- Family-ladder scaling study roster --------------------------------
-# 21 models = 7 families x 3 rungs, one EC2 instance per model. Every
-# architecture is in-tree upstream, so no entry needs --trust-remote-code;
-# every repo is ungated. Uniform max_model_len=131072: the smallest native
-# window on the roster is exactly 131072 (gemma-4-E2B, GLM-4.5-Air,
-# EXAONE-4.0-32B), so nothing is down-capped below native and a scaling study
-# cannot let context vary with the vendor's YaRN generosity. Every spec also
-# serves DETERMINISM_ARGS (appended after this dict) on top of the
-# digest-pinned image and a per-spec --revision/--tokenizer-revision pin;
-# both revision flags are pinned even though tokenizer_revision inherits
-# --revision at the pinned build, so the pin does not depend on that
-# inheritance. Prefix caching is OFF everywhere (a nondeterminism source),
-# and results from this config must NEVER pool with stock-config data.
-#
-# Instance tiers (chosen from weights-size and 128k-KV arithmetic; the
-# fleet supervisor maps these to EC2_INSTANCE_TYPES per lane):
-#   tier A g6e.4xlarge  (1x L40S 48 GB):  nano-4b, gemma e2b, ministral-3b
-#   tier B g6e.12xlarge (4x L40S 192 GB): qwen 27b, nano-30b, gemma 12b/31b,
-#                                         glm-4.7-flash, ministral 8b/14b,
-#                                         exaone 32b/33b
-#   tier C p5.48xlarge  (8x H100 640 GB): qwen 122b/397b-fp8, super-120b,
-#                                         glm-4.5-air, k-exaone-236b
-#   tier D p6-b200.48xlarge (8x B200 1440 GB): glm-4.7, deepseek-v3.1,
-#                                         deepseek-v4-pro, deepseek-v4-flash
-#
-# tp notes: GLM-4.7-Flash has 20 attention heads, so tp must divide 20; it
-# runs tp=4 on tier B (a p5 would idle half its GPUs). Nemotron-Nano-30B has
-# only 2 KV heads; vLLM replicates KV heads when tp exceeds n_kv. All other
-# tp choices divide the head counts exactly (verified from each config.json).
-#
-# Reasoning wiring (CoT is ON for every model in this study; the per-request
-# chat_template_kwargs toggles ride in extra_args from the study drivers --
-# see notebooks/induction/run_study.py COT_ARGS):
-#   * Qwen3.5 / Gemma-4: a server-side --reasoning-parser (qwen3 / gemma4)
-#     splits the think block into reasoning_content. Gemma-4's template
-#     defaults enable_thinking to FALSE, so the driver MUST pass it true, and
-#     its think tags are Gemma-specific, so the client-side "</think>"
-#     fallback would NOT catch them -- the parser is load-bearing there.
-#   * Nemotron-3: enable_thinking defaults on in the shipped template, and
-#     query() splits the plain-text <think> block CLIENT-side; do not switch
-#     to the vLLM nemotron_v3 parser without re-verifying.
-#   * GLM-4.x: thinking defaults ON; the glm47/glm45 parsers split it
-#     server-side.
-#   * Ministral-3 Reasoning: the [THINK] protocol lives ONLY in the shipped
-#     template's default_system_message, which the template injects ONLY when
-#     no system message is supplied -- so the Lean eval, which always supplies
-#     one, would silently disable thinking. Fix: inject that exact default
-#     text as the provider system_prompt below. ChatClient puts it FIRST and
-#     the template renders each system message as its own [SYSTEM_PROMPT]
-#     block, so induction stays byte-identical to out-of-box behavior while
-#     Lean gets the think protocol plus its own instructions. Do NOT switch
-#     these entries to --tokenizer-mode mistral: that bypasses the Jinja
-#     template entirely.
-#   * EXAONE: no vLLM reasoning parser exists for it, so query() splits the
-#     plain-text <think> block client-side. EXAONE-4.0-32B defaults
-#     enable_thinking OFF, so the driver must pass it true. Only 4.5-33B is a
-#     multimodal wrapper (hence its --language-model-only).
-#   * DeepSeek V4: the repos ship NO chat template (404, and no
-#     tokenizer_config key); the toggle lives in the repo's Python
-#     encoding_dsv4.py. vLLM accepts a LITERAL template string via
-#     --chat-template, so DSV4_CHAT_TEMPLATE below reproduces the shipped
-#     encoding for the [system?, user] + generation-prompt shapes this repo
-#     sends (byte-equality pinned by tests/evals/test_dsv4_chat_template.py
-#     against the vendored encoding module). chat_template_kwargs
-#     {"thinking": true} drives both the template branch and vLLM's
-#     deepseek_v4 parser, whose initial state accepts the prompt-final
-#     <think>. DeepSeek-V3.1 DOES ship its own template (thinking kwarg), so
-#     it needs no override.
+# Each spec key is ``--served-model-name``; prefix caching is off everywhere
+# because it is a nondeterminism source, so these results must never pool with
+# stock-config data, and ``max_model_len`` is uniformly 131072, the roster's
+# smallest native window, so context cannot vary with vendor YaRN generosity.
+# Gemma-4 and EXAONE-4.0-32B ship ``enable_thinking=False`` and Gemma's tags
+# escape the client-side ``</think>`` split, so the driver must pass it true;
+# Ministral gets its think protocol from an injected ``system_prompt`` and
+# must never switch to ``--tokenizer-mode mistral``, which bypasses the Jinja
+# template, while GLM-4.7-Flash's 20 attention heads require tp to divide 20.
 
-# Inline stand-in for the chat template DeepSeek V4 does not ship (see the
-# DeepSeek V4 note above): renders the [system?, user] + generation-prompt
-# shapes this repo sends exactly as the repo's own encoding_dsv4.py does --
-# system text bare, user text prefixed ``<｜User｜>``, then ``<｜Assistant｜>``
-# followed by an open ``<think>`` when ``thinking`` is true/unset (CoT on,
-# the study default) or a closed ``</think>`` when false. Byte-equality with
-# the vendored encoder is pinned by tests/evals/test_dsv4_chat_template.py.
+# DeepSeek V4 lacks a template; this matches its vendored encoder.
 DSV4_CHAT_TEMPLATE: str = (
     "<｜begin▁of▁sentence｜>"
     "{%- for m in messages -%}"
@@ -309,18 +163,9 @@ DSV4_CHAT_TEMPLATE: str = (
     "{%- endif -%}"
 )
 
-# The Ministral-3 Reasoning template's default_system_message, verbatim
-# (the md5 of the shipped chat_template.jinja is
-# f9ce03df8c692f42b2aeb78024e29f4f, identical across the 3B/8B/14B rungs).
-# Needed because Ministral has NO native thinking toggle: the shipped
-# template exposes no enable_thinking/thinking chat_template_kwargs -- the
-# [THINK] protocol lives entirely in this default system message, which the
-# template injects ONLY when the request supplies no system message of its
-# own. Any eval that sets a system prompt (the Lean eval always does) would
-# therefore silently disable thinking; injecting the exact default text as
-# the spec-level system_prompt keeps thinking on in every case while leaving
-# no-system-prompt requests byte-identical to out-of-box behavior. See the
-# Ministral note above.
+# Ministral's [THINK] protocol lives only in the template's
+# default_system_message, which the template drops once any system message is
+# supplied; injecting it as the spec system_prompt keeps thinking on either way.
 MINISTRAL_THINK_SYSTEM: str = (
     "# HOW YOU SHOULD THINK AND ANSWER\n\n"
     "First draft your thinking process (inner monologue) until you arrive at a "
@@ -454,6 +299,7 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
 #: under this bundle are NOT comparable with stock-config data. The four
 #: flags were never attributed individually: relax any one of them only
 #: after re-certifying with a byte-agreement probe.
+#: Prefix caching stays off because it is a source of nondeterminism.
 DETERMINISM_ARGS: List[str] = [
     "--no-enable-prefix-caching", "--max-num-seqs", "1",
     "--enforce-eager", "--seed", "0",
@@ -527,20 +373,16 @@ _INSTANCE_GPU_COUNTS = {
 def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     """Return the tensor-parallel degree (>= 1) for `model` on the box that landed.
 
-    ``tp = gcd(num_attention_heads, gpu_count)``: the largest head-divisor that
-    also divides the landed GPU count, so every GPU the hunt paid for is used
-    where divisibility allows (a tp=1 spec idled 3 of 4 L40S on g6e.12xlarge).
+    Uses the largest attention-head divisor of the landed GPU count.
 
     Parameters
     ----------
     model : str
-        Model whose attention-head count is considered.
+        Model name.
     instance_type : str
-        Landed EC2 instance type whose GPU count is considered.
+        Landed instance type.
     spec : Dict[str, Any]
-        Deploy spec; its ``"tp"`` is the fallback when `model` is absent from
-        ``MODEL_ATTENTION_HEADS`` or `instance_type` from
-        ``_INSTANCE_GPU_COUNTS``.
+        Deploy spec; ``"tp"`` is the fallback for unknown mappings.
 
     Returns
     -------
@@ -609,22 +451,19 @@ EC2_REQUIRE_GPU: str = os.getenv("EC2_REQUIRE_GPU", "")
 def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
     """Check that the landed box's GPU matches ``EC2_REQUIRE_GPU``.
 
-    Runs BEFORE the container swap, so a mismatched box never generates a
-    single row. No-ops when the pin is unset (the default).
+    Runs before swapping so mismatched hardware produces no rows.
 
     Parameters
     ----------
     state : Dict[str, Any]
-        Saved instance state.
+        Saved state.
     model : str
-        Model being served.
+        Model name.
 
     Raises
     ------
     RuntimeError
-        The pin is set and the landed instance type is either absent from this
-        module's GPU tables (unknown hardware is reported, never treated as a
-        match) or names silicon that does not match the pin.
+        Pin mismatch or unknown landed hardware.
     """
     if not EC2_REQUIRE_GPU:
         return
@@ -673,17 +512,14 @@ def _fetch_vllm_version(ip: str, vllm_api_key: str) -> Optional[str]:
 def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
     """Return the raw Prometheus line(s) mentioning ``cache_config_info``, or None.
 
-    The labels carry ``num_gpu_blocks`` / ``gpu_memory_utilization`` /
-    ``block_size``, and stay deliberately UNPARSED: the label set drifts across
-    vLLM builds, so the raw line survives where a parsed dict would not. None
-    on no match or any request failure.
+    Raw lines survive changing vLLM metric labels.
 
     Parameters
     ----------
     ip : str
-        VLLM server IP address.
+        vLLM server IP.
     vllm_api_key : str
-        Bearer token for vLLM requests.
+        vLLM bearer token.
 
     Returns
     -------
@@ -712,21 +548,17 @@ def _fetch_agent_fingerprint(
 ) -> Tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
     """Return (``/status``'s ``"fingerprint"``, attention-backend log lines).
 
-    Best-effort: either element degrades to None on failure, and ``_agent`` is
-    called with ``connect_retries=0`` because this is a snapshot, not a wait
-    loop. The backend lines are mined from ``/status``'s ``log_tail`` (the
-    container's last ~300 lines; they appear in no metrics endpoint), a moving
-    window -- call ``server_config`` right after serve or they may have gone.
+    Best-effort probes use no retries; backend logs are a moving ``log_tail`` window.
 
     Parameters
     ----------
     state : Dict[str, Any]
-        Saved instance state for the control-agent request.
+        State for the control-agent request.
 
     Returns
     -------
     Tuple[Optional[Dict[str, Any]], Optional[List[str]]]
-        Agent fingerprint and attention-backend log lines, each possibly None.
+        Fingerprint and backend logs, each possibly None.
     """
     try:
         status = _agent(
@@ -749,48 +581,22 @@ def _fetch_agent_fingerprint(
 def server_config(model: str) -> Optional[Dict[str, Any]]:
     """Return a serving-stack snapshot for `model`, for result provenance.
 
-    Stamped onto every stored replicate (``Marks.server_config`` via
-    ``ReplicateHarness.run_replicates``) and written as a deduction run's
-    ``server_config.yaml`` sidecar. Reads the state file at call time, so call
-    it INSIDE the ``serve_model`` block.
+    Read state inside ``serve_model`` so provenance matches the serving box.
 
     Parameters
     ----------
     model : str
-        Model whose serving configuration is captured.
+        Model name.
 
     Returns
     -------
     Optional[Dict[str, Any]]
-        None only when the state-file read itself raised; otherwise every key
-        is present (None for unknown/unreachable pieces), so readers always
-        see the full schema. Four groups:
-
-        - From state/spec, no network: ``gpu`` comes from a static per-type
-          table, NOT an nvidia-smi observation; ``vllm_image`` is the
-          CONFIGURED ``EC2_VLLM_IMAGE``, possibly a mutable tag;
-          ``hf_model_id`` is the spec's pin, not necessarily what is loaded.
-        - From ``state["last_serve"]`` (the argv actually POSTed):
-          ``vllm_args``, ``max_model_len``, ``served_at`` (UTC ISO-8601), all
-          None unless ``last_serve["model"] == model``, so a previous swap on
-          the same box is never misattributed.
-        - Live probes (read-only GETs bounded by
-          ``_SERVER_CONFIG_PROBE_TIMEOUT_S``), None on any failure including
-          "no box": ``vllm_version``, ``vllm_cache_config`` (raw unparsed
-          ``cache_config_info`` Prometheus lines), ``attention_backend_log``,
-          ``vllm_image_digest``, ``agent_fingerprint``
-          (``payloads/agent.py.txt``'s ``fingerprint()``: ``nvidia_smi`` is an
-          OBSERVATION, unlike the static ``gpu``; ``hf_snapshots`` = resolved
-          revision dirnames on disk; ``weights_digest`` = sha256 of the
-          safetensors index plus per-file sizes, NOT a full weights read).
-        - Client-side env reads, populated even with no box:
-          ``max_parallel_requests`` (``EC2_MAX_PARALLEL_REQUESTS``, default 8)
-          and ``stream`` (``EC2_STREAM_COMPLETIONS``), each individually
-          guarded so one malformed value degrades only itself.
+        Full schema; None for unavailable fields. ``gpu``, ``vllm_image`` and
+        ``hf_model_id`` are configured values, not observations.
 
     Notes
     -----
-    NEVER raises: provenance is a passenger and must not crash a lane.
+    Never raises because provenance must not crash a lane.
     """
     try:
         state = _load_state() or {}
@@ -915,15 +721,12 @@ def _load_state() -> Optional[Dict[str, Any]]:
 def _save_state(state: Dict[str, Any]) -> None:
     """Write the state file, owner-only from the moment it is created.
 
-    It holds the control token and the vLLM api key, so the mode rides on
-    ``os.open`` rather than a write-then-``chmod``, which would leave the
-    secrets readable at the process umask for the window in between. The
-    ``fchmod`` re-asserts it on a file some earlier version left looser.
+    ``os.open`` prevents a write-before-chmod window for stored secrets.
 
     Parameters
     ----------
     state : Dict[str, Any]
-        Instance identity and secrets to persist.
+        Instance state and secrets.
     """
     path = _state_path()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -938,11 +741,8 @@ def _clear_state(instance_id: Optional[str] = None) -> None:
     Parameters
     ----------
     instance_id : Optional[str]
-        The instance being torn down; when the file names a DIFFERENT one (a
-        second run for the same experiment tag provisioned a fresh box
-        mid-teardown) it is left alone, since deleting it strands a live,
-        billing GPU box with no driver and no local record. None deletes
-        unconditionally, for callers with no instance in hand.
+        Instance being torn down; a different recorded id is left alone so a
+        live, billing box is not stranded. None clears unconditionally.
     """
     try:
         if instance_id is not None:
@@ -974,9 +774,7 @@ def _require_state() -> Dict[str, Any]:
 def _base_url() -> str:
     """Return the OpenAI-compatible base URL, resolved at call time.
 
-    It cannot be an import-time constant: the instance's IP does not exist
-    until provisioning. ``EC2_INFERENCE_BASE_URL`` overrides the state file
-    (for tests or externally managed servers).
+    The IP exists only after provisioning; environment override wins.
     """
     override = os.getenv("EC2_INFERENCE_BASE_URL")
     if override:
@@ -1000,13 +798,12 @@ def _api_key() -> str:
 def get_model_context_length(model: str) -> int:
     """Return the served context window: the spec's ``max_model_len``.
 
-    That is exactly what vLLM was launched with, so it doubles as the soft
-    post-hoc token guard. Specless models fall back to ``EC2_CONTEXT_LENGTH``.
+    Specless models use ``EC2_CONTEXT_LENGTH``.
 
     Parameters
     ----------
     model : str
-        Model whose deployment spec is consulted.
+        Model name.
 
     Returns
     -------
@@ -1022,15 +819,10 @@ def get_model_context_length(model: str) -> int:
 def list_models(model: str = "") -> List[str]:
     """Return the ``data[].id`` values from vLLM's ``GET /v1/models``.
 
-    Normally a single-element list: this instance serves exactly one model at
-    a time, whichever ``serve_model`` last swapped in.
-
     Parameters
     ----------
     model : str
-        Accepted and IGNORED; it exists only for signature parity with
-        ``smolbench.evals.providers.aws.list_models`` so
-        ``smolbench.evals.provider`` can dispatch uniformly.
+        Ignored for provider-dispatch signature parity.
 
     Returns
     -------

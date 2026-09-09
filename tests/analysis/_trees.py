@@ -1,17 +1,7 @@
-"""Synthetic result trees for the ``notebooks/induction/analysis/`` report scripts.
+"""Synthetic result trees for analysis-report tests.
 
-Not a ``conftest.py``: tests/ has no ``__init__.py``, so pytest would import a
-second conftest.py here under the bare module name ``conftest`` and collide
-with the ``from conftest import StubTokenizer`` that tests/evals/ and
-tests/induction/ rely on. Fixtures are imported into each analysis test
-module's namespace instead.
-
-Each analysis script walks a real replicate tree and exits on any missing
-cell, so these fixtures build one under ``tmp_path`` and load each module by
-path with ``RESULTS_DIR`` repointed at it. Depth controls whether the
-seed-level sign-flip test can resolve anything: its floor ``2 / 2**S`` must
-clear Holm's loosest threshold, ``0.05 / 210 = 2.381e-4``, over the
-210-contrast family (see ``SHALLOW_DEPTH`` / ``DEEP_DEPTH`` below).
+Not ``conftest.py``: pytest would collide with the bare ``conftest`` module.
+Depth controls whether ``2 / 2**S`` clears Holm's ``0.05 / 210`` threshold.
 """
 
 import hashlib
@@ -37,19 +27,12 @@ SHALLOW_DEPTH = 6
 #: 2/2**16 = 3.05e-5 < 0.05/210 = 2.381e-4: the normal path is reachable.
 DEEP_DEPTH = 16
 
-#: Marks per replicate; must equal ``power_analysis.N_HARMONICS`` or
-#: ``paired_analysis.load_marks`` skips every replicate as partially written.
+#: Must match ``power_analysis.N_HARMONICS`` or marks are treated as partial.
 N_HARMONICS = 9
 
 
 def _marks_for(rate: float, noncompliance: float, mode: str, rng: np.random.Generator) -> Marks:
-    """Build one replicate: `N_HARMONICS` marks at accuracy `rate`.
-
-    `noncompliance` is the share of marks carrying the violation label `mode`
-    instead of `COMPLIANT`, drawn independently of the score so a lane can be
-    well-formed and wrong, or malformed and right by luck -- the two axes the
-    census and contrast machinery keep separate.
-    """
+    """Build one replicate with independent score and compliance axes."""
     scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
     bad = rng.random(N_HARMONICS) < noncompliance
     return Marks(
@@ -70,15 +53,7 @@ def build_tree(
     profile: Callable[[str, str], tuple[float, float | Callable[[int], float], str, Sequence[int]]],
     copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> None:
-    """Write a full ``{model}_{info}/rep_{seed}.yaml`` tree under `root`.
-
-    profile: ``(model, info) -> (rate, noncompliance, mode, seeds)``. `seeds`
-        can be shallower for one cell than its neighbours, to exercise the
-        mismatched-seed-set case; `noncompliance` can vary by seed, so a
-        whole-cell rate can disagree with the common-seed rate.
-    copies: ``(model, info) -> (model, info)`` pairs to byte-copy after
-        `profile` runs, for engineering an exact tie between two arms.
-    """
+    """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root`."""
     for model in models:
         for info in infos:
             rate, noncompliance, mode, seeds = profile(model, info)
@@ -87,9 +62,7 @@ def build_tree(
             cdir = root / f"{model}_{info}"
             cdir.mkdir(parents=True, exist_ok=True)
             for seed in seeds:
-                # Keyed by a stable digest, not hash() (PYTHONHASHSEED
-                # randomizes that per process), so the tree is byte-identical
-                # across runs and machines and a report assertion can't flake.
+                # Avoid randomized hash() so report assertions are reproducible.
                 digest = hashlib.blake2b(
                     f"{model}/{info}/{seed}".encode(), digest_size=4
                 ).digest()
@@ -171,6 +144,12 @@ def power_analysis() -> ModuleType:
 
 
 @pytest.fixture(scope="session")
+def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
+    """The standalone Monte Carlo module."""
+    return load_analysis("multiplicity_sim")
+
+
+@pytest.fixture(scope="session")
 def paired_analysis(power_analysis: ModuleType) -> ModuleType:
     """The paired re-analysis module (imports ``power_analysis``)."""
     return load_analysis("paired_analysis")
@@ -190,11 +169,9 @@ def extens_vs_noise(significance_report: ModuleType) -> ModuleType:
 
 @pytest.fixture
 def repoint(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
-    """Return a callable repointing every loaded analysis module at `root`.
+    """Return a callable that repoints every loaded analysis module.
 
-    ``RESULTS_DIR`` is imported by value into each sibling (``from
-    power_analysis import RESULTS_DIR``), so patching the owner alone leaves
-    the importers reading the real tree.
+    Siblings import ``RESULTS_DIR`` by value.
     """
 
     def _repoint(root: Path) -> None:

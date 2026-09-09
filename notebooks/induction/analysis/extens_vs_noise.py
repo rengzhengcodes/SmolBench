@@ -1,21 +1,10 @@
-"""Focused test: extensional vs noise-padded intensional, one contrast per model.
+"""Compare extensional and noise-padded intensional prompts per model.
 
-Both arms are token-matched in length (`noise_intens` is whitespace-padded to the same count
-under the model's own tokenizer), isolating whether the tokens carry information from whether
-they are merely long. Whitespace padding breaks the output contract in some models, so lanes
-are bucketed by measured non-compliance: INFORMATION (both arms well-formed, enumerated
-evidence really is harder to induce at equal length), COLLAPSE (noise arm broken, so
-extens > noise is forced, not evidence about information), or "extens degraded" -- no lane
-is classified by default.
-
-PRIMARY p is the exact seed-level sign-flip test: the 30 seeds are the independent unit, since
-item-level McNemar (kept as a descriptive column) would treat each seed's 9 harmonic items,
-which share one answer vector, as independent too. These 21 contrasts stay inside the
-pre-registered m=210 family; re-correcting at m=21 after picking the subset would be
+Token matching separates information from length; non-compliance identifies broken controls.
+Seed-level tests: the 30 seeds are the independent unit; item-level McNemar would treat each
+seed's 9 harmonic items, which share one answer vector, as independent. They stay in the
+210-contrast family because re-correcting at m=21 after picking the subset would be
 data-dependent family sizing.
-
-Run:
-    .venv/bin/python notebooks/induction/analysis/extens_vs_noise.py
 """
 
 import sys
@@ -25,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 
-# ALPHA comes from the module that owns it, not a local redeclaration.
+# Import the owned threshold to avoid a divergent local value.
 from power_analysis import ALPHA, MODELS  # noqa: E402
 from paired_analysis import (  # noqa: E402
     aligned,
@@ -54,12 +43,9 @@ def mechanism(nc_e: float, nc_n: float) -> str:
 
 
 def direction(acc_e: float, acc_n: float) -> str:
-    """Label which arm scored higher, with an explicit branch for an exact tie.
+    """Label the higher-scoring arm or an exact tie.
 
-    An exact tie is reachable, not a rounding artifact: both arms score the same matched items
-    (`paired_analysis.aligned` intersects seeds first), so item-for-item agreement is exact. A
-    two-way `>` branch would silently award every tie to `extens`, disagreeing with the RAW
-    DIRECTION block below, which counts ties as their own category.
+    Ties need their own branch so tallies do not award them to ``extens``.
 
     Parameters
     ----------
@@ -81,22 +67,18 @@ def direction(acc_e: float, acc_n: float) -> str:
 
 
 def main() -> None:
-    """Run the extens-vs-noise focused test and print the report.
+    """Print the extens-versus-noise report.
 
-    Every direction label and tally below is three-way (noise-higher / extens-higher / tied),
-    via `direction`, so per-lane labels, per-bucket tallies and the raw-direction block never
-    disagree about a given lane.
+    Three-way direction labels keep lane and aggregate tallies consistent.
     """
     correct, valid, compliance = load_marks()
     census = compliance_census(compliance)
 
     def nc(key: tuple[str, str]) -> float:
-        # Indexed, not `.get`: `aligned` above already exits on a cell with no marks.
+        # Missing cells already fail alignment.
         return census[key]["rate"]
 
-    # Computed once over the full m=210 family, not recomputed for these 21: signflip_exact_p
-    # is an exact randomization test, so the 210-pass already has every number the 21-row table
-    # needs. Only scalars are kept, not the `aligned` arrays, since the table prints summaries.
+    # Keep the full family: the displayed subset is selected after measurement.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
         a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
@@ -116,13 +98,10 @@ def main() -> None:
     rows = []
     for model in MODELS:
         ka, kb = (model, "extens"), (model, "noise_intens")
-        # Arm order here (extens, noise_intens) matches build_primary_contrasts, so the family
-        # pass's acc_a/acc_b are already this table's acc_e/acc_n.
+        # Contrast order matches the table's extens/noise columns.
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        # cmh_unpaired_p isn't part of the family pass (which computes only the two Holm
-        # p-values), so it's computed here as a descriptive column, needing the item-matched
-        # arrays back via `aligned`.
+        # This descriptive column needs the aligned arrays.
         a, b, sidx = aligned(correct, valid, ka, kb, drop_invalid=False)
         rows.append(dict(
             model=model, acc_e=fr["acc_a"], acc_n=fr["acc_b"], n=fr["n"],
@@ -195,7 +174,6 @@ def main() -> None:
         print(f"  {r['model']:13s} {r['acc_e']:.3f} vs {r['acc_n']:.3f}   "
               f"{d:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}")
 
-    # ---- the two mechanisms, separated, with nothing dropped ---------------
     print(f"\n{'=' * 78}\nTHE TWO MECHANISMS\n{'=' * 78}")
     for mech, title, gloss in (
         ("information",
@@ -232,15 +210,13 @@ def main() -> None:
                   f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   "
                   f"p={r['p_cluster']:.2e}")
         if sel_sig:
-            # `down` is an explicit `<`, not `len(sel_sig) - up`: that subtraction would fold
-            # every tie into extens-higher, disagreeing with `direction` and the raw tally below.
+            # Explicit comparison keeps ties out of extens-higher.
             up = sum(1 for r in sel_sig if r["acc_n"] > r["acc_e"])
             down = sum(1 for r in sel_sig if r["acc_n"] < r["acc_e"])
             print(f"  => direction among the significant ones: {up} "
                   f"noise-higher, {down} extens-higher, "
                   f"{len(sel_sig) - up - down} tied.")
 
-    # ---- the raw direction, unfiltered, because filtering is the hazard ----
     up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])
     down_all = sum(1 for r in rows if r["acc_n"] < r["acc_e"])
     coll = [r for r in rows if r["mech"] == "COLLAPSE"]
