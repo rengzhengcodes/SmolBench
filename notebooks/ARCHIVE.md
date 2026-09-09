@@ -26,9 +26,9 @@ A run in the live log is retired, never edited or deleted in place. On S3,
 `.superseded`, `S3_SUPERSEDED_SUFFIX`) and every reader skips a marked
 `run_ts` before applying earliest-wins; locally `LocalResultsStore.supersede`
 renames `rep_<seed>.yaml` to `rep_<seed>.SUPERSEDED-<run_ts>.yaml`
-(`LOCAL_SUPERSEDED_INFIX`). `scripts/results/regrade.py` goes through
-`ResultsStore.regrade`: supersede every surviving run at an address, then
-append the replacement with `regraded_from` naming the run it replaced.
+(`LOCAL_SUPERSEDED_INFIX`). `ResultsStore.regrade` supersedes every surviving
+run at an address, then appends the replacement with `regraded_from` naming
+the run it replaced.
 
 Tests that pin archived evidence stream it from S3, never a local copy:
 
