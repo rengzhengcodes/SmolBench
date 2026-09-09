@@ -64,7 +64,9 @@ def results_root() -> Path:
 def _default_verifier() -> Any:
     """Import `.verify` lazily; it requires `lean_interact`.
 
-    Fakes and `NullVerifier` supply its verification protocol in tests and generation-only sweeps.
+    Substitutes must provide `open_at_step`, `try_tail`, `replay_ground_truth`,
+    `verify_proof_tail`, and `ProofResult`; tests use `FakeVerifier` and generation-only
+    sweeps use `NullVerifier`.
     """
     from smolbench.deduction.lean import verify
     return verify
@@ -736,9 +738,11 @@ VERDICTS: dict[str, tuple[str, bool, bool]] = {
     "lean_error":   ("✘",   True,           False),
     "incomplete":   ("·",   True,           False),
     "given_up":     ("?",   True,           False),
+    # Distinct glyph: incomplete/given-up answered, while no_answer answered nothing.
     "no_answer":    ("∅",   False,          False),
     "replay_failed": ("!",  True,           True),
     "exception":    ("X",   False,          True),
+    # Generation-only sweeps: cells awaiting deferred verification.
     "unverified":   ("~",   False,          False),
     "skipped":      ("-",   False,          False),
 }
@@ -1368,9 +1372,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     """Run a configured sweep and write per-theorem output.
 
     One REPL serves each (theorem, k); another replays ground truth for its
-    sanity gate. Whitelists generate only listed cells, dropping theoremless
-    entries before their sanity gate, and fail after writing artifacts if
-    unreachable because `run_study.py` manifests their exact hash. Record
+    sanity gate. Whitelists generate only listed cells; a theorem owning none
+    is dropped before its sanity gate. Unreachable keys fail after artifacts
+    are written because `run_study.py` manifests their exact hash. Record
     `traced_root_present`: a cached traced checkout outside results changes
     `skip_trivial` output and triggers a warning when absent.
 

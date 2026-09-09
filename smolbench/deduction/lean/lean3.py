@@ -1,6 +1,7 @@
 """Detect parse-level Lean 3 syntax relics in generated Lean 4 proofs.
 
-Bracket depth spans lines so nested-term commas are not flagged; strings are scanned too.
+Bracket depth spans lines so nested-term commas are not flagged; strings are
+scanned too. An unclosed opener can suppress a later trailing-comma flag.
 """
 
 from __future__ import annotations

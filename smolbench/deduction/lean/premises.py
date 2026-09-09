@@ -17,7 +17,11 @@ from .corpus import data_root, metadata
 
 @dataclass(frozen=True)
 class Premise:
-    """A declaration in the traced repository."""
+    """A declaration in the traced repository.
+
+    ``full_name`` is the join key from lighter ``corpus.TracedTactic.premises``
+    records to `lookup`, which `context.py` uses to resolve them.
+    """
 
     #: Fully-qualified declaration name.
     full_name: str

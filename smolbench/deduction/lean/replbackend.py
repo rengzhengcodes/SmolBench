@@ -594,7 +594,8 @@ class ReplSession:
 
 #: Retry concurrent-start build-cache races; reopening usually succeeds within seconds.
 _REPL_OPEN_RETRIES = 3
-#: Two delays serve three attempts; the final attempt raises.
+#: One entry per SLEEP, i.e. ``_REPL_OPEN_RETRIES - 1``; the final attempt raises
+#: instead of sleeping.
 _REPL_OPEN_BACKOFF_S = (5.0, 15.0)
 
 

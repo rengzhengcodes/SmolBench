@@ -15,7 +15,10 @@ from .corpus import BenchmarkTheorem
 
 @dataclass(frozen=True)
 class NullReplayResult:
-    """Unattempted ground-truth replay, mirroring `verify.ReplayResult` for `runner`."""
+    """Unattempted replay mirroring `verify.ReplayResult` field-for-field.
+
+    Fields have the same names in the same order so `runner` can construct them positionally.
+    """
 
     theorem: str
     #: Always ``"skipped"``: replay was not attempted.

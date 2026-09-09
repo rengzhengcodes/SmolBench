@@ -731,6 +731,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_split_args(p_filter)
     p_filter.add_argument("--limit", type=int, default=0, help="cap number of theorems (0 = no cap)")
     # Filter uses 300, not 600: hundreds of stalled replays magnify worst-case runtime.
+    # See `test_dojo_timeout_has_one_default_across_all_three_entry_points`.
     p_filter.add_argument("--timeout", type=int, default=300)
     p_filter.add_argument("--fresh", action="store_true", help="delete existing JSONL and start over")
     p_filter.set_defaults(func=cmd_filter)

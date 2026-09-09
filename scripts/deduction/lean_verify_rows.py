@@ -1,8 +1,10 @@
 """Verify recorded Lean rows in a deferred pass.
-Phase 1 (``run_study.py``/``runner`` with ``NullVerifier``) records ``"unverified"``/``"skipped"`` rows; replay ``all_rows.jsonl`` into sibling ``verified_rows.jsonl``.
-Generation needs a provider API; verification needs ``elan`` and traced mathlib.
-Never alter ``all_rows.jsonl``: a verification bug must not lose paid proofs.
-Lazy ``lean_interact`` and boto imports keep ``--dry-run`` dependency-free.
+
+Phase 1 (``run_study.py``/``runner`` with ``NullVerifier``) records
+``"unverified"``/``"skipped"`` rows; replay ``all_rows.jsonl`` into sibling
+``verified_rows.jsonl``. Generation needs a provider API; verification needs
+``elan`` and traced mathlib. Never alter ``all_rows.jsonl``: a verification bug
+must not lose paid proofs. Lazy Lean/boto imports keep ``--dry-run`` dependency-free.
 """
 
 from __future__ import annotations
@@ -136,7 +138,8 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
 def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, Any]) -> None:
     """Apply one verification `result` to every row in `indices`, in place.
 
-    ``result`` must contain the four verification fields; preserve all others.
+    ``result`` must contain ``verdict``, ``lean_error``, ``final_state_pp``, and
+    ``verify_ms``; preserve all other fields.
 
     Parameters
     ----------
@@ -580,6 +583,7 @@ def _dojo_cache_lock() -> Iterator[None]:
     """Hold an exclusive non-blocking flock on `_LOCK_FILENAME` in `DOJO_CACHE_DIR`.
 
     Hold it for all runs: concurrent passes race on the shared build cache.
+    Raise `SystemExit`, naming the lock file, if another process holds it.
     """
     DOJO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = DOJO_CACHE_DIR / _LOCK_FILENAME
@@ -1008,8 +1012,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     """Verify every matching run under ``--s3-prefix``.
 
-    Otherwise require Lean/root, check RAM, lock the cache, then list and verify
-    runs; ``--dry-run`` skips the first three.
+    Outside ``--dry-run``, require Lean/root before listing runs, then check RAM
+    and hold the cache lock while verifying. Dry runs list and verify without these gates.
 
     Parameters
     ----------
@@ -1043,7 +1047,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     def _verify_every_run() -> int:
-        """Verify each run without aborting later lanes after one failure (for example, lane 3)."""
+        """Isolate failures so a pass does not abort on lane 3 and leave later lanes unchecked."""
         n_failed = 0
         for run in runs:
             try:

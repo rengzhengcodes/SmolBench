@@ -40,7 +40,8 @@ SPLIT_RULE = (
 def validate_export(export: Path) -> list[str]:
     """Validate a LeanDojo-v2 export.
 
-    Missing individual splits are empty; no splits means no theorems.
+    A missing individual split is not an error because v2 exports omit empty
+    splits; zero split files means no theorems to build from.
 
     Parameters
     ----------

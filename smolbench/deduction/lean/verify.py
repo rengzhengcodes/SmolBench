@@ -37,7 +37,8 @@ from .corpus import BenchmarkTheorem
 # Lean rejection are distinct study failures. Warnings do not count as errors.
 # `success` closes goals, `incomplete` leaves one, and `given_up` leaves `sorry`.
 # `exception` is a Python or REPL failure rather than a Lean verdict.
-# `replay_failed` keeps a broken ground-truth prefix distinct from a bad tail.
+# `replay_failed` means `open_at_step` failed to replay tactics 0..k-1 into an
+# open goal, keeping a broken ground-truth prefix distinct from a bad tail.
 Verdict = Literal[
     "success", "lean_error", "incomplete", "given_up", "no_answer", "exception", "replay_failed",
 ]
@@ -54,7 +55,8 @@ class ReplayResult:
     theorem: str
     #: Ground-truth verdict; never ``"replay_failed"`` or ``"no_answer"``.
     verdict: Verdict
-    #: Tactics applied before the verdict.
+    #: Tactics applied before the verdict; equals ``tactics_total`` for
+    #: ``"success"``/``"incomplete"`` and is less for ``"lean_error"``/``"given_up"``.
     tactics_applied: int
     #: Recorded tactic count; 0 without a proof.
     tactics_total: int
@@ -145,7 +147,9 @@ class ProofResult:
     verdict: Verdict
     #: Attempted tail, retained for result rows.
     tail_tried: str
-    #: Failure message, if any.
+    #: Lean's step-prefixed error (``"lean_error"``), prefix-replay message
+    #: (``"replay_failed"``), ``f"{type(exc).__name__}: {exc}"`` (``"exception"``),
+    #: or a fixed empty-tail message (``"no_answer"``); otherwise None.
     error: str | None = None
     #: Final goals for ``"incomplete"``.
     final_state_pp: str | None = None

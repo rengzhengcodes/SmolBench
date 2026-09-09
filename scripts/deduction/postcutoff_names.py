@@ -293,6 +293,8 @@ def _alias_targets(text: str, prefix: str) -> tuple[str, ...]:
     """Resolve candidate full names for an ``alias`` target.
 
     Emit bare and qualified forms because scanning cannot resolve Lean names.
+    A multi-line alias with ``:=`` on a later line returns ``()``, so deprecation
+    excludes its own name but not its target.
 
     Parameters
     ----------
@@ -350,9 +352,13 @@ def _alias_names(text: str) -> tuple[list[str], str]:
 def scan_lean_text(text: str, file_path: str) -> list[Decl]:
     """Scan top-level declarations from one ``.lean`` file without I/O.
 
-    Only column-0 declarations after modifiers or ``open ... in`` are recognized to avoid nested terms, even if indented top-level declarations are missed.
+    Only column-0 declarations after modifiers or ``open ... in`` are recognized
+    to avoid nested terms, even if indented top-level declarations are missed.
     Private declarations are excluded because mangled names cannot match across trees.
     A pending attribute survives skipped declarations; over-marking deprecated is conservative.
+    ``namespace``/``section``/``end`` share one unmatched scope stack, so an
+    unbalanced file silently drifts, giving later names wrong prefixes and therefore
+    wrong post-cutoff verdicts.
 
     Parameters
     ----------

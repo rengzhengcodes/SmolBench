@@ -179,7 +179,8 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
-    Exact suffix matching avoids silently ungated citations.
+    Exact suffix matching is a hard rule, not a heuristic; a miss costs only
+    one citation going ungated.
 
     Parameters
     ----------

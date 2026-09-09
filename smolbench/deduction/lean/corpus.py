@@ -52,7 +52,9 @@ class TracedTactic:
     state_before: str
     #: State after the tactic.
     state_after: str
-    #: Referenced premise records; empty when none.
+    #: Referenced ``{full_name, def_path, def_pos, def_end_pos}`` records, lighter than
+    #: ``premises.Premise`` because they omit ``code``/``kind``; ``full_name`` is the
+    #: join key to ``premises.lookup``. Empty when none.
     premises: list[dict]
 
 
@@ -212,7 +214,9 @@ def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
 
 
 def metadata() -> dict:
-    """Load top-level ``metadata.json``."""
+    """Load ``metadata.json`` keys ``dataset_name``, ``creation_time``, ``from_repo``
+    (``{url, commit}``), and ``leandojo_version``; raise `FileNotFoundError` if absent.
+    """
     path = data_root() / "metadata.json"
     if not path.exists():
         raise FileNotFoundError(

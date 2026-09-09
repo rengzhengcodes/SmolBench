@@ -37,7 +37,10 @@ def fetch_manifests(s3: Any, *, run_prefix: str) -> dict[str, dict]:
 def fetch_spool_index(
     s3: Any, *, run_prefix: str
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
-    """List lane output keys and prompt ETags; ETags avoid downloading ~19 MB × 21.
+    """List lane output keys and prompt ETags.
+
+    Small single-part uploads make ETags the object's MD5, so comparison checks byte
+    equality without downloading ~19 MB × 21.
 
     Parameters
     ----------
@@ -99,7 +102,11 @@ def divergent_prompt_cells(
 def reproduce_pin(
     val_json: Path, replay_jsonl: Path, *, limit: int, seed: int
 ) -> tuple[list[str], int]:
-    """Re-derive a pin in split order because seeded sampling is order-sensitive.
+    """Mirror `runner._select_theorems`: retain replay-passing theorems in split order,
+    then use ``random.Random(seed).sample`` only when ``0 < limit < len(pool)``.
+
+    Otherwise retain the whole pool; split order is required because sampling is
+    order-sensitive.
 
     Parameters
     ----------
