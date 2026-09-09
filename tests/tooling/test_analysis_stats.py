@@ -15,7 +15,7 @@ import pytest
 from tests._paths import NOTEBOOKS, load_by_path
 
 def _load(name: str, rel: str) -> ModuleType:
-    mod = load_by_path(name, NOTEBOOKS / rel)
+    mod = load_by_path(NOTEBOOKS / rel, name)
     sys.modules[Path(rel).stem] = mod  # siblings import each other by bare name
     return mod
 

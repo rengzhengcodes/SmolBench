@@ -19,6 +19,7 @@ import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from smolbench.evals.results_store import S3ResultsStore, resolve_results_location
+from smolbench.evals.spool import spool_prefix
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -67,9 +68,7 @@ def iter_deduction_lanes(local: bool) -> Iterable[Tuple[str, str]]:
             if rows.exists():
                 yield d.name, rows.read_text(errors="replace")
         return
-    from smolbench.deduction.lean import runner
-
-    deduction_prefix = runner.spool_prefix() + "/"
+    deduction_prefix = spool_prefix() + "/"
     # Deduction uses its own spool prefix.
     bucket, _base_prefix = resolve_results_location()
     s3 = _s3()

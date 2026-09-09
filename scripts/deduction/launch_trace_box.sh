@@ -68,11 +68,20 @@ RUNBOOK="$HERE/trace_mathlib_ec2.sh"
 # --------------------------------------------------------------------------
 DRY_RUN=0
 FORCE=0
+usage() {
+    cat <<'EOF'
+Launch the mathlib trace EC2 box.
+
+Usage: scripts/deduction/launch_trace_box.sh [--dry-run] [--force]
+  --dry-run  Print the launch plan without starting an instance.
+  --force    Launch even when a matching pending/running instance exists.
+EOF
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
         --force)   FORCE=1; shift ;;
-        -h|--help) sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         *)         echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done

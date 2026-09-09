@@ -12,7 +12,7 @@ import pytest
 
 from tests._paths import SCRIPTS, load_by_path
 
-load_by_path("kv_budget", SCRIPTS / "arch" / "kv_budget.py")
+load_by_path(SCRIPTS / "arch" / "kv_budget.py", "kv_budget")
 
 from kv_budget import (  # noqa: E402
     kv_bytes, _is_shared_latent, _kv_layers, _layer_kv_shape, _layer_mix,

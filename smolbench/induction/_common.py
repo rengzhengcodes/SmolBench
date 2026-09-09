@@ -1,16 +1,7 @@
-"""Generation machinery behind the induction benchmark (periodic).
+"""Shared induction prompt and label-generation machinery.
 
-Kept separate from ``periodic.py`` so the calibration invariants live in one
-place: the noise-padding ablation is comparable across evals only when the
-noise profile is identical, and a seed must always map to the same label set.
-
-The noise pad is whitespace sized in TOKENS
-(:func:`~smolbench.evals.tokenization.token_matched_noise_prompt`) under the
-tokenizer of the model under test, verified to hit the target exactly --
-characters are the wrong unit, as a character-matched pad over-pads the
-control arm. The pad search itself and its unit table live in
-:mod:`smolbench.evals.tokenization`; this module holds ``Prompter``, the
-substitution merge, and the random label/string generators.
+Noise padding is token-matched under the tested model because character matching over-pads controls.
+Seeds deterministically select label sets.
 """
 
 import string
@@ -32,82 +23,54 @@ from ordered_set import OrderedSet
 from smolbench.evals import Answer, QnA, Quiz
 
 
-# range_free_template is exercised in production, unlike two now-deleted
-# fields it might resemble: run_study.py supplies it (`zero_template`), and
-# `periodic.get_periodic_prompts` raises when a condition needs it
-# (`omit_range=True`) and it is `None` -- no silent fallback to the
-# range-stating `template`, since that fallback is exactly the answer-leaking
-# prompt this field exists to avoid.
+# Missing range-free templates raise rather than leaking position ranges.
 @dataclass(frozen=True, slots=True)
 class Prompter:
-    """Bundle everything needed to prompt an LLM with a generated context.
+    """Bundle a generated-context prompt.
 
-    Placeholder contract: ``template`` MUST reference ``$positive_info`` (the
-    intensional, extensional or noise-padded context) plus every key
-    ``query_gen`` produces, and nothing else (see :func:`build_substitution`).
-    ``range_free_template``, when supplied, must hold to the same contract
-    minus any placeholder that states a position range (e.g. ``$seq_len``):
-    it is the question a range-omitting condition renders from instead of
-    ``template``. Rendering uses ``safe_substitute``, not ``substitute``, so a
-    literal ``$`` in quiz text does not raise mid-study -- but a misspelled
-    placeholder is silently left verbatim, so validate templates on a sample
-    query first.
+    Templates require ``$positive_info`` and query keys; range-free templates must omit range placeholders.
+    ``safe_substitute`` permits literal ``$`` but leaves misspelled placeholders verbatim.
     """
 
-    #: Prompt template. See the placeholder contract in the class docstring.
+    #: Prompt template.
     template: string.Template
-    #: (generated context mappings..., seed) -> iterable of
-    #: (substitution_dict, answer) pairs; the mapping arguments are
-    #: benchmark-specific (see each benchmark's built-in query generators).
+    #: Query generator yielding substitutions and answers.
     query_gen: Callable[..., Iterable[Tuple[Dict[str, str], Any]]]
-    #: Template for a condition that must not reveal the position range (see
-    #: ``periodic.py``'s ``RANGE_KEYS``). ``None`` is fine unless a condition
-    #: needs it, in which case generation raises rather than falling back to
-    #: ``template`` and shipping the leak silently.
+    #: Position-range-free template; required by range-omitting conditions.
     range_free_template: Optional[string.Template] = None
 
 
 @dataclass(frozen=True, slots=True)
 class RenderedQuery:
-    """One query's rendered prompt and token count, per information condition.
+    """Rendered prompts and token counts for one query.
 
-    Emitted by ``smolbench.induction.periodic.get_periodic_prompts``: one
-    ``RenderedQuery`` per underlying query. The counts are not a convenience
-    re-tokenization -- they are the same counts generation already computed
-    to build the prompts (every condition is tokenized during rendering, to
-    give a padded condition's target) -- so a caller sizing a completion
-    budget can read them off here instead of re-tokenizing every prompt.
+    Counts are generation-time values, avoiding inconsistent re-tokenization.
     """
 
-    #: condition name -> that condition's rendered prompt for this query.
+    #: Condition name to rendered prompt.
     prompts: Mapping[str, str]
-    #: condition name -> ``tokenizer.count(prompts[name])`` under the
-    #: tokenizer generation ran with. Same keys as `prompts`.
+    #: Condition name to generation-time token count.
     token_counts: Mapping[str, int]
-    #: This query's ground-truth answer -- identical across every condition,
-    #: since only the amount of positive information shown varies.
+    #: Ground-truth answer, shared across conditions.
     answer: Answer
 
 
 def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, str]:
-    """Merge a query's substitutions with the arm's ``positive_info`` context.
+    """Merge query substitutions with arm ``positive_info``.
 
-    The single merge point for all three renderings, so precedence is
-    uniform: `positive_info` wins any collision with `query`, since every arm
-    must control it -- a ``query_gen`` that emitted its own ``positive_info``
-    key would otherwise silently collapse the three arms into one.
+    ``positive_info`` wins collisions so arms cannot collapse into one.
 
     Parameters
     ----------
     query : Dict[str, str]
-        Query substitutions to merge.
+        Query substitutions.
     positive_info : str
-        Arm-specific positive-information context.
+        Arm context.
 
     Returns
     -------
     Dict[str, str]
-        A fresh dict, so callers may mutate it further.
+        Fresh merged substitutions.
     """
     return query | {"positive_info": positive_info}
 
@@ -117,25 +80,21 @@ def context_renderer(
     query: Dict[str, str],
     template: Optional[string.Template] = None,
 ) -> Callable[[str], str]:
-    """Build one query's deterministic ``context -> rendered prompt`` function.
-
-    :func:`~smolbench.evals.tokenization.token_matched_noise_prompt` needs
-    the rendering as a reusable callable. ``template`` defaults to
-    ``prompter.template``.
+    """Build a deterministic ``context -> prompt`` renderer.
 
     Parameters
     ----------
     prompter : Prompter
-        Prompter supplying the default template.
+        Prompter and default template.
     query : Dict[str, str]
-        Query substitutions for each rendering.
+        Query substitutions.
     template : Optional[string.Template], optional
-        Template to render.
+        Rendering template.
 
     Returns
     -------
     Callable[[str], str]
-        Function mapping context to a rendered prompt.
+        Context-to-prompt function.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -151,33 +110,30 @@ def random_unique_strings(
     rng: np.random.Generator,
     charset: Collection[str],
 ) -> OrderedSet[str]:
-    """Generate ``n`` unique random strings of length ``length`` over ``charset``.
+    """Generate ``n`` unique ``length``-character strings over ``charset``.
 
-    Samples integers in ``[0, base**length)`` without replacement and
-    base-expands each, so uniqueness is exact regardless of how densely the
-    space is sampled. ``charset`` must exclude any separator in use
-    downstream.
+    Sampling without replacement guarantees uniqueness.
 
     Parameters
     ----------
     n : int
-        Number of unique strings to generate.
+        Number of strings.
     length : int
-        Length of each generated string.
+        String length.
     rng : np.random.Generator
-        Random generator supplying samples.
+        Random generator.
     charset : Collection[str]
-        Characters from which to build strings.
+        Source characters; must exclude downstream separators.
 
     Returns
     -------
     OrderedSet[str]
-        Generated unique strings in draw order.
+        Unique strings in draw order.
 
     Raises
     ------
     ValueError
-        If ``length`` is too small a space for ``n`` unique strings.
+        Insufficient string space.
     """
     charset = tuple(charset)
     base: int = len(charset)
@@ -188,8 +144,7 @@ def random_unique_strings(
             f"insufficient length to generate {n} unique strings."
         )
     if base**length > np.iinfo(np.int64).max:
-        # rng.choice needs the population to fit in int64; raise our own
-        # message rather than an opaque numpy OverflowError.
+        # ``rng.choice`` requires an int64 population.
         raise ValueError(
             f"{base}**{length} exceeds the int64 sample space rng.choice "
             f"supports; reduce length (or count, which drives it)."
@@ -199,15 +154,12 @@ def random_unique_strings(
     for idx in range(length - 1, -1, -1):
         indices, digits[:, idx] = np.divmod(indices, base)
     charset_array: np.ndarray = np.asarray(charset)
-    # OrderedSet, not tuple: documents the uniqueness contract and keeps draw
-    # order (a plain set would de-determinize iteration).
+    # OrderedSet preserves unique draw order.
     return OrderedSet("".join(row) for row in charset_array[digits])
 
 
-# Multiplies the information-theoretic minimum label length
-# (ceil(log_base(count))) for auto-generated labels, giving headroom since
-# `random_unique_strings` has zero slack at exactly that minimum. Changing
-# this changes label length, and so prompt length, for every config at once.
+# Headroom above the unique-label minimum prevents a full sample space.
+# Changing this changes label length, and so prompt length, for every config.
 LABEL_LENGTH_SAFETY_FACTOR: int = 2
 
 
@@ -217,21 +169,18 @@ def random_labels(
     charset: Collection[str],
     min_length: int = 0,
 ) -> Tuple[str, ...]:
-    """Auto-generate ``count`` unique random labels for a benchmark config.
+    """Generate deterministic unique labels for a benchmark configuration.
 
-    Length is
-    ``max(min_length, ceil(log_{len(charset)}(count)) * LABEL_LENGTH_SAFETY_FACTOR)``.
-    A fresh ``np.random.default_rng(seed)`` feeds one
-    :func:`random_unique_strings` call, so a seed always yields the same set.
+    Label length includes safety headroom above the unique-label minimum.
 
     Parameters
     ----------
     count : int
-        Number of labels to generate.
+        Number of labels.
     seed : int
-        Seed for the random generator.
+        Random seed.
     charset : Collection[str]
-        Characters from which to build labels.
+        Label characters.
     min_length : int, optional
         Minimum label length.
 
@@ -240,8 +189,7 @@ def random_labels(
     Tuple[str, ...]
         Generated labels.
     """
-    # Floor of 1: at count=1, min_length=0 the information-theoretic minimum
-    # is 0 and the "label" would be the empty string.
+    # A one-label configuration must not generate an empty label.
     length: int = max(
         min_length,
         1,
@@ -257,27 +205,23 @@ def quizzes_from_prompts(
     qna_cls: type[QnA],
     conditions: Iterable[str],
 ) -> Dict[str, Quiz]:
-    """Wrap ``RenderedQuery`` instances into one ``Quiz`` per condition.
-    Raises ``ValueError``, naming it, if some ``RenderedQuery`` lacks one of
-    `conditions`'s names -- otherwise a missing arm would surface much later
-    as a confusing ``KeyError``.
+    """Wrap rendered queries into one ``Quiz`` per condition.
+
+    Raise early for missing conditions.
 
     Parameters
     ----------
     prompts : Iterable[RenderedQuery]
-        Rendered prompts to group by condition.
+        Rendered queries.
     qna_cls : type[QnA]
-        Question-and-answer class for each rendered prompt.
+        Question-and-answer class.
     conditions : Iterable[str]
-        Typed structurally (any string iterable) rather than as
-        ``periodic.CONDITIONS``'s key type, because importing ``periodic`` here
-        would be a cycle; passing the mapping directly still works since
-        iterating it yields its keys in the wanted order.
+        Condition names; structural typing avoids a ``periodic`` import cycle.
 
     Returns
     -------
     Dict[str, Quiz]
-        Quizzes keyed by condition name.
+        Quizzes by condition name.
     """
     condition_names = tuple(conditions)
     quizzes: Dict[str, list] = {name: [] for name in condition_names}

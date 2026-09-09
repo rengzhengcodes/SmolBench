@@ -1,4 +1,4 @@
-"""Offline tests for smolbench.deduction.lean.prompt (fence extraction + prompt assembly)."""
+"""Tests for Lean fence extraction and prompt assembly."""
 
 import pytest
 
@@ -23,33 +23,20 @@ _THINK_NOT_AT_START = "some preamble <think>not a leading tag</think> exact h"
         (_THINK_NOT_AT_START, _THINK_NOT_AT_START.strip()),
         ("<think></think>tac", "tac"),
         ("```lean\nrfl", "rfl"),  # unclosed fence: header line stripped, body kept
-        # A non-lean fence must not steal the match: fences pair by scanning
-        # lines, so a ```text/```python block is consumed whole and the
-        # following ```lean block is what comes back. Before this, text
-        # starting with a literal ```lean line could be sent to Lean as a
-        # tactic.
+        # Non-Lean fences must not steal the following Lean block.
         ("```text\nintro h\nsimp\n```\n\n```lean\nintro h\nsimp\n```",
          "intro h\nsimp"),
         ("```python\nprint(1)\n```\n\n```lean\nexact h\n```", "exact h"),
-        # A lean block followed by a non-lean one: the last lean-ish block
-        # wins, not merely the last block.
+        # The last Lean block wins, not merely the last block.
         ("```lean\nexact h\n```\n```text\nblah\n```", "exact h"),
-        # A trailing unclosed non-lean fence must not destroy the closed lean
-        # block before it: only closed blocks are candidates, and the
-        # dangling opener simply yields no block of its own.
+        # An unclosed non-Lean fence must not discard the preceding closed block.
         ("```lean\nexact h\n```\n```python\nnever closed", "exact h"),
-        # An empty lean block still counts as an answer (unchanged behaviour):
-        # the model answered, it answered with nothing.
+        # An empty Lean block is still an answer.
         ("```lean\n\n```", ""),
     ],
 )
 def test_extract_tactic_block(text: str, expected: str) -> None:
-    """Fence extraction, including the non-lean-fence cases.
-
-    A closing ``` line only ever closes the fence currently open, so a
-    non-lean block cannot make the extractor return a chunk beginning with a
-    literal "```lean" header line.
-    """
+    """A non-Lean fence cannot yield a literal ` ```lean` tactic header."""
     assert prompt.extract_tactic_block(text) == expected
 
 

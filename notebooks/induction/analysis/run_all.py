@@ -1,21 +1,15 @@
-"""Run the induction study's four analysis reports, then optionally multiplicity_sim.
+"""Run induction reports, optionally including multiplicity_sim.
 
-Order is fixed -- power_analysis -> paired_analysis -> significance_report ->
-extens_vs_noise -- because each later script import-time-checks invariants
-against the ones before it. Runs in process (not subprocess) so the chain is
-testable end to end and ``power_analysis.RESULTS_DIR`` resolves once for the
-whole run. ``multiplicity_sim`` is excluded by default (pass ``--with-sim``):
-it reads no replicate tree and its Monte Carlo run outlasts the rest of the
-chain combined.
-
-    .venv/bin/python notebooks/induction/analysis/run_all.py [--with-sim]
+Run in process so imports share one results directory. Exclude the costly,
+result-free simulation unless ``--with-sim`` is passed.
+CHAIN order is fixed: each later script import-time-checks invariants against the earlier ones.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-# Only __main__ gets its own directory on sys.path for free; needed for the sibling imports below.
+# Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import power_analysis  # noqa: E402  (path shim above must precede the import)
@@ -23,33 +17,31 @@ import paired_analysis  # noqa: E402
 import significance_report  # noqa: E402
 import extens_vs_noise  # noqa: E402
 
-# Imported at module scope, not lazily: the import itself is cheap (only defines functions and
-# constants), and calling multiplicity_sim.main() below then resolves through the same module
-# object a test's monkeypatch.setattr(sys.modules["multiplicity_sim"], "main", ...) mutates.
+# Keep this module-level import patchable in tests.
 import multiplicity_sim  # noqa: E402
 
-#: Module objects, not names, so `main` calls each directly and `_banner` reads its `__name__`.
+#: Modules permit direct calls and banner names.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
 
 
 def _banner(name: str) -> None:
-    """Print a delimited banner naming the script about to run."""
+    """Print a script banner."""
     rule = "=" * 78
     print(f"\n{rule}\n{name}\n{rule}", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the analysis chain in dependency order, printing a banner per script.
+    """Run analysis scripts in dependency order.
 
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments to parse.
+        Command-line arguments.
 
     Returns
     -------
     int
-        Always 0: each script's own `main()` raises rather than returning a failure code.
+        Success status; scripts raise on failure.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",

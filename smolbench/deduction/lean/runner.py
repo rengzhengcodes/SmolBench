@@ -1,20 +1,10 @@
-"""Run the eval loop: theorem × step k × context rung × N replicates.
+"""Run theorem × step × context-rung evaluation replicates.
 
-Two entry points, both used by `cli.py`: `run_cell` (one cell, own Lean REPL
-session) and `sweep` (YAML sweep, one REPL session per (theorem, k)).
-
-Generation goes through `ChatClient.complete` on a provider resolved per
-model entry (`_provider_for`), not `INFERENCE_PROVIDER`, so one sweep can mix
-providers. Shared config defaults: `seed` 0 (matches `theorems.seed` and
-`run_study.py`'s driver config, so an omitted key can't disagree with either
--- `run_cell`'s own `seed` parameter keeps its own default of 1776);
-`dojo_timeout` `DEFAULT_DOJO_TIMEOUT`; `request_timeout` 1800s (`ChatClient`'s
-120s default truncates long CoT mid-stream); `max_retries` 4, so a wedged
-endpoint can't spin forever inside an open REPL session.
-
-This module never verifies Lean proofs itself -- `.verify` does, lazily
-imported through `_default_verifier()` -- so a Lean toolchain is only needed
-when no fake verifier is passed in.
+Providers resolve per model so a sweep can mix them. `seed` defaults to 0 to
+match `theorems.seed` and `run_study.py`; `run_cell` keeps 1776. The 1800s
+request timeout prevents the client's 120s default from truncating long CoT,
+and four retries bound a wedged endpoint in an open REPL session. Verification
+is lazily imported so generation needs no Lean toolchain.
 """
 
 from __future__ import annotations
@@ -50,25 +40,20 @@ from .corpus import (
 )
 from .prompt import SYSTEM, build_user_prompt, extract_tactic_block
 
-# `lean3` imports eagerly: stdlib-only, and `write_run_analysis` always
-# needs it for the `l3` column, so there is no lazy-import seam to keep.
+# `write_run_analysis` always needs stdlib-only `lean3`, so no lazy seam exists.
 
-# No top-level `from .verify import ...`: `.verify` needs `lean_interact`,
-# not always installed. `_default_verifier` below is the lazy seam for it.
+# `.verify` needs optional `lean_interact`, so `_default_verifier` imports it lazily.
 
 
-#: Seconds for `run_cell`/`sweep`'s Lean REPL session (also `cli`'s
-#: `run-cell --timeout`). Not lower: a timeout is recorded as an
-#: `"exception"` verdict, so a tight budget would silently convert
-#: slow-but-real theorems into infrastructure failures.
+#: REPL seconds for `run_cell`, `sweep`, and `cli --timeout`; lower budgets
+#: would record slow real theorems as infrastructure `"exception"` verdicts.
 DEFAULT_DOJO_TIMEOUT: int = 600
 
 
 def results_root() -> Path:
-    """Root directory for sweep/run-cell output; may not exist yet.
+    """Return the output root, resolving `SMOLBENCH_LEAN_RESULTS` at call time.
 
-    ``SMOLBENCH_LEAN_RESULTS`` if set, else anchored to the installed package,
-    never cwd (mirrors `corpus.data_root`); read at call time.
+    Otherwise anchor to the installed package, never cwd, matching `corpus.data_root`.
     """
     override = os.getenv("SMOLBENCH_LEAN_RESULTS")
     if override:
@@ -77,11 +62,11 @@ def results_root() -> Path:
 
 
 def _default_verifier() -> Any:
-    """Import `.verify` at call time; raises `ImportError` without `lean_interact`.
+    """Import `.verify` lazily; it requires `lean_interact`.
 
-    Protocol: `open_at_step`, `try_tail`, `replay_ground_truth`,
-    `verify_proof_tail`, `ProofResult`. Tests substitute `FakeVerifier`;
-    generation-only sweeps use `NullVerifier`.
+    Substitutes must provide `open_at_step`, `try_tail`, `replay_ground_truth`,
+    `verify_proof_tail`, and `ProofResult`; tests use `FakeVerifier` and generation-only
+    sweeps use `NullVerifier`.
     """
     from smolbench.deduction.lean import verify
     return verify
@@ -93,17 +78,17 @@ def _default_verifier() -> Any:
 
 
 def slug_theorem(name: str) -> str:
-    """Filesystem-safe theorem name. Most mathlib names slug to themselves."""
+    """Return a filesystem-safe theorem name."""
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 
 def slug_rung(rung: str) -> str:
-    """`stepk:1` -> `stepk-1`. Avoids `:` for Win/WSL safety."""
+    """Return a filesystem-safe rung slug; `:` is unsafe on Win/WSL."""
     return rung.replace(":", "-")
 
 
 def slug_model(model: str) -> str:
-    """Take the last `/` segment: `anthropic/claude-haiku-4.5` -> `claude-haiku-4.5`."""
+    """Return a model's final `/`-separated segment."""
     return model.rsplit("/", 1)[-1]
 
 
@@ -131,11 +116,9 @@ def run_cell(
 ) -> Iterable[dict]:
     """Yield one JSONL-serializable row per replicate for one (theorem, k, chain, level) cell.
 
-    Opens its own Lean REPL session; unlike `sweep`, `complete()` is not
-    wrapped in try/except here, since this is single-shot and non-resuming, so
-    a generation failure propagates instead of becoming an exception row.
-
-    Rows match the sweep row schema minus `api_model` (no display name here).
+    It opens its own REPL; single-shot, non-resuming completion failures
+    propagate rather than become exception rows. Rows omit `api_model` because
+    this entry point has no display name.
 
     Parameters
     ----------
@@ -144,31 +127,29 @@ def run_cell(
     model : str
         Model identifier for model completion.
     theorem : BenchmarkTheorem
-        Theorem whose proof tail from step `k` is attempted.
+        Theorem whose tail is attempted.
     k : int
         Index of the tactic step.
     chain : Chain
-        Prompt chain for rendering the theorem.
+        Prompt chain.
     level : int
-        Prompt rung level.
+        Rung level.
     n_replicates : int
-        Number of completion replicates to generate.
+        Replicates to generate.
     temperature : float, optional
-        Sampling temperature for model completion.
+        Sampling temperature.
     max_tokens : int, optional
-        Maximum generated tokens per completion.
+        Maximum completion tokens.
     dojo_timeout : int, optional
-        kept spelled this way, not `repl_timeout` -- pinned across
-        `run_cell`, `sweep`, and `cli`'s defaults (see `DEFAULT_DOJO_TIMEOUT`).
+        Name shared by `run_cell`, `sweep`, and `cli` defaults.
     seed : int, optional
-        replicate `i` decodes at `seed + i`, so the replicate index, not
-        theorem/rung/model, is the seed-varying axis.
+        Replicate `i` uses `seed + i` for cross-model pairing.
     request_timeout : int, optional
-        Completion request timeout in seconds.
+        Request timeout in seconds.
     max_retries : int, optional
-        Maximum completion retry attempts.
+        Retry limit.
     verifier : Any, optional
-        `None` resolves `_default_verifier()`; tests pass a fake.
+        `None` resolves `_default_verifier()`.
 
     Yields
     ------
@@ -185,14 +166,14 @@ def run_cell(
     try:
         ctx_len = mod.get_model_context_length(model)
     except Exception as exc:  # noqa: BLE001
-        # Same rationale as `_ctx_len_for`: a catalog lookup failure must not abort the cell.
+        # Lookup failure must not abort this cell.
         ctx_len = 10**9
         print(f"warning: context-length lookup failed for {model} on {provider}: {exc}", flush=True)
 
     for replicate_idx in range(n_replicates):
         replicate_seed = seed + replicate_idx
         t0 = time.monotonic()
-        # sweep, not run_cell, owns exception rows (see this function's docstring).
+        # Only `sweep` writes exception rows.
         rsp = mod.complete(
             user_prompt, model, replicate_seed,
             system=SYSTEM,
@@ -251,12 +232,12 @@ def run_cell(
 
 
 def jsonl_line(row: dict) -> str:
-    """The one JSONL spelling every writer here uses (handles included)."""
+    """Serialize one JSONL row."""
     return json.dumps(row, ensure_ascii=False) + "\n"
 
 
 def write_jsonl(rows: Iterable[dict], path: Path) -> int:
-    """Append JSONL rows to a path and return their count."""
+    """Append rows and return their count."""
     path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     with path.open("a") as f:
@@ -267,20 +248,19 @@ def write_jsonl(rows: Iterable[dict], path: Path) -> int:
 
 
 def new_run_id() -> str:
-    """Return a timestamped, short-unique run identifier."""
+    """Return a timestamped, short-unique run ID."""
     return time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
 
 
 def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
     """Raise `ValueError` unless every theorem in `pool` carries `BenchmarkTheorem.postcutoff`.
 
-    Names the first 5 offending theorems plus a total count, so a large bad
-    pool doesn't dump thousands of names into the message.
+    Name five offenders plus the total to bound large error messages.
 
     Parameters
     ----------
     pool : list[BenchmarkTheorem]
-        Theorems to validate for post-cutoff status.
+        Theorems to validate.
     """
     bad = [t.full_name for t in pool if not t.postcutoff]
     if not bad:
@@ -288,7 +268,7 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
     shown = ", ".join(bad[:5])
     suffix = f", and {len(bad) - 5} more" if len(bad) > 5 else ""
     raise ValueError(
-        f"theorems.require_postcutoff: {len(bad)} theorem(s) are not flagged "
+        f"Post-cutoff gate: {len(bad)} theorem(s) are not flagged "
         f"postcutoff: {shown}{suffix}"
     )
 
@@ -301,11 +281,9 @@ def _select_theorems(
     Parameters
     ----------
     spec : dict
-        Configuration `theorems` block.
+        `theorems` configuration.
     cell_whitelist : frozenset[tuple] | None, optional
-        Narrows the pool to theorems owning at least one of its cell keys; it's a parameter,
-        not a `spec` field, because `sweep` loads it once from `LEAN_CELL_WHITELIST` rather than
-        duplicating it into config.
+        Theorems owning an allowed cell; loaded once from `LEAN_CELL_WHITELIST`.
 
     Returns
     -------
@@ -315,10 +293,8 @@ def _select_theorems(
     Raises
     ------
     ValueError
-        For an unknown `source`, a malformed `shard`, or (when `require_postcutoff` is set) a
-        pool containing a non-post-cutoff theorem.
+        Unknown sources, malformed shards, or pre-cutoff pools.
     """
-    require_postcutoff = bool(spec.get("require_postcutoff", False))
     source = spec.get("source", "replay_passing")
     kind = spec.get("kind", "random")
     split = spec.get("split", "val")
@@ -326,12 +302,11 @@ def _select_theorems(
     limit = int(spec.get("limit", 0))
     seed = int(spec.get("seed", 0))
 
-    # Runs before the pool loads, redundant with the per-theorem check below:
-    # the old LeanDojo Benchmark 4 snapshot has no post-cutoff tail at all, so
-    # no sampling/seed/split choice over it can ever produce a compliant item.
-    if require_postcutoff and not is_postcutoff_corpus():
+    # Check first: the old Benchmark 4 snapshot has no post-cutoff tail, so no
+    # sampling, seed, or split can produce a compliant item.
+    if not is_postcutoff_corpus():
         raise ValueError(
-            f"theorems.require_postcutoff is set but {data_root()} is not a "
+            f"{data_root()} is not a "
             "post-cutoff corpus -- the old single-snapshot LeanDojo Benchmark 4 "
             "has no post-cutoff tail, so no sampling, seed or split change over "
             "it can produce a compliant selection"
@@ -347,12 +322,9 @@ def _select_theorems(
     else:
         raise ValueError(f"unknown theorems.source: {source!r}")
 
-    # Checked on the raw pool, before sampling/sharding/whitelisting (which
-    # only ever remove rows): `random.Random(seed).sample` is order- and
-    # population-sensitive, so whether the draw misses a pre-cutoff row must
-    # not decide compliance.
-    if require_postcutoff:
-        _require_all_postcutoff(pool)
+    # Check before filters: sampling is population-sensitive, so a missed
+    # pre-cutoff row must not decide compliance.
+    _require_all_postcutoff(pool)
 
     if max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= max_tactics]
@@ -361,25 +333,22 @@ def _select_theorems(
         rng = random.Random(seed)
         pool = rng.sample(pool, limit)
 
-    # Applied after the seeded sample: every shard computes the identical pool
-    # and takes a disjoint slice, so the shards' union equals the unsharded
-    # selection. Boundary is per-theorem, keeping one theorem's rungs and
-    # sanity row on a single shard.
+    # Shard after sampling so identical pools make disjoint slices whose union
+    # is unsharded selection; keep each theorem's rungs and sanity row together.
     shard = str(spec.get("shard", "") or "")
     if shard:
         idx_str, sep, n_str = shard.partition("/")
         try:
             idx, n = int(idx_str), int(n_str)
         except ValueError:
-            idx, n = -1, 0  # falls through to the range check below
+            # `-1, 0` fails the shared range check.
+            idx, n = -1, 0
         if not sep or not (0 <= idx < n):
             raise ValueError(f"theorems.shard {shard!r} must be 'i/n' with 0 <= i < n")
         pool = pool[idx::n]
 
-    # Applied last, at the theorem level (mirrors the shard above). Dropping
-    # whole theorems here, not just per-cell later, skips the sanity replay
-    # and REPL session for every untouched theorem -- needed for an
-    # n=200-cell rerun against a 300-theorem pool.
+    # Filter whole theorems last to skip their sanity replay and REPL session:
+    # needed for an n=200-cell rerun against a 300-theorem pool.
     if cell_whitelist is not None:
         whitelisted_theorems = {key[1] for key in cell_whitelist}
         pool = [t for t in pool if t.full_name in whitelisted_theorems]
@@ -403,35 +372,29 @@ def _row_key(model: str, theorem: str, k: int, rung: str, replicate_idx: int) ->
 
 
 # ---------------------------------------------------------------------------
-# Cell whitelist (LEAN_CELL_WHITELIST) -- an env-gated filter scoped to
-# specific (model, theorem, k, rung, replicate_idx) cells, rather than a
-# stride over the theorem pool like `theorems.shard`: regenerates an exact
-# small cell sample on a fresh box without re-running the rest of a lane.
-# See `sweep`'s docstring for where it is consulted.
+# `LEAN_CELL_WHITELIST` filters exact cells for small fresh-box reruns.
 # ---------------------------------------------------------------------------
 
 
 def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     """Load and validate a `LEAN_CELL_WHITELIST` JSON file into a key set.
 
-    Entries are 5-element ``[model, theorem, k, rung, replicate_idx]`` arrays,
-    matching `_row_key`'s order so keys compare equal to `sweep`'s.
+    Five-element entries follow `_row_key` order so they compare equal to `sweep` keys.
 
     Parameters
     ----------
     path_str : str
-        Path to the JSON file.
+        JSON file path.
 
     Returns
     -------
     frozenset[tuple]
-        Cell keys in `_row_key` order; duplicates collapse, source order is not preserved.
+        `_row_key`-ordered keys.
 
     Raises
     ------
     ValueError
-        (naming `path_str`) on any read/parse/shape problem: a missing or malformed file must
-        abort before generating a cell, not degrade into a full, expensive re-run.
+        Read, parse, or shape errors; malformed input must abort before expensive generation.
     """
     path = Path(path_str)
     try:
@@ -469,20 +432,18 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
 def hash_cell_keys(keys: Iterable[tuple]) -> str:
     """Lowercase hex SHA-256 of a canonical JSON encoding of `keys`.
 
-    Keys are sorted and coerced to lists first, so a tuple and an equal-valued
-    list (as `load_cell_whitelist` returns) fingerprint identically. Used by
-    `run_study.py` to stamp "this exact set of cells" into a manifest;
-    change-detection, not security.
+    Sort and list-coerce keys so equal tuples and lists fingerprint alike; this
+    stamps the manifest's exact cell set for change detection, not security.
 
     Parameters
     ----------
     keys : Iterable[tuple]
-        Cell keys to encode canonically.
+        Cell keys.
 
     Returns
     -------
     str
-        Lowercase hex SHA-256 fingerprint.
+        SHA-256 fingerprint.
     """
     canonical = json.dumps(
         sorted(list(key) for key in keys), separators=(",", ":")
@@ -490,44 +451,37 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-#: Cap on unreachable `LEAN_CELL_WHITELIST` keys `sweep` logs individually at
-#: ERROR level. Bounds only the log stream -- the full list always lands in
-#: `manifest.json["whitelist_missed"]` regardless.
+#: Individually logged unreachable whitelist keys; the full list always enters
+#: `manifest.json["whitelist_missed"]`.
 WHITELIST_MISS_LOG_CAP: int = 50
 
 
 # ---------------------------------------------------------------------------
-# Sweep config files. One loader, two callers (`cli.cmd_run_sweep --config`
-# and `run_study.py`'s `build_config`), kept here so the driver need not
-# import the CLI or grow its own `yaml.safe_load` that could drift.
+# One shared config loader prevents the driver and CLI YAML parsing from drifting.
 # ---------------------------------------------------------------------------
 
 
 def load_sweep_config(path: str | Path) -> tuple[dict, str]:
     """Load a sweep config YAML file; return it with a SHA-256 of the raw bytes.
 
-    Requires a YAML mapping: `sweep` indexes `config` by key, so a list or the
-    `None` an empty file parses to would surface much later as a confusing
-    `AttributeError`. Hashes the SAME bytes handed to the parser (one read),
-    so the digest can't drift from what was parsed, and changes when a
-    COMMENT changes -- deliberate, since `sweep.yaml`'s rationale comments are
-    part of what a run's provenance claims. `yaml` imports locally: this
-    module is also imported by callers with no reason to require PyYAML.
+    Require a mapping so malformed input fails before keyed access. Hash the
+    parser's exact bytes, including rationale comments, because provenance
+    claims them; import YAML locally for callers that do not need PyYAML.
 
     Parameters
     ----------
     path : str | Path
-        YAML configuration file.
+        YAML configuration path.
 
     Returns
     -------
     tuple[dict, str]
-        Parsed configuration and SHA-256 of its raw bytes.
+        Configuration and raw-byte SHA-256.
     """
     import yaml
 
     config_path = Path(path)
-    # One read: the bytes hashed are exactly the bytes yaml.safe_load() sees.
+    # Hash exactly the bytes `yaml.safe_load()` sees.
     raw = config_path.read_bytes()
     sha256_hex = hashlib.sha256(raw).hexdigest()
     config = yaml.safe_load(raw)
@@ -541,33 +495,21 @@ def load_sweep_config(path: str | Path) -> tuple[dict, str]:
 
 
 def _repair_torn_tail(jsonl_path: Path) -> int:
-    """Truncate a torn or unparseable FINAL line off `jsonl_path`, in place.
+    """Truncate torn final lines from `jsonl_path` in place.
 
-    Must run before `sweep` reopens `all_rows.jsonl` in append mode on resume:
-    a SIGKILL mid-write can leave a half-written final line, and appending
-    onto it welds the next row onto the torn prefix into one corrupt MIDDLE
-    line -- recoverable as a tail, not once welded (`merge_lean_shards.py`
-    hard-aborts on a mid-file parse failure). `_existing_keys` already
-    tolerates a torn tail by skipping it, so the fix has to land before the
-    append, not at read time.
-
-    Repairs by checking the last line from the end (newline-terminated? does
-    it parse as JSON?), truncating back and retrying on either failure, so a
-    multi-line tear is still fully repaired. Reads and truncates once rather
-    than rewriting surviving content back out, so a second crash can't lose
-    rows that were never torn.
-
-    Logs a WARNING on any repair.
+    Run before append: a SIGKILL can leave a partial final line, and append
+    would weld it into corrupt middle data that `merge_lean_shards.py` aborts
+    on. Scan backward and truncate once so a second crash cannot lose intact rows.
 
     Parameters
     ----------
     jsonl_path : Path
-        JSONL file to repair in place.
+        JSONL file.
 
     Returns
     -------
     int
-        Bytes discarded (``0`` means untouched, not "no file").
+        Discarded bytes; 0 if untouched.
     """
     if not jsonl_path.exists():
         return 0
@@ -577,10 +519,8 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
         while end > 0:
             if data[end - 1] != 0x0A:  # last byte is not '\n': tail is UNTERMINATED
                 newline_before = data.rfind(b"\n", 0, end)
-                end = newline_before + 1  # 0 if no newline at all: whole file was torn
+                end = newline_before + 1
                 continue
-            # Terminated: isolate the last complete line (excluding its own
-            # trailing "\n") and see if it parses.
             newline_before = data.rfind(b"\n", 0, end - 1)
             last_line = data[newline_before + 1 : end - 1]
             try:
@@ -588,7 +528,7 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
             except (ValueError, UnicodeDecodeError):
                 end = newline_before + 1
                 continue
-            break  # terminated and parses: nothing left to repair
+            break
         discarded = len(data) - end
         if discarded:
             f.truncate(end)
@@ -601,31 +541,30 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
     return discarded
 
 
-def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
-    """Parse `path`'s rows, dropping a torn FINAL line; missing file -> ``[]``.
+def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> list[dict]:
+    """Parse rows, optionally skipping corrupt records.
 
-    Single reader for `all_rows.jsonl`-shaped files. Only the last line can be
-    torn (a SIGKILL mid-append); dropped with a WARNING, not silently, so real
-    corruption elsewhere still raises `json.JSONDecodeError` naming the line.
+    Only a SIGKILL-torn final line is dropped with a warning; interior
+    corruption still names its line.
 
     Parameters
     ----------
     path : Path
-        JSONL file to parse.
+        JSONL file.
+    skip_bad : bool, optional
+        Skip undecodable records for read-only reporting.
 
     Returns
     -------
     list[dict]
-        Parsed rows, dropping a torn FINAL line; missing file -> ``[]``.
+        Parsed rows, or `[]` for a missing file.
     """
     if not path.exists():
         return []
-    # split("\n"), not splitlines(): the writer separates records on "\n" only,
-    # while splitlines() also breaks on U+2028/U+0085, which json.dumps leaves
-    # unescaped under ensure_ascii=False and a Lean error can carry.
+    # `splitlines()` breaks on U+2028/U+0085 that JSON leaves unescaped in Lean errors.
     lines = path.read_text().split("\n")
     if lines and lines[-1] == "":
-        lines.pop()  # the trailing "\n" terminates the last record, it is not one
+        lines.pop()
     rows: list[dict] = []
     for lineno, line in enumerate(lines):
         if not line.strip():
@@ -633,6 +572,8 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError as exc:
+            if skip_bad:
+                continue
             if lineno != len(lines) - 1:
                 raise json.JSONDecodeError(
                     f"corrupt row mid-file at line {lineno + 1}", line, exc.pos
@@ -645,7 +586,7 @@ def read_jsonl_tolerating_torn_tail(path: Path) -> list[dict]:
 
 
 def _cell_key(r: dict) -> tuple:
-    """`_row_key` off a raw row, with the tolerant defaults resume decisions use."""
+    """Return the tolerant row key used by resume."""
     return _row_key(
         r.get("model", ""), r.get("theorem_id", ""), int(r.get("k", -1)),
         r.get("rung", ""), int(r.get("replicate_idx", -1)),
@@ -653,7 +594,7 @@ def _cell_key(r: dict) -> tuple:
 
 
 def group_cell_rows(rows: Iterable[dict], key: Callable[[dict], Any]) -> dict:
-    """Group `rows` by ``key(row)``, first-seen key order (dicts preserve it)."""
+    """Group rows by key in first-seen order."""
     groups: dict = {}
     for row in rows:
         groups.setdefault(key(row), []).append(row)
@@ -661,7 +602,7 @@ def group_cell_rows(rows: Iterable[dict], key: Callable[[dict], Any]) -> dict:
 
 
 def _accounts_for_cell(r: dict) -> bool:
-    """True if `r` is evidence its cell must NOT re-run -- see `_existing_keys`."""
+    """Return whether this row prevents its cell from rerunning."""
     if r.get("verdict") == "exception":
         return False
     return (bool((r.get("candidate_proof") or "").strip())
@@ -669,26 +610,21 @@ def _accounts_for_cell(r: dict) -> bool:
 
 
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
-    """Read existing JSONL rows; return cell keys for cells that must NOT re-run.
+    """Return existing cell keys that must not rerun.
 
-    Only surviving (non-``exception``) rows count as evidence: a cell whose
-    only record is an exception re-runs even with proof text, since the
-    exception may have come from the verifier before the proof was checked.
-    Among survivors: non-empty ``candidate_proof`` skips the cell; else
-    ``prompt_tokens > 0`` also skips it (asked, returned nothing extractable
-    -- that is data); else the cell re-runs. Re-running an asked-and-empty
-    cell would resample until a proof happened to appear, inflating pass@1.
-    ``prompt_tokens`` is also the signal `audit_run_completeness.py` uses.
+    Exceptions rerun because verification may not have checked their candidate.
+    Empty prompted cells remain data; rerunning them would inflate pass@1.
+    `prompt_tokens` is `audit_run_completeness.py`'s completeness signal.
 
     Parameters
     ----------
     jsonl_path : Path
-        JSONL file containing existing rows.
+        Existing-row JSONL file.
 
     Returns
     -------
     set[tuple]
-        Cell keys for cells that must NOT re-run.
+        Keys that must not rerun.
     """
     cell_rows = [r for r in read_jsonl_tolerating_torn_tail(jsonl_path)
                  if r.get("kind") == "cell"]
@@ -698,28 +634,20 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
 
 
 def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
-    """Collapse ``kind: "cell"`` rows to one row per cell key: earliest surviving attempt.
+    """Deduplicate cell rows, preferring the earliest surviving attempt.
 
-    `_existing_keys` re-runs a cell whose only row is an exception (the
-    exception may be from the verifier, so the candidate was never checked),
-    and a resumed sweep APPENDS that retry -- so one cell key can carry more
-    than one row. Counting rows instead of cells would inflate `cmd_analyze`'s
-    pass@N (a retried cell reads as 1/2 instead of 1/1); callers aggregate
-    over this function's output instead.
-
-    Groups by `_existing_keys`' own field names/defaults, not this module's
-    stricter `_row_key`, so the two agree on "same cell".
+    Resume appends exception retries; counting both would inflate `cmd_analyze`
+    pass@N. Use `_existing_keys` fields so both define the same cell.
 
     Parameters
     ----------
     rows : Iterable[dict]
-        Cell rows to deduplicate.
+        Cell rows.
 
     Returns
     -------
     list[dict]
-        The earliest non-exception row per key, or the first row if every row for that key is an
-        exception (so it still counts once, not vanishes).
+        Earliest surviving row, or first exception.
     """
     deduped: list[dict] = []
     for group in group_cell_rows(rows, _cell_key).values():
@@ -729,26 +657,21 @@ def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
 
 
 def _sanity_done(jsonl_path: Path) -> dict[str, str]:
-    """Map theorem name to its recorded sanity verdict from the JSONL (last wins).
+    """Map theorem names to their final recorded sanity verdict.
 
-    Verdicts, not just names, so resume can RE-APPLY the gate: a theorem whose
-    ground truth failed to replay stays excluded rather than falling through
-    because its gate row already exists. An `"exception"` row is the one
-    verdict that does NOT stay excluded (not in `SANITY_FAILURE_VERDICTS`): an
-    infra hiccup on a past run must not permanently blank a theorem out of the
-    study -- the caller's gate check, not this function, lets it through.
-    Never triggers a re-replay for an existing row of any verdict; a second
-    sanity row per theorem would break `merge_lean_shards.py`'s `--expect-sanity` count gate.
+    Resume reapplies failure verdicts so failed ground truth stays excluded,
+    but infrastructure exceptions must not permanently exclude a theorem. Do
+    not replay existing rows: `merge_lean_shards.py --expect-sanity` requires one.
 
     Parameters
     ----------
     jsonl_path : Path
-        JSONL file containing sanity rows.
+        Sanity-row JSONL file.
 
     Returns
     -------
     dict[str, str]
-        Theorem names mapped to their recorded sanity verdicts.
+        Names mapped to verdicts.
     """
     return {r.get("theorem_id", ""): r.get("verdict", "")
             for r in read_jsonl_tolerating_torn_tail(jsonl_path)
@@ -765,7 +688,7 @@ def _theorem_dir(run_dir: Path, theorem: BenchmarkTheorem) -> Path:
 
 
 def _write_meta(theorem: BenchmarkTheorem, k: int, theorem_dir: Path) -> None:
-    """Write meta.json (idempotent — overwrites)."""
+    """Overwrite `meta.json`."""
     theorem_dir.mkdir(parents=True, exist_ok=True)
     tt_k = theorem.traced_tactics[k] if 0 <= k < len(theorem.traced_tactics) else None
     meta = {
@@ -788,7 +711,7 @@ def _write_meta(theorem: BenchmarkTheorem, k: int, theorem_dir: Path) -> None:
 
 
 def _write_prompt(rung: str, rendered_text: str, theorem_dir: Path) -> None:
-    """Write prompts/<rung-slug>.md (idempotent — overwrites)."""
+    """Overwrite a rung prompt."""
     pd = theorem_dir / "prompts"
     pd.mkdir(parents=True, exist_ok=True)
     (pd / f"{slug_rung(rung)}.md").write_text(rendered_text + "\n")
@@ -801,26 +724,21 @@ def _append_output(row: dict, theorem_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Summary generators (regenerable post-hoc)
+# Summary generators
 # ---------------------------------------------------------------------------
 
 
-#: verdict -> (glyph, sanity_failure, never_measured). Lives here, not in
-#: `.verify` (which owns the taxonomy's prose and `Verdict` Literal), because
-#: `.verify` imports `lean_interact` and this module must not. The two
-#: derived sets below can't drift from this table.
-#:
-#: `sanity_failure` gates cell generation (`_process_one_theorem`): only a
-#: POSITIVE finding that the recorded ground truth is unreplayable suppresses
-#: it. "exception" (infra) and "skipped" (deferred NullVerifier replay) pass
-#: through; "no_answer" is unreachable from `replay_ground_truth`.
+#: verdict -> (glyph, sanity_failure, never_measured). Keep this table here:
+#: `.verify` imports `lean_interact` and this module must not. Derived sets
+#: cannot drift. Only unreplayable ground truth gates cells; infrastructure
+#: exceptions and deferred skips pass through; replay cannot return `no_answer`.
 VERDICTS: dict[str, tuple[str, bool, bool]] = {
     #                glyph  sanity_failure  never_measured
     "success":      ("✓",   False,          False),
     "lean_error":   ("✘",   True,           False),
     "incomplete":   ("·",   True,           False),
     "given_up":     ("?",   True,           False),
-    # Distinct glyph: "answered but incomplete/given-up" differs from "answered nothing".
+    # Distinct glyph: incomplete/given-up answered, while no_answer answered nothing.
     "no_answer":    ("∅",   False,          False),
     "replay_failed": ("!",  True,           True),
     "exception":    ("X",   False,          True),
@@ -832,8 +750,7 @@ VERDICTS: dict[str, tuple[str, bool, bool]] = {
 _VERDICT_GLYPH = {v: row[0] for v, row in VERDICTS.items()}
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
     v for v, row in VERDICTS.items() if row[1])
-#: Verdicts meaning Lean never actually ran (REPL never opened, or a
-#: last-resort net fired) -- not a real pass or fail. Read by `lean_verify_rows.py`.
+#: Verdicts where Lean never ran; `lean_verify_rows.py` reads these as unresolved.
 NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset(
     v for v, row in VERDICTS.items() if row[2])
 
@@ -844,39 +761,20 @@ def _glyph(v: str) -> str:
     return _VERDICT_GLYPH.get(v, "?")
 
 
-#: This study's S3 key prefix.
-DEDUCTION_SPOOL_PREFIX: str = "deduction_postcutoff/runs"
-
-
-def spool_prefix() -> str:
-    """Resolve the S3 key prefix writers/readers use for deduction spool runs.
-
-    Reads `LEAN_SPOOL_PREFIX` at call time, never cached, so a caller can flip
-    the prefix between invocations within one process. Falls back to
-    `DEDUCTION_SPOOL_PREFIX`; strips whitespace and a trailing "/".
-    """
-    raw = os.environ.get("LEAN_SPOOL_PREFIX", "").strip()
-    return raw.rstrip("/") if raw else DEDUCTION_SPOOL_PREFIX
-
-
 def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
-    """Reject any path whose FILE NAME carries a `retired_markers.RETIRED_MARKERS` marker.
+    """Reject row files whose names carry a retired marker.
 
-    It also logs, since `write_theorem_summary` runs inside a per-theorem worker that -- under
-    `theorem_workers > 1` -- swallows exceptions into one THEOREM-WORKER-FAIL line (serial runs
-    propagate).
+    Log too: concurrent theorem workers reduce errors to one failure line.
 
     Parameters
     ----------
     paths : Iterable[str | Path]
-        Row-file paths to validate.
+        Row-file paths.
 
     Raises
     ------
     ValueError
-        Naming every offending path, rather than warning and skipping: these files parse
-        perfectly and would otherwise yield a complete, plausible, WRONG summary instead of a
-        crash.
+        Retired paths: silently skipping valid files would create a plausible wrong summary.
     """
     bad = [str(p) for p in paths if is_retired(p)]
     if bad:
@@ -891,7 +789,7 @@ def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
 
 
 def _rung_sort_key(rung: str) -> tuple[int, int]:
-    """Order rungs by chain then by level: stepk, then hint, then noise."""
+    """Order `stepk`, `hint`, then `noise` rungs by level."""
     if ":" not in rung:
         return (99, 0)
     chain, lvl = rung.split(":", 1)
@@ -914,17 +812,11 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     jsonl_files = sorted(outputs_dir.glob("*.jsonl"))
     reject_superseded_rows(jsonl_files)
     for jl in jsonl_files:
-        # filename: <rung-slug>__<model-slug>.jsonl
         stem = jl.stem
         if "__" not in stem:
             continue
-        with jl.open() as f:
-            for line in f:
-                try:
-                    r = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                cells[(r["rung"], r["model"])].append(r)
+        for r in read_jsonl_tolerating_torn_tail(jl, skip_bad=True):
+            cells[(r["rung"], r["model"])].append(r)
 
     rungs = sorted({r for r, _ in cells.keys()}, key=_rung_sort_key)
     models = sorted({m for _, m in cells.keys()})
@@ -939,7 +831,6 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     else:
         lines.append("**True premises at k:** _(none recorded)_\n")
 
-    # Verdict matrix
     lines.append("## Verdict matrix\n")
     header = "| rung | " + " | ".join(slug_model(m) for m in models) + " |"
     sep = "| --- |" + " --- |" * len(models)
@@ -955,7 +846,6 @@ def write_theorem_summary(theorem_dir: Path) -> None:
         lines.append("".join(row))
     lines.append("")
 
-    # Per-cell detail
     lines.append("## Per-cell detail\n")
     for rung in rungs:
         for m in models:
@@ -981,71 +871,112 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     (theorem_dir / "summary.md").write_text("\n".join(lines))
 
 
-def write_run_analysis(run_dir: Path) -> None:
-    """Read all_rows.jsonl; overwrite `run_dir`'s analysis.txt with a (rung, model) table.
+def analyze_rows(
+    path: Path,
+) -> tuple[
+    dict[tuple[str, str], dict[str, int]],
+    dict[tuple[str, str, str, int], list[str]],
+    tuple[int, int, int],
+]:
+    """Aggregate complete rows for every analysis renderer.
 
-    Regenerates wholesale; a no-op when `all_rows.jsonl` doesn't exist. `l3`
-    counts cells whose `candidate_proof` holds a PARSE-LEVEL Lean 3 relic
-    (`lean3.find_relics`), regardless of verdict -- the metric
-    `lean3.corrupt_tail`'s repair training aims to drive to zero. Cell rows
-    are deduped through `dedupe_cell_rows` first, so "N cells" and every
-    per-cell `n` count distinct cells, not raw rows.
+    Shared deduplication and counters keep the CLI and durable report aligned.
+
+    Parameters
+    ----------
+    path : Path
+        JSONL file.
+
+    Returns
+    -------
+    tuple[dict, dict, tuple[int, int, int]]
+        Counters, pass@N groups, and sanity counts.
+    """
+    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: {
+            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
+            "given_up": 0, "replay_failed": 0, "exception": 0,
+            "no_answer": 0, "unverified": 0, "tok_in": 0, "tok_out": 0,
+            "ms": 0, "trunc": 0, "l3": 0,
+        }
+    )
+    # pass@N needs exact (theorem, k) identity unavailable in rung/model totals.
+    groups: dict[tuple[str, str, str, int], list[str]] = defaultdict(list)
+    sanity = [0, 0, 0]
+    # Deduplicate before counts and pass@N to collapse exception retries.
+    cell_rows: list[dict] = []
+    for row in read_jsonl_tolerating_torn_tail(path):
+        if row.get("kind", "cell") != "sanity":
+            cell_rows.append(row)
+        elif row.get("verdict") == "success":
+            sanity[0] += 1
+        elif row.get("verdict") in SANITY_FAILURE_VERDICTS:
+            sanity[1] += 1
+        else:
+            # Infra exceptions and generation-only skips are not ground-truth failures.
+            sanity[2] += 1
+
+    for row in dedupe_cell_rows(cell_rows):
+        counter = cells[(row.get("rung", "?"), row.get("model", "?"))]
+        counter["n"] += 1
+        verdict = row.get("verdict", "exception")
+        counter[verdict if verdict in counter else "exception"] += 1
+        counter["tok_in"] += row.get("prompt_tokens", 0)
+        counter["tok_out"] += row.get("completion_tokens", 0)
+        counter["ms"] += row.get("gen_ms", 0) + row.get("verify_ms", 0)
+        # Count cut-off reasoning separately from proof dead ends; vLLM can
+        # put it in `reasoning_content` with empty `raw_response`.
+        raw = row.get("raw_response", "") or row.get("content", "")
+        if (("<think>" in raw and "</think>" not in raw)
+                or (row.get("reasoning_content") and not (row.get("raw_response") or "").strip())):
+            counter["trunc"] += 1
+        if lean3.find_relics(row.get("candidate_proof") or ""):
+            counter["l3"] += 1
+        groups[(row.get("model", "?"), row.get("rung", "?"),
+                row.get("theorem_id", "?"), row.get("k", -1))].append(verdict)
+    return dict(cells), dict(groups), (sanity[0], sanity[1], sanity[2])
+
+
+def model_totals(cells: dict[tuple[str, str], dict[str, int]]) -> dict[str, dict[str, int]]:
+    """Roll rung counters into model totals.
+
+    Parameters
+    ----------
+    cells : dict[tuple[str, str], dict[str, int]]
+        `analyze_rows` counters.
+
+    Returns
+    -------
+    dict[str, dict[str, int]]
+        Model-keyed totals.
+    """
+    totals: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
+    )
+    for (_, model), counter in cells.items():
+        for key in totals[model]:
+            totals[model][key] += counter[key]
+    return dict(totals)
+
+
+def write_run_analysis(run_dir: Path) -> None:
+    """Overwrite `analysis.txt` with a rung/model table.
+
+    `l3` counts parse-level Lean 3 relics regardless of verdict; deduplication
+    makes every cell count distinct cells rather than raw retry rows.
 
     Parameters
     ----------
     run_dir : Path
-        Run directory containing `all_rows.jsonl`.
+        Run directory.
     """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
         return
 
-    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
-            "no_answer": 0,
-            "unverified": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0, "l3": 0,
-        }
-    )
-    n_sanity_pass = 0
-    n_sanity_fail = 0
-    n_sanity_skipped = 0
-    # Collected here, not aggregated inline, so `dedupe_cell_rows` can collapse
-    # an exception-then-retry pair before the "N cells" count and per-cell
-    # tallies below ever see the raw row count.
-    cell_rows: list[dict] = []
-    for r in read_jsonl_tolerating_torn_tail(all_rows):
-        if r["kind"] == "sanity":
-            if r.get("verdict") == "success":
-                n_sanity_pass += 1
-            elif r.get("verdict") in SANITY_FAILURE_VERDICTS:
-                n_sanity_fail += 1
-            else:
-                # "skipped" (deferred) or "exception" (infra): nothing POSITIVELY failed.
-                n_sanity_skipped += 1
-            continue
-        cell_rows.append(r)
-
-    # Deduped cell count: a lane that resumed past an exception reads as one
-    # cell, not two (see dedupe_cell_rows).
-    n_rows = 0
-    for r in dedupe_cell_rows(cell_rows):
-        n_rows += 1
-        key = (r.get("rung", "?"), r.get("model", "?"))
-        c = cells[key]
-        c["n"] += 1
-        v = r.get("verdict", "exception")
-        if v in c:
-            c[v] += 1
-        else:
-            c["exception"] += 1
-        c["tok_in"] += r.get("prompt_tokens", 0)
-        c["tok_out"] += r.get("completion_tokens", 0)
-        c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
-        if lean3.find_relics(r.get("candidate_proof") or ""):
-            c["l3"] += 1
+    cells, _groups, sanity = analyze_rows(all_rows)
+    n_sanity_pass, n_sanity_fail, n_sanity_skipped = sanity
+    n_rows = sum(counter["n"] for counter in cells.values())
 
     out: list[str] = []
     out.append(
@@ -1064,7 +995,6 @@ def write_run_analysis(run_dir: Path) -> None:
         (run_dir / "analysis.txt").write_text("\n".join(out) + "(no cell rows)\n")
         return
 
-    # The `l3` header cell names its own scope, so no marker line is needed.
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
         f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} "
@@ -1088,16 +1018,7 @@ def write_run_analysis(run_dir: Path) -> None:
         )
 
     out.append("\n# per-model totals")
-    by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
-    )
-    for (_, model), c in cells.items():
-        by_model[model]["n"] += c["n"]
-        by_model[model]["success"] += c["success"]
-        by_model[model]["tok_in"] += c["tok_in"]
-        by_model[model]["tok_out"] += c["tok_out"]
-        by_model[model]["l3"] += c["l3"]
-    for model, m in sorted(by_model.items()):
+    for model, m in sorted(model_totals(cells).items()):
         rate = m["success"] / m["n"] if m["n"] else 0
         out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
                    f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "
@@ -1106,7 +1027,7 @@ def write_run_analysis(run_dir: Path) -> None:
 
 
 def regenerate_run_artifacts(run_dir: Path) -> None:
-    """Rebuild analysis.txt + every theorem's summary.md from durable artifacts."""
+    """Rebuild analysis and theorem summaries from durable artifacts."""
     write_run_analysis(run_dir)
     theorems_dir = run_dir / "theorems"
     if theorems_dir.exists():
@@ -1116,9 +1037,7 @@ def regenerate_run_artifacts(run_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Inner cell loop — shares one Lean REPL session across all rungs/models/
-# replicates at a single (theorem, k). Caller wraps in a try/except for open
-# failures.
+# One REPL session serves all cells at a (theorem, k).
 # ---------------------------------------------------------------------------
 
 
@@ -1148,69 +1067,65 @@ def _run_cells_at_step_concurrent(
     cell_whitelist: frozenset[tuple] | None = None,
     written_keys: set[tuple] | None = None,
 ) -> tuple[int, int, int]:
-    """Fire all (rung, model, replicate) gen calls in parallel, verifying each
-    on the shared Lean REPL session as responses arrive.
+    """Generate cells concurrently and verify them on the shared REPL.
 
-    Verify serializes (the REPL session is single-threaded); gen -- the
-    dominant cost at ~1.3-3s/cell vs ~0.4s/verify -- fans out. A cell already
-    in `done_keys` (or, with `cell_whitelist`, absent from it) is skipped; an
-    empty pending list returns without opening the REPL session, so a
-    fully-resumed (theorem, k) pays no Lean startup. Written rows
-    `_existing_keys` would later count are added to `written_keys`, if given.
+    Verification serializes because the REPL is single-threaded; generation at
+    ~1.3–3s/cell versus ~0.4s verification fans out. Skip completed or unlisted cells, avoiding REPL startup when none
+    remain; record resumable written keys when requested.
 
     Parameters
     ----------
     all_rows : TextIO
-        Open JSONL output stream.
+        JSONL output stream.
     theorem : BenchmarkTheorem
-        Theorem being evaluated.
+        Evaluated theorem.
     k : int
-        Tactic-step index.
+        Step index.
     rungs : list[str]
-        Rungs to evaluate.
+        Evaluation rungs.
     rendered_by_rung : dict
-        Rendered prompts keyed by rung.
+        Rung-keyed prompts.
     models_cfg : list[dict]
-        Model configuration entries.
+        Model configurations.
     n_replicates : int
-        Number of replicates per cell.
+        Replicates per cell.
     temperature : float
-        Generation temperature.
+        Sampling temperature.
     max_tokens : int
-        Maximum generation tokens.
+        Generation token limit.
     provider_factory : Callable[[dict], tuple[Any, int]]
-        Creates a provider and its context length from a model configuration.
+        Resolves a provider and context length.
     base_seed : int
-        Base seed for replicate generation.
+        Replicate base seed.
     request_timeout : int
-        Request timeout in seconds.
+        Request timeout.
     max_retries : int
-        Maximum request retries.
+        Request retry limit.
     done_keys : set
-        Cell keys already completed.
+        Completed keys.
     tdir : Path
-        Per-theorem output directory.
+        Theorem output directory.
     dojo_timeout : int
-        Lean Dojo timeout in seconds.
+        Lean REPL timeout.
     verifier : Any
-        Verifier for generated proof tails.
+        Proof-tail verifier.
     max_workers : int, optional
-        Maximum concurrent generation workers.
+        Generation worker limit.
     write_lock : threading.Lock | None, optional
-        Serializes writes to `all_rows`.
+        Output-write lock.
     print_lock : threading.Lock | None, optional
-        Serializes status output.
+        Status-output lock.
     model_semaphores : dict[str, threading.Semaphore] | None, optional
-        Per-model generation semaphores.
+        Per-model semaphores.
     cell_whitelist : frozenset[tuple] | None, optional
-        Allowed cell keys.
+        Allowed keys.
     written_keys : set[tuple] | None, optional
-        Receives keys for rows `_existing_keys` would count.
+        Receives resumable written keys.
 
     Returns
     -------
     tuple[int, int, int]
-        Counts of written, successful, and skipped cells.
+        Written, successful, and skipped counts.
     """
     n_written = n_ok = n_skipped = 0
     write_lock = write_lock or threading.Lock()
@@ -1238,8 +1153,7 @@ def _run_cells_at_step_concurrent(
                     "user_prompt": user_prompt,
                     "mc": mc, "model": mc["model"], "provider": mc["provider"],
                     "replicate_idx": replicate_idx,
-                    # Seed depends only on replicate index (see sweep), keeping
-                    # cross-model comparisons at a cell seed-paired.
+                    # Replicate-only seeds keep cross-model cells paired.
                     "seed": base_seed + replicate_idx,
                     "display_name": display_name,
                     "extra_params": mc.get("extra_params"),
@@ -1248,10 +1162,8 @@ def _run_cells_at_step_concurrent(
     if not pending:
         return n_written, n_ok, n_skipped
 
-    # Submit slow (reasoning) cells first: the REPL session stays open until the
-    # last gen completes, so front-loading them cuts per-theorem wall clock.
-    # Optimisation only -- skipped at max_workers=1, where rows must land in
-    # plain (rung, model, replicate) order.
+    # Submit reasoning cells first to shorten REPL lifetime; preserve plain
+    # order at one worker.
     rung_order = {r: i for i, r in enumerate(rungs)}
     model_order = {id(mc): i for i, mc in enumerate(models_cfg)}
 
@@ -1284,9 +1196,7 @@ def _run_cells_at_step_concurrent(
                 *args: Any,
                 **kwargs: Any,
             ) -> Any:
-                # Stamped where generation begins, not at submit: at
-                # max_workers=1 a submit-time stamp bills every earlier cell's
-                # queue wait (and any semaphore wait) to this cell's gen_ms.
+                # Start at generation so queue and semaphore waits are not billed.
                 if sem is None:
                     p["t_gen_start"] = time.monotonic()
                     return mod.complete(*args, **kwargs)
@@ -1297,8 +1207,7 @@ def _run_cells_at_step_concurrent(
             future_to_pending = {}
             for p in pending:
                 mod, ctx_len = provider_factory(p["mc"])
-                # Fallback only: read if the future raises before
-                # `_gated_complete` restamps, so `gen_ms` can never KeyError.
+                # Fallback if the future raises before its start timestamp.
                 p["t_gen_start"] = time.monotonic()
                 sem = (model_semaphores or {}).get(p["display_name"])
                 fut = executor.submit(
@@ -1314,9 +1223,7 @@ def _run_cells_at_step_concurrent(
                 )
                 future_to_pending[fut] = p
 
-            # At max_workers=1, iterate in submission order instead of
-            # `as_completed`: the latter yields finished futures in arbitrary
-            # order, making the one-worker path's row order nondeterministic.
+            # One worker preserves submission order; `as_completed` does not.
             arrivals = (list(future_to_pending) if max_workers == 1
                         else as_completed(future_to_pending))
             for fut in arrivals:
@@ -1343,17 +1250,13 @@ def _run_cells_at_step_concurrent(
                 try:
                     rsp = fut.result()
                 except Exception as exc:  # noqa: BLE001
-                    # Read after the wait, never before: at max_workers=1
-                    # `arrivals` is submission order, so the worker may not
-                    # have restamped `t_gen_start` yet at loop entry.
+                    # Read after waiting: one-worker tasks may not have started.
                     gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
                     row = {
                         **base_row,
                         "prompt_tokens": 0, "completion_tokens": 0,
                         "cache_read_tokens": 0, "cache_creation_tokens": 0,
-                        # No server-reported stop reason since the request
-                        # itself raised; key stays present so every row
-                        # indexes finish_reason alike.
+                        # Keep the key so every row has `finish_reason`.
                         "finish_reason": None,
                         "gen_ms": gen_ms, "verify_ms": 0,
                         "candidate_proof": "", "raw_response": "",
@@ -1419,16 +1322,14 @@ def _run_cells_at_step_concurrent(
 
 
 def _provider_for(mc: dict) -> Any:
-    """Resolve the provider module for one model-config entry.
+    """Resolve one model configuration's provider.
 
-    Explicit, not via the env-dispatched `provider.complete`: one process-wide
-    `INFERENCE_PROVIDER` can't express a lineup mixing providers across
-    `config["models"]`.
+    Do not use process-wide `INFERENCE_PROVIDER`: a lineup can mix providers.
 
     Parameters
     ----------
     mc : dict
-        Model configuration entry.
+        Model configuration.
 
     Returns
     -------
@@ -1439,24 +1340,22 @@ def _provider_for(mc: dict) -> Any:
 
 
 def _ctx_len_for(mc: dict, mod: Any) -> int:
-    """Resolve a model's context window, tolerating catalog-lookup failures.
+    """Resolve a model context window, tolerating catalog failures.
 
-    Falls back to `10**9` on failure (timeout or unlisted model id), so
-    `complete()`'s token-usage guard never fires for this model; a genuine
-    overflow then surfaces later as that guard's `ValueError`, recorded
-    per-cell as a resumable exception row rather than a hard abort.
+    Fall back to `10**9` so real overflow becomes a resumable per-cell
+    `ValueError`, not a hard abort.
 
     Parameters
     ----------
     mc : dict
-        Model configuration entry.
+        Model configuration.
     mod : Any
         Provider module.
 
     Returns
     -------
     int
-        Model context window.
+        Context window.
     """
     try:
         return mod.get_model_context_length(mc["model"])
@@ -1470,47 +1369,35 @@ def _ctx_len_for(mc: dict, mod: Any) -> int:
 
 
 def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = None) -> int:
-    """Run a sweep described by `config`; write per-theorem dirs under `run_dir`.
+    """Run a configured sweep and write per-theorem output.
 
-    Loops theorem, then k, then rung, then model, then replicate. One Lean REPL
-    session per (theorem, k), shared across every branch from it; one further
-    per-theorem session re-runs the full proof as a sanity gate.
-
-    `LEAN_CELL_WHITELIST` (env, optional JSON file of cell keys): when set,
-    only those cells generate, and a theorem owning none of them is dropped
-    before its sanity gate runs. After the run, `sweep` reconciles the
-    whitelist against what was written and raises `RuntimeError` on any
-    unreachable key -- fatal, since `run_study.py` stamps
-    `hash_cell_keys(cell_whitelist)` into `manifest.json` as a claim about
-    exactly these cells; raised only after that file and `analysis.txt` are
-    (re)written, so the claim's own falsification is on record.
-
-    `traced_root_present` (in `manifest.json`): without a cached, traced
-    mathlib4 checkout, `skip_trivial` judges fewer rungs trivial, so which
-    cells a run produces can depend on a directory outside the results tree
-    (logged as a WARNING at start).
+    One REPL serves each (theorem, k); another replays ground truth for its
+    sanity gate. Whitelists generate only listed cells; a theorem owning none
+    is dropped before its sanity gate. Unreachable keys fail after artifacts
+    are written because `run_study.py` manifests their exact hash. Record
+    `traced_root_present`: a cached traced checkout outside results changes
+    `skip_trivial` output and triggers a warning when absent.
 
     Parameters
     ----------
     config : dict
         Sweep configuration.
     run_dir : Path
-        Directory for per-theorem outputs and run artifacts.
+        Run artifact directory.
     resume : bool, optional
-        ``True`` skips cells already recorded in `all_rows.jsonl` (`_existing_keys`).
+        Skip resumable `all_rows.jsonl` cells.
     verifier : Any, optional
-        Verifier for sanity replays and generated proof tails.
+        Sanity and proof-tail verifier.
 
     Returns
     -------
     int
-        Number of cells written.
+        Written cell count.
     """
     if verifier is None:
         verifier = _default_verifier()
 
-    # Loaded once, threaded into `_select_theorems` and
-    # `_run_cells_at_step_concurrent`, so a bad file raises before spend.
+    # Load once so a bad whitelist fails before spend.
     cell_whitelist_path = os.environ.get("LEAN_CELL_WHITELIST", "").strip()
     cell_whitelist: frozenset[tuple] | None = (
         load_cell_whitelist(cell_whitelist_path) if cell_whitelist_path else None
@@ -1526,8 +1413,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
         validate_rung(chain, int(lvl))  # type: ignore[arg-type]
 
     models_cfg = list(config["models"])
-    # Fail fast: pure module resolution, no network call, so a typo aborts
-    # here instead of after the first theorem burns a real sanity replay.
+    # Resolve locally first so a typo fails before a real sanity replay.
     for mc in models_cfg:
         _provider_for(mc)
     n_replicates = int(config.get("n_replicates", 1))
@@ -1538,19 +1424,13 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     max_concurrency = int(config.get("max_concurrency", 12))
     skip_trivial = bool(config.get("skip_trivial", True))
     theorem_workers = int(config.get("theorem_workers", 1))
-    # Default 0, matching `theorems.seed` (see `_select_theorems`) and
-    # `run_study.py`'s driver config -- not `run_cell`'s separate `seed`
-    # parameter (its own default of 1776, see module docstring). Exists so a
-    # config that omits `seed` can't silently disagree with the driver's value.
+    # Match `theorems.seed` and `run_study.py` at 0 so omitted config cannot disagree.
     base_seed = int(config.get("seed", 0))
     request_timeout = int(config.get("request_timeout", 1800))
     max_retries = int(config.get("max_retries", 4))
 
-    # Whether a traced mathlib4 checkout (lets `body_with_proof` render full
-    # premise source, so `is_trivial_rung` judges correctly) is present on
-    # this box, right now. Lazy import: `premises` is otherwise reached only
-    # through `context`'s own lazy imports; a top-level import here would add
-    # an eager dependency edge this module doesn't otherwise have.
+    # A traced checkout lets `is_trivial_rung` judge full premises; import
+    # lazily to avoid `context`'s otherwise absent eager dependency.
     from . import premises
     traced_root_present = premises._traced_root() is not None
     if skip_trivial and not traced_root_present:
@@ -1580,8 +1460,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     manifest = {
         "run_name": config.get("run_name") or run_dir.name,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        # Provenance about the box, not `config` -- recorded unconditionally
-        # so an archived run's reader can tell which regime it ran under.
+        # Record box provenance so archived readers know the rendering regime.
         "traced_root_present": traced_root_present,
         "config": config,
     }
@@ -1596,10 +1475,8 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
             flush=True,
         )
 
-    # (provider module, context length) cache, resolved once per unique
-    # (provider, model), not per cell. Keyed on `mc["model"]` too, since
-    # `ctx_len` is model-specific -- else one model's length could leak onto
-    # another's token-usage guard.
+    # Cache per (provider, model): context length is model-specific and must
+    # not leak into another model's token guard.
     provider_cache: dict[tuple, tuple] = {}
     def _provider_and_ctx_for(mc: dict) -> tuple:
         key = (mc["provider"], mc["model"])
@@ -1608,9 +1485,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
             provider_cache[key] = (mod, _ctx_len_for(mc, mod))
         return provider_cache[key]
 
-    # `max_concurrency: N` on a model entry gets a Semaphore(N) shared across
-    # all theorem workers, throttling a model that hits upstream rate limits
-    # (e.g. qwen-instruct's 429s) without slowing the rest of the lineup.
+    # Shared per-model caps throttle upstream rate limits without slowing peers.
     model_semaphores: dict[str, threading.Semaphore] = {}
     for mc in models_cfg:
         cap = mc.get("max_concurrency")
@@ -1629,9 +1504,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
         flush=True,
     )
     if cell_whitelist is not None:
-        # `n_total_cells` is an upper bound over the whitelist-narrowed pool
-        # (a theorem may own only some combos); printed separately so it
-        # isn't read as the count actually selected.
+        # This is an upper bound: a theorem may own only some requested cells.
         print(
             f"cell whitelist active: {len(cell_whitelist)} cell(s) requested "
             f"(LEAN_CELL_WHITELIST={cell_whitelist_path})",
@@ -1649,15 +1522,10 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
         flush=True,
     )
 
-    # Before opening for append, not after -- see `_repair_torn_tail`'s
-    # docstring. Unconditional, not gated on `resume`: `run_study.py` usually
-    # renames the old file aside first under `resume=False`, but if that ever
-    # gets skipped, an unrepaired torn tail is just as wrong there.
+    # Repair before append even without resume: an unrepaired tail is corrupt.
     _repair_torn_tail(all_rows_path)
 
-    # Keys this call writes that `_existing_keys` would count, accumulated in
-    # the write path so whitelist reconciliation below skips re-parsing
-    # all_rows.jsonl.
+    # Accumulate resumable writes to avoid reparsing for whitelist reconciliation.
     written_keys: set[tuple] = set()
 
     with all_rows_path.open("a") as all_rows:
@@ -1665,12 +1533,11 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
         print_lock = threading.Lock()
 
         def _process_one_theorem(theorem: BenchmarkTheorem) -> tuple[int, int, int]:
-            """Worker function: process one theorem end-to-end (sanity + cells)."""
+            """Process one theorem's sanity gate and cells."""
             n_w = n_o = n_s = 0
             tdir = _theorem_dir(run_dir, theorem)
             tdir.mkdir(parents=True, exist_ok=True)
 
-            # ---- sanity gate per theorem (separate Lean REPL session) ----
             prev_sanity = sanity_done.get(theorem.full_name)
             if prev_sanity is None:
                 t0 = time.monotonic()
@@ -1696,8 +1563,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
                         )
                     return n_w, n_o, n_s
             elif prev_sanity in SANITY_FAILURE_VERDICTS:
-                # Resume re-applies the gate rather than just skipping the
-                # replay (see `_sanity_done`).
+                # Resume reapplies the recorded gate.
                 with print_lock:
                     print(
                         f"  SANITY-FAIL {theorem.full_name}: {prev_sanity} "
@@ -1743,7 +1609,6 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
                         done_keys=done_keys,
                         tdir=tdir, dojo_timeout=dojo_timeout,
                         verifier=verifier,
-                        # concurrent_gen=False is one worker, not a second code path.
                         max_workers=max_concurrency if concurrent_gen else 1,
                         write_lock=write_lock, print_lock=print_lock,
                         model_semaphores=model_semaphores,
@@ -1791,16 +1656,11 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     manifest["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     manifest["counts"] = {"written": n_written, "skipped": n_skipped, "success": n_ok}
 
-    # Reconcile against what all_rows.jsonl now accounts for: the pre-run
-    # snapshot plus this run's own writes. Checked at the END, not early, so
-    # reachable cells still get generated even when others in the whitelist
-    # are not.
+    # Reconcile at the end so reachable cells still generate despite misses.
     whitelist_missed: list[tuple] = []
     if cell_whitelist is not None:
         whitelist_missed = sorted(cell_whitelist - (done_keys | written_keys))
-        # List-of-lists, matching `hash_cell_keys`'s convention. Recorded even
-        # when empty (`[]`), distinguishing a whitelist-free run from a
-        # reconciled-and-clean one.
+        # Record even `[]` to distinguish a clean whitelist run from no whitelist.
         manifest["whitelist_missed"] = [list(k) for k in whitelist_missed]
 
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -1808,8 +1668,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     write_run_analysis(run_dir)
 
     if whitelist_missed:
-        # Logged individually (capped) so an operator sees which cells were
-        # unreachable; the full list already survived into manifest.json above.
+        # Cap logs; the manifest retains every unreachable key.
         shown = whitelist_missed[:WHITELIST_MISS_LOG_CAP]
         for key in shown:
             logging.error("whitelist cell unreachable: %s", list(key))
@@ -1820,8 +1679,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
                 "(full list in manifest.json['whitelist_missed'])",
                 n_suppressed,
             )
-        # Fatal: `run_study.py` stamps this exact cell set into manifest.json's
-        # claim (see docstring); raised only after that file is rewritten above.
+        # Fatal after writing: `run_study.py` manifests this exact cell claim.
         raise RuntimeError(
             f"LEAN_CELL_WHITELIST={cell_whitelist_path!r}: "
             f"{len(whitelist_missed)} of {len(cell_whitelist)} requested "

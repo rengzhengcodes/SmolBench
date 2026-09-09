@@ -1,9 +1,4 @@
-"""Experiment lifecycle facade (study-neutral) and the experiment-tag guard.
-
-`Experiment` carries the whole provision/run/agent_status/teardown lifecycle,
-so a second study's driver inherits it instead of re-implementing it inline.
-Offline: nothing here touches AWS.
-"""
+"""Test the neutral experiment lifecycle and tag guard."""
 
 import dataclasses
 import inspect
@@ -32,7 +27,7 @@ def build(**kwargs: Any) -> Experiment:
 
 
 def test_the_base_carries_the_whole_lifecycle() -> None:
-    """Everything a driver needs is on the neutral class, not on a subclass."""
+    """Keep driver lifecycle on the neutral class."""
     for name in ("provision", "run", "summarize", "cot_chain_lengths",
                  "agent_status", "teardown", "_apply_env", "seeds",
                  "results_dir", "harness"):
@@ -44,8 +39,7 @@ def test_the_base_carries_the_whole_lifecycle() -> None:
 
 
 def test_the_base_declares_no_study_default_for_the_info_arms() -> None:
-    """`info_types` is required on the neutral class: a default here is how one
-    study's arm names would end up spelled into a shared module."""
+    """Require info types to avoid study defaults in shared code."""
     with pytest.raises(TypeError):
         Experiment(notebook_dir="somewhere", archetype_tags={},
                    make_quizzes=make_quizzes)
@@ -55,30 +49,26 @@ def test_the_base_declares_no_study_default_for_the_info_arms() -> None:
 
 
 def test_the_induction_subclass_only_supplies_defaults() -> None:
-    """`InductionExperiment` adds induction's two defaults and no new fields:
-    anything else would be study-specific prose leaking into shared inheritance."""
+    """Limit induction subclass to its two defaults."""
     assert issubclass(InductionExperiment, Experiment)
     assert [f.name for f in dataclasses.fields(InductionExperiment)] == [
         f.name for f in dataclasses.fields(Experiment)
     ]
-    # Default 1: the induction information arms.
+    # Induction information-arm default.
     assert InductionExperiment(
         notebook_dir="periodic", archetype_tags={}, make_quizzes=make_quizzes
     ).info_types
-    # Default 2: the CoT archetype tag, which the base makes an explicit
-    # argument (a study that has no CoT archetype must not inherit one).
+    # CoT tag remains explicit in the neutral base.
     assert (inspect.signature(InductionExperiment.cot_chain_lengths)
             .parameters["tag"].default == "cot")
     assert (inspect.signature(Experiment.cot_chain_lengths)
             .parameters["tag"].default is inspect.Parameter.empty)
 
 
-# ---------------------------------------------------------------------------
-# validate_experiment_tag
-# ---------------------------------------------------------------------------
+# validate_experiment_tag.
 
 def test_a_lane_tag_and_the_standalone_tag_are_accepted() -> None:
-    """The two shapes a driver legitimately resolves to must pass."""
+    """Accept valid lane and standalone tags."""
     fleet = study_config.load_study_config().fleet
     assert validate_experiment_tag(fleet.standalone_tag, None) is None
     assert validate_experiment_tag(f"{fleet.tag_prefix}glm-4.7", None) is None
@@ -88,18 +78,15 @@ def test_a_lane_tag_and_the_standalone_tag_are_accepted() -> None:
 
 
 @pytest.mark.parametrize("tag, lane", [
-    # A bare shared fleet prefix names every lane at once: fleet_teardown
-    # terminates by tag, so this would take the whole fleet down.
+    # A bare fleet prefix could terminate every lane.
     ("scaling-", None),
     ("scaling", None),
     ("scaling--s0of2", "-s0of2"),
-    # Nothing at all is not a tag.
     ("", None),
     ("   ", None),
 ])
 def test_an_unsafe_tag_is_refused(tag: str, lane: str | None) -> None:
-    """Each refusal names the tag, so an operator can see what to export."""
+    """Name rejected tags in errors."""
     with pytest.raises(ValueError) as exc:
         validate_experiment_tag(tag, lane)
     assert repr(tag) in str(exc.value) or tag.strip() in str(exc.value)
-

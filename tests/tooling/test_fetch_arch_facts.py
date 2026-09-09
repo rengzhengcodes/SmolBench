@@ -14,7 +14,7 @@ import pytest
 
 from tests._paths import SCRIPTS, load_by_path
 
-faf = load_by_path("fetch_arch_facts", SCRIPTS / "arch" / "fetch_arch_facts.py")
+faf = load_by_path(SCRIPTS / "arch" / "fetch_arch_facts.py", "fetch_arch_facts")
 from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
 #: Minimal config for the helpers and four cross-check fields.

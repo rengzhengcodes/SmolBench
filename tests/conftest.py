@@ -1,31 +1,120 @@
-"""Provide shared fixtures: a local OpenAI-compatible stub server and stub tokenizers.
-
-By default every test in this directory runs offline, with no AWS credentials
-and no network access beyond the loopback stub server; the only exception is
-opt-in, the ``s3_archive`` fixture below, whose tests SKIP unless
-``SMOLBENCH_ARCHIVE_S3`` is set. The stub server implements enough of the Chat
-Completions API to exercise the shared client in
-``smolbench/evals/openai_compat.py`` through every provider module.
-``StubTokenizer`` replaces the real model tokenizers that the induction
-generators would otherwise download.
-"""
+"""Shared offline OpenAI-stub, tokenizer, and optional S3 fixtures."""
 
 import hashlib
+import importlib.util
 import json
 import math
 import os
 import posixpath
 import re
+import sys
 import threading
+from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Iterator
 
 import pytest
 
+from tests._paths import NOTEBOOKS
+
+def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
+    """Write `rows` with the production JSONL serializer.
+
+    Sharing `runner.jsonl_line` keeps Unicode and record terminators identical
+    to files emitted by a real deduction sweep.
+
+    Parameters
+    ----------
+    path : Path
+        Destination file.
+    rows : Iterable[dict[str, Any]]
+        JSON-compatible records.
+    """
+    from smolbench.deduction.lean.runner import jsonl_line
+
+    path.write_text("".join(jsonl_line(row) for row in rows))
+
+
+def cell_row(**overrides: Any) -> dict[str, Any]:
+    """Build a full-schema synthetic deduction cell row.
+
+    A shared complete record keeps tests focused on the fields they vary while
+    preserving the production schema expected by downstream scripts.
+
+    Parameters
+    ----------
+    **overrides : Any
+        Values replacing the defaults.
+
+    Returns
+    -------
+    dict[str, Any]
+        Synthetic cell row.
+    """
+    row: dict[str, Any] = {
+        "kind": "cell", "theorem_id": "Mini.theoremA", "file_path": "Mini.lean",
+        "k": 1, "n_total_tactics": 2, "chain": "stepk", "level": 1,
+        "rung": "stepk:1", "replicate_idx": 0, "seed": 0, "model": "model-a",
+        "api_model": "model-a", "provider": "stub", "temperature": 0.7,
+        "prompt_tokens": 10, "completion_tokens": 5, "cache_read_tokens": 0,
+        "cache_creation_tokens": 0, "finish_reason": "stop", "context_chars": 10,
+        "gen_ms": 100, "verify_ms": 0, "candidate_proof": "rfl",
+        "raw_response": "```lean\nrfl\n```", "reasoning_content": None,
+        "verdict": "success", "lean_error": None, "final_state_pp": None,
+        "ground_truth_remaining": "rfl", "error": None, "tactics_applied": 0,
+        "tactics_total": 1, "ms": 0,
+    }
+    row.update(overrides)
+    return row
+
+
+def import_run_study(
+    name: str, env: dict[str, str] | None = None
+) -> tuple[ModuleType | None, BaseException | None, dict[str, str]]:
+    """Import the induction driver under an isolated environment.
+
+    Parameters
+    ----------
+    name : str
+        Unique module name.
+    env : dict[str, str] or None, optional
+        Environment overlay.
+
+    Returns
+    -------
+    tuple[ModuleType or None, BaseException or None, dict[str, str]]
+        Module, import exception, and post-import environment.
+    """
+    saved = dict(os.environ)
+    module: ModuleType | None = None
+    exc: BaseException | None = None
+    try:
+        os.environ.update(env or {})
+        spec = importlib.util.spec_from_file_location(
+            name, NOTEBOOKS / "induction" / "run_study.py"
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("could not create run_study module spec")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException as err:
+            module, exc = None, err
+        env_after = dict(os.environ)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+        sys.modules.pop(name, None)
+    return module, exc, env_after
+
 
 class _StubHandler(BaseHTTPRequestHandler):
-    """Replays the server's scripted response and records request bodies."""
+    """Replay scripted responses and record requests."""
 
-    def _reply(self, obj, code=200):
+    def _reply(self, obj: Any, code: int = 200) -> None:
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -33,24 +122,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _reply_sse(self, obj):
-        """Re-emit a chat-completions body as an SSE stream.
-
-        The stream sends one character per delta, on both channels. This
-        makes a test exercise real reassembly, not a single-frame passthrough
-        that would still pass even if the client dropped every chunk but the
-        last. The frame order matches vLLM: content and reasoning deltas
-        first, then a chunk that carries only ``finish_reason``, then (when
-        ``stream_options`` sets ``{"include_usage": true}``) a usage-only
-        chunk whose ``choices`` list is empty -- the shape most likely to
-        crash a naive ``choices[0]`` reader -- and finally ``[DONE]``.
-        """
+    def _reply_sse(self, obj: Any) -> None:
+        """Emit character-level SSE frames."""
         message = (obj.get("choices") or [{}])[0].get("message") or {}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
 
-        def frame(chunk):
+        def frame(chunk: Any) -> None:
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
 
         for key in ("reasoning_content", "reasoning"):
@@ -66,45 +145,36 @@ class _StubHandler(BaseHTTPRequestHandler):
             frame({"choices": [], "usage": obj["usage"]})
         self.wfile.write(b"data: [DONE]\n\n")
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
-        # Record the headers with the body. Tests can then check auth and
-        # routing headers, for example Prime Intellect's X-Prime-Team-ID.
+        # Keep headers for authentication and routing checks.
         self.server.requests.append(
             {"path": self.path, "body": payload, "headers": dict(self.headers)}
         )
         response = self.server.next_response()
-        # The stub replies in whatever transport the client asks for. A
-        # streaming test and a non-streaming test can queue the same
-        # response object and check that the parsed results match.
         if payload.get("stream"):
             self._reply_sse(response)
         else:
             self._reply(response)
 
-    def do_GET(self):
-        # Record headers for the same reason as in do_POST, for example to
-        # check metadata_get's Authorization bearer header.
+    def do_GET(self) -> None:
         self.server.requests.append(
             {"path": self.path, "body": None, "headers": dict(self.headers)}
         )
         if self.path.endswith("/endpoints"):
-            # OpenRouter-style context-length listing.
             self._reply({"data": {"endpoints": [{"context_length": 100000}]}})
         elif "/models/" in self.path:
-            # Prime-Intellect-style model info.
             self._reply({"context_length": 100000})
         else:
-            # Generic /models listing (aws/ec2 list_models).
             self._reply({"data": [{"id": "stub-model"}]})
 
-    def log_message(self, *args):
+    def log_message(self, *args: Any) -> None:
         pass  # keep pytest output clean
 
 
 class StubServer(ThreadingHTTPServer):
-    """OpenAI-compatible stub; push responses with ``queue_response``."""
+    """OpenAI-compatible response stub."""
 
     def __init__(self):
         super().__init__(("127.0.0.1", 0), _StubHandler)
@@ -112,10 +182,10 @@ class StubServer(ThreadingHTTPServer):
         self._responses: list = []
         self.default_response = chat_completion("42")
 
-    def queue_response(self, obj) -> None:
+    def queue_response(self, obj: Any) -> None:
         self._responses.append(obj)
 
-    def next_response(self):
+    def next_response(self) -> Any:
         return self._responses.pop(0) if self._responses else self.default_response
 
     @property
@@ -123,18 +193,20 @@ class StubServer(ThreadingHTTPServer):
         return f"http://127.0.0.1:{self.server_address[1]}/v1"
 
 
-def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
-    """Builds a minimal chat-completions response body."""
+def chat_completion(
+    content: Any,
+    reasoning_content: Any = None,
+    reasoning: Any = None,
+    usage: Any = ...,
+) -> dict[str, Any]:
+    """Build a chat-completions response."""
     message = {"content": content}
     if reasoning_content is not None:
         message["reasoning_content"] = reasoning_content
     if reasoning is not None:
         message["reasoning"] = reasoning
     body = {"choices": [{"message": message}]}
-    # Three-way `usage` switch, with Ellipsis as the "unspecified" sentinel
-    # (None is a meaningful value here, so it cannot be the default): omitted
-    # -> a small default usage stanza, usage=None -> no usage key at all (a
-    # server that reports nothing), any dict -> passed through verbatim.
+    # Ellipsis means default usage; None omits it.
     if usage is ...:
         usage = {"total_tokens": 10}
     if usage is not None:
@@ -142,45 +214,18 @@ def chat_completion(content, reasoning_content=None, reasoning=None, usage=...):
     return body
 
 
-# ---------------------------------------------------------------------------
-# Stub tokenizers (smolbench.evals.tokenization.Tokenizer implementations)
-# ---------------------------------------------------------------------------
-# The induction generators need a tokenizer to size their token-matched noise
-# arm. A real tokenizer would need either a network download (`HFTokenizer`)
-# or a tiktoken BPE file that may or may not be in the local cache. Neither
-# fits the offline, deterministic contract of this suite. These stubs are
-# pure Python. They give exact, stable results, so the golden-hash fixture is
-# recorded against them.
+# Deterministic tokenizer stubs.
 
 _CHUNK_RE = re.compile(r"\s+|\S+")
 
 
 class StubTokenizer:
-    """Deterministic tokenizer that copies the BPE behavior that matters.
-
-    Two properties of real tokenizers drive the noise-padding logic. This
-    stub copies both, so tests exercise the same code paths a served model
-    would use.
-
-    1. Whitespace runs merge. A long run of one repeated whitespace
-       character collapses to a single token (``" " * 128`` really is one
-       token in ``cl100k_base``). This is why a plain space pad cannot reach
-       a large token target, and why `choose_whitespace_unit` exists.
-    2. Mixed whitespace does not merge. Alternating characters defeat the run
-       merge, so ``" \\t" * n`` costs about n tokens. This is the property
-       the pad atom is chosen for.
-
-    All other text follows a coarse length model: one token per 2 whitespace
-    characters, and one token per 4 other characters. Boundary effects are
-    real here too. The pad fuses with adjacent whitespace in the template, so
-    the token count of a padded prompt is not the sum of its parts. This is
-    the same second-order behavior the padding search must handle.
-    """
+    """Tokenizer whose whitespace runs merge for padding tests."""
 
     name = "stub"
 
     def count(self, text: str) -> int:
-        """Returns the stub token count of `text`."""
+        """Return the stub token count."""
         total = 0
         for chunk in _CHUNK_RE.findall(text):
             if chunk.isspace():
@@ -194,16 +239,7 @@ class StubTokenizer:
 
 
 class TruncatingTokenizer:
-    """`StubTokenizer` with a hard cap, like a tokenizer.json truncation stanza.
-
-    This models a real failure found in
-    ``nvidia/Llama-3_1-Nemotron-Ultra-253B-v1-FP8``: its ``tokenizer.json``
-    sets ``truncation: {max_length: 512}``, so every count above the cap
-    comes back as the cap. A capped tokenizer looks linear right up to the
-    cap. This is why the pad-atom probe must reach past any plausible cap --
-    otherwise a saturating counter could report a 26,000-token prompt and its
-    pad as equal, both at 512.
-    """
+    """Tokenizer with a hard cap for saturation tests."""
 
     name = "truncating-512"
 
@@ -212,22 +248,17 @@ class TruncatingTokenizer:
         self._inner = StubTokenizer()
 
     def count(self, text: str) -> int:
-        """Returns the stub count, capped like a truncating tokenizer."""
+        """Return the capped token count."""
         return min(self._inner.count(text), self.cap)
 
 
 class MergeEverythingTokenizer:
-    """Pathological tokenizer: any whitespace run is one token.
-
-    No repeating whitespace atom can grow the count under this tokenizer.
-    This is the case `choose_whitespace_unit` must refuse, instead of
-    silently returning a pad that saturates far below its target.
-    """
+    """Tokenizer with fully merged whitespace for rejection tests."""
 
     name = "merge-everything"
 
     def count(self, text: str) -> int:
-        """Returns the stub token count of `text`."""
+        """Return the stub token count."""
         return sum(
             1 if chunk.isspace() else math.ceil(len(chunk) / 4)
             for chunk in _CHUNK_RE.findall(text)
@@ -235,7 +266,7 @@ class MergeEverythingTokenizer:
 
 
 @pytest.fixture
-def stub_server():
+def stub_server() -> Iterator[StubServer]:
     server = StubServer()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -245,21 +276,8 @@ def stub_server():
 
 
 @pytest.fixture(autouse=True)
-def _clear_provider_context_length_caches():
-    """Clear the openrouter and primeintellect `get_model_context_length` caches.
-
-    This fixture is autouse. It clears both `lru_cache` caches before and
-    after every test.
-
-    Some tests avoid cross-test cache bleed by picking a globally unique
-    model-name string per test (``m-openrouter-shape``, ``mini/pi-model-a``).
-    Clearing around every test makes cross-test isolation a real guarantee,
-    rather than a per-test naming convention.
-
-    The clear step is guarded by ImportError, so this fixture degrades
-    gracefully (skips silently) if a provider module is ever renamed or
-    removed, instead of failing collection for the whole suite.
-    """
+def _clear_provider_context_length_caches() -> Iterator[None]:
+    """Clear provider context-length caches around each test."""
     def _clear() -> None:
         try:
             from smolbench.evals.providers import openrouter
@@ -272,33 +290,20 @@ def _clear_provider_context_length_caches():
         except ImportError:
             pass
 
-    _clear()   # drop any stale entries left by a previous test
+    _clear()
     yield
-    _clear()   # leave a clean cache for whatever runs next
-
-
-# ---------------------------------------------------------------------------
-# S3-resident archive: evidence tree, data sidecars, LeanDojo corpus
-# ---------------------------------------------------------------------------
+    _clear()
 
 
 class S3Archive:
-    """Read-only, in-memory access to an archive prefix on S3.
-
-    The archived evidence tree (``notebooks/deduction/results/**``), the
-    data sidecars (``notebooks/deduction/data/*``) and the LeanDojo
-    corpus live ONLY under ``<SMOLBENCH_ARCHIVE_S3>/notebooks/deduction/``
-    (see ``notebooks/ARCHIVE.md``). Tests that need them stream each object
-    into memory through this class. Nothing is written to disk: the
-    user's ruling is that archived data is accessed on AWS, never pulled
-    into a local tree.
+    """Read-only S3 archive access.
 
     Parameters
     ----------
     uri : str
-        ``s3://<bucket>/<prefix>`` of the archive root.
+        Archive URI.
     region : str or None
-        Region for the S3 client; ``None`` lets boto3 resolve one.
+        S3 region.
     """
 
     def __init__(self, uri: str, region: str | None) -> None:
@@ -313,7 +318,7 @@ class S3Archive:
         return f"{self.prefix}/{rel}" if self.prefix else rel
 
     def keys(self, rel_prefix: str) -> list[str]:
-        """List archive-relative paths under ``rel_prefix`` (a directory)."""
+        """List paths below ``rel_prefix``."""
         full = self._key(rel_prefix).rstrip("/") + "/"
         out: list[str] = []
         paginator = self._client.get_paginator("list_objects_v2")
@@ -330,8 +335,8 @@ class S3Archive:
         except self._client.exceptions.ClientError:
             return False
 
-    def open(self, rel: str):
-        """Return a streaming body for one object (read it, do not save it)."""
+    def open(self, rel: str) -> Any:
+        """Return an object's streaming body."""
         try:
             return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))["Body"]
         except self._client.exceptions.NoSuchKey as exc:
@@ -352,13 +357,7 @@ class S3Archive:
 
 @pytest.fixture(scope="session")
 def s3_archive() -> "S3Archive":
-    """The S3 archive, or skip.
-
-    Opt-in: set ``SMOLBENCH_ARCHIVE_S3=s3://<bucket>/<prefix>`` (and, if
-    needed, ``SMOLBENCH_RESULTS_S3_REGION``) with live AWS credentials.
-    Unset, every test that depends on this fixture skips, so the default
-    suite stays offline and credential-free.
-    """
+    """Return the opt-in S3 archive, or skip."""
     uri = os.environ.get("SMOLBENCH_ARCHIVE_S3", "").strip()
     if not uri:
         pytest.skip("SMOLBENCH_ARCHIVE_S3 not set: archived evidence lives on S3 only")

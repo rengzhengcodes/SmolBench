@@ -1,4 +1,4 @@
-"""Offline tests for scripts/results/evidence_manifest.py: the EVIDENCE.json mechanism."""
+"""Offline tests for `evidence_manifest.py`."""
 
 import hashlib
 import importlib.util
@@ -31,7 +31,7 @@ ALLOW = [{"name": HINT, "reason": "prompt path in prose, not an evidence artifac
 
 @pytest.fixture(scope="module")
 def em() -> ModuleType:
-    # @dataclass resolves KW_ONLY through sys.modules, which is None for a path exec.
+    # `@dataclass` needs `sys.modules` populated for path execution.
     name = "smolbench_test_evidence_manifest"
     spec = importlib.util.spec_from_file_location(name, SCRIPTS / "results" / "evidence_manifest.py")
     sys.modules[name] = mod = importlib.util.module_from_spec(spec)

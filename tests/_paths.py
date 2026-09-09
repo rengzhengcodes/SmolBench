@@ -1,4 +1,4 @@
-"""Single source of truth for repo-relative path anchors used across the test suite.
+"""Single source of truth for repo-relative paths and path-based test imports.
 
 tests/ is grouped into subject subdirectories (evals/, induction/, deduction/,
 tooling/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
@@ -28,13 +28,27 @@ SCRIPTS = REPO_ROOT / "scripts"
 NOTEBOOKS = REPO_ROOT / "notebooks"
 
 
-def load_by_path(name: str, path: Path, *, snapshot_env: bool = False) -> ModuleType:
-    """Execute `path` as a module registered under `name`.
+def load_by_path(path: Path, name: str, *, snapshot_env: bool = False) -> ModuleType:
+    """Load `path` as module `name` and register it during execution.
 
-    Registered in ``sys.modules`` BEFORE exec, because a PEP 563 dataclass in
-    the loaded module resolves its own module through that entry.
-    ``snapshot_env`` restores ``os.environ`` afterwards, for scripts that call
-    ``load_dotenv`` (or set ``EC2_*`` defaults) at module scope.
+    Registered in ``sys.modules`` before exec because a PEP 563 dataclass in the
+    loaded module resolves its own module through that entry. ``snapshot_env``
+    restores ``os.environ`` afterwards for scripts that call ``load_dotenv`` or
+    set ``EC2_*`` defaults at module scope.
+
+    Parameters
+    ----------
+    path : Path
+        Python source file to execute.
+    name : str
+        Temporary module name.
+    snapshot_env : bool, optional
+        Restore ``os.environ`` after the module executes.
+
+    Returns
+    -------
+    ModuleType
+        Executed module.
     """
     saved = dict(os.environ) if snapshot_env else None
     try:

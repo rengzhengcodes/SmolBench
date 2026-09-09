@@ -18,7 +18,7 @@ from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS, load_by_path
 
 def _load(stem: str) -> ModuleType:
     return load_by_path(
-        f"_scaling_{stem}", SCRIPTS / "fleet" / f"{stem}.py", snapshot_env=True)
+        SCRIPTS / "fleet" / f"{stem}.py", f"_scaling_{stem}", snapshot_env=True)
 
 
 fleet, status, shards, teardown = (
@@ -848,7 +848,7 @@ def test_the_fleet_no_longer_manages_per_lane_state_files() -> None:
     assert "LEAN_STATE_FILE" not in deduction
     # Matching paths prevent deduction from provisioning a second box.
     driver = load_by_path(
-        "_deduction_driver_probe", NOTEBOOKS / "deduction" / "run_study.py",
+        NOTEBOOKS / "deduction" / "run_study.py", "_deduction_driver_probe",
         snapshot_env=True)
     derived = driver.lane_env_defaults("glm-4.7", repo_root=Path("/anchor"))["EC2_STATE_FILE"]
     assert Path(derived).name == deduction["INDUCTION_STATE_FILE"]

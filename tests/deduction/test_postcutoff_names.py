@@ -1,33 +1,19 @@
-"""Acceptance tests for scripts/deduction/postcutoff_names.py.
+"""Offline acceptance tests for post-cutoff declaration selection.
 
-The script builds the provably post-cutoff mathlib4 declaration set between two
-commits; these tests pin what decides *what lands in the artifact*: the
-namespace-aware Lean scanner, deprecation/move filters, the Bors ``(#NNNNN)``
-commit-message parser, the PR-date provenance filter, and the JSON artifact shape.
-
-Everything here is offline: the provenance tests drive the real script against
-a throwaway local git repo built in ``tmp_path`` (so clone/blame/commit-walk run
-for real), with only the GitHub PR lookup replaced by an in-test stub.
+Only GitHub PR lookup is stubbed; scanner, filters, git history, and artifact run for real.
 """
 
-import importlib.util
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests._paths import FIXTURES, SCRIPTS
+from tests._paths import FIXTURES, SCRIPTS, load_by_path
 
 _PATH = SCRIPTS / "deduction" / "postcutoff_names.py"
-_SPEC = importlib.util.spec_from_file_location("postcutoff_names", _PATH)
-pcn = importlib.util.module_from_spec(_SPEC)
-# Register before exec_module: a module loaded by path is otherwise absent
-# from sys.modules, which breaks dataclass field resolution under PEP 563.
-sys.modules[_SPEC.name] = pcn
-_SPEC.loader.exec_module(pcn)
+pcn = load_by_path(_PATH, "postcutoff_names")
 
 SAMPLE = FIXTURES / "postcutoff" / "sample.lean"
 
@@ -45,8 +31,7 @@ def sample_decls() -> dict:
     return {d.full_name: d for d in decls}
 
 
-#: Every name the fixture must yield -- and, by exact-set equality, nothing
-#: else. Derived from the spec's scanner rules, not from the implementation.
+#: Exact scanner expectations, derived from rules rather than implementation.
 EXPECTED_SAMPLE_NAMES = {
     "topLevelThm",
     "Alpha.inNamespace",
@@ -177,10 +162,10 @@ def test_normalise_line_collapses_whitespace(raw: str, expected: str) -> None:
 
 def test_deprecation_excluded_names_covers_alias_targets(sample_decls: dict) -> None:
     excluded = pcn.deprecation_excluded_names(sample_decls.values())
-    # deprecated declarations and the targets of deprecated aliases go
+    # Deprecated declarations and alias targets go.
     assert {"Alpha.deprecatedThm", "Alpha.oldName", "newName", "Alpha.newName",
             "Alpha.iffBackward", "someIff", "Alpha.someIff"} <= excluded
-    # a non-deprecated alias must not drag its (real, live) target out
+    # A live alias must not exclude its target.
     assert "Alpha.plainAlias" not in excluded
     assert "Alpha.inNamespace" not in excluded
     assert "inNamespace" not in excluded
@@ -342,11 +327,7 @@ def test_collect_normalised_lines_is_normalised(two_trees: tuple[Path, Path]) ->
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: provenance, PR-date filter, artifact
-# ---------------------------------------------------------------------------
-#
-# Stubbing only `fetch_pr_created_at` also asserts that no other code path
-# talks to the network.
+# End-to-end provenance, PR-date filter, artifact.
 
 TARGET_DATE = "2026-06-01"
 
@@ -374,9 +355,7 @@ REPO_A_NO_PR = REPO_A_LONG_LIVED.replace(
     "end Old\n", "theorem noPr : 4 = 4 := rfl\n\nend Old\n"
 )
 
-#: PR number -> GitHub ``created_at``. #200 was opened after the cutoff (its
-#: declaration is post-cutoff); #150 was opened before the cutoff and merged
-#: after it -- the case the whole PR-date filter exists for.
+#: #200 opened after the cutoff; #150 merged after but opened before it.
 STUB_PRS = {200: "2026-06-10T09:00:00Z", 150: "2026-05-20T09:00:00Z"}
 
 
@@ -401,11 +380,7 @@ def _commit(repo: Path, files: dict, message: str, date: str) -> str:
 
 @pytest.fixture(scope="module")
 def fake_mathlib(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, str]]:
-    """A four-commit local stand-in for mathlib4.
-
-    Returns ``(repo_path, shas)`` where ``shas`` maps a label to its commit:
-    ``root`` (no Mathlib/ at all), ``old``, ``pr200``, ``pr150``, ``new``.
-    """
+    """Four-commit local mathlib stand-in, including no-Mathlib root and PR cases."""
     repo = tmp_path_factory.mktemp("fake_mathlib")
     _git(repo, "init", "-q", "-b", "master")
     shas = {}
@@ -547,8 +522,7 @@ def test_only_the_stubbed_entry_point_talks_to_github(
     artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
 ) -> None:
     _, _, _, calls = artifact
-    # Two PR-numbered commits are reachable from the kept set; the third
-    # declaration has no PR number and must cost no API call.
+    # A no-PR declaration must cost no API call.
     assert sorted(calls) == [150, 200]
 
 
@@ -575,7 +549,7 @@ def test_empty_old_tree_is_refused_not_silently_diffed(
     fake_mathlib: tuple[Path, dict[str, str]],
     stub_pr_lookup: list[int],
 ) -> None:
-    """An empty old tree would make every name look new -- refuse it."""
+    """Refuse an empty old tree because every name would otherwise look new."""
     repo, shas = fake_mathlib
     with pytest.raises(SystemExit) as excinfo:
         _run(tmp_path, repo, shas["root"], shas["new"], "never.json")
@@ -604,7 +578,7 @@ def test_rate_limit_stops_calling_and_still_writes_what_it_had(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A rate limit must degrade the run, not abort it or fake a result."""
+    """A rate limit must degrade, not abort or fabricate results."""
     repo, shas = fake_mathlib
     calls = []
 
@@ -617,8 +591,7 @@ def test_rate_limit_stops_calling_and_still_writes_what_it_had(
     captured = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out.read_text())
-    # The PR-numbered declarations are dropped unresolved; the one with no PR
-    # number never needed the API and survives on its commit date.
+    # Unresolved PR declarations drop; no-PR declarations use commit date.
     assert set(data["decls"]) == {"Old.noPr"}
     assert len(calls) == 1, "must stop calling after the first rate limit"
     assert "rate_limited=2" in captured, captured

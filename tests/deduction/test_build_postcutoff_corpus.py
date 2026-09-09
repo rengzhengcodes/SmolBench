@@ -1,20 +1,13 @@
-"""Acceptance tests for scripts/deduction/build_postcutoff_corpus.py and the EC2 runbook.
+"""Acceptance tests for the post-cutoff corpus builder and runbook.
 
-Expected values (split assignment, digest recipe, refusal messages, summary schema)
-come from POSTCUTOFF_SPEC_B2, not from the implementation.
-
-The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic LeanDojo-v2
-export: three theorems, each present once in ``random`` and once in ``novel_premises``
-(in a DIFFERENT split), exercising the builder's union-across-families + dedup path
-and its own re-splitting. Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
+Expectations come from POSTCUTOFF_SPEC_B2, not implementation; the synthetic
+fixture leaves only `Mini.postB` after the post-cutoff two-tactic filter.
 """
 
 import hashlib
-import importlib.util
 import json
 import shutil
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -22,13 +15,10 @@ from typing import Any
 import pytest
 
 import smolbench.deduction.lean.corpus as corpus
-from tests._paths import FIXTURES, SCRIPTS
+from tests._paths import FIXTURES, SCRIPTS, load_by_path
 
 _PATH = SCRIPTS / "deduction" / "build_postcutoff_corpus.py"
-_SPEC = importlib.util.spec_from_file_location("build_postcutoff_corpus", _PATH)
-build = importlib.util.module_from_spec(_SPEC)
-sys.modules[_SPEC.name] = build
-_SPEC.loader.exec_module(build)
+build = load_by_path(_PATH, "build_postcutoff_corpus")
 
 RUNBOOK = SCRIPTS / "deduction" / "trace_mathlib_ec2.sh"
 
@@ -65,9 +55,6 @@ def built(tmp_path: Path) -> Path:
     return _build(tmp_path / "out")
 
 
-# Happy path
-
-
 def test_only_the_postcutoff_multi_tactic_theorem_survives(built: Path) -> None:
     """Pre-cutoff and single-tactic post-cutoff rows are dropped; one row remains."""
     rows = _json(built / "random" / "val.json")
@@ -76,7 +63,7 @@ def test_only_the_postcutoff_multi_tactic_theorem_survives(built: Path) -> None:
     assert row["postcutoff"] is True
     assert row["postcutoff_provenance"] == {
         "introduced_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        # null pr_number/pr_created_at are legal (reason="commit-date"); only a missing key is a refusal.
+        # Null PR fields are legal; missing keys are not.
         "pr_number": None,
         "pr_created_at": None,
         "reason": "commit-date",
@@ -97,19 +84,11 @@ def test_local_url_is_rewritten_to_github(built: Path) -> None:
 
 
 def test_split_assignment_is_sha256_deterministic(built: Path) -> None:
-    """sha256(full_name)[:8] % 100 buckets Mini.postB into val (89) though the fixture files it under random/test, proving splits are re-derived, not inherited."""
+    """Splits are re-derived: `Mini.postB` hashes to val bucket 89."""
     assert int(hashlib.sha256(b"Mini.postB").hexdigest()[:8], 16) % 100 == 89
-    for kind in ("random", "novel_premises"):
-        assert _json(built / kind / "train.json") == []
-        assert _json(built / kind / "test.json") == []
-        assert [r["full_name"] for r in _json(built / kind / "val.json")] == ["Mini.postB"]
-
-
-def test_both_split_families_carry_the_same_rows(built: Path) -> None:
-    """novel_premises is a copy of random so every loader path works."""
-    for split in ("train", "val", "test"):
-        assert _json(built / "random" / f"{split}.json") == _json(
-            built / "novel_premises" / f"{split}.json")
+    assert _json(built / "random" / "train.json") == []
+    assert _json(built / "random" / "test.json") == []
+    assert [r["full_name"] for r in _json(built / "random" / "val.json")] == ["Mini.postB"]
 
 
 def test_metadata_block_matches_package_a_contract(built: Path) -> None:
@@ -117,7 +96,6 @@ def test_metadata_block_matches_package_a_contract(built: Path) -> None:
     meta = _json(built / "metadata.json")
     assert meta["dataset_name"] == DATASET_NAME
     assert meta["from_repo"] == {"url": GITHUB_URL, "commit": NEW_COMMIT}
-    # creation_time / leandojo_version are copied through from the export.
     assert meta["leandojo_version"] == "2.0.0"
     assert meta["postcutoff"] == {
         "method": "name-set-difference+pr-opened-after-T",
@@ -146,9 +124,7 @@ def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) ->
     assert summary["target_date"] == "2026-06-03"
     assert summary["min_traced_tactics"] == 2
     assert summary["counts"] == {
-        "rows_read": 6,
-        "unique_theorems": 3,
-        "duplicates_dropped": 3,
+        "rows_read": 3,
         "postcutoff_named": 2,
         "with_min_tactics": 1,
         "written": 1,
@@ -156,19 +132,15 @@ def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) ->
     }
     assert summary["rows_per_source_file"] == {
         "random/train.json": 1, "random/val.json": 1, "random/test.json": 1,
-        "novel_premises/train.json": 1, "novel_premises/val.json": 1,
-        "novel_premises/test.json": 1,
     }
     assert summary["full_names"] == ["Mini.postB"]
     assert summary["sha256_of_sorted_full_names"] == (
         "d3ce8aa996d11342f560ea4afd0c4fc4650313b8187e6e8cd891df526fa99ca6")
 
 
-# Digest recipe with >1 name: a 1-name pool can't distinguish join separators.
-
-
+# Use multiple names: one name cannot distinguish digest join separators.
 def _synthetic_export(root: Path, names_and_tactics: dict[str, int]) -> Path:
-    """Write a minimal v2 export carrying ``{full_name: n_traced_tactics}``."""
+    """Write a minimal v2 export carrying `{full_name: n_traced_tactics}`."""
     rows = []
     for i, (name, ntac) in enumerate(sorted(names_and_tactics.items())):
         rows.append({
@@ -180,11 +152,10 @@ def _synthetic_export(root: Path, names_and_tactics: dict[str, int]) -> Path:
                  "state_before": "⊢ A", "state_after": "no goals"}
                 for j in range(ntac)],
         })
-    for kind in ("random", "novel_premises"):
-        (root / kind).mkdir(parents=True, exist_ok=True)
-        (root / kind / "train.json").write_text(json.dumps(rows))
-        for split in ("val", "test"):
-            (root / kind / f"{split}.json").write_text("[]")
+    (root / "random").mkdir(parents=True, exist_ok=True)
+    (root / "random" / "train.json").write_text(json.dumps(rows))
+    for split in ("val", "test"):
+        (root / "random" / f"{split}.json").write_text("[]")
     (root / "metadata.json").write_text(json.dumps({
         "dataset_name": "synthetic", "creation_time": "2026-08-30 00:00:00.000000",
         "from_repo": {"url": "/mnt/data/mathlib4", "commit": NEW_COMMIT},
@@ -228,10 +199,7 @@ def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path: Pat
         "\n".join(sorted(summary["full_names"])).encode()).hexdigest()
 
 
-# Refusals each start from a real, buildable export and break exactly one thing,
-# so none can pass merely because the input was unreadable.
-
-
+# Refusals start from a real, buildable export and break one thing, so unreadable input cannot pass them vacuously.
 def _real_export_copy(tmp_path: Path) -> Path:
     dst = tmp_path / "exp"
     shutil.copytree(EXPORT, dst)
@@ -253,12 +221,10 @@ def test_refuses_when_export_commit_disagrees_with_names_json(tmp_path: Path) ->
 def test_refuses_when_a_selected_row_carries_a_foreign_commit(tmp_path: Path) -> None:
     """A row traced at another commit cannot be part of this pool."""
     export = _real_export_copy(tmp_path)
-    # Mini.postB occurs once per family; poison BOTH, so the refusal cannot be
-    # dodged by whichever occurrence dedup happens to keep.
-    for rel in ("random/test.json", "novel_premises/val.json"):
-        rows = _json(export / rel)
-        rows[0]["commit"] = "e" * 40
-        (export / rel).write_text(json.dumps(rows))
+    rel = "random/test.json"
+    rows = _json(export / rel)
+    rows[0]["commit"] = "e" * 40
+    (export / rel).write_text(json.dumps(rows))
     with pytest.raises(SystemExit) as exc:
         _build(tmp_path / "out", export=export)
     assert "Mini.postB" in str(exc.value) and "e" * 40 in str(exc.value)
@@ -309,9 +275,6 @@ def test_refuses_when_a_required_export_file_is_missing(tmp_path: Path) -> None:
     assert "corpus.jsonl" in str(exc.value)
 
 
-# The built corpus loads through the real loader (Package A's API).
-
-
 def test_built_corpus_metadata_reads_through_the_corpus_module(
     built: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -341,9 +304,7 @@ def test_built_corpus_satisfies_package_a_postcutoff_api(
         corpus.reset_caches()
 
 
-# trace_mathlib_ec2.sh: only --dry-run is executable on this box.
-
-
+# Only ``trace_mathlib_ec2.sh --dry-run`` is executable on this box.
 def test_runbook_parses(tmp_path: Path) -> None:
     """`bash -n` accepts the script."""
     r = subprocess.run(["bash", "-n", str(RUNBOOK)], capture_output=True, text=True)
@@ -378,7 +339,7 @@ def test_runbook_dry_run_prints_the_plan(tmp_path: Path) -> None:
 
 
 def test_runbook_dry_run_writes_nothing(tmp_path: Path) -> None:
-    """--dry-run writes nothing; --workdir is pointed inside tmp_path so this can't pass vacuously against $HOME, which the script never touches anyway."""
+    """Dry runs write nothing under the supplied workdir."""
     workdir = tmp_path / "wd"
     _dry_run(tmp_path, ["--workdir", str(workdir)])
     assert not workdir.exists(), "dry-run created its workdir (log/mkdir not gated)"

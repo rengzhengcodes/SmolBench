@@ -16,6 +16,7 @@ import pathlib
 from typing import Any, Dict, List, Tuple
 
 from smolbench.evals.results_store import resolve_results_location
+from smolbench.evals.spool import spool_prefix
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -46,7 +47,7 @@ def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, i
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
     Strip deduction's ``scaling_`` prefix so both legs share a model name. Keep
-    `bucket` parameterized for redirects and derive the prefix from `runner.spool_prefix()`.
+    `bucket` parameterized for redirects and derive the prefix from `spool.spool_prefix()`.
 
     Parameters
     ----------
@@ -60,9 +61,7 @@ def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, i
     List[Tuple[str, str, str, int]]
         Leg, model, source key, and size tuples.
     """
-    from smolbench.deduction.lean import runner
-
-    deduction_prefix = runner.spool_prefix() + "/"
+    deduction_prefix = spool_prefix() + "/"
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
     for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
@@ -140,10 +139,7 @@ def main() -> int:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    # Keep --help cheap: runner transitively imports lean3, corpus, context, and provider.
-    from smolbench.deduction.lean import runner
-
-    deduction_prefix = runner.spool_prefix() + "/"
+    deduction_prefix = spool_prefix() + "/"
 
     # Source and destination are the same bucket (a within-bucket server-side
     # copy), resolved here so a redirected SMOLBENCH_RESULTS_S3 isn't missed.

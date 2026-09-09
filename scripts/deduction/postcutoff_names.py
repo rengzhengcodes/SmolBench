@@ -1,18 +1,9 @@
-"""Find mathlib4 declarations that provably appeared after a cutoff date.
+"""Find mathlib4 declarations introduced after a cutoff date.
 
-Writes the surviving names, with per-declaration provenance, as a JSON
-artifact, for pointing a theorem-proving eval at material a model cannot have
-memorised.
-
-Name-only heuristic: it never elaborates Lean, so every ambiguity is resolved
-toward EXCLUDING a name rather than risking a false post-cutoff claim. An
-empty scanned tree would invert that direction (everything in the other tree
-would look new), so :func:`main` refuses to run when either side is empty.
-
-PR creation dates are cached in ``<workdir>/cache/prs.json`` (negative results
-included), so a re-run over the same commits makes no GitHub requests and
-produces a byte-identical artifact. :func:`fetch_pr_created_at` is the only
-network call in the module.
+Names are excluded on ambiguity because this name-only scan cannot elaborate Lean.
+Both trees must be non-empty because an empty side reverses that conservative rule.
+PR dates, including misses, are cached so reruns need no GitHub requests and remain byte-identical.
+``fetch_pr_created_at`` is the module's only network call.
 """
 
 import argparse
@@ -29,15 +20,13 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from collections.abc import Iterable
 
-#: Fixed name: the script loads by file path, under which ``__name__`` varies,
-#: and a stable name keeps log capture predictable.
+#: Stable under file-path loading, where ``__name__`` varies.
 LOGGER: logging.Logger = logging.getLogger("postcutoff_names")
 
-#: Declaration keywords recognised at column 0. ``example`` is absent (declares
-#: no name); ``alias`` is absent because it has its own scanning rule, though
-#: it still appears as a ``Decl.kind``.
+#: Column-0 declaration keywords; ``alias`` has separate scanning and ``example`` has no name.
 DECL_KEYWORDS: frozenset[str] = frozenset(
     {
         "theorem",
@@ -51,9 +40,7 @@ DECL_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
-#: Declaration modifiers skipped before the declaration keyword. A word that is
-#: itself a declaration keyword in disguise (``irreducible_def``) must NOT be
-#: listed, or its own name token would be read as a modifier's tail.
+#: Prefix modifiers; ``irreducible_def`` must not appear or its name becomes a modifier tail.
 MODIFIERS: frozenset[str] = frozenset(
     {
         "private",
@@ -67,29 +54,21 @@ MODIFIERS: frozenset[str] = frozenset(
     }
 )
 
-#: Characters that terminate a declaration's name token. Closers are absent on
-#: purpose: a name token never starts inside a binder.
+#: Name-token terminators; closers are absent because a name never starts inside a binder.
 _NAME_STOP_CHARS: frozenset[str] = frozenset(":({[⦃⟨<>")
 
-#: ``_root_.Foo`` escapes the ambient namespace; the marker is stripped and no
-#: prefix is applied.
+#: ``_root_.Foo`` bypasses the ambient namespace.
 _ROOT_PREFIX: str = "_root_."
 
-#: Whole-word ``deprecated`` anywhere in an attribute block marks the
-#: declaration, covering ``@[deprecated]``, ``@[deprecated (since := "...")]``
-#: and ``@[simp, deprecated foo]``.
+#: Any ``deprecated`` attribute marks the declaration.
 _DEPRECATED_RE: re.Pattern[str] = re.compile(r"\bdeprecated\b")
 
-#: mathlib's merge queue appends ``(#NNNNN)`` to the first line of the commit
-#: subject. ``[0-9]`` rather than ``\d`` so that non-ASCII digits (which
-#: ``int()`` would happily accept) cannot produce a bogus PR number.
+#: ASCII digits only: ``int()`` accepts non-ASCII digits, which would yield a bogus PR number.
 _PR_NUMBER_RE: re.Pattern[str] = re.compile(r"\(#([0-9]+)\)\s*$")
 
 _WHITESPACE_RUN_RE: re.Pattern[str] = re.compile(r"\s+")
 
-#: Bound on how many ``@[...]`` / ``open ... in`` prefixes are peeled off one
-#: line before giving up. Real sources use at most two; this only guards
-#: against a pathological line looping forever.
+#: Four prefix strips exceed real sources' two and bound pathological loops.
 _MAX_PREFIX_STRIPS: int = 4
 
 DEFAULT_REPO_URL: str = "https://github.com/leanprover-community/mathlib4"
@@ -100,9 +79,7 @@ METHOD: str = "name-set-difference+pr-opened-after-T"
 #: Subdirectory of a mathlib4 checkout that holds the library itself.
 _SUBDIR: str = "Mathlib"
 
-#: GitHub REST endpoint for one pull request. Hardcoded to mathlib4 regardless
-#: of ``--repo-url``: the PR numbers in mathlib commit subjects only mean
-#: anything against this repository.
+#: mathlib commit-subject PR numbers only identify this repository.
 _PR_API_URL: str = "https://api.github.com/repos/leanprover-community/mathlib4/pulls/{number}"
 
 _API_HEADERS: dict[str, str] = {
@@ -111,47 +88,35 @@ _API_HEADERS: dict[str, str] = {
     "User-Agent": "smolbench-postcutoff",
 }
 
-#: One initial attempt plus this many retries, sleeping ``_HTTP_RETRY_SLEEPS``
-#: seconds before each retry.
+#: Three retries after the initial request, with ``_HTTP_RETRY_SLEEPS`` delays.
 _HTTP_RETRIES: int = 3
 _HTTP_RETRY_SLEEPS: tuple[float, ...] = (2.0, 4.0, 8.0)
 
-#: Per-request ceiling. Unbounded ``urlopen`` calls in a loop over hundreds of
-#: PRs turn one stalled socket into a hung run.
+#: Bounds a stalled socket across hundreds of PRs.
 _HTTP_TIMEOUT: float = 30.0
 
-#: Ceiling on any single git invocation. Generous because a cold mathlib4
-#: clone legitimately takes minutes; exists to break a hang (a blobless clone
-#: lazily fetching over a dead transport), not to budget a command.
+#: Generous for cold clones but bounds hangs from lazy blob fetches over dead transports.
 _GIT_TIMEOUT: float = 1800.0
 
 #: Lines of git stderr quoted in a :class:`RuntimeError`.
 _STDERR_TAIL_LINES: int = 5
 
-#: ``git blame --line-porcelain`` emits one of these headers before every line:
-#: ``<sha> <original-line> <final-line> [<lines-in-group>]``. Content lines are
-#: tab-prefixed and key/value headers start with a word, so neither can match.
+#: Matches porcelain headers, not tab-prefixed content or word-keyed headers.
 _BLAME_HEADER_RE: re.Pattern[str] = re.compile(
     r"^([0-9a-f]{40}) (?P<orig>[0-9]+) (?P<final>[0-9]+)(?: [0-9]+)?$"
 )
 
 
 class RateLimitError(RuntimeError):
-    """Raised when the GitHub API refuses a request for rate-limit reasons.
-
-    The message names only the PR number and status code -- never token material.
-    """
+    """GitHub rate-limit response; messages never expose token material."""
 
 
 @dataclasses.dataclass(frozen=True)
 class Decl:
-    """One Lean declaration found by the scanner.
+    """A scanned Lean declaration.
 
-    ``statement`` is the raw source line normalised by :func:`normalise_line`
-    (any ``@[simp] ``/``open ... in `` prefix and trailing comment included),
-    so it compares like with like against :func:`collect_normalised_lines`'s
-    move-heuristic oracle. ``alias_targets`` holds the alias's resolved
-    candidate targets for ``kind == "alias"`` and is empty otherwise.
+    ``statement`` uses the move oracle's normalization so comparisons agree.
+    ``alias_targets`` holds alias candidates and is empty otherwise.
     """
 
     full_name: str
@@ -164,11 +129,9 @@ class Decl:
 
 
 def normalise_line(line: str) -> str:
-    """Collapse whitespace runs in a source line and strip the ends.
+    """Collapse whitespace and strip ends.
 
-    No comment stripping or case folding. Feeds both :attr:`Decl.statement` and
-    :func:`collect_normalised_lines`, so the move heuristic in
-    :func:`select_postcutoff_names` compares like with like.
+    No comment stripping or case folding, so the move heuristic compares like with like.
 
     Parameters
     ----------
@@ -184,13 +147,9 @@ def normalise_line(line: str) -> str:
 
 
 def _strip_comments(line: str, depth: int) -> tuple[str, int]:
-    """Remove Lean comments from one line, carrying block-comment depth.
+    """Remove comments while carrying nested block-comment depth.
 
-    Block comments nest (hence a depth counter, not a flag); doc comments
-    ``/-- ... -/`` are just block comments here. Text after a block comment
-    closes mid-line loses column-0 status by design: ``/- x -/ theorem foo``
-    then declares nothing. That's the conservative direction, and mathlib
-    doesn't write declarations that way regardless.
+    Mid-line closers lose column-0 status to avoid false declarations.
 
     Parameters
     ----------
@@ -232,7 +191,7 @@ def _strip_comments(line: str, depth: int) -> tuple[str, int]:
 
 
 def _consume_attribute(text: str, balance: int) -> tuple[str, int, str]:
-    """Consume attribute-block characters from ``text``, tracking bracket balance.
+    """Consume attribute text while tracking bracket balance.
 
     Parameters
     ----------
@@ -258,11 +217,9 @@ def _consume_attribute(text: str, balance: int) -> tuple[str, int, str]:
 
 
 def _strip_modifiers(text: str) -> tuple[list[str], str]:
-    """Peel a leading run of :data:`MODIFIERS` off column-0 text.
+    """Peel leading modifiers from column-0 text.
 
-    A modifier counts only as a whole word followed by whitespace, so a
-    declaration named like a modifier isn't consumed. Feeds both the
-    declaration and scope-keyword branches of the scanner, since
+    A modifier must be a whitespace-delimited word so similarly named declarations survive.
     ``noncomputable section`` must still push a scope.
 
     Parameters
@@ -287,12 +244,9 @@ def _strip_modifiers(text: str) -> tuple[list[str], str]:
 
 
 def _name_token(text: str) -> str:
-    """Read a declaration's name token off the text after its keyword.
+    """Read a declaration name after its keyword.
 
-    Runs to the first whitespace or member of :data:`_NAME_STOP_CHARS`. Empty
-    means the declaration is unnamed (``instance : Foo Bar where``) and must be
-    skipped. A universe binder leaves a trailing dot (``def foo.{u}`` gives
-    ``foo.``), which :func:`_qualify` strips.
+    Empty unnamed declarations must be skipped; universe binders leave a dot for ``_qualify``.
 
     Parameters
     ----------
@@ -311,11 +265,9 @@ def _name_token(text: str) -> str:
 
 
 def _qualify(token: str, prefix: str) -> str:
-    """Apply the ambient namespace prefix to a declared name token.
+    """Apply an ambient namespace prefix.
 
-    ``_root_.`` is
-    honoured before the trailing-dot strip, so its dot is never mistaken for a
-    universe binder's (``def foo.{u}`` reads as ``foo.``).
+    Handle ``_root_.`` before stripping a universe-binder dot.
 
     Parameters
     ----------
@@ -327,8 +279,7 @@ def _qualify(token: str, prefix: str) -> str:
     Returns
     -------
     str
-        ``""`` when the token carries no name at all (empty, a bare ``_root_.``, or all
-        dots), which the caller must skip.
+        Empty when no name remains; callers must skip it.
     """
     if token.startswith(_ROOT_PREFIX):
         return token[len(_ROOT_PREFIX) :].rstrip(".")
@@ -339,13 +290,11 @@ def _qualify(token: str, prefix: str) -> str:
 
 
 def _alias_targets(text: str, prefix: str) -> tuple[str, ...]:
-    """Resolve an ``alias``'s right-hand side into candidate full names.
+    """Resolve candidate full names for an ``alias`` target.
 
-    Emits both the bare token and, when a namespace is in force, its qualified
-    form, since only elaboration (not this scanner) can tell which one Lean
-    would resolve. A multi-line alias whose ``:=`` is on a later line resolves
-    to ``()`` here, so a deprecated multi-line alias excludes its own name but
-    not its target.
+    Emit bare and qualified forms because scanning cannot resolve Lean names.
+    A multi-line alias with ``:=`` on a later line returns ``()``, so deprecation
+    excludes its own name but not its target.
 
     Parameters
     ----------
@@ -373,16 +322,13 @@ def _alias_targets(text: str, prefix: str) -> tuple[str, ...]:
     candidates = [token]
     if prefix:
         candidates.append(f"{prefix}.{token}")
-    # dict.fromkeys deduplicates while preserving first-seen order.
     return tuple(dict.fromkeys(candidates))
 
 
 def _alias_names(text: str) -> tuple[list[str], str]:
-    """Split an ``alias``'s left-hand side from the rest of the line.
+    """Split an ``alias`` left-hand side from its remainder.
 
-    Handles plain ``alias X := Y`` and the iff-splitting forms
-    ``alias ⟨X, Y⟩ := Z`` / ``alias ⟨_, X⟩ := Z``. An unterminated ``⟨`` yields
-    no names, skipping the declaration.
+    Unterminated ``⟨`` produces no names, so the declaration is skipped.
 
     Parameters
     ----------
@@ -404,21 +350,15 @@ def _alias_names(text: str) -> tuple[list[str], str]:
 
 
 def scan_lean_text(text: str, file_path: str) -> list[Decl]:
-    """Scan one ``.lean`` file's text for top-level declarations.
+    """Scan top-level declarations from one ``.lean`` file without I/O.
 
-    Line-oriented and stateful across lines (comment depth, a namespace/section
-    scope stack, a pending ``@[...]`` attribute block); performs no I/O.
-    Declarations are recognised only at column 0, after optional modifiers and
-    an optional ``open ... in`` prefix -- this is what keeps
-    ``have``/``let``/``where``-fields and nested proof terms from being read as
-    declarations, at the cost of missing an indented top-level one.
-    ``namespace``/``section``/``end`` share one scope stack with no name
-    matching on ``end``, so an unbalanced file silently drifts. A pending
-    attribute is not cleared by a skipped (private or unnamed) declaration, so
-    it may attach to a later one; over-marking ``deprecated`` is the safe
-    direction. ``private`` declarations produce no :class:`Decl` at all, since
-    Lean mangles their real full names and a mangled name could never match
-    across two trees.
+    Only column-0 declarations after modifiers or ``open ... in`` are recognized
+    to avoid nested terms, even if indented top-level declarations are missed.
+    Private declarations are excluded because mangled names cannot match across trees.
+    A pending attribute survives skipped declarations; over-marking deprecated is conservative.
+    ``namespace``/``section``/``end`` share one unmatched scope stack, so an
+    unbalanced file silently drifts, giving later names wrong prefixes and therefore
+    wrong post-cutoff verdicts.
 
     Parameters
     ----------
@@ -561,10 +501,9 @@ def scan_lean_text(text: str, file_path: str) -> list[Decl]:
 
 
 def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
-    """List the ``.lean`` files of a tree in a deterministic (sorted) order.
+    """List ``.lean`` files in deterministic order.
 
-    Shared by :func:`scan_tree` and :func:`collect_normalised_lines` so both
-    see exactly the same files in the same order.
+    Shared scans use the same files and order.
 
     Parameters
     ----------
@@ -576,22 +515,47 @@ def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
     Returns
     -------
     list[pathlib.Path]
-        ``[]`` when the directory is absent -- an empty side inverts the module's
-        conservative direction; see :func:`main`.
+        Empty when absent; ``main`` rejects empty scan sides.
     """
     base = root / subdir if subdir else root
-    # A directory named `*.lean` would make callers' `read_text` raise; filter it here.
+    # Exclude matching directories because callers read every returned path.
     return sorted(path for path in base.rglob("*.lean") if path.is_file())
 
 
-def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
-    """Scan every ``.lean`` file of a tree and index declarations by full name.
+def _scan_tree_state(
+    root: pathlib.Path, subdir: str,
+) -> tuple[dict[str, Decl], set[str], set[str]]:
+    """Collect a Lean tree's declarations, lines, and paths in one pass.
 
-    Files are read with ``errors="replace"``: a decoding error should degrade
-    one line, not abort a whole-repository scan. On a duplicate full name the
-    first occurrence (sorted-file, source order) wins, which only matters for
-    making the result independent of filesystem iteration order -- mathlib
-    itself never defines the same name twice.
+    Parameters
+    ----------
+    root : pathlib.Path
+        Root of the Lean tree.
+    subdir : str
+        Subdirectory containing Lean files.
+
+    Returns
+    -------
+    tuple[dict[str, Decl], set[str], set[str]]
+        Declarations, normalized lines, and root-relative paths.
+    """
+    decls: dict[str, Decl] = {}
+    lines: set[str] = set()
+    files: set[str] = set()
+    for path in _iter_lean_files(root, subdir):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        rel = path.relative_to(root).as_posix()
+        files.add(rel)
+        for decl in scan_lean_text(text, rel):
+            decls.setdefault(decl.full_name, decl)
+        lines.update(filter(None, (normalise_line(line) for line in text.splitlines())))
+    return decls, lines, files
+
+
+def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
+    """Index declarations from every ``.lean`` file.
+
+    Replacement decoding preserves a repository scan; sorted first occurrence keeps duplicate handling deterministic.
 
     Parameters
     ----------
@@ -605,28 +569,13 @@ def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
     dict[str, Decl]
         declarations indexed by full name.
     """
-    out: dict[str, Decl] = {}
-    for path in _iter_lean_files(root, subdir):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        rel = path.relative_to(root).as_posix()
-        for decl in scan_lean_text(text, rel):
-            if decl.full_name not in out:
-                out[decl.full_name] = decl
-    return out
+    return _scan_tree_state(root, subdir)[0]
 
 
 def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set[str]:
-    """Collect every non-empty normalised source line of a tree.
+    """Collect non-empty normalized source lines.
 
-    This is the "did this exact text already exist at the old commit" oracle
-    for :func:`select_postcutoff_names`'s move heuristic. Includes ALL lines,
-    not just declaration lines, since a broader set matches more statements
-    and excludes more names -- the conservative direction.
-
-    Mathlib is roughly 1.5 million lines, so the returned set holds on the
-    order of a million short strings (a few hundred MB); accepted because the
-    alternative (re-reading the old tree per candidate) is orders of magnitude
-    slower and the script runs once, offline.
+    All lines make the move heuristic conservative; about 1.5 million lines consume a few hundred MB to avoid repeated old-tree reads.
 
     Parameters
     ----------
@@ -640,20 +589,13 @@ def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set
     set[str]
         non-empty normalised source lines.
     """
-    lines: set[str] = set()
-    for path in _iter_lean_files(root, subdir):
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            normalised = normalise_line(line)
-            if normalised:
-                lines.add(normalised)
-    return lines
+    return _scan_tree_state(root, subdir)[1]
 
 
 def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
-    """Collect the names a deprecation or rename accounts for.
+    """Collect names accounted for by deprecations or renames.
 
-    Pass the NEW commit's whole declaration set, not just the diff: a
-    deprecated alias outside the diff can still name a target inside it.
+    Use the whole new tree because an old deprecated alias can target a diff name.
 
     Parameters
     ----------
@@ -663,9 +605,7 @@ def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
     Returns
     -------
     set[str]
-        Every deprecated declaration's name plus every ``alias_targets`` entry of a
-        deprecated alias -- both candidate resolutions are dropped, since which one
-        Lean means needs elaboration.
+        Deprecated names and alias targets; both resolutions are dropped without elaboration.
     """
     excluded: set[str] = set()
     for decl in decls:
@@ -673,18 +613,13 @@ def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
             continue
         excluded.add(decl.full_name)
         if decl.kind == "alias":
-            # mathlib's rename pattern is "new decl `Bar.baz` + `@[deprecated]
-            # alias Foo.foo := Bar.baz`": a deprecated alias's target is the
-            # renamed OLD theorem wearing a new name, not new mathematics.
+            # A deprecated alias target is renamed old mathematics, not a new declaration.
             excluded.update(decl.alias_targets)
     return excluded
 
 
 def parse_pr_number(commit_message: str) -> int | None:
-    """Extract the mathlib PR number from a commit message.
-
-    mathlib's merge queue appends ``(#NNNNN)`` to the first line only; a match
-    elsewhere in the message, or a non-numeric body, yields ``None``.
+    """Extract a mathlib PR number from the first commit-message line.
 
     Parameters
     ----------
@@ -709,17 +644,9 @@ def select_postcutoff_names(
     old_lines: set[str],
     old_files: set[str],
 ) -> tuple[dict[str, Decl], dict[str, int]]:
-    """Reduce two scanned trees to the declarations that are genuinely new.
+    """Keep declarations genuinely new between scanned trees.
 
-    Pure; runs three filters in order: (1) name-set difference against
-    ``old_decls``; (2) drop anything :func:`deprecation_excluded_names` names,
-    fed the WHOLE new tree so a deprecated alias whose own name is old can
-    still exclude its target; (3) drop a declaration when its file is new AND
-    its statement text already existed somewhere in the old tree -- the
-    signature of material moved into a new file, which is how mathlib actually
-    relocates declarations. Requiring a new file (not just a matching line)
-    keeps a genuinely new declaration from being dropped for coincidentally
-    duplicating a line in its own unchanged file.
+    Drop deprecated aliases from the whole new tree and moved statements in new files; requiring a new file avoids dropping coincidental duplicates.
 
     Parameters
     ----------
@@ -735,8 +662,7 @@ def select_postcutoff_names(
     Returns
     -------
     tuple[dict[str, Decl], dict[str, int]]
-        the kept declarations (sorted by name) and the funnel counts ``n_old_decls``,
-        ``n_new_decls``, ``n_name_diff``, ``n_after_deprecated``, ``n_after_move``.
+        Name-sorted declarations and funnel counts.
     """
     diff = {name: decl for name, decl in new_decls.items() if name not in old_decls}
 
@@ -766,11 +692,9 @@ def select_postcutoff_names(
 
 
 def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
-    """Run one git command and return the completed process.
+    """Run a git command.
 
-    Private: callers normally want :func:`run_git`'s stdout-or-raise contract.
-    The exceptions are presence probes (``git cat-file -e`` only has an exit
-    code to check) and steps that must branch on the exit code themselves.
+    Used for exit-status probes and branches; callers otherwise use ``run_git``'s stdout-or-raise contract.
 
     Parameters
     ----------
@@ -790,13 +714,9 @@ def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.Com
 
 
 def run_git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True) -> str:
-    """Run one git command and return its standard output.
+    """Run git and return standard output.
 
-    With ``check=False`` a failing command returns ``""``, which callers treat
-    as "no answer". A hung transport raises `subprocess.TimeoutExpired` after
-    :data:`_GIT_TIMEOUT` seconds regardless of ``check``: it's an
-    infrastructure failure, not an unresolved declaration. The GitHub token is
-    never passed to git, so no argument list here can leak it.
+    ``check=False`` means no answer; timeouts remain infrastructure failures. Tokens never reach git arguments.
 
     Parameters
     ----------
@@ -825,10 +745,9 @@ def _commit_present(clone: pathlib.Path, commit: str) -> bool:
 
 
 def _ensure_commits_present(clone: pathlib.Path, commits: Iterable[str]) -> None:
-    """Fetch any of ``commits`` the clone does not already have.
+    """Fetch commits absent from a clone.
 
-    The fetch itself is judged by exit code, not exception, since a shallow or
-    partial remote may legitimately refuse a fetch-by-sha; only the re-check decides.
+    Recheck after fetch because shallow or partial remotes may refuse fetch-by-sha.
 
     Parameters
     ----------
@@ -840,8 +759,7 @@ def _ensure_commits_present(clone: pathlib.Path, commits: Iterable[str]) -> None
     Raises
     ------
     RuntimeError
-        If a commit is still missing after the fetch, rather than let a missing
-        endpoint silently turn into an empty or wrong diff.
+        A commit remains missing after fetch, preventing an empty or wrong diff.
     """
     for commit in commits:
         if _commit_present(clone, commit):
@@ -860,15 +778,9 @@ def ensure_clone(
     *,
     commits: Iterable[str] = (),
 ) -> pathlib.Path:
-    """Return a usable clone of the repository under ``workdir``, creating it if needed.
+    """Return or create a usable clone under ``workdir``.
 
-    An existing clone (``git rev-parse --git-dir`` succeeds) is reused
-    untouched -- cloning mathlib4 costs minutes and the script is meant to be
-    re-run against a pre-warmed clone. The clone is ``--filter=blob:none
-    --no-checkout``: history and trees are needed for blame, not the ~2 GB of
-    file blobs, which worktrees fetch lazily as needed. Some servers reject an
-    object filter, so a failed filtered clone falls back to one plain-clone
-    attempt.
+    Reuse valid clones; blobless history supports blame without ~2 GB of blobs, with one plain-clone fallback for servers rejecting filters.
 
     Parameters
     ----------
@@ -896,8 +808,7 @@ def ensure_clone(
                 "blobless clone failed (exit %d); retrying without --filter",
                 filtered.returncode,
             )
-            # Remove only what this call created; a pre-existing directory is
-            # the operator's, not ours.
+            # Never remove a pre-existing operator directory.
             if not preexisting and clone.exists():
                 shutil.rmtree(clone)
             run_git(["clone", "--no-checkout", repo_url, str(clone)])
@@ -908,13 +819,9 @@ def ensure_clone(
 
 
 def ensure_worktree(clone: pathlib.Path, path: pathlib.Path, commit: str) -> pathlib.Path:
-    """Return a worktree of ``clone`` checked out at ``commit``.
+    """Return a worktree checked out at ``commit``.
 
-    Worktrees rather than repeated checkouts in one tree, since the old and
-    new commits must be readable at the same time (the scanner reads old while
-    blame reads new); swapping one checkout back and forth would be slower and
-    racy. A worktree already at ``commit`` is left alone, which is what makes a
-    re-run cheap.
+    Separate worktrees keep old scanning and new blame readable together without races.
 
     Parameters
     ----------
@@ -948,15 +855,9 @@ def prefetch_range_objects(
     subdir: str = "Mathlib",
     chunk_size: int = 2000,
 ) -> int:
-    """Bulk-fetch the objects a blobless clone will need for blame.
+    """Bulk-fetch objects a blobless clone needs for blame.
 
-    Pure optimisation: without it, ``git blame`` fetches each missing blob
-    lazily over its own connection. Measured on real mathlib: 11548 missing
-    objects, ~35 s to prefetch, turning a 4.6 s per-file blame into 0.24 s.
-    This is the one place besides :func:`apply_pr_filter` that catches and
-    swallows a failure (logged as a warning; the run continues with lazy
-    fetching), since it is pure performance and nothing else here may degrade
-    silently.
+    11,548 objects took ~35 s and reduced per-file blame from 4.6 s to 0.24 s. This and ``apply_pr_filter`` alone catch failures because prefetch is only optimization.
 
     Parameters
     ----------
@@ -974,8 +875,7 @@ def prefetch_range_objects(
     Returns
     -------
     int
-        0 without calling ``git fetch`` when nothing is missing, since an empty object list
-        would otherwise fetch the entire remote.
+        Requested object count; zero must not fetch an empty list, which fetches the remote.
     """
     if chunk_size < 1:
         raise ValueError(f"chunk_size must be >= 1, got {chunk_size}")
@@ -987,7 +887,7 @@ def prefetch_range_objects(
                 f"{old}..{new}", "--", subdir,
             ]
         )
-        # `--missing=print` marks each absent object with a leading `?`.
+        # ``--missing=print`` marks absent objects with ``?``.
         oids: list[str] = []
         seen: set[str] = set()
         for line in listing.splitlines():
@@ -1020,15 +920,9 @@ def prefetch_range_objects(
 
 
 def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> dict[int, str]:
-    """Attribute each line of one file to the commit that introduced it.
+    """Attribute file lines to their introducing commits.
 
-    Bounding blame to ``old..new`` is what makes this both affordable and
-    correct: only commits in the range are considered, so every older line
-    comes back attributed to the boundary commit ``old`` itself, whose author
-    date is at or before the old commit's and therefore rejected by the date
-    filter. A git failure returns ``{}`` rather than raising, so the affected
-    declarations are simply dropped as unresolved; a `TimeoutExpired` still
-    propagates, since a hung git is an infrastructure fault, not "no such line".
+    Range blame maps older lines to ``old``, whose date fails the cutoff. Failures yield unresolved drops; timeouts remain infrastructure failures.
 
     Parameters
     ----------
@@ -1059,11 +953,9 @@ def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> d
 
 
 def _iso_utc(raw: str) -> str:
-    """Normalise a git ``%aI`` timestamp to ``YYYY-MM-DDTHH:MM:SSZ`` in UTC.
+    """Normalize a git timestamp to UTC.
 
-    Author dates are compared against GitHub's ``created_at``, which is always
-    UTC with a ``Z``; comparing a ``+02:00`` local timestamp as text would
-    misdate commits near midnight.
+    GitHub dates are UTC; textual local-time comparison misdates near midnight.
 
     Parameters
     ----------
@@ -1080,13 +972,9 @@ def _iso_utc(raw: str) -> str:
 
 
 def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]:
-    """Read the date, subject and PR number of each of ``shas``.
+    """Read each commit's date, subject, and PR number.
 
-    One batched ``git log --no-walk -z --format=%H%x00%aI%x00%B`` call rather
-    than one per sha, since a run resolves hundreds of commits and process
-    startup would dominate. ``-z`` plus the two ``%x00`` separators make the
-    stream split into groups of three regardless of message contents; the
-    record count is validated rather than assumed.
+    A NUL-delimited batch avoids hundreds of processes; validate groups of three because messages contain arbitrary text.
 
     Parameters
     ----------
@@ -1106,7 +994,7 @@ def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]
     out = run_git(["-C", str(clone), "log", "--no-walk", "-z", "--format=%H%x00%aI%x00%B", *unique])
     fields = out.split("\0")
     if fields and fields[-1] == "":
-        fields.pop()  # trailing separator
+        fields.pop()
     if len(fields) % 3 != 0:
         raise RuntimeError(
             f"git log returned {len(fields)} field(s) for {len(unique)} commit(s), "
@@ -1130,10 +1018,9 @@ def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]
 
 
 def _is_rate_limited(headers: object, body: str) -> bool:
-    """Decide whether a 403/429 response is a rate limit rather than a refusal.
+    """Distinguish rate limits from other 403/429 responses.
 
-    GitHub uses 403 for both rate limiting and plain authorisation failures,
-    so the two must be told apart before a whole run is abandoned.
+    GitHub uses 403 for authorization failures too, which must not abort a run.
 
     Parameters
     ----------
@@ -1152,14 +1039,9 @@ def _is_rate_limited(headers: object, body: str) -> bool:
 
 
 def fetch_pr_created_at(pr_number: int, token: str | None) -> str | None:
-    """Ask the GitHub API when a mathlib pull request was opened.
+    """Fetch a mathlib pull request's creation time.
 
-    The only function in the module that touches the network, so a caller that
-    stubs it out makes the whole script offline. The token goes into the
-    ``Authorization`` header only -- never logged, never in an exception
-    message, never written to the artifact. A 404 is a definitive answer and
-    is never retried; a rate limit is never retried either, since retrying is
-    exactly what it forbids.
+    Tokens stay only in Authorization headers, never logs, exceptions, or artifacts. Never retry 404 or rate limits because each is definitive or forbidden.
 
     Parameters
     ----------
@@ -1190,7 +1072,7 @@ def fetch_pr_created_at(pr_number: int, token: str | None) -> str | None:
             if exc.code == 404:
                 return None
             if exc.code in (403, 429) and _is_rate_limited(exc.headers, body):
-                # Message names the status and the PR only -- never the token.
+                # Never expose token material.
                 raise RateLimitError(
                     f"GitHub rate limit reached on PR #{pr_number} (HTTP {exc.code})"
                 ) from exc
@@ -1213,15 +1095,9 @@ def resolve_provenance(
     new: str,
     jobs: int = 8,
 ) -> dict[str, dict]:
-    """Attribute every kept declaration to the commit that introduced it.
+    """Attribute kept declarations to introducing commits.
 
-    Blames one FILE at a time, not one declaration at a time, since several
-    declarations usually share a file and blame's cost is per file. ``jobs``
-    defaults low because more concurrent blob fetches against GitHub invite
-    abuse throttling. Deterministic despite threading: files are blamed in
-    sorted order, results are collected in input (not completion) order, and
-    the output is built by sorted name. Declarations with no blamed line are
-    omitted and counted, never guessed at.
+    Blame by file to share its cost; low concurrency avoids GitHub throttling. Sorted input/output preserves determinism; unresolved lines are dropped, never guessed.
 
     Parameters
     ----------
@@ -1255,7 +1131,7 @@ def resolve_provenance(
     if paths:
         workers = max(1, min(jobs, len(paths)))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            # `map` yields in INPUT order, so completion order cannot leak in.
+            # Input-order ``map`` prevents completion order leaking into output.
             blames = dict(zip(paths, pool.map(_blame, paths)))
 
     provenance: dict[str, dict] = {}
@@ -1286,34 +1162,17 @@ def resolve_provenance(
     return provenance
 
 
-def _bump(counters: dict, key: str) -> None:
-    """Increment ``counters[key]``, tolerating a key that is not there yet."""
-    counters[key] = counters.get(key, 0) + 1
-
-
 def apply_pr_filter(
     provenance: dict[str, dict],
     target_date: str,
     token: str | None,
     cache: dict,
-    counters: dict,
+    counters: Counter[str],
 ) -> dict[str, dict]:
-    """Keep only the declarations with dated evidence of being post-cutoff.
+    """Keep declarations with post-cutoff date evidence.
 
-    Prefers the PR's creation date (a mathlib PR is opened before it merges,
-    so that's the earliest defensible moment the text could have been public)
-    over the introducing commit's own author date, used only when no PR number
-    was found or the PR no longer exists. ``cache`` is read and written in
-    place, including negative results, so a re-run never re-asks about a
-    deleted PR. On :class:`RateLimitError`, stops calling the API and drops
-    every remaining PR-numbered entry unresolved rather than raising, so work
-    already done is not thrown away; cached dates are still used since reading
-    the cache is not a request.
-
-    The artifact schema also allows ``reason == "new-name"``, for a
-    declaration kept on name-newness alone. This pipeline always demands date
-    evidence, so it never emits that value -- it exists for a caller that
-    relaxes the rule.
+    Prefer PR opening, the earliest public date, then commit date if no PR evidence. Cache misses prevent repeat lookup. On rate limit, drop remaining unresolved PRs while retaining cached and completed work.
+    This pipeline never emits schema-supported ``reason == "new-name"`` because it demands date evidence.
 
     Parameters
     ----------
@@ -1325,7 +1184,7 @@ def apply_pr_filter(
         GitHub token for pull request lookups.
     cache : dict
         pull request creation dates, updated in place.
-    counters : dict
+    counters : Counter[str]
         pipeline counters, updated in place.
 
     Returns
@@ -1345,10 +1204,10 @@ def apply_pr_filter(
             if key in cache:
                 created_at = cache[key]
             elif rate_limited:
-                _bump(counters, "rate_limited")
+                counters["rate_limited"] += 1
                 continue
             else:
-                _bump(counters, "api_calls")
+                counters["api_calls"] += 1
                 try:
                     created_at = fetch_pr_created_at(pr_number, token)
                 except RateLimitError as exc:
@@ -1358,13 +1217,13 @@ def apply_pr_filter(
                         exc,
                         len(selected),
                     )
-                    _bump(counters, "rate_limited")
+                    counters["rate_limited"] += 1
                     continue
                 cache[key] = created_at
 
         if created_at is not None:
             if created_at[:10] >= target_date:
-                _bump(counters, "kept_pr")
+                counters["kept_pr"] += 1
                 selected[name] = {
                     "file_path": entry["file_path"],
                     "introduced_commit": entry["introduced_commit"],
@@ -1373,13 +1232,13 @@ def apply_pr_filter(
                     "reason": "pr-opened-after-T",
                 }
             else:
-                _bump(counters, "dropped_pr_before_target")
+                counters["dropped_pr_before_target"] += 1
             continue
 
-        # No usable PR evidence: fall back to the introducing commit's own date.
+        # Commit date is fallback when PR evidence is unavailable.
         author_date = entry.get("author_date")
         if author_date is not None and author_date[:10] >= target_date:
-            _bump(counters, "kept_commit_date")
+            counters["kept_commit_date"] += 1
             selected[name] = {
                 "file_path": entry["file_path"],
                 "introduced_commit": entry["introduced_commit"],
@@ -1388,9 +1247,8 @@ def apply_pr_filter(
                 "reason": "commit-date",
             }
         else:
-            # One counter for both commit-date failures: no author date and an
-            # author date before the target both mean no evidence the declaration is new.
-            _bump(counters, "dropped_no_date")
+            # Both cases lack evidence that the declaration is new.
+            counters["dropped_no_date"] += 1
     return selected
 
 
@@ -1407,11 +1265,9 @@ def build_artifact(
     selected: dict[str, dict],
     kept: dict[str, Decl],
 ) -> dict:
-    """Assemble the JSON artifact.
+    """Assemble a JSON artifact.
 
-    No wall clock, hostname, duration or tool version is included, so two runs
-    over the same commits are byte-identical and a re-run can be diffed
-    against its predecessor to prove nothing moved.
+    Exclude wall clock, host, duration, and version so identical commits produce identical artifacts.
 
     Parameters
     ----------
@@ -1433,13 +1289,12 @@ def build_artifact(
     dict
         JSON-serializable artifact.
     """
+    assert selected.keys() <= kept.keys(), "selected declarations must be retained"
     decls: dict[str, dict] = {}
     for name in sorted(selected):
         entry = selected[name]
-        decl = kept.get(name)
         decls[name] = {
-            # Prefer `kept`'s own record over `selected`'s derived copy.
-            "file_path": decl.file_path if decl is not None else entry["file_path"],
+            "file_path": kept[name].file_path,
             "introduced_commit": entry["introduced_commit"],
             "pr_number": entry["pr_number"],
             "pr_created_at": entry["pr_created_at"],
@@ -1491,12 +1346,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the whole pipeline and write the artifact.
+    """Run the pipeline and write the artifact.
 
-    The PR cache is written in a ``finally``, so a run stopped by a rate limit
-    or an exception still keeps every date already paid for, and the next run
-    resumes from there. Logging is configured here, not at import, so
-    importing this module stays free of side effects.
+    Always write cached dates so interrupted runs resume; configure logging here to keep imports side-effect-free.
 
     Parameters
     ----------
@@ -1516,26 +1368,20 @@ def main(argv: list[str] | None = None) -> int:
     cache_path = workdir / "cache" / "prs.json"
     token = args.github_token or os.environ.get("GITHUB_ACCESS_TOKEN")
 
-    # Stage 1: materialise both commits.
     clone = ensure_clone(workdir, args.repo_url, commits=(args.old, args.new))
     if not args.no_prefetch:
         prefetch_range_objects(clone, args.old, args.new, subdir=_SUBDIR)
     wt_old = ensure_worktree(clone, workdir / "wt_old", args.old)
     wt_new = ensure_worktree(clone, workdir / "wt_new", args.new)
 
-    # Stage 2: scan both trees.
     new_decls = scan_tree(wt_new, _SUBDIR)
-    old_decls = scan_tree(wt_old, _SUBDIR)
-    # An empty side would make the diff meaningless (empty OLD tree => every
-    # name looks new); refuse rather than handle it.
+    old_decls, old_lines, old_files = _scan_tree_state(wt_old, _SUBDIR)
+    # Empty sides make the diff meaningless; an empty old tree makes every name look new.
     if not new_decls:
         raise SystemExit(f"the new tree at {wt_new} yielded zero declarations -- refusing to diff")
     if not old_decls:
         raise SystemExit(f"the old tree at {wt_old} yielded zero declarations -- refusing to diff")
-    old_lines = collect_normalised_lines(wt_old, _SUBDIR)
-    old_files = {path.relative_to(wt_old).as_posix() for path in _iter_lean_files(wt_old, _SUBDIR)}
 
-    # Stage 3: select, attribute, date.
     kept, counts = select_postcutoff_names(new_decls, old_decls, old_lines, old_files)
     provenance = resolve_provenance(kept, wt_new, clone, args.old, args.new, jobs=args.jobs)
 
@@ -1543,14 +1389,13 @@ def main(argv: list[str] | None = None) -> int:
     if cache_path.is_file():
         cache = json.loads(cache_path.read_text(encoding="utf-8"))
         LOGGER.info("loaded %d cached PR date(s) from %s", len(cache), cache_path)
-    counters: dict = {}
+    counters: Counter[str] = Counter()
     try:
         selected = apply_pr_filter(provenance, args.target_date, token, cache, counters)
     finally:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    # Stage 4: write the artifact.
     artifact = build_artifact(args.old, args.new, args.target_date, counts, selected, kept)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as sink:
@@ -1562,8 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
         reasons[entry["reason"]] = reasons.get(entry["reason"], 0) + 1
     unresolved = counts["n_after_move"] - len(provenance)
 
-    # Printed, not logged, so a caller can parse the result without depending
-    # on logging config.
+    # Print so callers can parse output independently of logging configuration.
     print(f"postcutoff: old_commit={args.old} new_commit={args.new} target_date={args.target_date}")
     print(f"postcutoff: n_old_decls={counts['n_old_decls']}")
     print(f"postcutoff: n_new_decls={counts['n_new_decls']}")
