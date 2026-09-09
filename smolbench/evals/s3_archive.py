@@ -1,4 +1,4 @@
-"""Read-only, in-memory access to an S3 archive prefix."""
+"""Share read-only S3 archive access to prevent notebook and test drift."""
 from __future__ import annotations
 import hashlib
 import json
@@ -8,7 +8,7 @@ from smolbench.evals import _aws
 from smolbench.evals.results_store import parse_s3_uri
 
 class S3Archive:
-    """Stream objects from an ``s3://bucket/prefix`` archive root. Sharing it prevents notebook and test copies from drifting.
+    """Stream objects from an ``s3://bucket/prefix`` archive root.
 
 Parameters
 ----------
@@ -18,26 +18,26 @@ region : str or None
     AWS region, or ``None`` for normal SDK resolution."""
 
     def __init__(self, uri: str, region: str | None=None) -> None:
-        """Initialize a read-only archive handle. Sharing it prevents notebook and test copies from drifting.
+        """Initialize a read-only archive handle.
 
 
 Parameters
 ----------
 uri : str
-    Estimator input.
+    S3 archive-root URI.
 region : str or None
-    Estimator input."""
+    AWS region, or ``None`` for normal SDK resolution."""
         self.bucket, self.prefix = parse_s3_uri(uri)
         self._client = _aws.fresh_client('s3', region)
 
     def _key(self, rel: str) -> str:
-        """Resolve an archive-relative object key. Sharing it prevents notebook and test copies from drifting.
+        """Resolve an archive-relative object key.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -47,13 +47,13 @@ str
         return f'{self.prefix}/{normalized}' if self.prefix else normalized
 
     def open(self, rel: str) -> Any:
-        """Open one object as a streaming response body. Sharing it prevents notebook and test copies from drifting.
+        """Open one object as a streaming response body.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -70,13 +70,13 @@ FileNotFoundError
             raise FileNotFoundError(self._key(rel)) from exc
 
     def read(self, rel: str) -> bytes:
-        """Read one object into memory. Sharing it prevents notebook and test copies from drifting.
+        """Read one object into memory.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -85,13 +85,13 @@ bytes
         return self.open(rel).read()
 
     def text(self, rel: str) -> str:
-        """Decode one object as UTF-8 text. Sharing it prevents notebook and test copies from drifting.
+        """Decode one object as UTF-8 text.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -100,13 +100,13 @@ str
         return self.read(rel).decode('utf-8', errors='replace')
 
     def json(self, rel: str) -> Any:
-        """Decode one object as JSON. Sharing it prevents notebook and test copies from drifting.
+        """Decode one object as JSON.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -115,13 +115,13 @@ Any
         return json.loads(self.text(rel))
 
     def size(self, rel: str) -> int:
-        """Read an object's content length without downloading it. Sharing it prevents notebook and test copies from drifting.
+        """Read an object's content length without downloading it.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------
@@ -131,13 +131,13 @@ int
         return int(response['ContentLength'])
 
     def sha256(self, rel: str) -> str:
-        """Hash one object without saving it locally. Sharing it prevents notebook and test copies from drifting.
+        """Hash one object without saving it locally.
 
 
 Parameters
 ----------
 rel : str
-    Estimator input.
+    Archive-relative path.
 
 Returns
 -------

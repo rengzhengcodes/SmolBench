@@ -39,15 +39,12 @@ def test_notebook_json_shape_survives_editing(path: Path) -> None:
         assert cell.get("execution_count") is None, f"cell {i} gained an execution_count"
 
 
-def test_dependency_filter_covers_every_lake_package(stats_nb: dict[str, Any]) -> None:
+def test_dependency_filter_covers_every_lake_package() -> None:
     """Filter `.lake/packages/`, not one dependency name, to avoid misclassification.
 
     Std was renamed Batteries; an ``std``-only marker silently made every Batteries theorem Mathlib and inflated the "Mathlib-only" population.
     """
-    src = _cell_source(stats_nb, "def is_mathlib_cell")
-    ns: dict = {}
-    exec(compile(src, str(STATS_NB), "exec"), ns)
-    is_mathlib_cell = ns["is_mathlib_cell"]
+    from notebooks.deduction.analysis.notebook_stats import is_mathlib_cell
 
     for dep in (".lake/packages/std/Std/Data/List.lean",
                 ".lake/packages/batteries/Batteries/Data/List.lean",

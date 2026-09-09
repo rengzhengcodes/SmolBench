@@ -127,8 +127,9 @@ def fake_s3(
     The notebook must not carry a test-only injection hook.
     """
     client = FakeS3(_fake_bucket(modules["ded_pa"].MODELS))
-    monkeypatch.setitem(sys.modules, "boto3",
-                        types.SimpleNamespace(client=lambda *a, **kw: client))
+    session = types.SimpleNamespace(
+        Session=lambda: types.SimpleNamespace(client=lambda *a, **kw: client))
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(session=session))
     return client
 
 
@@ -219,8 +220,9 @@ def test_an_incomplete_recovery_fetch_stops_the_cell_by_name(
     del objects[
         f"deduction_postcutoff/runs/{RECOVERY_RUN}/{dropped}/recovered_rows.jsonl"]
     client = FakeS3(objects)
-    monkeypatch.setitem(sys.modules, "boto3",
-                        types.SimpleNamespace(client=lambda *a, **kw: client))
+    session = types.SimpleNamespace(
+        Session=lambda: types.SimpleNamespace(client=lambda *a, **kw: client))
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(session=session))
 
     namespace = dict(modules, RUN_HEAVY=True)
     with pytest.raises(SystemExit) as excinfo:

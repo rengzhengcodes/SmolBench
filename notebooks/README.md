@@ -60,8 +60,8 @@ both legs in one process (`tests/tooling/test_analysis_stats.py`,
 the bare names only for the duration of each exec.
 
 **A re-run retires its predecessor rather than racing it.** The S3 key is an
-append-only log; a forced re-collection and `scripts/results/regrade.py` both
-go through `ResultsStore.regrade`/`supersede_all` (retire every surviving run
+append-only log; a forced re-collection goes through
+`ResultsStore.regrade`/`supersede_all` (retire every surviving run
 at the address, then write the replacement, whose `regraded_from` names the run
 it replaced). `ARCHIVE.md` has the marker spellings.
 

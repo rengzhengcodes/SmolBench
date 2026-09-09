@@ -175,7 +175,10 @@ def test_the_in_cell_grader_pin_is_live_not_a_no_op(
 
     src = cell_source(nb, "ported estimators:")
     with pytest.raises(AssertionError):
-        exec(compile(src, str(STATS_NB), "exec"), {"ded_pa": _WrongGrader})
+        exec(compile(src, str(STATS_NB), "exec"), {
+            "ded_pa": _WrongGrader,
+            "notebook_stats": notebook_stats,
+        })
 
 
 def test_a_row_with_no_verdict_is_not_a_measurement(ded_pa: ModuleType) -> None:

@@ -12,6 +12,7 @@ Each subsystem has its own README with full detail.
 ```
 smolbench/                 the installable library
   evals/                   shared eval infrastructure (see smolbench/evals/README.md)
+    spool.py               deduction spool-address resolution
     providers/               one module per inference backend
     payloads/                byte-frozen on-instance assets for providers/ec2.py
     experiment.py            the provision/run/agent_status/teardown facade
@@ -30,8 +31,6 @@ smolbench/                 the installable library
   deduction/lean/           the Lean 4 theorem-proving benchmark
     corpus.py, premises.py, context.py, prompt.py   corpus loading + prompt rendering
     runner.py, verify.py, replbackend.py            the sweep runner and lean-interact verification
-    decontam.py, decontam_config.py                 near-duplicate filtering + its policy loader
-    decontam_config.toml                            the MinHash/LSH params and key floor
     lean3.py, nullverify.py, cli.py
 
 notebooks/                 experiment drivers and analysis, one directory per study (see notebooks/README.md)
@@ -58,7 +57,7 @@ scripts/                   operational scripts, grouped by job (see scripts/READ
     fleet_status.py              read-only fleet listing
     fleet_teardown.py            lists, and with --terminate ends, the instances
   deduction/                 Lean run sharding, merging, and the deferred verify pass
-  results/                   results-store admin: provisioning, audits, manifests, regrade.py
+  results/                   results-store admin: provisioning, audits, manifests
   smoke/                     live-AWS smoke tests (spend real money -- opt-in only)
   arch/                      the model-architecture facts pipeline (see scripts/arch/README.md)
 
@@ -100,6 +99,6 @@ The four optional extras carry `dev`: pytest and linters; `aws`: boto3/botocore 
 .venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
 ```
 
-The suite uses a local OpenAI-compatible stub, so it needs no AWS credentials or network access. This prints `1196 passed, 5 skipped`.
+The suite uses a local OpenAI-compatible stub, so it needs no AWS credentials or network access. This prints `1120 passed, 2 skipped`.
 
-All 5 skips are `tests/deduction/test_s3_archive.py`: archived S3 evidence requires `SMOLBENCH_ARCHIVE_S3`. See `notebooks/ARCHIVE.md` `## GitHub releases` for the archive sha256s, and `## S3` for archived S3 evidence.
+All 2 skips are `tests/deduction/test_s3_archive.py`: archived S3 evidence requires `SMOLBENCH_ARCHIVE_S3`. See `notebooks/ARCHIVE.md` `## GitHub releases` for the archive sha256s, and `## S3` for archived S3 evidence.

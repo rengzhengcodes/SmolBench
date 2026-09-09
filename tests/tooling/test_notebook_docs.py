@@ -6,6 +6,7 @@ Import marker spellings from the store module so stale quoted markers fail here.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -59,12 +60,11 @@ def test_the_docs_name_the_direct_s3_readers(readme: str) -> None:
 
 
 def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> None:
-    """Archive locates recovery rows read by notebook and audit."""
-    from tests._paths import SCRIPTS
-
-    audit = (SCRIPTS / "results" / "audit_lean_pinning.py").read_text()
-    run = re.search(r'RECOVERY_RUN = "([^"]+)"', audit)
-    assert run, "audit_lean_pinning no longer declares RECOVERY_RUN"
+    """Archive locates the recovery rows declared by the notebook."""
+    notebook = json.loads((NOTEBOOKS / "statistical_analyses.ipynb").read_text())
+    source = "".join(line for cell in notebook["cells"] for line in cell["source"])
+    run = re.search(r'RECOVERY_RUN = "([^"]+)"', source)
+    assert run, "statistical_analyses.ipynb no longer declares RECOVERY_RUN"
     assert run.group(1) in archive, \
         f"ARCHIVE.md never locates the {run.group(1)} rows"
     assert "recovered_rows.jsonl" in archive
@@ -72,18 +72,12 @@ def test_archive_locates_the_recovery_rows_the_notebook_reads(archive: str) -> N
 
 def test_archive_names_the_prefix_the_readers_actually_default_to(archive: str) -> None:
     """Name the re-collection prefix ``rows_source.spool_prefix()`` defaults to, not the retired one."""
-    import importlib.util
-    import sys
+    from smolbench.evals.spool import spool_prefix
 
-    path = NOTEBOOKS / "deduction" / "analysis" / "rows_source.py"
-    spec = importlib.util.spec_from_file_location("docs_rows_source", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-
-    assert module._DEDUCTION_SPOOL_PREFIX in archive, (
+    prefix = spool_prefix()
+    assert prefix in archive, (
         f"ARCHIVE.md never names the re-collection prefix "
-        f"{module._DEDUCTION_SPOOL_PREFIX!r}")
+        f"{prefix!r}")
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme: str) -> None:

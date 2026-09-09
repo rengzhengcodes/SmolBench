@@ -1,9 +1,10 @@
-"""Shared notebook estimators with explicit modules to avoid bare-import collisions."""
+"""Keep shared estimators explicit to prevent import and notebook-copy drift."""
 from __future__ import annotations
 import collections
 import math
 import random
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from itertools import combinations
 from typing import Any
 import numpy as np
 from scipy.stats import binomtest
@@ -21,15 +22,15 @@ _BOOT_CAP_WARNED: set[float] = set()
 PASS_AT_1_SE_CAVEAT = "Normal-approximation SE (and the Clopper-Pearson CI) assume independent cells. Several cells in this sample can share a theorem (different rungs/replicates of it), which this estimate does not account for -- see flip_stats' docstring Notes. Treat as a rough, likely-too-narrow bound, not exact."
 
 def posterior_family(models: Sequence[str], infos: Sequence[str]) -> int:
-    """Count all model-within-info and info-within-model pairs. Sharing it prevents notebook and test copies from drifting.
+    """Count all model-within-info and info-within-model pairs.
 
 
 Parameters
 ----------
 models : Sequence[str]
-    Estimator input.
+    Model names.
 infos : Sequence[str]
-    Estimator input.
+    Information-arm names.
 
 Returns
 -------
@@ -38,21 +39,20 @@ int
     return len(infos) * math.comb(len(models), 2) + len(models) * math.comb(len(infos), 2)
 
 def build_posterior_contrasts(models: Sequence[str], infos: Sequence[str]) -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
-    """Build every labelled contrast in the posterior family. Sharing it prevents notebook and test copies from drifting.
+    """Build every labelled contrast in the posterior family.
 
 
 Parameters
 ----------
 models : Sequence[str]
-    Estimator input.
+    Model names.
 infos : Sequence[str]
-    Estimator input.
+    Information-arm names.
 
 Returns
 -------
 list[tuple[str, tuple[str, str], tuple[str, str]]]
     Label and two condition keys for each contrast."""
-    from itertools import combinations
     out = []
     for info in infos:
         for model_a, model_b in combinations(models, 2):
@@ -63,25 +63,25 @@ list[tuple[str, tuple[str, str], tuple[str, str]]]
     return out
 
 def classify(p: float, ci_lo: float, ci_hi: float, mei: float, r_min: int, alpha: float, min_r: int=MIN_R_FOR_EQUIVALENCE) -> str:
-    """Classify one contrast as decided, equivalent, or undecided. Sharing it prevents notebook and test copies from drifting.
+    """Classify one contrast as decided, equivalent, or undecided.
 
 
 Parameters
 ----------
 p : float
-    Estimator input.
+    Contrast p-value.
 ci_lo : float
-    Estimator input.
+    Lower confidence bound for the effect.
 ci_hi : float
-    Estimator input.
+    Upper confidence bound for the effect.
 mei : float
-    Estimator input.
+    Minimum effect of interest.
 r_min : int
-    Estimator input.
+    Smaller arm's replicate count.
 alpha : float
-    Estimator input.
+    Decision threshold.
 min_r : int
-    Estimator input.
+    Minimum replicates required for equivalence.
 
 Returns
 -------
@@ -94,17 +94,17 @@ str
     return 'UNDECIDED'
 
 def boot_resamples(alpha: float, target: int=BOOT_TAIL_TARGET, cap: int=BOOT_RESAMPLE_CAP) -> int:
-    """Derive a bootstrap count from the two-sided interval level. Sharing it prevents notebook and test copies from drifting.
+    """Derive a bootstrap count from the two-sided interval level.
 
 
 Parameters
 ----------
 alpha : float
-    Estimator input.
+    Two-sided interval error rate.
 target : int
-    Estimator input.
+    Target draws in each tail.
 cap : int
-    Estimator input.
+    Maximum affordable resample count.
 
 Returns
 -------
@@ -120,25 +120,25 @@ int
     return cap
 
 def paired_diff_ci(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray, alpha: float, n_boot: int | None=None, seed: int=0, *, error_bars: Any) -> dict[str, float]:
-    """Bootstrap ``a - b`` while resampling replicate blocks. Sharing it prevents notebook and test copies from drifting.
+    """Bootstrap ``a - b`` while resampling replicate blocks.
 
 
 Parameters
 ----------
 a : np.ndarray
-    Estimator input.
+    First arm's outcome marks.
 b : np.ndarray
-    Estimator input.
+    Second arm's outcome marks.
 seed_idx : np.ndarray
-    Estimator input.
+    Replicate-block index aligned with both arms.
 alpha : float
-    Estimator input.
+    Two-sided interval error rate.
 n_boot : int or None
-    Estimator input.
+    Resample count, or ``None`` to derive it from ``alpha``.
 seed : int
-    Estimator input.
+    Bootstrap random seed.
 error_bars : Any
-    Estimator input.
+    Deduction error-bar module.
 
 Returns
 -------
@@ -152,21 +152,21 @@ dict[str, float]
     return error_bars.diff_ci(stats, 1, 0)
 
 def synth(rate: float, n_seeds: int, gen: np.random.Generator, cluster_sd: float=0.0, *, n_harm: int) -> tuple[np.ndarray, np.ndarray]:
-    """Draw flat marks and their replicate indices. Sharing it prevents notebook and test copies from drifting.
+    """Draw flat marks and their replicate indices.
 
 
 Parameters
 ----------
 rate : float
-    Estimator input.
+    Marginal success probability.
 n_seeds : int
-    Estimator input.
+    Number of replicate blocks.
 gen : np.random.Generator
-    Estimator input.
+    Random-number generator.
 cluster_sd : float
-    Estimator input.
+    Standard deviation of the replicate-level logit offset.
 n_harm : int
-    Estimator input.
+    Harmonic cells per replicate.
 
 Returns
 -------
@@ -190,23 +190,23 @@ ValueError
     return (marks.reshape(-1), np.repeat(np.arange(n_seeds), n_harm))
 
 def resample_sweep(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray, alpha: float, grid: Sequence[int] | None=None, *, error_bars: Any) -> list[dict[str, float | int | None]]:
-    """Measure interval-endpoint drift over resample counts. Sharing it prevents notebook and test copies from drifting.
+    """Measure interval-endpoint drift over resample counts.
 
 
 Parameters
 ----------
 a : np.ndarray
-    Estimator input.
+    First arm's outcome marks.
 b : np.ndarray
-    Estimator input.
+    Second arm's outcome marks.
 seed_idx : np.ndarray
-    Estimator input.
+    Replicate-block index aligned with both arms.
 alpha : float
-    Estimator input.
+    Two-sided interval error rate.
 grid : Sequence[int] or None
-    Estimator input.
+    Resample counts, or ``None`` for ``error_bars.B_GRID``.
 error_bars : Any
-    Estimator input.
+    Deduction error-bar module.
 
 Returns
 -------
@@ -222,30 +222,34 @@ list[dict[str, float | int | None]]
         prev = (ci['lo'], ci['hi'])
     return rows
 
+# Inspect the function's global reads so a literal grid cannot silently replace
+# the error-bars module's shared tuning contract.
+assert 'B_GRID' in resample_sweep.__code__.co_names
+
 def _true_null_draws(cluster_sd: float, n_sim: int, r: int, rate: float, gen: np.random.Generator, measure: Callable[[float, np.ndarray, np.ndarray, np.ndarray], Any], who: str, *, n_harm: int, paired: Any) -> tuple[list[Any], float]:
-    """Simulate true-null contrasts and measure their design effect. Sharing it prevents notebook and test copies from drifting.
+    """Simulate true-null contrasts and measure their design effect.
 
 
 Parameters
 ----------
 cluster_sd : float
-    Estimator input.
+    Standard deviation of the replicate-level logit offset.
 n_sim : int
-    Estimator input.
+    Number of simulated contrasts.
 r : int
-    Estimator input.
+    Replicate blocks per arm.
 rate : float
-    Estimator input.
+    Shared true-null success probability.
 gen : np.random.Generator
-    Estimator input.
+    Random-number generator.
 measure : Callable[[float, np.ndarray, np.ndarray, np.ndarray], Any]
-    Estimator input.
+    Statistic computed from each draw.
 who : str
-    Estimator input.
+    Caller name for diagnostic errors.
 n_harm : int
-    Estimator input.
+    Harmonic cells per replicate.
 paired : Any
-    Estimator input.
+    Paired-analysis module.
 
 Returns
 -------
@@ -269,31 +273,31 @@ ValueError
     return (measured, float(np.median(deffs)))
 
 def verdict_distribution(cluster_sd: float, n_sim: int=60, rate: float=0.5, n_seeds: int=40, mei: float=0.15, alpha: float=0.05, seed: int=20260904, *, n_harm: int, paired: Any, error_bars: Any) -> dict[str, Any]:
-    """Tally posterior verdicts over repeated true-null contrasts. Sharing it prevents notebook and test copies from drifting.
+    """Tally posterior verdicts over repeated true-null contrasts.
 
 
 Parameters
 ----------
 cluster_sd : float
-    Estimator input.
+    Standard deviation of the replicate-level logit offset.
 n_sim : int
-    Estimator input.
+    Number of simulated contrasts.
 rate : float
-    Estimator input.
+    Shared true-null success probability.
 n_seeds : int
-    Estimator input.
+    Replicate blocks per arm.
 mei : float
-    Estimator input.
+    Minimum effect of interest.
 alpha : float
-    Estimator input.
+    Decision threshold.
 seed : int
-    Estimator input.
+    Simulation random seed.
 n_harm : int
-    Estimator input.
+    Harmonic cells per replicate.
 paired : Any
-    Estimator input.
+    Paired-analysis module.
 error_bars : Any
-    Estimator input.
+    Deduction error-bar module.
 
 Returns
 -------
@@ -301,19 +305,19 @@ dict[str, Any]
     Verdict counts, median design effect, and simulation count."""
 
     def verdict(p: float, a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> str:
-        """Classify one simulated contrast. Sharing it prevents notebook and test copies from drifting.
+        """Classify one simulated contrast.
 
 
 Parameters
 ----------
 p : float
-    Estimator input.
+    Contrast p-value.
 a : np.ndarray
-    Estimator input.
+    First arm's outcome marks.
 b : np.ndarray
-    Estimator input.
+    Second arm's outcome marks.
 seed_idx : np.ndarray
-    Estimator input.
+    Replicate-block index aligned with both arms.
 
 Returns
 -------
@@ -325,29 +329,29 @@ str
     return {'verdicts': collections.Counter(verdicts), 'median_deff': median_deff, 'n_sim': n_sim}
 
 def false_decided_rate(cluster_sd: float, n_sim: int, *, r: int, alpha: float, n_harm: int, paired: Any, rate: float=0.5, seed: int=20260906, gen: np.random.Generator | None=None) -> dict[str, Any]:
-    """Measure the false-decided rate of clustered true-null contrasts. Sharing it prevents notebook and test copies from drifting.
+    """Measure the false-decided rate of clustered true-null contrasts.
 
 
 Parameters
 ----------
 cluster_sd : float
-    Estimator input.
+    Standard deviation of the replicate-level logit offset.
 n_sim : int
-    Estimator input.
+    Number of simulated contrasts.
 r : int
-    Estimator input.
+    Replicate blocks per arm.
 alpha : float
-    Estimator input.
+    Decision threshold.
 n_harm : int
-    Estimator input.
+    Harmonic cells per replicate.
 paired : Any
-    Estimator input.
+    Paired-analysis module.
 rate : float
-    Estimator input.
+    Shared true-null success probability.
 seed : int
-    Estimator input.
+    Simulation random seed.
 gen : np.random.Generator or None
-    Estimator input.
+    Generator override, or ``None`` to construct one from ``seed``.
 
 Returns
 -------
@@ -360,13 +364,13 @@ dict[str, Any]
     return {'cluster_sd': cluster_sd, 'r': r, 'alpha': alpha, 'n_sim': n_sim, 'decided': decided, 'rate': decided / n_sim, 'median_deff': median_deff, 'ci_lo': interval.low, 'ci_hi': interval.high, 'inflated': interval.low > alpha}
 
 def group_rows_by_cell(rows: Iterable[dict[str, Any]]) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
-    """Group cell rows by key while preserving file order. Sharing it prevents notebook and test copies from drifting.
+    """Group cell rows by key while preserving file order.
 
 
 Parameters
 ----------
 rows : Iterable[dict[str, Any]]
-    Estimator input.
+    Result records, including non-cell rows to ignore.
 
 Returns
 -------
@@ -381,15 +385,15 @@ dict[tuple[Any, ...], list[dict[str, Any]]]
     return grouped
 
 def surviving_verdict(verdicts: Iterable[str | None], unmeasurable: Collection[str]) -> str | None:
-    """Return the first verdict outside the live unmeasurable set. Sharing it prevents notebook and test copies from drifting.
+    """Return the first verdict outside the live unmeasurable set.
 
 
 Parameters
 ----------
 verdicts : Iterable[str | None]
-    Estimator input.
+    Verdicts in attempt order.
 unmeasurable : Collection[str]
-    Estimator input.
+    Verdicts excluded by the live grader.
 
 Returns
 -------
@@ -398,13 +402,13 @@ str or None
     return next((verdict for verdict in verdicts if verdict not in unmeasurable), None)
 
 def is_mathlib_cell(row: Mapping[str, Any]) -> bool:
-    """Identify a Mathlib theorem rather than a vendored Lake dependency. Sharing it prevents notebook and test copies from drifting.
+    """Identify a Mathlib theorem rather than a vendored Lake dependency.
 
 
 Parameters
 ----------
 row : Mapping[str, Any]
-    Estimator input.
+    Cell row carrying an optional file path.
 
 Returns
 -------
@@ -413,21 +417,21 @@ bool
     return not str(row.get('file_path') or '').startswith(_DEPENDENCY_PACKAGE_MARKER)
 
 def measurable_cell_keys(rows: Iterable[dict[str, Any]], unmeasurable: Collection[str]) -> list[tuple[Any, ...]]:
-    """Select sorted Mathlib cell keys with a measured verdict. Sharing it prevents notebook and test copies from drifting.
+    """Select sorted Mathlib cell keys with a measured verdict.
 
 
 Parameters
 ----------
 rows : Iterable[dict[str, Any]]
-    Estimator input.
+    Result records, including non-cell rows to ignore.
 unmeasurable : Collection[str]
-    Estimator input.
+    Verdicts excluded by the live grader.
 
 Returns
 -------
 list[tuple[Any, ...]]
     Deterministically sorted measurable Mathlib keys."""
-    keys = []
+    keys: list[tuple] = []
     for key, group in group_rows_by_cell(rows).items():
         verdict = surviving_verdict((row.get('verdict') for row in group), unmeasurable)
         if verdict is None or verdict == UNGRADED_VERDICT or (not is_mathlib_cell(group[0])):
@@ -436,17 +440,17 @@ list[tuple[Any, ...]]
     return sorted(keys)
 
 def select_sample_keys(measurable: Sequence[tuple[Any, ...]], n: int, seed: int) -> list[tuple[Any, ...]]:
-    """Draw a reproducible sample from an already-sorted population. Sharing it prevents notebook and test copies from drifting.
+    """Draw a reproducible sample from an already-sorted population.
 
 
 Parameters
 ----------
 measurable : Sequence[tuple[Any, ...]]
-    Estimator input.
+    Deterministically ordered eligible keys.
 n : int
-    Estimator input.
+    Sample size.
 seed : int
-    Estimator input.
+    Sampling random seed.
 
 Returns
 -------
@@ -455,17 +459,17 @@ list[tuple[Any, ...]]
     return random.Random(seed).sample(list(measurable), n)
 
 def clopper_pearson_interval(k: int, n: int, alpha: float=0.05) -> tuple[float, float]:
-    """Calculate an exact two-sided Clopper-Pearson interval. Sharing it prevents notebook and test copies from drifting.
+    """Calculate an exact two-sided Clopper-Pearson interval.
 
 
 Parameters
 ----------
 k : int
-    Estimator input.
+    Success count.
 n : int
-    Estimator input.
+    Trial count.
 alpha : float
-    Estimator input.
+    Two-sided interval error rate.
 
 Returns
 -------
@@ -499,13 +503,13 @@ ValueError
     return (lower, upper)
 
 def is_pass(verdict: str) -> bool:
-    """Return whether a measured verdict is exactly ``success``. Sharing it prevents notebook and test copies from drifting.
+    """Return whether a measured verdict is exactly ``success``.
 
 
 Parameters
 ----------
 verdict : str
-    Estimator input.
+    Measured grader verdict.
 
 Returns
 -------
@@ -521,13 +525,13 @@ ValueError
     return verdict == 'success'
 
 def flip_stats(pairs: Mapping[tuple[Any, ...], tuple[str, str]]) -> dict[str, Any]:
-    """Calculate McNemar-style flip statistics for paired verdicts. Sharing it prevents notebook and test copies from drifting.
+    """Calculate McNemar-style flip statistics for paired verdicts.
 
 
 Parameters
 ----------
 pairs : Mapping[tuple[Any, ...], tuple[str, str]]
-    Estimator input.
+    Cell keys mapped to original and rerun verdicts.
 
 Returns
 -------
@@ -535,7 +539,7 @@ dict[str, Any]
     Contingency counts, flip rate, interval, standard error, and keys."""
     n = len(pairs)
     a = b = c = d = 0
-    flipped_keys = []
+    flipped_keys: list[tuple] = []
     for key, (original_verdict, rerun_verdict) in pairs.items():
         original, rerun = (is_pass(original_verdict), is_pass(rerun_verdict))
         if original and rerun:
@@ -555,13 +559,13 @@ dict[str, Any]
     return {'n': n, 'a_both_pass': a, 'b_orig_pass_rerun_fail': b, 'c_orig_fail_rerun_pass': c, 'd_both_fail': d, 'discordant': discordant, 'flip_rate': flip_rate, 'flip_rate_ci95': [ci_lo, ci_hi], 'pass_at_1_se': se, 'pass_at_1_se_caveat': PASS_AT_1_SE_CAVEAT, 'flipped_keys': [list(key) for key in flipped_keys]}
 
 def verifier_drift_stats(pairs: Mapping[tuple[Any, ...], tuple[str, str]]) -> dict[str, Any]:
-    """Measure exact verdict-text agreement after reverification. Sharing it prevents notebook and test copies from drifting.
+    """Measure exact verdict-text agreement after reverification.
 
 
 Parameters
 ----------
 pairs : Mapping[tuple[Any, ...], tuple[str, str]]
-    Estimator input.
+    Cell keys mapped to study and reverified verdicts.
 
 Returns
 -------
