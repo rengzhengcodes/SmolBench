@@ -1,10 +1,10 @@
 """Block-bootstrap error bars for deduction pass@1 and paired contrasts.
 
-Resample theorem blocks because their cells share a proof prefix. BCa falls back to
-percentile for a degenerate bias correction; both are printed. The PRIMARY test is
-block sign-flip; cell-level McNemar is descriptive because it ignores clustering.
-Count-as-failure scores model-dependent no-survivor cells 0, avoiding the
-model-dependent denominators that dropping would reward.
+Resample theorem blocks because their cells share a proof prefix. BCa falls back to percentile for a degenerate bias correction; both are printed.
+The PRIMARY test is block sign-flip; cell-level McNemar is descriptive because it ignores clustering.
+``lane_outcomes`` grades through ``power_analysis.grade_verdicts``, shared with
+``load_joint_cells`` and ``hint_vs_noise.load_rungs``; only denominator and recovery schemas live here.
+A no-survivor cell scores 0 when another lane measured it; dropping makes denominators model-dependent and rewards a broken verifier.
 """
 
 import argparse

@@ -1,10 +1,9 @@
-"""Power analysis for the Lean-4 deduction family-ladder scaling study (21 checkpoints,
-7 vendor families x 3 rungs).
+"""Power analysis for the Lean-4 deduction family-ladder study: 21 checkpoints, 7 vendor families x 3 rungs.
 
-``ladder_pos`` is a model's 0..2 family position; ``prompt_rung`` is context. PRIMARY has 21
-within-family Bonferroni contrasts; exploratory SECONDARY has 63 size-matched
-Benjamini-Hochberg contrasts. Read ``verified_rows.jsonl``: ``all_rows.jsonl`` has
-``"unverified"`` placeholders, so its near-zero rates could silently mimic universal failure.
+The study overloads "rung"; this file separates model ``ladder_pos`` from context ``prompt_rung``.
+PRIMARY has 21 within-family Bonferroni contrasts; exploratory SECONDARY has 63 size-matched BH contrasts.
+Both use a theorem block-bootstrap and Beta-mixture pass@N advisory: theorems, not replicates, are this benchmark's power lever.
+Read ``verified_rows.jsonl``, never generation-time ``all_rows.jsonl``; its ``"unverified"`` placeholders can silently mimic universal failure.
 """
 
 from __future__ import annotations

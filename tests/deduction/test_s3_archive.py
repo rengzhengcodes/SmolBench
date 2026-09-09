@@ -1,6 +1,7 @@
-"""S3 archive gates; stream objects rather than pulling them to disk.
+"""S3 archive gates; stream objects rather than pulling them to disk, and skip offline::
 
-Run with `SMOLBENCH_ARCHIVE_S3` under `pytest tests/deduction/test_s3_archive.py`.
+    SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/2026-08-25 \\
+        .venv/bin/python -m pytest tests/deduction/test_s3_archive.py -q
 """
 
 from __future__ import annotations

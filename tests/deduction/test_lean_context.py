@@ -1,4 +1,7 @@
-"""Tests for Lean context rendering and rung triviality."""
+"""Tests for Lean context rendering and rung triviality.
+
+Goldens below were checked by hand, not copied from output.
+"""
 
 from collections.abc import Iterator
 from pathlib import Path
@@ -49,6 +52,7 @@ def test_state_parsing() -> None:
     assert context.extract_goal_only("n : ℕ\nh : P n\n⊢ Q n") == "⊢ Q n"
 
 
+#: A post-``cases``/``constructor`` state, the normal shape once a proof branches.
 _TWO_GOALS = (
     "case inl\n"
     "n : ℕ\n"

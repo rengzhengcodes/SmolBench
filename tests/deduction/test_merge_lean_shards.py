@@ -111,7 +111,10 @@ def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path: Pat
 
 
 def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path: Path) -> None:
-    """Resumed exception/retry pairs stay; their key counts once for `--expect-cells`."""
+    """Resumed exception/retry pairs stay; their key counts once for `--expect-cells`.
+
+    Both rows are safe because ``power_analysis.grade_verdicts`` applies earliest-surviving-wins.
+    """
     runs = tmp_path / "runs"
     _write_shard(runs, "resumed", 0, 1, [
         cell_row(kind="sanity", theorem_id="A"),

@@ -130,6 +130,7 @@ def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(
     assert _proj(out[1:3], "verify_ms") == [(111,), (222,)]
     assert _proj([out[0], out[5]], "verdict", "tactics_applied") == [("success", 5)] * 2
     assert out[0]["ms"] == 42  # a prior replay is not reverted to the all_rows placeholder
+    # t1 skips, t2 deduplicates, and t3 keeps the prior row wholesale, so OLD text replays too.
     assert sorted(fake.tried) == [("t2", "tac"), ("t3", "NEW"), ("t3", "OLD"), ("t4", "tac")]
 
 
@@ -156,6 +157,7 @@ def test_full_pass_sentinel_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         if prior is None:
             assert verdicts == [verdict, verdict]
         else:
+            # Resume marked a group done, so the sentinel gate carries no ``not done`` term.
             assert {"success", "unverified"} <= set(verdicts)
 
 

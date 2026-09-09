@@ -1,6 +1,8 @@
 """Run local OpenAI-compatible stubs for a real Lean sweep.
 
 The good fixture proof must verify and the bogus one must return `lean_error`.
+Port A serves model "stub-good-model" and Port B serves "stub-bad-model"; OS-assigned
+ports print once to stdout as {"pi": <port>, "or": <port>} before serving.
 Reuse `tests.conftest.StubServer` so the stub dialect has one source of truth.
 """
 
@@ -28,7 +30,7 @@ except ImportError as err:
 #: Request log path, supplied by `lean_smoke.sh --e2e`.
 REQLOG = sys.argv[1]
 
-#: GOOD proves `Mini.theoremA`; BAD names no lemma, so Lean returns `lean_error`.
+#: GOOD proves `Mini.theoremA`; BAD names a lemma that does not exist, so Lean returns `lean_error`.
 GOOD = "Here is the proof:\n```lean\nexact Mini.premiseA h (Mini.premiseB n)\n```"
 BAD = "```lean\nexact nonexistent_lemma_xyz42\n```"
 
@@ -37,7 +39,11 @@ LOG_LOCK = threading.Lock()
 
 
 class _LoggingRequestList(list):
-    """Request list that appends `{stub, path, body}` JSON lines under `LOG_LOCK`."""
+    """Request list that appends `{stub, path, body}` JSON lines under `LOG_LOCK`.
+
+    Subclass the list so the stub dialect stays defined once in `tests/conftest.py`.
+    GET requests are logged too, with `body: null`, and filtered by path before body access.
+    """
 
     def __init__(self, stub: str, path: str) -> None:
         super().__init__()

@@ -1,4 +1,7 @@
-"""Reporting contracts for deduction analysis scripts loaded by file path."""
+"""Reporting contracts for deduction analysis scripts loaded by file path.
+
+They run under ``uv run --no-project --with numpy --with scipy`` with no smolbench installed.
+"""
 
 from __future__ import annotations
 

@@ -1,8 +1,9 @@
 """Offline end-to-end smoke driver for the evaluation harness.
 
+Run as ``timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py``.
+No credentials, network, or AWS spend.
 Use `timeout 120`: OpenRouter retries transient failures indefinitely with a
 60-second backoff, so a bad stub otherwise hangs the driver.
-
 Exit codes: 0 pass, 1 stage failure, 2 environment/import failure.
 """
 
@@ -42,7 +43,7 @@ def main() -> None:
     stage("env", f"python {sys.version.split()[0]} at {sys.executable}")
 
     try:
-        # Reuse the test stub so the two dialects cannot drift.
+        # Reuse the test stub so the two dialects cannot drift; pytest must be importable from the dev extra.
         from tests.conftest import StubServer, StubTokenizer, chat_completion
     except ImportError as err:
         print(

@@ -199,6 +199,7 @@ def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path: Pat
         "\n".join(sorted(summary["full_names"])).encode()).hexdigest()
 
 
+# Refusals start from a real, buildable export and break one thing, so unreadable input cannot pass them vacuously.
 def _real_export_copy(tmp_path: Path) -> Path:
     dst = tmp_path / "exp"
     shutil.copytree(EXPORT, dst)
@@ -303,6 +304,7 @@ def test_built_corpus_satisfies_package_a_postcutoff_api(
         corpus.reset_caches()
 
 
+# Only ``trace_mathlib_ec2.sh --dry-run`` is executable on this box.
 def test_runbook_parses(tmp_path: Path) -> None:
     """`bash -n` accepts the script."""
     r = subprocess.run(["bash", "-n", str(RUNBOOK)], capture_output=True, text=True)

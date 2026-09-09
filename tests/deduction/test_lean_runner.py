@@ -24,6 +24,7 @@ from tests._paths import LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOF
 
 M1 = "mini/pi-model-a"       # provider: primeintellect
 M2 = "mini/or-model-b"       # provider: openrouter
+#: A proof verifies iff it holds MARKER, the fake-verifier rule these tests rely on.
 MARKER = "QED"
 
 

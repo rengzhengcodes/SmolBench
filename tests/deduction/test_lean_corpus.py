@@ -181,6 +181,7 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(
     corpus.reset_caches()
 
 
+# ``eval_split_specs`` reads the active corpus, not a literal in a deleted SFT-dataset builder.
 def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
     """The committed fixture carries only ``random/val.json``, so that is the spec list."""
     assert corpus.eval_split_specs() == (("random", "val"),)
@@ -189,7 +190,10 @@ def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
 def test_eval_split_specs_is_canonically_ordered_and_call_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Use train/val/test order and read the root at call time."""
+    """Use train/val/test order and read the root at call time.
+
+    Creation order is reversed so filesystem listing would yield test/val/train and make manifests disagree across machines.
+    """
     first = tmp_path / "first" / "random"
     first.mkdir(parents=True)
     for split in ("test", "val", "train"):

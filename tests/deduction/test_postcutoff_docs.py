@@ -40,7 +40,10 @@ def test_notebook_json_shape_survives_editing(path: Path) -> None:
 
 
 def test_dependency_filter_covers_every_lake_package(stats_nb: dict[str, Any]) -> None:
-    """Filter `.lake/packages/`, not one dependency name, to avoid misclassification."""
+    """Filter `.lake/packages/`, not one dependency name, to avoid misclassification.
+
+    Std was renamed Batteries; an ``std``-only marker silently made every Batteries theorem Mathlib and inflated the "Mathlib-only" population.
+    """
     src = _cell_source(stats_nb, "def is_mathlib_cell")
     ns: dict = {}
     exec(compile(src, str(STATS_NB), "exec"), ns)

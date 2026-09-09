@@ -27,13 +27,14 @@ logging.basicConfig(level=logging.INFO)
 # Anchor paths to ``__file__``, never cwd: fleet and notebook launches vary it.
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
-#: Shared spool location from the study config, so it cannot drift from results_store.
+#: Shared spool location from the study config, so it cannot drift from results_store; the
+#: loader is memoized by resolved path, so the second call parses nothing and needs no temporary.
 SPOOL_BUCKET: str = load_study_config().results.bucket
 SPOOL_REGION: str = load_study_config().results.region
 #: Resolve ``spool_prefix()`` at call time so late ``LEAN_SPOOL_PREFIX`` applies.
 
-#: Latest served-weight release, 2026-06-03 (resolved 2026-08-30); corpus dates
-#: must clear it so checkpoints cannot have trained on held-out theorems.
+#: Latest served-weight release: the last Hugging Face commit touching a weight file at each lane's
+#: pinned ``--revision`` (resolved 2026-08-30); corpus dates must clear it.
 ROSTER_LATEST_RELEASE: str = "2026-06-03"
 
 
@@ -126,9 +127,9 @@ _induction = importlib.util.module_from_spec(_induction_spec)
 sys.modules[_induction_spec.name] = _induction
 _induction_spec.loader.exec_module(_induction)  # runs that file's own load_dotenv(...) etc.
 
-#: Imported roster; never redeclare its source of truth.
+#: Spec key to short analysis tag; imported roster, never redeclare its source of truth.
 MODELS: dict[str, str] = _induction.MODELS
-#: Imported CoT settings; never redeclare their source of truth.
+#: Spec key to per-request CoT-toggle kwargs, total over MODELS; imported settings, never redeclare.
 COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 
 # Late imports require EC2_* defaults and MODELS/COT_ARGS.
@@ -239,14 +240,15 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
 
     Use ``runner.load_sweep_config``, shared with ``cli.cmd_run_sweep``, so
     the schema has one reader. Deep-copy the shared config so calls cannot
-    mutate each other. Keep all
-    knobs equal across 21 checkpoints except ``run_name`` and ``models[0]`` so
+    mutate each other. Keep all knobs equal across 21 checkpoints except
+    ``run_name`` and ``models[0]`` so
     differences measure models, and stamp the YAML SHA-256 in ``manifest.json``.
     Reject reserved names before missing names: overlays silently replace the
     former, while missing names silently use runner defaults. Reject corpora
     before the latest roster release because a checkpoint may have trained on
-    their theorems. Read lane environment values at call time; shard names
-    follow ``scripts/fleet/run_fleet.py``'s ``Lane`` convention.
+    their theorems. ``LEAN_SHARD``, ``LEAN_RUN_NAME``, ``LEAN_CELL_WHITELIST``,
+    ``LEAN_CORPUS_SPLIT``, and ``LEAN_SEED`` are read at call time; the default
+    run name is ``scaling_<key>`` with ``_shard<i>of<n>`` when sharded.
 
     Parameters
     ----------
@@ -487,7 +489,8 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
     ``all_rows.jsonl`` prevents every lane appearing outstanding. Drop a
     theorem only for a recorded sanity failure, and build runner row keys.
     This duplicates the sweep predicate, so update it with sweep changes:
-    under-counting would skip a lane with real cells left.
+    under-counting would skip a lane with real cells left. No test catches this
+    drift except an end-to-end comparison against a live sweep.
 
     Parameters
     ----------

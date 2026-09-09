@@ -19,6 +19,7 @@ from tests._paths import (
     load_by_path,
 )
 
+#: Post-cutoff fixture provenance for the freshly emitted manifest.
 FIXTURE_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 FIXTURE_CREATION_TIME = "2026-08-30 15:43:26.000000"
 FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
