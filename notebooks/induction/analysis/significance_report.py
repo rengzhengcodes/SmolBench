@@ -1,18 +1,8 @@
-"""Holm and Hochberg significance report over the PRIMARY contrast family.
+"""Holm and Hochberg report for PRIMARY contrasts.
 
-Applies step-down Holm (1979) at FWER = 0.05 to the 210 pre-registered
-PRIMARY contrasts, using the exact seed-level sign-flip test
-(``paired_analysis.signflip_exact_p``) as PRIMARY: the independent unit is
-the replicate seed, not the mark, so a collapsed arm's 9 correlated harmonic
-items count as one piece of evidence, not nine. Item-level McNemar and
-unpaired CMH stay descriptive columns; their gap to the cluster p is the
-design effect. Hochberg (1988) is a sensitivity check only, since its
-positive-dependence requirement (MTP2, Sarkar 1998) is unverified for 210
-statistics sharing models, seeds and harmonics. Nothing is excluded: cells
-at or above COLLAPSE_THRESHOLD non-compliance are annotated, never removed.
-
-Run:
-    .venv/bin/python notebooks/induction/analysis/significance_report.py
+PRIMARY uses exact seed-level sign flips because harmonic marks within a seed are correlated.
+Hochberg is sensitivity-only: its positive-dependence condition is unverified.
+Collapsed cells are annotated, never excluded.
 """
 
 import sys
@@ -26,9 +16,7 @@ import numpy as np
 from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals.quiz import COMPLIANT
-# EMPTY is imported rather than spelled "empty" here, because a literal would
-# keep parsing cleanly and silently read 0 if parsing.py ever renamed the
-# label -- turning a padding collapse into an apparently empty-free arm.
+# Import the label so a rename cannot silently read empty values as zero.
 from smolbench.evals.parsing import EMPTY
 
 from power_analysis import (  # noqa: E402
@@ -46,36 +34,28 @@ from paired_analysis import (  # noqa: E402
     signflip_exact_p,
 )
 
-#: A cell at or above this share of non-compliant completions gets a mechanism
-#: annotation on every contrast it touches, applied symmetrically to all arms.
+#: Non-compliance rate requiring symmetric mechanism annotation.
 COLLAPSE_THRESHOLD = 0.25
 
-#: Above this share the arm has stopped emitting parseable answers at all,
-#: not merely degraded. Used only to word the census, never to fence.
+#: Near-total parse failure threshold; census wording only.
 TOTAL_COLLAPSE = 0.95
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Hochberg (1988) step-up rejections at familywise level `alpha`.
-
-    Thin wrapper over ``statsmodels.stats.multitest.multipletests`` with
-    ``method="simes-hochberg"``, uniformly at least as powerful as Holm
-    where its positive-dependence condition holds (see module docstring).
+    """Return Hochberg step-up rejections at familywise level ``alpha``.
 
     Parameters
     ----------
     pvals : np.ndarray
-        P-values in the family.
+        Family p-values.
     alpha : float, optional
-        Familywise error-rate level.
+        Familywise error rate.
 
     Returns
     -------
     np.ndarray
-        Rejection mask.
+        Rejections.
     """
-    # Unstable sort is safe here for the same tie-monotonicity reason as
-    # paired_analysis.holm.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=alpha, method="simes-hochberg"
     )
@@ -83,28 +63,19 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
 
 
 def compliance_census(compliance: dict) -> dict:
-    """Measure non-compliance per ``(model, info)`` cell, from an already-parsed tree.
-
-    Consumes `paired_analysis.load_marks`'s third return value rather than
-    re-walking and re-parsing the tree, so the census and the contrasts can
-    never disagree about which replicates a cell contains.
+    """Measure non-compliance per parsed ``(model, info)`` cell.
 
     Parameters
     ----------
     compliance : dict
-        Per-cell compliance mappings from `paired_analysis.load_marks`.
+        Per-cell compliance mappings.
 
     Returns
     -------
     dict
-        Cell key -> ``rate``, ``n``, ``modes`` (Counter of violation labels),
-        and ``per_seed`` (so a caller can re-take the rate over any seed
-        subset, as the padding table does). Cells with no marks at all are
-        omitted -- an unmeasured cell must never read as compliant or
-        collapsed.
+        Census entries; omit cells without marks so they are not treated as compliant.
     """
     out = {}
-    # Iterates the loader's own mapping, so cell order follows MODELS x INFOS.
     for key, by_seed in compliance.items():
         vals = [v for seed_vals in by_seed.values() for v in seed_vals]
         if not vals:
@@ -122,24 +93,21 @@ def compliance_census(compliance: dict) -> dict:
 
 
 def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
-    """Non-compliance rate of one census `cell` (from `compliance_census`), restricted to `seeds`.
+    """Return a census cell's non-compliance rate over ``seeds``.
 
-    Pools the counts before dividing -- ``sum(noncompliant) / sum(marks)`` --
-    rather than averaging per-seed rates, so a seed with 2 marks does not
-    weigh the same as one with 9.
+    Pool counts before division so unequal seed sizes retain their weight.
 
     Parameters
     ----------
     cell : dict
-        Census entry for one cell.
+        Census cell.
     seeds : Iterable[int]
-        Replicate seeds to include.
+        Included replicate seeds.
 
     Returns
     -------
     float | None
-        `None`, not 0.0, when the subset has no marks at all, so an unmeasured
-        subset cannot publish as perfectly compliant.
+        Rate, or ``None`` for no marks.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     total = sum(t for _nc, t in counts)
@@ -149,23 +117,19 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
 
 
 def collapse_note(key: tuple[str, str], census: dict) -> str:
-    """One-line mechanism annotation for a cell; ``""`` below `COLLAPSE_THRESHOLD`.
-
-    Carries the measured rate and dominant failure mode -- "99.6%
-    multiple-values" vs "28.5% empty" are different results a bare COLLAPSE
-    label would erase. Also ``""`` for a cell missing from `census`.
+    """Return a mechanism annotation, or ``""`` below the collapse threshold.
 
     Parameters
     ----------
     key : tuple[str, str]
         Cell key.
     census : dict
-        Compliance census by cell.
+        Compliance census.
 
     Returns
     -------
     str
-        Mechanism annotation, or ``""`` below `COLLAPSE_THRESHOLD`.
+        Mechanism annotation or ``""``.
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -176,12 +140,7 @@ def collapse_note(key: tuple[str, str], census: dict) -> str:
 
 
 def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
-    """Bucket a contrast from its two ``(model, info)`` keys.
-
-    ``"finding"`` (two informative arms), ``"arm-vs-floor"`` (one
-    informative arm against the chance baseline, a positive control), or
-    ``"zero-vs-zero"`` (two baseline arms, null by construction). The last
-    two are jointly the zero-arm controls.
+    """Classify a contrast by its two ``(model, info)`` keys.
 
     Parameters
     ----------
@@ -193,7 +152,7 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     Returns
     -------
     str
-        Contrast bucket.
+        One of ``"finding"``, ``"arm-vs-floor"``, or ``"zero-vs-zero"``.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -211,20 +170,16 @@ def _print_signed(rows: list, sign: str, key: str) -> None:
 
 
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
-    """Print the Holm step-down around where it stopped (rank / p / own threshold).
-
-    A count alone hides how close the decision was; the two ranks either side of
-    the boundary show whether the family is comfortably separated or resting on
-    one contrast. `pvals` is in `rows` order, `n_rej` the Holm rejection count.
+    """Print Holm ranks around its stopping boundary.
 
     Parameters
     ----------
     pvals : np.ndarray
-        P-values in `rows` order.
+        P-values in row order.
     rows : list
         Contrast rows.
     m : int
-        Number of hypotheses.
+        Hypothesis count.
     n_rej : int
         Holm rejection count.
     """
@@ -238,13 +193,10 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
 
 
 def main() -> None:
-    """Run the significance report and print it.
+    """Run and print the significance report.
 
-    Every narrative conclusion below is conditional on the counts beside it
-    (see the depth guard and its floor_bound branches), rather than a
-    sentence printed unconditionally regardless of what the data shows.
+    Narrative claims remain conditional on displayed counts.
     """
-    # ONE walk of the tree: the census reads the same parse as the contrasts.
     correct, valid, compliance = load_marks()
     contrasts = build_primary_contrasts()
     census = compliance_census(compliance)

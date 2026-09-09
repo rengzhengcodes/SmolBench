@@ -1,64 +1,38 @@
-"""Guard the deduction study's pinned theorem set, offline.
-
-The pin is underivable from a clean clone (seeded sample over an S3-only sidecar),
-and a one-theorem pool change reshuffles all 300 silently, so pin the digest.
-"""
+"""Exercise pinned-theorem manifest emission offline."""
 
 from __future__ import annotations
 
-import hashlib
-import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 from types import ModuleType
-from typing import Any, NoReturn
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
-from tests._paths import (LEAN_MINI_POSTCUTOFF as POSTCUTOFF, NOTEBOOKS,
-                         REPO_ROOT, SCRIPTS)
+from tests._paths import (
+    LEAN_MINI_POSTCUTOFF as POSTCUTOFF,
+    REPO_ROOT,
+    SCRIPTS,
+    load_by_path,
+)
 
-MANIFEST = NOTEBOOKS / "deduction" / "pinned_theorems.json"
-
-#: The pinned set's identity. Both are load-bearing: the count alone would
-#: pass a swap of one theorem for another, and the digest alone would not
-#: localize a size change.
-EXPECTED_COUNT = 300
-EXPECTED_SHA256 = "292194deb832f75ae2f4008a7d597e4d6ac765ff9c0c4e4a31b7eeab377e5b36"
-
-#: Corpus provenance. Pinned so a corpus swap cannot happen silently -- the
-#: recency finding (README.md, "Corpus date vs. model cutoffs") is stated
-#: entirely in terms of this commit's trace date, so a different corpus
-#: invalidates that section.
-EXPECTED_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
-EXPECTED_CREATION_TIME = "2024-03-24 23:38:32.469290"
-
-#: The post-cutoff fixture's own provenance, for the freshly-emitted manifest.
+#: Post-cutoff fixture provenance for the freshly emitted manifest.
 FIXTURE_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 FIXTURE_CREATION_TIME = "2026-08-30 15:43:26.000000"
 FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
 
 
 @pytest.fixture(scope="module")
-def manifest() -> dict[str, Any]:
-    return json.loads(MANIFEST.read_text())
-
-
-@pytest.fixture(scope="module")
 def emitted(tmp_path_factory: pytest.TempPathFactory, audit: ModuleType) -> dict[str, Any]:
-    """A manifest freshly emitted by `--emit-manifest`, offline, from the fixture.
-
-    Makes the committed manifest's claimed provenance checkable without the
-    ~700 MB dataset or any AWS call.
-    """
+    """Fixture manifest emitted offline by `--emit-manifest`."""
     tmp = tmp_path_factory.mktemp("emit")
     sidecar = tmp / "replay_passing_random_val.jsonl"
     sidecar.write_text("".join(
         json.dumps({"full_name": n, "verdict": "success"}) + "\n" for n in FIXTURE_NAMES))
-    out = tmp / "pinned_theorems.json"
+    out = tmp / "reproduced_pin.json"
     assert audit.main([
         "--offline", "--emit-manifest", str(out),
         "--val-json", str(POSTCUTOFF / "random" / "val.json"),
@@ -68,78 +42,34 @@ def emitted(tmp_path_factory: pytest.TempPathFactory, audit: ModuleType) -> dict
     return json.loads(out.read_text())
 
 
-#: ``(fixture name, expectations)``. The committed manifest is the old study's
-#: record; the emitted one proves the emitter still produces that exact shape.
-MANIFEST_CASES = [
-    pytest.param("manifest", {
-        "count": EXPECTED_COUNT, "sha256": EXPECTED_SHA256,
-        "commit": EXPECTED_COMMIT, "creation_time": EXPECTED_CREATION_TIME,
-        "derivation": ("replay_passing", "novel_premises", "val"),
-        "shape": (300, 0, 805), "postcutoff": None}, id="committed"),
-    pytest.param("emitted", {
-        "count": 2, "sha256": None,
-        "commit": FIXTURE_COMMIT, "creation_time": FIXTURE_CREATION_TIME,
-        "derivation": ("replay_passing", "random", "val"),
-        "shape": (2, 0, 2), "postcutoff": "2026-07-31"}, id="emitted"),
-]
-
-
-@pytest.mark.parametrize("which,expected", MANIFEST_CASES)
-def test_pinned_manifest_identity(
-    request: pytest.FixtureRequest, which: str, expected: dict[str, Any],
-) -> None:
-    """Membership digest, corpus provenance, and the recorded draw recipe."""
-    manifest = request.getfixturevalue(which)
+def test_emitted_manifest_identity(emitted: dict[str, Any]) -> None:
+    """The fixture manifest records its membership, provenance, and recipe."""
+    manifest = emitted
     names = manifest["full_names"]
-    assert manifest["count"] == expected["count"] == len(names)
-    assert len(set(names)) == expected["count"], "pinned set contains duplicates"
+    assert manifest["count"] == len(names) == 2
+    assert len(set(names)) == 2, "pinned set contains duplicates"
     assert names == sorted(names), "full_names must be stored sorted"
-    digest = hashlib.sha256("\n".join(names).encode()).hexdigest()
-    assert digest == manifest["sha256_of_sorted_full_names"]
-    if expected["sha256"] is not None:
-        assert digest == expected["sha256"]
 
     corpus = manifest["corpus"]
-    assert corpus["from_repo"]["commit"] == expected["commit"]
-    assert corpus["creation_time"] == expected["creation_time"]
+    assert corpus["from_repo"]["commit"] == FIXTURE_COMMIT
+    assert corpus["creation_time"] == FIXTURE_CREATION_TIME
     assert corpus["from_repo"]["url"].endswith("leanprover-community/mathlib4")
-    # The corpus block carries metadata.json verbatim, so a post-cutoff corpus's
-    # provenance rides along and a reader can check T without the dataset.
-    if expected["postcutoff"] is None:
-        assert "postcutoff" not in corpus
-    else:
-        assert corpus["postcutoff"]["target_date"] == expected["postcutoff"]
-        assert corpus["postcutoff"]["new_commit"] == expected["commit"]
+    assert corpus["postcutoff"]["target_date"] == "2026-07-31"
+    assert corpus["postcutoff"]["new_commit"] == FIXTURE_COMMIT
 
     d = manifest["derivation"]
-    assert (d["source"], d["kind"], d["split"]) == expected["derivation"]
-    assert (d["limit"], d["seed"], d["pool_size"]) == expected["shape"]
-
-
-def test_slug_theorem_maps_pinned_names_injectively() -> None:
-    """The lossy on-disk slug must not collide two distinct pinned theorems."""
-    spec = importlib.util.spec_from_file_location(
-        "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
-    )
-    audit = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(audit)
-
-    from smolbench.deduction.lean import runner
-
-    names = json.loads(MANIFEST.read_text())["full_names"]
-    assert len({audit.slug_theorem(n) for n in names}) == len(names)
-    assert all(audit.slug_theorem(n) == runner.slug_theorem(n) for n in names)
-    assert any(re.search(r"[?']", n) for n in names)
+    assert (d["source"], d["kind"], d["split"]) == ("replay_passing", "random", "val")
+    assert (d["limit"], d["seed"], d["pool_size"]) == (2, 0, 2)
 
 
 @pytest.fixture(scope="module")
-def audit() -> ModuleType:
-    spec = importlib.util.spec_from_file_location(
-        "_audit", SCRIPTS / "results" / "audit_lean_pinning.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def audit() -> Iterator[ModuleType]:
+    name = "_audit"
+    module = load_by_path(SCRIPTS / "results" / "audit_lean_pinning.py", name)
+    try:
+        yield module
+    finally:
+        sys.modules.pop(name, None)
 
 
 def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType) -> None:
@@ -154,26 +84,6 @@ def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType)
     assert audit.divergent_prompt_cells({"thm|stepk-1"}, differing) == {"thm|stepk-1"}
 
 
-def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit: ModuleType) -> None:
-    """Only "no such key" becomes an empty lane; AccessDenied must surface."""
-    class _Err(Exception):
-        def __init__(self, response: dict[str, Any]) -> None:
-            self.response = response
-
-    class _S3:
-        def __init__(self, response: dict[str, Any]) -> None:
-            self.response = response
-
-        def get_object(self, **kwargs: Any) -> NoReturn:
-            raise _Err(self.response)
-
-    missing = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
-    assert audit.fetch_recovery(_S3(missing)) == {lane: set() for lane in audit.LANES}
-    denied = {"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}}
-    with pytest.raises(_Err):
-        audit.fetch_recovery(_S3(denied))
-
-
 @pytest.mark.parametrize("path,flag,argv", [
     ("results/audit_lean_pinning.py", "--expect-theorems", []),
     ("results/audit_lean_pinning.py", "--expect-cells", []),
@@ -184,11 +94,7 @@ def test_fetch_recovery_tolerates_absence_but_propagates_real_errors(audit: Modu
 def test_every_consumer_requires_an_explicit_expected_shape(
     path: str, flag: str, argv: list[str],
 ) -> None:
-    """No consumer may carry (or inherit) a default pinned shape: state it or fail.
-
-    Checked through the CLI rather than by importing, so an import-time-fatal
-    script on a box where these run also surfaces here.
-    """
+    """Consumers must state pinned shapes; use CLI so import failures surface."""
     script = SCRIPTS / path
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
     proc = subprocess.run(

@@ -1,10 +1,6 @@
-"""Pure-logic tests for scripts/results/provision_results_bucket.py; no AWS.
+"""Offline tests for ``provision_results_bucket.py``.
 
-`FakeAwsClient` records every call, including operations it doesn't
-implement (`__getattr__`), so an assertion like "create_policy_version was
-never called" is falsifiable -- the earlier fake, which implemented only
-seven methods, would raise ``AttributeError`` instead of letting that
-assertion fail. `test_unknown_calls_are_recorded` is its positive control.
+The fake records unknown calls so absence assertions remain falsifiable.
 """
 
 import json
@@ -21,9 +17,8 @@ from smolbench.evals import _aws
 class FakeAwsClient:
     """One fake standing in for both the S3 and IAM clients.
 
-    Records every call as ``(operation, kwargs)`` onto `calls`, in order,
-    with duplicates kept -- an operation-keyed dict would hide a second
-    ``create_bucket`` behind the first.
+    Preserve ordered duplicate calls; an operation-keyed mapping would hide
+    a second ``create_bucket``.
     """
 
     def __init__(self) -> None:
@@ -35,8 +30,7 @@ class FakeAwsClient:
     def __getattr__(self, name: str) -> Any:
         """Record any operation this fake doesn't implement, and return ``{}``.
 
-        Dunder lookups are refused, so copy, pickle and pytest introspection
-        still see a normal object rather than a callable for every name.
+        Refuse dunder lookups so introspection sees a normal object.
         """
         if name.startswith("__"):
             raise AttributeError(name)
@@ -47,21 +41,9 @@ class FakeAwsClient:
 
         return _unknown
 
-    def create_bucket(self, **kwargs: Any) -> None:
-        self._record("create_bucket", **kwargs)
-
-    def put_public_access_block(self, **kwargs: Any) -> None:
-        self._record("put_public_access_block", **kwargs)
-
-    def put_bucket_versioning(self, **kwargs: Any) -> None:
-        self._record("put_bucket_versioning", **kwargs)
-
     def create_policy(self, **kwargs: Any) -> dict[str, dict[str, str]]:
         self._record("create_policy", **kwargs)
         return {"Policy": {"Arn": f"arn:aws:iam::414266451290:policy/{kwargs['PolicyName']}"}}
-
-    def attach_group_policy(self, **kwargs: Any) -> None:
-        self._record("attach_group_policy", **kwargs)
 
     def list_policies(self, **kwargs: Any) -> dict[str, list[Any]]:
         self._record("list_policies", **kwargs)
@@ -76,8 +58,7 @@ class FakeAwsClient:
 def fake_aws(monkeypatch: pytest.MonkeyPatch) -> FakeAwsClient:
     """Routes every client construction to one FakeAwsClient.
 
-    Clears ``SMOLBENCH_RESULTS_S3`` so the default-bucket tests below do not
-    inherit whatever a developer's shell exports.
+    Clear ``SMOLBENCH_RESULTS_S3`` to isolate default-bucket tests.
     """
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)
     client = FakeAwsClient()
@@ -124,14 +105,13 @@ def test_main_provisions_bucket_policy_and_group_attachment(fake_aws: FakeAwsCli
     assert p.main([]) == 0
     calls = fake_aws.calls
 
-    # The clients: S3 pinned to the bucket's region, IAM global (region None).
+    # S3 uses the bucket region; IAM is global.
     assert [kw for name, kw in calls if name == "fresh_client"] == [
         {"service": "s3", "region": "us-west-2"},
         {"service": "iam", "region": None},
     ]
 
-    # Each mutating step runs exactly once (kept as a list, so a duplicate
-    # can't hide behind the last call of the same name).
+    # Lists expose duplicate mutating calls.
     assert [name for name, _kw in calls].count("create_bucket") == 1
     assert _kwargs_for(calls, "create_bucket") == [{
         "Bucket": "smolbench-results-414266451290",

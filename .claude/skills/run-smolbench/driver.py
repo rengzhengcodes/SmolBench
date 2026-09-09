@@ -1,16 +1,10 @@
-"""Offline end-to-end smoke driver for the smolbench eval harness.
+"""Offline end-to-end smoke driver for the evaluation harness.
 
-Drives the production path -- quiz generation, provider dispatch,
-ChatClient.query/evaluate, grading, Marks YAML IO -- against the local
-OpenAI-compatible stub server from tests/conftest.py. No credentials,
-network, or AWS spend. Run from the repo root:
-
-    timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py
-
-The timeout matters: the openrouter ChatClient retries transient failures
-indefinitely with a 60s backoff, so a misbehaving stub would hang the driver.
-
-Exit codes: 0 = PASS, 1 = a stage failed, 2 = environment/import problem.
+Run as ``timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py``.
+No credentials, network, or AWS spend.
+Use `timeout 120`: OpenRouter retries transient failures indefinitely with a
+60-second backoff, so a bad stub otherwise hangs the driver.
+Exit codes: 0 pass, 1 stage failure, 2 environment/import failure.
 """
 
 import os
@@ -23,7 +17,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
-# Stage counter state for uniform progress lines.
 _STAGE = {"n": 0, "total": 8}
 
 
@@ -42,7 +35,6 @@ def check(cond: bool, msg: str) -> None:
 
 def main() -> None:
     """Run the offline end-to-end eval-harness smoke test."""
-    # Environment guard.
     check(
         sys.version_info[:2] == (3, 12),
         f"Python {sys.version.split()[0]} is not the project interpreter; smolbench "
@@ -51,8 +43,7 @@ def main() -> None:
     stage("env", f"python {sys.version.split()[0]} at {sys.executable}")
 
     try:
-        # Reused from the offline test suite so the stub dialect has one source
-        # of truth (needs pytest importable -- it's in the dev extra).
+        # Reuse the test stub so the two dialects cannot drift; pytest must be importable from the dev extra.
         from tests.conftest import StubServer, StubTokenizer, chat_completion
     except ImportError as err:
         print(
@@ -74,7 +65,6 @@ def main() -> None:
         tof_membership_query_gen,
     )
 
-    # Periodic quiz generation (offline, deterministic).
     periodic_template = string.Template(
         "Context:\n---\n"
         "There is a counting game. Count positions starting from 1. "
@@ -87,13 +77,12 @@ def main() -> None:
     periodic_prompter = Prompter(periodic_template, {}, numeric_count_query_gen)
     intens, extens, noise_intens = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter, tokenizer=StubTokenizer())
     check(len(intens) == len(extens) == len(noise_intens) == 3, "expected 3 questions per periodic quiz")
-    # seq_len = lcm(1..3) = 6, so counts are 6//1, 6//2, 6//3.
+    # lcm(1..3) is 6, yielding 6//1, 6//2, and 6//3.
     check([q.answer for q in intens] == [6, 3, 2], f"periodic answers {[q.answer for q in intens]} != [6, 3, 2]")
     intens2, _, _ = get_periodic_numeric_quiz(periodic_cfg, periodic_prompter, tokenizer=StubTokenizer())
     check(tuple(intens) == tuple(intens2), "periodic generation is not seed-deterministic")
     stage("periodic", f"{len(intens)} Numeric questions, answers {[q.answer for q in intens]}, seed-stable")
 
-    # Periodic ToF quiz generation (offline, deterministic).
     tof_template = string.Template(
         "Context:\n---\n"
         "There is a counting game. Count positions starting from 1. "
@@ -112,13 +101,11 @@ def main() -> None:
     check(tuple(tof_intens) == tuple(tof_intens2), "periodic ToF generation is not seed-deterministic")
     stage("periodic-tof", f"{len(tof_intens)} ToF questions ({n_true} True / {n_false} False), seed-stable")
 
-    # Stub server + call-time provider dispatch.
     server = StubServer()
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:
-        # Dispatch is read at call time (smolbench/evals/provider.py), so env
-        # set after import still applies, matching how notebooks do it.
+        # Dispatch reads the environment at call time, so post-import settings apply.
         os.environ["INFERENCE_PROVIDER"] = "openrouter"
         os.environ["OPENROUTER_BASE_URL"] = server.base_url
         os.environ["OPENROUTER_API_KEY"] = "smoke-dummy"
@@ -126,7 +113,6 @@ def main() -> None:
         check(ctx == 100000, f"stub context length lookup returned {ctx}")
         stage("dispatch", f"INFERENCE_PROVIDER=openrouter -> stub at {server.base_url}, ctx={ctx}")
 
-        # Single seeded query round trip.
         server.queue_response(chat_completion("6", reasoning_content="thought"))
         content, reasoning = provider.query(
             intens[0].prompt, "smolbench-smoke", seed=42, context_length=ctx
@@ -136,10 +122,7 @@ def main() -> None:
         check(last_post["body"].get("seed") == 42, f"request body lost the seed: {last_post['body']}")
         stage("query", "content+reasoning channels parsed, seed=42 present in request body")
 
-        # Sequential graded evaluate (queued right/wrong/invalid).
-        # max_parallel=1 is required: StubServer.next_response pops the queue
-        # FIFO, so the response<->question mapping is deterministic only when
-        # questions are asked one at a time.
+        # max_parallel=1 preserves FIFO response-to-question mapping.
         server.queue_response(chat_completion(str(intens[0].answer)))  # correct
         server.queue_response(chat_completion("99"))                   # incorrect
         server.queue_response(chat_completion("no digits here"))       # invalid
@@ -150,8 +133,7 @@ def main() -> None:
         check(tally == (1, 1, 1), f"sequential grading tally {tally} != (1, 1, 1)")
         stage("evaluate-seq", "graded 3 Numeric questions -> 1 correct / 1 incorrect / 1 invalid")
 
-        # Parallel evaluate (uniform default response): fan-out is only safe
-        # with a uniform response, since thread completion order varies.
+        # Parallel responses must be uniform because completion order varies.
         server.default_response = chat_completion("True")
         marks_par = provider.evaluate(
             tof_intens, "smolbench-smoke", seed=42, max_parallel=4, show_progress=False
@@ -167,7 +149,7 @@ def main() -> None:
         server.shutdown()
         server_thread.join(timeout=5)
 
-    # Marks YAML round trip; temp dir keeps smoke artifacts out of the repo.
+    # A temporary directory keeps smoke artifacts out of the repository.
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "smoke_marks.yaml"
         marks_par.dump(out)

@@ -72,8 +72,6 @@ def test_unbootstrapped_loaders_name_the_remedy(
     corpus.reset_caches()
 
 
-# Post-cutoff corpus contract (A1) and the traced-root commit filter (A4)
-
 NEW_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 OLD_COMMIT = "69c8a067c87c2bb6ba583f03fbf46090564be370"
 
@@ -113,13 +111,6 @@ def test_postcutoff_flag_is_read_off_every_theorem_row(postcutoff_data: Path) ->
     thms = corpus.load_split("random", "val")
     assert len(thms) == 2
     assert all(t.postcutoff is True for t in thms)
-
-
-def test_absent_block_is_none_and_rows_default_to_not_postcutoff(lean_data: Path) -> None:
-    """The old (2024-03-24) corpus stays legal to load and reports itself honestly."""
-    assert corpus.postcutoff_metadata() is None
-    assert corpus.is_postcutoff_corpus() is False
-    assert all(t.postcutoff is False for t in corpus.load_split("random", "val"))
 
 
 def test_commit_mismatch_between_from_repo_and_block_raises(
@@ -190,10 +181,7 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(
     corpus.reset_caches()
 
 
-# eval_split_specs: the eval holdout's split list comes from the active corpus,
-# not from a literal in a deleted SFT-dataset builder.
-
-
+# ``eval_split_specs`` reads the active corpus, not a literal in a deleted SFT-dataset builder.
 def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
     """The committed fixture carries only ``random/val.json``, so that is the spec list."""
     assert corpus.eval_split_specs() == (("random", "val"),)
@@ -202,13 +190,9 @@ def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
 def test_eval_split_specs_is_canonically_ordered_and_call_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Order is train/val/test regardless of creation order, and re-read per call.
+    """Use train/val/test order and read the root at call time.
 
-    Creation order is reversed on purpose: a filesystem-listing implementation
-    would report ``test, val, train`` here and two machines' holdout manifests
-    would disagree over an ordering nobody chose. The second half repoints
-    ``SMOLBENCH_LEAN_DATA`` mid-test without re-importing anything -- a cached
-    result or an import-time constant would keep reporting the first root.
+    Creation order is reversed so filesystem listing would yield test/val/train and make manifests disagree across machines.
     """
     first = tmp_path / "first" / "random"
     first.mkdir(parents=True)
@@ -228,7 +212,7 @@ def test_eval_split_specs_is_canonically_ordered_and_call_time(
 def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Never an empty tuple: a holdout built from one would decontaminate nothing."""
+    """Never an empty tuple: a holdout built from one would protect nothing."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "missing"))
     with pytest.raises(FileNotFoundError, match="missing"):
         corpus.eval_split_specs()

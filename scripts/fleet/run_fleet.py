@@ -1,21 +1,9 @@
 """21-lane EC2 fleet supervisor for the family-ladder scaling study.
 
-Launches ``notebooks/induction/run_study.py`` once per checkpoint, pinning
-``INDUCTION_MODELS`` and a lane-private EC2 state file. This file is the
-entry point only -- argument parsing, lane selection, ``--dry-run``; the
-roster, per-lane environment, live loop, restart policy and S3 spool/shutdown
-live in ``lane_env.py``/``supervisor.py``/``policy.py``/``_config.py``,
-loaded by path below, so each has exactly one home.
-
-Launch order is tier D (scarcest capacity) then tier A, staggered. The
-family gate (``--no-gate`` skips it) holds tiers B/C until the tier-A
-``supervisor.GATE_MODELS`` lanes log a healthy serve, turning a 21-way bet on
-the digest-pinned ``lane_env.FLEET_IMAGE`` into a 3-way one. ``--phase
-induction`` (default) never shuts a box down; only
-``fleet_teardown.py --terminate`` reclaims what it leaves up.
-
-COST: an ungated launch can provision up to 21 distinct spot instances at
-once, each billing while up.
+This entry point handles selection and dry runs; split modules own live fleet
+behavior. The family gate limits image risk before tiers B/C; induction leaves
+instances up for ``fleet_teardown.py --terminate``. An ungated launch can bill
+21 spot instances at once.
 """
 
 from __future__ import annotations
@@ -28,17 +16,14 @@ from pathlib import Path
 from types import ModuleType
 from typing import Optional
 
-# No `logging.basicConfig` here: it lives in `lane_env.py`, which must call
-# it before its by-path load of the induction driver (that module logs at
-# import time, and the first handler installed wins). `lane_env` is loaded
-# below, so the root logger is already configured by the time `main` logs.
+# Never call logging.basicConfig here: lane_env must configure it before importing
+# the driver, whose first handler wins.
 
 _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config() -> ModuleType:
-    # Bootstrapped by hand: load_module_by_path lives on _config itself,
-    # and scripts/fleet isn't a package.
+    # `_config` supplies its own path loader because this directory is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
         spec = importlib.util.spec_from_file_location(
@@ -50,15 +35,9 @@ def _load_fleet_config() -> ModuleType:
 
 _config = _load_fleet_config()
 
-# lane_env before supervisor: lane_env.py runs load_dotenv (via its by-path
-# load of the induction driver) before smolbench.evals.providers.ec2 freezes
-# its EC2_* constants against the environment. Reordering these two lines
-# changes that sequence silently -- supervisor.py reaches lane_env at its own
-# module scope too, but only as a side effect.
-#
-# Bound under these exact private names, never unpacked into module-level
-# aliases, so every use site spells `_lane_env.X`/`_supervisor.Y` and a moved
-# symbol keeps one home; tests reach both modules the same way.
+# Load `lane_env` first so dotenv precedes frozen ``EC2_*`` constants. Keep these
+# exact private module names, never unpacked aliases, so moved symbols retain one
+# home and tests reach both modules the same way.
 _lane_env = _config.load_fleet_module("lane_env")
 _supervisor = _config.load_fleet_module("supervisor")
 
@@ -104,17 +83,17 @@ def _selected_lanes(raw: str) -> dict[str, _lane_env.Lane]:
     Parameters
     ----------
     raw : str
-        Comma-separated lane keys from ``--lanes``; empty selects every lane.
+        Comma-separated keys; empty selects all lanes.
 
     Returns
     -------
     dict[str, _lane_env.Lane]
-        Selected lanes in ``lane_env.LANES`` order.
+        Selected lanes in roster order.
 
     Raises
     ------
     SystemExit
-        For a key not in ``lane_env.LANES``.
+        Unknown lane key.
     """
     lanes = _lane_env.LANES
     if not raw.strip():
@@ -136,15 +115,14 @@ _DRY_RUN_NOTICE = (
 def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane], phase_name: str) -> None:
     """Print, per lane, its tier, every scheduled phase's command, and full env.
 
-    Never calls ``supervisor.preflight``/``fleet_image_digest`` (real network
-    I/O); `_DRY_RUN_NOTICE` says so under the header.
+    Avoid live checks so dry runs make no network calls.
 
     Parameters
     ----------
     lanes : dict[str, _lane_env.Lane]
-        Lanes to include in the plan.
+        Lanes for the plan.
     phase_name : str
-        Requested phase selection.
+        Requested phases.
     """
     phases = _supervisor._phase_sequence(phase_name)
     print(f"run_fleet DRY RUN -- phase={phase_name!r}, {len(lanes)} lane(s) selected\n")
@@ -170,13 +148,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     Parameters
     ----------
     argv : Optional[list[str]], optional
-        Command-line arguments to parse.
+        Command-line arguments.
 
     Returns
     -------
     int
-        ``0`` once the live fleet is all-terminal; individual lanes may still be
-        halted (see the printed summary).
+        ``0`` at all-terminal; individual lanes may still be halted as the printed summary reports.
     """
     args = _build_arg_parser().parse_args(argv)
     lanes = _selected_lanes(args.lanes)

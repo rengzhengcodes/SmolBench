@@ -1,10 +1,6 @@
-"""List the family-ladder scaling study's live EC2 fleet, read-only.
+"""List the scaling study's live EC2 fleet without changing it.
 
-Companion to ``run_fleet.py`` (launches and monitors) and
-``fleet_teardown.py`` (terminates); both import it, as do analysis
-notebooks. Importing needs no AWS SDK: boto3 is imported lazily inside
-`_default_client_factory`, never at module scope, and tests inject a fake
-through `client_factory`.
+Importing needs no AWS SDK because boto3 is loaded only when a client is made.
 """
 
 from __future__ import annotations
@@ -22,8 +18,7 @@ _CONFIG_MODULE_NAME = "smolbench_fleet_config"
 
 
 def _load_fleet_config() -> ModuleType:
-    # Bootstrapped by hand: load_module_by_path lives on _config itself,
-    # and scripts/fleet isn't a package.
+    # Bootstrap by path because scripts/fleet is not a package.
     module = sys.modules.get(_CONFIG_MODULE_NAME)
     if module is None:
         spec = importlib.util.spec_from_file_location(
@@ -37,7 +32,7 @@ _config = _load_fleet_config()
 
 
 def _default_client_factory(region: str) -> Any:
-    """Build a boto3 EC2 client for `region` (boto3 imported here, lazily)."""
+    """Build an EC2 client lazily for `region`."""
     import boto3
 
     return boto3.client("ec2", region_name=region)
@@ -50,28 +45,22 @@ def fleet_rows(
 ) -> list[dict]:
     """List every running or pending EC2 instance tagged for this study.
 
-    `tag_prefix` is applied server-side (EC2 tag filters accept a trailing
-    ``*``) and re-checked client-side, so a regression in one can't leak a
-    sibling experiment's instances in. A region that raises (no
-    credentials, disabled, throttled) is logged and skipped.
+    Apply and re-check the tag prefix so another experiment cannot leak in.
+    Failed regions are logged and skipped.
 
     Parameters
     ----------
     regions : Sequence[str], optional
-        Regions to list.
+        Regions to query.
     tag_prefix : str, optional
-        Experiment-tag prefix the instances must carry.
+        Required experiment-tag prefix.
     client_factory : Optional[Callable[[str], Any]], optional
-        `None` uses `_default_client_factory`, the seam tests use to stub in a
-        fake with no AWS SDK.
+        Client factory, or the lazy default.
 
     Returns
     -------
     list[dict]
-        One dict per instance with exactly
-        region/experiment_tag/lane/instance_id/instance_type/availability_zone/
-        state/launch_time/age_hours -- `format_fleet_table` relies on this exact
-        set.
+        Rows with exactly region/experiment_tag/lane/instance_id/instance_type/availability_zone/state/launch_time/age_hours, as ``format_fleet_table`` requires.
     """
     rows: list[dict] = []
     now = datetime.now(timezone.utc)
@@ -95,7 +84,7 @@ def fleet_rows(
                 tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
                 experiment_tag = tags.get("smolbench:experiment", "")
                 if not experiment_tag.startswith(tag_prefix):
-                    continue  # second guard re-check -- see docstring Notes
+                    continue  # Guard against a mismatched server-side filter.
                 launch_time = instance.get("LaunchTime")
                 age_hours = (
                     (now - launch_time).total_seconds() / 3600 if launch_time is not None else 0.0
@@ -121,39 +110,36 @@ def fleet_rows(
 def format_fleet_table(rows: Sequence[dict]) -> str:
     """Render `rows` (as returned by `fleet_rows`) as a fixed-width text table.
 
-    Never empty: empty `rows` render an explicit "no scaling-* instances found"
-    line, so an empty fleet and a broken query read differently to the operator.
+    Empty rows render an explicit message so operators can distinguish them
+    from a broken query.
 
     Parameters
     ----------
     rows : Sequence[dict]
-        Fleet rows returned by `fleet_rows`.
+        Rows from ``fleet_rows``.
 
     Returns
     -------
     str
-        Fixed-width text table.
+        Fixed-width table.
     """
     if not rows:
         return f"fleet_status: no {_config.SCALING_TAG_PREFIX}* instances found in any region.\n"
 
     columns = ("lane", "instance_id", "instance_type", "availability_zone", "state", "age", "region")
-    # No `.get` defaults: fleet_rows is the only producer and guarantees these keys.
+    # ``fleet_rows`` guarantees every required key.
     formatted_rows = [
         {c: f"{row['age_hours']:.1f}h" if c == "age" else str(row[c]) for c in columns}
         for row in rows
     ]
 
-    widths = {c: len(c) for c in columns}
-    for formatted in formatted_rows:
-        for c in columns:
-            widths[c] = max(widths[c], len(formatted[c]))
-
-    lines = ["  ".join(c.upper().ljust(widths[c]) for c in columns)]
-    lines.append("  ".join("-" * widths[c] for c in columns))
-    for formatted in formatted_rows:
-        lines.append("  ".join(formatted[c].ljust(widths[c]) for c in columns))
-    return "\n".join(lines) + "\n"
+    widths = {c: max([len(c), *(len(row[c]) for row in formatted_rows)]) for c in columns}
+    return "\n".join([
+        "  ".join(c.upper().ljust(widths[c]) for c in columns),
+        "  ".join("-" * widths[c] for c in columns),
+        *("  ".join(formatted[c].ljust(widths[c]) for c in columns)
+          for formatted in formatted_rows),
+    ]) + "\n"
 
 
 def main(argv: Optional[list[str]] = None) -> int:

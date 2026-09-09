@@ -1,21 +1,7 @@
-"""The ONE restart vocabulary both fleet supervisors read.
+"""Share restart classification and relaunch limits between fleet supervisors.
 
-``run_fleet.py`` (21 one-model-per-box lanes) and ``run_shards.py`` (one
-shard group of a direct ``run_study.py`` run) both watch a child process die
-and must answer the same question: spot reclaim (likely to succeed later) or
-real crash (won't)? That answer, and the cap/backoff on acting on it, lives
-here once, so the two supervisors can differ in HOW they spend the answer
-without risking a POLICY difference: ``run_fleet`` is tick-driven (21 lanes
-in one loop, so it records a `pending_relaunch_at` deadline rather than
-blocking) and ``run_shards`` is sleep-driven (nothing else to do, so it
-sleeps `decision.delay_seconds` in line).
-
-This module imports only ``re``/``dataclasses`` -- no ``_config``, boto3 or
-``smolbench`` -- and does no import-time work beyond compiling
-`RECLAIM_PATTERNS`. Required, not incidental: it is loaded by file path from
-both supervisors, at module scope in ``run_fleet``'s case before anything
-else is set up, so it must stay free of anything that could fail, read the
-environment, or need AWS credentials.
+Keep imports and import-time work minimal because both supervisors load this
+module by path before AWS setup.
 """
 
 from __future__ import annotations
@@ -24,16 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Verdict: reclaim or crash
-# ---------------------------------------------------------------------------
-# Excludes the bare provisioning line (`ec2._launch_fresh`'s "trying <type>
-# in <az> ..."): it logs on every attempt, including successful ones, so
-# matching it would misclassify a provisioning-time crash as a reclaim --
-# and a reclaim gets far more relaunches than a crash. Only failure wording
-# counts: capacity/quota errors, and the "endpoint unreachable" message
-# ec2.py raises after its connection-failure cap trips (the reclaim/IP-drift
-# symptom).
+# Excludes routine provisioning logs so crashes do not receive reclaim retries.
 RECLAIM_PATTERNS: tuple[re.Pattern, ...] = tuple(
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -52,11 +29,8 @@ RECLAIM_PATTERNS: tuple[re.Pattern, ...] = tuple(
 def classify_exit(log_tail: str, instance_present: bool) -> str:
     """Classify a lane's non-zero exit as a spot reclaim or a real crash.
 
-    ``"reclaim"`` when `instance_present` is false or `log_tail` matches
-    `RECLAIM_PATTERNS`; ``"crash"`` otherwise, including an empty tail with
-    the instance still present. A backwards verdict either abandons a lane on
-    a routine interruption or burns money relaunching one that will always
-    fail the same way.
+    Treat an absent instance or a reclaim marker as reclaim; otherwise crash,
+    avoiding abandoned interruptions or money-burning crash retries.
 
     Parameters
     ----------
@@ -68,7 +42,7 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
     Returns
     -------
     str
-        The ``"reclaim"`` or ``"crash"`` verdict.
+        ``"reclaim"`` or ``"crash"``.
     """
     if not instance_present:
         return "reclaim"
@@ -77,15 +51,9 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
     return "crash"
 
 
-# ---------------------------------------------------------------------------
-# Caps and backoff schedule
-# ---------------------------------------------------------------------------
 MAX_CRASH_RELAUNCHES = 2
-# Bounded, not unlimited: a failed `describe_instances` sweep (see
-# `supervisor._Presence`) makes every exit look like a reclaim, so an
-# unbounded budget would let a lane relaunch for the fleet's whole lifetime
-# with no crash counting. 12 relaunches span ~4.15h of backoff against a
-# 9-14h tier budget (`lane_env.TIER_BUDGET_HOURS`).
+# Bound reclaim retries: failed instance sweeps otherwise hide crashes; 12
+# relaunches span about 4.15h against 9--14h tier budgets.
 MAX_RECLAIM_RELAUNCHES = 12
 RECLAIM_BACKOFF_BASE_SECONDS = 60
 RECLAIM_BACKOFF_CAP_SECONDS = 1800
@@ -94,10 +62,8 @@ RECLAIM_BACKOFF_CAP_SECONDS = 1800
 def reclaim_backoff_seconds(attempt: int) -> float:
     """Return the delay to wait before reclaim relaunch number `attempt` (1-based).
 
-    ``min(RECLAIM_BACKOFF_CAP_SECONDS, RECLAIM_BACKOFF_BASE_SECONDS * 2 **
-    (attempt - 1))``: 60, 120, 240, 480, 960, then 1800 from the sixth attempt
-    on. Monotonically non-decreasing, so a lane fighting a persistently dry
-    capacity pool never waits less than it did last time.
+    Use 60, 120, 240, 480, 960, then 1800 seconds for persistent capacity
+    shortages; the schedule must never decrease for a persistently dry pool.
 
     Parameters
     ----------
@@ -107,13 +73,12 @@ def reclaim_backoff_seconds(attempt: int) -> float:
     Returns
     -------
     float
-        Delay in seconds before the relaunch.
+        Relaunch delay in seconds.
 
     Raises
     ------
     ValueError
-        When `attempt` is below 1: a 0-based or negative `attempt` would give a shorter delay
-        than the base (``2 ** -1`` is 0.5), inverting the schedule.
+        ``attempt`` below 1, which would invert the schedule.
     """
     if attempt < 1:
         raise ValueError(f"attempt must be >= 1 (1-based), got {attempt}")
@@ -123,24 +88,13 @@ def reclaim_backoff_seconds(attempt: int) -> float:
     )
 
 
-# ---------------------------------------------------------------------------
-# The decision
-# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Decision:
     """What a supervisor should do about one non-zero exit.
 
-    Frozen: both supervisors hold a decision across a few statements (log it,
-    then record a deadline or sleep and relaunch), and an accidental mutation
-    between those steps would make the action taken and the reason logged
-    stop describing each other.
-
-    `action` is ``"relaunch"`` or ``"halt"``. `delay_seconds` is ``0.0`` for
-    a halt or an immediate crash relaunch. `reason` is the operator-facing
-    sentence to log, with no supervisor-specific prefix (``run_fleet``
-    prepends ``"run_fleet[<lane>]: "``, ``run_shards`` prepends ``"shard
-    <i>: "``); on a halt it names the exceeded constant, so the log line is
-    self-explaining without the reader knowing the cap by heart.
+    Frozen so logged reasons cannot diverge from actions; halts name exceeded caps.
+    ``action`` is ``"relaunch"`` or ``"halt"``; ``delay_seconds`` is ``0.0``
+    for halts or immediate crashes, and ``reason`` has no supervisor prefix.
     """
 
     action: str
@@ -151,41 +105,28 @@ class Decision:
 def decide_relaunch(verdict: str, *, attempt: int, rc: int | None) -> Decision:
     """Decide whether to relaunch after a `verdict` exit, and after how long.
 
-    The ONE place either supervisor's relaunch cap is enforced: both call it
-    with their own per-lane/per-shard counter, so a cap raised here applies
-    to both, and neither can quietly carry a second, laxer rule.
-
-    A crash relaunches immediately (``delay_seconds == 0.0``) rather than
-    backing off: it isn't a capacity shortage, so waiting buys nothing, and
-    the tight `MAX_CRASH_RELAUNCHES` cap bounds the loop instead. Backoff
-    exists only for the reclaim path, where the thing being waited on (spot
-    capacity, a quota window) actually frees up on its own.
+    Crash relaunches are immediate because waiting cannot fix them; only capacity
+    reclaims back off. This is the one cap enforcement point: both supervisors
+    pass their counters here, so a raised cap applies to both and neither carries a laxer rule.
 
     Parameters
     ----------
     verdict : str
-        Exit classification: ``"reclaim"`` or ``"crash"``.
+        ``"reclaim"`` or ``"crash"``.
     attempt : int
-        the POST-increment count of relaunches of this verdict's kind
-        for this lane/shard (the caller bumps its counter first, then asks), so
-        the cap is exceeded once `attempt` exceeds the relevant maximum.
+        Post-increment relaunch count for this verdict.
     rc : int | None
-        the child's exit status, interpolated into `Decision.reason` for the
-        operator. never compared against: callers differ in what they can
-        supply (`subprocess.Popen.poll()`, or an inferred 0/1 for an adopted
-        process with no waitable handle).
+        Child exit status for the reason; never compared because callers supply either ``Popen.poll()`` or inferred 0/1 without a waitable handle.
 
     Returns
     -------
     Decision
-        Relaunch decision for the exit.
+        Relaunch or halt decision.
 
     Raises
     ------
     ValueError
-        Raised, never an assert (stripped under ``python -O``), for a `verdict`
-        outside ``"reclaim"``/``"crash"``: silently treating an unrecognised
-        verdict as one of the two would apply the wrong cap to a real failure.
+        Raised, never asserted because ``python -O`` strips assertions; accepting another verdict would apply the wrong cap to a real failure.
     """
     if verdict == "reclaim":
         if attempt > MAX_RECLAIM_RELAUNCHES:
@@ -235,16 +176,12 @@ def count_and_decide(
 ) -> Decision:
     """Classify a dead child's exit, bump the matching counter, and decide.
 
-    The sequence both supervisors share; only the scheduling of
-    `Decision.delay_seconds` differs between them. `counters` is any object
-    with `crash_relaunches`/`reclaim_relaunches` attributes (a
-    `supervisor._LaneRun` or a `shards.Shard`); incremented first, since
-    `decide_relaunch`'s `attempt` is the post-increment count.
+    Increment before deciding so caps use the post-increment count.
 
     Parameters
     ----------
     counters : Any
-        Object holding crash and reclaim relaunch counters.
+        Object with crash and reclaim relaunch counters.
     log_tail : str
         Recent child-process log output.
     instance_present : bool
@@ -255,7 +192,7 @@ def count_and_decide(
     Returns
     -------
     Decision
-        Relaunch or halt decision for the exit.
+        Relaunch or halt decision.
     """
     verdict = classify_exit(log_tail, instance_present)
     name = "reclaim_relaunches" if verdict == "reclaim" else "crash_relaunches"

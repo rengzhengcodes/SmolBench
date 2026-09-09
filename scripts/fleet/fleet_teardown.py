@@ -1,12 +1,8 @@
-"""List, and optionally terminate, the family-ladder scaling study's EC2 fleet.
+"""List or explicitly terminate the scaling study's EC2 fleet.
 
-Read-only by default; nothing is terminated without an explicit
-``--terminate``. Deletes no local file: ``ec2.py`` recovers a box from its
-``smolbench:experiment`` tag when the state file is missing, so unlinking it
-never reclaimed anything -- terminating the instance is what stops billing.
-`terminate_fleet` re-checks the ``scaling-`` tag prefix per row rather than
-trusting the caller, since that tag is an AWS value this script does not
-control.
+Deleting state cannot stop billing because ec2.py recovers boxes from their
+``smolbench:experiment`` tags; only termination reclaims them. Re-check each AWS
+tag before termination because callers do not control those values.
 """
 
 from __future__ import annotations
@@ -22,8 +18,7 @@ from typing import Any, Optional
 def _fleet_status() -> ModuleType:
     """Load the sibling ``fleet_status.py`` lazily, through `_config`'s loader.
 
-    `_config` is bootstrapped by hand here, same as every fleet module: it
-    can't load itself through its own function.
+    Bootstrap ``_config`` because it cannot load itself.
     """
     name = "smolbench_fleet_config"
     config = sys.modules.get(name)
@@ -36,21 +31,19 @@ def _fleet_status() -> ModuleType:
 
 
 def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -> list[dict]:
-    """Terminate every instance in `rows`, region by region; returns the rows actually terminated.
+    """Terminate eligible instances and return the terminated rows.
 
     Parameters
     ----------
     rows : list[dict]
-        skips any row whose `experiment_tag` lacks the study's `scaling-`
-        prefix, the safety re-check against terminating another experiment's box.
+        Rows; tags outside the study prefix are skipped for safety.
     client_factory : Optional[Any], optional
-        `None` builds a boto3 client lazily per region, keeping boto3 out of
-        the import chain.
+        Client factory, or a lazy boto3 client.
 
     Returns
     -------
     list[dict]
-        The rows actually terminated.
+        Terminated rows.
     """
     fleet_status = _fleet_status()
     factory = client_factory or fleet_status._default_client_factory
@@ -58,7 +51,7 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
     for row in rows:
         tag = row.get("experiment_tag", "")
         if not tag.startswith(fleet_status._config.SCALING_TAG_PREFIX):
-            continue  # defensive: fleet_rows filters this server- and client-side
+            continue  # Never terminate a row outside the study prefix.
         client = factory(row["region"])
         client.terminate_instances(InstanceIds=[row["instance_id"]])
         terminated.append(row)
@@ -66,17 +59,17 @@ def terminate_fleet(rows: list[dict], *, client_factory: Optional[Any] = None) -
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Run the CLI: print the fleet listing, and with ``--terminate`` kill it.
+    """Print the fleet; terminate only with ``--terminate``.
 
     Parameters
     ----------
     argv : Optional[list[str]], optional
-        Command-line arguments to parse.
+        Command-line arguments.
 
     Returns
     -------
     int
-        ``1`` only if the ``--terminate`` confirmation is declined.
+        One when confirmation is declined; otherwise zero.
     """
     parser = argparse.ArgumentParser(
         description="Enumerate (and, with --terminate, kill) the scaling study's EC2 fleet."

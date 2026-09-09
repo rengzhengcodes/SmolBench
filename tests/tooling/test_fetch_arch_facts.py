@@ -1,9 +1,7 @@
-"""Offline contract for scripts/arch/fetch_arch_facts.py; no network.
+"""Offline contract for fetch_arch_facts; no network.
 
-Every fetch goes through an injected fake, so nothing reaches the Hugging
-Face hub. Pins three properties: fetches use the deploy spec's pinned
-commit SHA, not the moving ``main`` branch; ``--check`` compares revisions;
-and ``--check`` runs before either output file is written.
+Injected fakes keep fetches off the Hugging Face hub. Fetches use deploy-spec
+SHAs, and ``--check`` compares revisions before writing outputs.
 """
 
 import json
@@ -14,15 +12,12 @@ from typing import Any
 
 import pytest
 
-from tests._paths import SCRIPTS
+from tests._paths import SCRIPTS, load_by_path
 
-sys.path.insert(0, str(SCRIPTS / "arch"))
-
-import fetch_arch_facts as faf  # noqa: E402
+faf = load_by_path(SCRIPTS / "arch" / "fetch_arch_facts.py", "fetch_arch_facts")
 from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS  # noqa: E402
 
-#: Minimal config.json: enough for _hoist/_classify/_layer_view and for the
-#: four fields cross_check compares against the fixture.
+#: Minimal config for the helpers and four cross-check fields.
 CONFIG = {
     "architectures": ["FakeForCausalLM"],
     "model_type": "fake",
@@ -40,7 +35,7 @@ def _fake_fetch(
     resolved: str | None = None,
     payload: dict[str, Any] = CONFIG,
 ) -> Callable[[str, str, str], tuple[dict[str, Any], str, str | None]]:
-    """Build a recording fetch stub. `resolved` None means "the pin held"."""
+    """Build a recording fetch stub; None means the pin held."""
 
     def fetch(repo: str, filename: str, revision: str) -> tuple[dict[str, Any], str, str | None]:
         calls.append((repo, filename, revision))
@@ -50,7 +45,7 @@ def _fake_fetch(
 
 
 def test_every_fetch_uses_the_spec_pinned_sha_not_main() -> None:
-    """The URL used to be resolve/main, so a force-push re-based every figure."""
+    """Use pinned SHAs so force-pushes cannot rebase figures."""
     calls = []
     bundle = faf.collect(fetch=_fake_fetch(calls))
 
@@ -58,7 +53,7 @@ def test_every_fetch_uses_the_spec_pinned_sha_not_main() -> None:
     assert len(bundle["facts"]) == len(roster) == 21
     assert calls, "collect() fetched nothing"
     assert not any(revision == "main" for _repo, _f, revision in calls)
-    # Both files of every rung are fetched at that rung's own pinned SHA.
+    # Fetch both files at each rung's own pinned SHA.
     by_repo = {}
     for repo, filename, revision in calls:
         by_repo.setdefault(repo, set()).add((filename, revision))
@@ -72,19 +67,19 @@ def test_every_fetch_uses_the_spec_pinned_sha_not_main() -> None:
 
 
 def test_spec_revision_refuses_an_unpinned_spec() -> None:
-    """No fallback to a moving branch: an unpinned rung cannot be audited."""
+    """Reject moving branches: unpinned rungs cannot be audited."""
     assert faf.spec_revision({"hf_model_id": "r", "vllm_args": ["--revision", "abc123"]}) == "abc123"
     with pytest.raises(ValueError):
         faf.spec_revision({"hf_model_id": "r", "vllm_args": ["--tp", "8"]})
     with pytest.raises(ValueError):
         faf.spec_revision({"hf_model_id": "r", "vllm_args": ["--revision"]})  # dangling
-    # ...and every shipped spec is pinned, so the guard is not a live path.
+    # Shipped specs are pinned, so this guard is not a live path.
     for spec in EC2_DEPLOY_SPECS.values():
         assert len(faf.spec_revision(spec)) == 40
 
 
 def test_cross_check_reports_a_moved_pin() -> None:
-    """pinned != resolved is the vendor-force-push signal the old check missed."""
+    """Treat a changed resolved pin as a vendor force-push signal."""
     moved = faf.collect(fetch=_fake_fetch([], resolved="f" * 40))
     problems = faf.cross_check(moved["facts"])
     assert problems, "a moved pin must be reported"
@@ -92,7 +87,7 @@ def test_cross_check_reports_a_moved_pin() -> None:
     a_key = sorted(moved["facts"])[0]
     assert any(p.startswith(f"{a_key}: pinned revision ") for p in problems)
 
-    # A record with no resolved revision at all is also a problem, not a pass.
+    # A missing resolved revision is a problem, not a pass.
     held = faf.collect(fetch=_fake_fetch([]))
     held["facts"][a_key]["revision"] = None
     assert any("missing revision" in p for p in faf.cross_check(held["facts"]))
@@ -103,7 +98,7 @@ def test_check_runs_before_the_outputs_are_written(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A failed cross-check must leave the previous audit trail untouched."""
+    """Failed cross-checks leave the prior audit trail untouched."""
     raw, facts = tmp_path / "arch_configs_raw.json", tmp_path / "arch_facts.json"
     monkeypatch.setattr(faf, "_RAW_PATH", raw)
     monkeypatch.setattr(faf, "_FACTS_PATH", facts)
@@ -114,7 +109,7 @@ def test_check_runs_before_the_outputs_are_written(
     assert "CROSS-CHECK MISMATCHES" in capsys.readouterr().out
     assert not raw.exists() and not facts.exists()
 
-    # ...and a clean run does write both.
+    # A clean run writes both files.
     monkeypatch.setattr(faf, "_fetch", _fake_fetch([]))
     monkeypatch.setattr(sys, "argv", ["fetch_arch_facts.py"])
     assert faf.main() == 0

@@ -1,17 +1,10 @@
-"""Reporting contracts for the deduction analysis scripts -- each check below guards
-a claim the code made that the data did not support: an unconditional null-narrative
-sentence, a cross-study literal in the conclusion, a silently dropped extra
-replicate, and a hand-rolled binomial CDF standing in for scipy.
+"""Reporting contracts for deduction analysis scripts loaded by file path.
 
-Loaded by file path, as the scripts themselves are: they run under
-``uv run --no-project --with numpy --with scipy`` with no smolbench installed.
+They run under ``uv run --no-project --with numpy --with scipy`` with no smolbench installed.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import json
-import sys
 from math import comb
 from pathlib import Path
 from types import ModuleType
@@ -19,63 +12,26 @@ from typing import Any
 
 import pytest
 
+from conftest import cell_row, write_jsonl
 from tests._paths import NOTEBOOKS
+from tests.analysis._trees import load_analysis
 
 ANALYSIS = NOTEBOOKS / "deduction" / "analysis"
 
 
-#: Bare module names the deduction and induction analysis scripts share. The
-#: scripts import their siblings by bare name off their own sys.path insert,
-#: so a cached induction ``power_analysis`` (left by tests/analysis) would be
-#: handed to deduction's ``error_bars`` and fail with an ImportError on a
-#: symbol only the induction module lacks. Evict foreign siblings first.
-_BARE_SIBLINGS = ("_power_common", "power_analysis", "paired_analysis", "error_bars",
-                  "hint_vs_noise", "rows_source", "significance_report",
-                  "extens_vs_noise", "multiplicity_sim")
-
-
-def _owned_by(module: ModuleType, directory: Path) -> bool:
-    file = getattr(module, "__file__", None)
-    return bool(file) and Path(file).resolve().parent == directory.resolve()
-
-
-def _load(name: str) -> ModuleType:
-    for sibling in _BARE_SIBLINGS:
-        mod = sys.modules.get(sibling)
-        if mod is not None and not _owned_by(mod, ANALYSIS):
-            del sys.modules[sibling]
-    spec = importlib.util.spec_from_file_location(
-        f"deduction_analysis_{name}", ANALYSIS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture(scope="module")
 def pa() -> ModuleType:
-    return _load("power_analysis")
+    return load_analysis("power_analysis", ANALYSIS)
 
 
 @pytest.fixture(scope="module")
 def hvn() -> ModuleType:
-    return _load("hint_vs_noise")
-
-
-def _cell(theorem: str, rung: str, ok: bool, *, model: str = "m", k: int = 1,
-          replicate_idx: int = 0) -> dict[str, Any]:
-    return {"kind": "cell", "model": model, "theorem_id": theorem, "k": k,
-            "rung": rung, "replicate_idx": replicate_idx,
-            "verdict": "success" if ok else "lean_error"}
+    return load_analysis("hint_vs_noise", ANALYSIS)
 
 
 def _write_rows_dir(root: Path, models: list[str] | tuple[str, ...], *,
                     n_theorems: int, b: int, c: int) -> None:
-    """One `verified_rows.jsonl` per model: `b` hint-only wins, `c` noise-only wins.
-
-    The remaining ``n_theorems - b - c`` cells are concordant successes, so the
-    discordant total (what exact McNemar conditions on) is exactly ``b + c``.
-    """
+    """Write rows with `b + c` discordant cells, which exact McNemar conditions on."""
     for model in models:
         d = root / model
         d.mkdir(parents=True)
@@ -87,16 +43,17 @@ def _write_rows_dir(root: Path, models: list[str] | tuple[str, ...], *,
                 hint_ok, noise_ok = False, True
             else:
                 hint_ok, noise_ok = True, True
-            rows.append(_cell(f"T{i}", "hint:3", hint_ok, model=model))
-            rows.append(_cell(f"T{i}", "noise:3", noise_ok, model=model))
-        (d / "verified_rows.jsonl").write_text(
-            "".join(json.dumps(r) + "\n" for r in rows))
+            rows.append(cell_row(theorem_id=f"T{i}", rung="hint:3", model=model,
+                                 verdict="success" if hint_ok else "lean_error"))
+            rows.append(cell_row(theorem_id=f"T{i}", rung="noise:3", model=model,
+                                 verdict="success" if noise_ok else "lean_error"))
+        write_jsonl(d / "verified_rows.jsonl", rows)
 
 
-# The null narrative must follow the result.
+# Null narrative follows the result.
 
 
-#: Fragments that may ONLY appear when nothing reached significance.
+#: Fragments allowed only for no significance.
 _NULL_NARRATIVE = ("rules out LARGE effects", "consistent with no effect")
 #: A different study's numbers, quoted as literals in this one's conclusion.
 _CROSS_STUDY_LITERALS = ("0.155", "0.866")
@@ -104,7 +61,7 @@ _CROSS_STUDY_LITERALS = ("0.155", "0.866")
 
 def test_null_narrative_is_suppressed_when_everything_is_significant(
         hvn: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """An all-significant run (b=20, c=0 for every model, p=2*0.5**20, Holm rejects all 21) must not print the null-result paragraph."""
+    """With b=20, c=0, p=2*0.5**20, all 21 significant results omit null narrative."""
     _write_rows_dir(tmp_path, hvn.MODELS, n_theorems=60, b=20, c=0)
     assert hvn.main(["--rows-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
@@ -117,7 +74,7 @@ def test_null_narrative_is_suppressed_when_everything_is_significant(
 
 def test_null_narrative_still_prints_on_an_actual_null(
         hvn: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The interpretation is gated, not deleted: b/c=11/9 (and reversed) gives 20 discordant pairs, p near 0.82, and a near-even sign split -- a genuine null must still get the paragraph."""
+    """Gate rather than delete null interpretation; b/c=11/9 gives 20 pairs and p≈0.82."""
     half = len(hvn.MODELS) // 2
     _write_rows_dir(tmp_path, hvn.MODELS[:half], n_theorems=60, b=11, c=9)
     _write_rows_dir(tmp_path, hvn.MODELS[half:], n_theorems=60, b=9, c=11)
@@ -129,13 +86,13 @@ def test_null_narrative_still_prints_on_an_actual_null(
         "a genuine null must still be interpreted; the fix gates the paragraph, "
         "it does not remove it"
     )
-    # The direction line reports the counts it computed, not a fixed verdict.
+    # Report computed direction counts, not a fixed verdict.
     assert f"{half} favour hint:3" in out or f"{len(hvn.MODELS) - half} favour hint:3" in out
 
 
 def test_no_cross_study_effect_literals_in_the_conclusion(
         hvn: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The induction leg's 0.155-0.866 range must not be a literal here, checked in source and output: if it's ever restored it must be read from that study's report at runtime, not hardcoded."""
+    """Cross-study 0.155–0.866 effects must be runtime data, never conclusion literals."""
     source = (ANALYSIS / "hint_vs_noise.py").read_text()
     for literal in _CROSS_STUDY_LITERALS:
         assert literal not in source, (
@@ -156,15 +113,17 @@ def test_no_cross_study_effect_literals_in_the_conclusion(
 def test_extra_replicates_are_reported_as_dropped(
         pa: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str],
         caplog: pytest.LogCaptureFixture) -> None:
-    """replicate_idx != 0 rows are dropped, never aggregated; the loader must announce the count (stderr banner or logging), or a run with bought replicates would silently be analysed at R=1."""
+    """Drop `replicate_idx != 0` with an announcement or paid data is silently analyzed at R=1."""
     path = tmp_path / "verified_rows.jsonl"
     rows = [
-        _cell("T1", "stepk:1", True, model="m1"),
-        _cell("T1", "stepk:1", False, model="m1", replicate_idx=1),
-        _cell("T1", "stepk:1", False, model="m1", replicate_idx=2),
-        _cell("T1", "stepk:1", True, model="m2"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1", replicate_idx=1,
+                 verdict="lean_error"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m1", replicate_idx=2,
+                 verdict="lean_error"),
+        cell_row(theorem_id="T1", rung="stepk:1", model="m2"),
     ]
-    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    write_jsonl(path, rows)
 
     with caplog.at_level(0):
         _, blocks, _ = pa.load_joint_cells([path], models=("m1", "m2"))
@@ -183,12 +142,7 @@ def test_extra_replicates_are_reported_as_dropped(
 
 
 def _reference_mcnemar(b: int, c: int) -> float:
-    """Exact two-sided McNemar p, computed independently of the module under test.
-
-    Deliberately NOT scipy and NOT the module's own helper: a plain
-    ``math.comb`` sum over the conditional Binomial(b + c, 1/2), so this pins
-    the VALUE rather than agreement between two spellings of the same call.
-    """
+    """Independent Binomial(b+c, 1/2) McNemar reference so this tests values, not the same call twice."""
     n = b + c
     if n == 0:
         return 1.0
@@ -201,7 +155,7 @@ def _reference_mcnemar(b: int, c: int) -> float:
                                  (60, 60), (120, 0), (61, 59), (120, 120)])
 def test_mcnemar_exact_p_matches_an_independent_reference(
         pa: ModuleType, b: int, c: int) -> None:
-    """The scipy-backed implementation matches an independent reference, including b+c==0 (p=1, not division by zero) and the two-sided doubling clamped at 1.0."""
+    """Match the reference, including `b+c==0` → p=1 and a 1.0 cap."""
     got = pa.mcnemar_exact_p(b, c)
     want = _reference_mcnemar(b, c)
     assert got == pytest.approx(want, abs=1e-9), (b, c, got, want)
@@ -222,16 +176,11 @@ def test_mcnemar_exact_p_agrees_across_the_whole_grid(pa: ModuleType) -> None:
 
 @pytest.fixture(scope="module")
 def eb() -> ModuleType:
-    return _load("error_bars")
+    return load_analysis("error_bars", ANALYSIS)
 
 
 def _reference_holm(pvals: list[float], alpha: float) -> list[bool]:
-    """Holm step-down, computed independently of the module under test.
-
-    Sorts ascending and rejects ranks 1..i for the largest i whose p_(i) <= alpha /
-    (m - i + 1), stopping at the first failing rank. Uses a stable sort, which the
-    old hand-rolled implementation used and which `multipletests` does not guarantee.
-    """
+    """Independent stable-sort Holm reference because `multipletests` order is not guaranteed."""
     import numpy as np
 
     m = len(pvals)
@@ -256,7 +205,7 @@ def _reference_holm(pvals: list[float], alpha: float) -> list[bool]:
 ])
 def test_holm_delegation_matches_the_step_down_rule(
         eb: ModuleType, pvals: list[float]) -> None:
-    """multipletests(method="holm") must reproduce the retired hand-rolled rule exactly, including tie-handling: several contrasts sit exactly on the decision boundary, and multipletests's argsort is not guaranteed stable."""
+    """Match the prior Holm rule at tie-sensitive decision boundaries."""
     import numpy as np
 
     got = eb.holm(np.array(pvals, dtype=float), 0.05)

@@ -1,17 +1,6 @@
-r"""Merge a sharded deduction lane's run directories into the canonical run.
+"""Merge sharded deduction lanes into their canonical run directory.
 
-``run_study.py`` can run a lane as N theorem-stride shards, each writing a
-NON-canonical ``runs/scaling_<key>_shard<i>of<n>`` under ``--no-s3``: shard
-dirs must never reach the canonical S3 prefix. This folds them into one
-canonical ``runs/scaling_<key>``, regenerates ``analysis.txt``, and under
-``--spool`` uploads via the driver's verified two-phase ``spool_to_s3`` before
-pruning the shard dirs. Merge gates (SystemExit) run before anything is
-written; see the per-gate messages in ``merge_shards``.
-
-Run from the repo root after the shard drivers have exited::
-
-    .venv/bin/python scripts/deduction/merge_lean_shards.py ministral-3-14b --n 3 \
-        --expect-cells <N> --expect-sanity <N> --spool
+Shard directories must never reach the canonical S3 prefix; prune only after verified spool.
 """
 
 import argparse
@@ -28,52 +17,38 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 RESULTS_RUNS: Path = REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
 
 
-def _cell_key(row: dict) -> tuple:
-    # Delegates to runner._row_key for the field order; local import so
-    # argparse-only callers skip runner's import chain.
-    from smolbench.deduction.lean import runner
-    return runner._row_key(
-        row.get("model"), row.get("theorem_id"), row.get("k"),
-        row.get("rung"), row.get("replicate_idx"),
-    )
-
-
 def merge_shards(
     key: str,
     n: int,
     *,
     runs_root: Path,
-    expect_cells: int | None,
-    expect_sanity: int | None,
+    expect_cells: int,
+    expect_sanity: int,
 ) -> Path:
-    """Fold ``n`` shard run directories into the canonical ``scaling_<key>`` directory.
-
-    Never touches the shard dirs -- only ``main`` prunes those, after a verified
-    S3 spool.
+    """Merge shard directories without pruning them.
 
     Parameters
     ----------
     key : str
         Scaling-run key.
     n : int
-        Number of shard run directories.
+        Shard count.
     runs_root : Path
-        Directory containing shard and canonical run directories.
-    expect_cells : int | None
-        Expected number of merged cell rows.
-    expect_sanity : int | None
-        Expected number of merged sanity rows.
+        Run-directory root.
+    expect_cells : int
+        Expected merged cells.
+    expect_sanity : int
+        Expected merged sanity rows.
 
     Returns
     -------
     Path
-        Canonical merged run directory.
+        Canonical run directory.
 
     Raises
     ------
     SystemExit
-        On any failed gate (see module docstring); may leave the canonical dir absent or
-        partial.
+        Failed validation; canonical output may be absent or partial.
     """
     canonical = runs_root / f"scaling_{key}"
     shard_dirs = [runs_root / f"scaling_{key}_shard{i}of{n}" for i in range(n)]
@@ -85,9 +60,8 @@ def merge_shards(
     if (canonical / "all_rows.jsonl").exists():
         raise SystemExit(f"{canonical / 'all_rows.jsonl'} already exists -- refusing to clobber.")
 
-    # Rows are gathered by key across all shards first: the duplicate-vs-resume
-    # judgment below needs every row for a key in hand.
-    cell_rows_by_key: dict[tuple, list[dict]] = {}
+    # Group after reading all shards so duplicate rows can be distinguished from resumes.
+    cell_rows: list[dict] = []
     sanity_ids: set[str] = set()
     per_shard_rows: list[list[dict]] = []
     n_sanity = 0
@@ -101,7 +75,7 @@ def merge_shards(
         per_shard_rows.append(kept)
         for row in kept:
             if row.get("kind") == "cell":
-                cell_rows_by_key.setdefault(_cell_key(row), []).append(row)
+                cell_rows.append(row)
             elif row.get("kind") == "sanity":
                 n_sanity += 1
                 t = row.get("theorem_id")
@@ -109,37 +83,26 @@ def merge_shards(
                     raise SystemExit(f"duplicate sanity row across shards: {t}")
                 sanity_ids.add(t)
 
-    # At most one SURVIVING row per cell key: runner._existing_keys re-runs a
-    # cell whose only row is "exception", so one surviving row plus exception
-    # rows is an ordinary resume, not the double-run stride-disjoint shards
-    # could never otherwise produce. Anchored on the literal "exception" to
-    # match _existing_keys, not the other verdict taxonomies.
-    # `cell_key`, not `key`, to avoid shadowing this function's `key` param.
-    n_resumed = 0
-    for cell_key, rows in cell_rows_by_key.items():
+    # Match `_existing_keys`: exception plus retry is a resume, not a duplicate shard cell.
+    grouped = runner.group_cell_rows(cell_rows, runner._cell_key)
+    for cell_key, rows in grouped.items():
         surviving = [r for r in rows if r.get("verdict") != "exception"]
         if len(surviving) >= 2:
             raise SystemExit(
                 f"duplicate cell across shards: {cell_key} has {len(surviving)} "
                 f"surviving rows (verdicts {[r.get('verdict') for r in surviving]})"
             )
-        if len(rows) > 1:
-            n_resumed += 1
+    n_resumed = sum(len(rows) > 1 for rows in grouped.values())
     if n_resumed:
-        logging.info(
-            f"{n_resumed} cell key(s) carried an exception row plus a resumed "
-            "retry; both rows are kept in the merged file and the key counts once"
-        )
-
-    # Distinct keys, not rows: a lane resumed past one exception (945 rows
-    # against a pinned 944) doesn't fail this for the same reason as above.
-    n_cells = len(cell_rows_by_key)
-    if expect_cells is not None and n_cells != expect_cells:
+        logging.info("%d cell key(s) keep exception rows plus a resumed retry", n_resumed)
+    # Count exception+retry once; otherwise a valid resume reads as 945 rows for 944 cells.
+    n_cells = len(runner.dedupe_cell_rows(cell_rows))
+    if n_cells != expect_cells:
         raise SystemExit(f"merged distinct cell count {n_cells} != expected {expect_cells}")
-    if expect_sanity is not None and n_sanity != expect_sanity:
+    if n_sanity != expect_sanity:
         raise SystemExit(f"merged sanity count {n_sanity} != expected {expect_sanity}")
 
-    # Gate: the theorems/ trees must be disjoint (theorem-stride shards are).
+    # Theorem-stride shard trees must be disjoint.
     seen_rel: dict[str, Path] = {}
     for d in shard_dirs:
         tdir = d / "theorems"
@@ -160,8 +123,7 @@ def merge_shards(
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(d / rel, dst)
 
-    # Each server_config.yaml is already a YAML list of timestamped snapshots
-    # (the driver appends), so plain concatenation stays valid YAML.
+    # Snapshot lists concatenate as valid YAML.
     with (canonical / "server_config.yaml").open("w") as sink:
         for d in shard_dirs:
             sc = d / "server_config.yaml"
@@ -231,13 +193,12 @@ def main(argv: list[str] | None = None) -> None:
         expect_sanity=args.expect_sanity,
     )
 
-    # Per-shard analysis.txt files are partial and were not copied; regenerate.
+    # Shard analyses are partial, so regenerate.
     from smolbench.deduction.lean import runner
     runner.write_run_analysis(canonical)
 
     if args.spool:
-        # Reuse the driver's verified two-phase spool instead of re-deriving
-        # bucket/prefix/verify semantics; loaded by path like the driver itself.
+        # Reuse verified spool semantics instead of re-deriving bucket and verification.
         spec = importlib.util.spec_from_file_location(
             "merge_lean_shards_driver",
             REPO_ROOT / "notebooks" / "deduction" / "run_study.py",
@@ -247,7 +208,7 @@ def main(argv: list[str] | None = None) -> None:
         spec.loader.exec_module(driver)
         uploaded = driver.spool_to_s3(canonical, args.key)
         logging.info(f"spooled {uploaded} file(s) for scaling_{args.key}")
-        # The spool verified every upload; only now prune the shard dirs.
+        # Prune only after every upload is verified.
         for i in range(args.n):
             shard_dir = RESULTS_RUNS / f"scaling_{args.key}_shard{i}of{args.n}"
             shutil.rmtree(shard_dir)

@@ -1,10 +1,6 @@
-"""Offline contract for scripts/results/audit_run_completeness.py; no AWS.
+"""Offline contracts for ``audit_run_completeness.py``.
 
-``audit_induction`` used to report only what it found: a ``(model, arm)``
-with zero objects in S3 never entered its ``seen`` dict, so an absent model
-printed "ok". It now walks the expected grid and set-differences against
-it, so an unlanded cell is examined and a 31st seed is named, not counted
-as ``-1``.
+Audit the expected grid so empty cells and extra seeds are reported.
 """
 
 import os
@@ -15,8 +11,7 @@ import pytest
 
 from scripts.results import audit_run_completeness as audit
 
-#: A miniature roster: 2 models x 2 arms x 3 seeds, so an assertion names
-#: every cell explicitly instead of restating the tool's own arithmetic.
+#: 2 models × 2 arms × 3 seeds make each expected cell explicit.
 FAKE_DRIVER = SimpleNamespace(
     MODELS={"model-a": "tag_a", "model-b": "tag_b"},
     INFO_TYPES=("intens", "zero"),
@@ -48,10 +43,7 @@ class FakeStore:
 def fake_driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Stand in for notebooks/induction/run_study.py.
 
-    Injected rather than loaded, so this never runs the driver's
-    module-scope ``load_dotenv``, which would mutate the environment for the
-    whole pytest session (`test_the_real_roster_is_the_grid` covers the real
-    driver).
+    Injection avoids the driver's import-time environment mutation.
     """
     monkeypatch.setattr(audit, "_induction_driver", lambda: FAKE_DRIVER)
     return FAKE_DRIVER
@@ -70,8 +62,7 @@ def test_a_cell_with_nothing_landed_is_examined_and_reported(
         "model-b": {"intens": {"missing": [0, 1, 2], "unexpected": []},
                     "zero": {"missing": [0, 1, 2], "unexpected": []}},
     }
-    # The grid is walked by (model, MODELS[model], info) -- the analysis tag,
-    # not the spec key, is what a store keyed on tags would need.
+    # Stores use the analysis tag rather than the spec key.
     assert sorted(store.calls) == [
         ("model-a", "tag_a", "intens"), ("model-a", "tag_a", "zero"),
         ("model-b", "tag_b", "intens"), ("model-b", "tag_b", "zero"),
@@ -115,7 +106,7 @@ def test_a_store_failure_propagates(fake_driver: SimpleNamespace) -> None:
 
 
 def test_the_real_roster_is_the_grid() -> None:
-    """os.environ is restored after, since the driver's import-time load_dotenv would otherwise leak into later tests."""
+    """Restore the environment after the driver's import-time mutation."""
     saved = dict(os.environ)
     try:
         driver = audit._induction_driver()
@@ -131,9 +122,7 @@ def test_the_real_roster_is_the_grid() -> None:
     assert {c[0] for c in store.calls} == set(driver.MODELS)
 
 
-# ---------------------------------------------------------------------------
-# both S3 seams resolve the bucket from one place
-# ---------------------------------------------------------------------------
+# Both S3 seams resolve the bucket from one place.
 def test_both_audits_follow_smolbench_results_s3(monkeypatch: pytest.MonkeyPatch) -> None:
     """A redirected results store must reach both the induction and deduction halves."""
     from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET
@@ -149,16 +138,17 @@ def test_both_audits_follow_smolbench_results_s3(monkeypatch: pytest.MonkeyPatch
             return iter(())
 
     monkeypatch.setattr(audit, "_s3", FakeS3)
+    monkeypatch.setenv("LEAN_SPOOL_PREFIX", "spool")
 
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/base")
     store = audit._induction_store()
     assert (store.bucket, store.base_prefix) == ("redirected-bucket", "base")
     assert store.experiment == audit.INDUCTION_EXPERIMENT
-    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert list(audit.iter_deduction_lanes(local=False)) == []
     assert listed == ["redirected-bucket"]
 
-    # ...and unset falls back to the one committed default, not a local copy.
+    # Unset falls back to the committed default.
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
     assert audit._induction_store().bucket == DEFAULT_RESULTS_BUCKET
-    assert list(audit.iter_deduction_lanes(local=False, deduction_prefix="spool/")) == []
+    assert list(audit.iter_deduction_lanes(local=False)) == []
     assert listed == ["redirected-bucket", DEFAULT_RESULTS_BUCKET]

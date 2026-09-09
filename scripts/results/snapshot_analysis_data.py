@@ -1,19 +1,9 @@
-"""Publish an analysis-ready snapshot of the family-ladder study to S3.
+"""Publish an analysis-ready family-ladder snapshot to S3.
 
-Every byte already lives in S3, but under the layout the runners wanted, with
-induction and deduction legs named differently and deduction a level deeper.
-Republished under one shared ``<dest>/<leg>/<model>/...`` layout that analysis
-reads, plus ``<dest>/provenance/*.md`` (how to read the rows) and
-``<dest>/MANIFEST.json`` (computed counts only, no prose).
-
-A snapshot, not a move: no source object is modified or deleted. Re-runs
-resume, skipping a destination object already present at a matching size, and
-every copy is verified against its source size. Copies run server-side, so
-~4.5 GB across ~55k objects never transits this host.
-
-``*_SUPERSEDED-*``/``*_STALE-*``/``*_BROKEN-*`` files are copied on purpose:
-they are the repair audit trail, and their names say they are not current data.
-
+Copy into ``<dest>/<leg>/<model>/...`` without modifying sources; matching-size
+objects resume safely. Server-side copying keeps ~4.5 GB across ~55k objects
+off this host. Include superseded, stale, and broken files as the repair audit trail.
+Write ``<dest>/MANIFEST.json`` with computed counts only, no prose.
     scripts/results/snapshot_analysis_data.py [--dry-run] [--dest analysis/2026-08-16]
 """
 
@@ -23,9 +13,10 @@ import concurrent.futures
 import json
 import logging
 import pathlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from smolbench.evals.results_store import resolve_results_location
+from smolbench.evals.spool import spool_prefix
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -52,34 +43,25 @@ def _s3() -> Any:
     return boto3.client("s3")
 
 
-def iter_source_keys(
-    client: Any, *, bucket: str, deduction_prefix: Optional[str] = None
-) -> List[Tuple[str, str, str, int]]:
+def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, int]]:
     """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
 
-    The deduction leg carries a ``scaling_`` prefix, stripped here so both legs
-    of a model share one name. `bucket` is a parameter, not a module constant,
-    so a redirected ``SMOLBENCH_RESULTS_S3`` is honored. `deduction_prefix`
-    defaults to `runner.spool_prefix()`; `main` always passes it explicitly.
+    Strip deduction's ``scaling_`` prefix so both legs share a model name. Keep
+    `bucket` parameterized for redirects and derive the prefix from `spool.spool_prefix()`.
 
     Parameters
     ----------
     client : Any
-        S3 client that lists the study objects.
+        S3 client.
     bucket : str
-        Bucket containing the study objects.
-    deduction_prefix : Optional[str], optional
-        Prefix containing deduction objects.
+        Study-object bucket.
 
     Returns
     -------
     List[Tuple[str, str, str, int]]
-        Study-object leg, model, source key, and size tuples.
+        Leg, model, source key, and size tuples.
     """
-    if deduction_prefix is None:
-        from smolbench.deduction.lean.runner import spool_prefix
-
-        deduction_prefix = spool_prefix() + "/"
+    deduction_prefix = spool_prefix() + "/"
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
     for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
@@ -102,20 +84,18 @@ def iter_source_keys(
 def copy_one(client: Any, bucket: str, src_key: str, dest_key: str, size: int) -> str:
     """Copy one object server-side within `bucket`, and verify its size.
 
-    A within-bucket copy: source and destination are the same resolved bucket.
-    `size` (the expected source size) decides whether an already-present
-    destination object can be skipped.
+    Skip an existing destination only when its size matches the source.
 
     Parameters
     ----------
     client : Any
-        S3 client that copies and checks objects.
+        S3 client.
     bucket : str
-        Resolved bucket for the source and destination.
+        Source and destination bucket.
     src_key : str
-        Source object key.
+        Source key.
     dest_key : str
-        Destination object key.
+        Destination key.
     size : int
         Expected source size.
 
@@ -127,7 +107,7 @@ def copy_one(client: Any, bucket: str, src_key: str, dest_key: str, size: int) -
     Raises
     ------
     RuntimeError
-        if the copied object's size doesn't match.
+        Copied size differs from source.
     """
     try:
         head = client.head_object(Bucket=bucket, Key=dest_key)
@@ -156,25 +136,17 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=32,
                     help="concurrent copies; the work is pure network wait (default 32)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument(
-        "--spool-prefix", default=None,
-        help="S3 key prefix the deduction leg spooled under (default: "
-             "LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
-    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    # Resolved after parse_args, so `--help` never has to run `spool_prefix()`.
-    from smolbench.deduction.lean.runner import spool_prefix
-
-    deduction_prefix = (args.spool_prefix or spool_prefix()) + "/"
+    deduction_prefix = spool_prefix() + "/"
 
     # Source and destination are the same bucket (a within-bucket server-side
     # copy), resolved here so a redirected SMOLBENCH_RESULTS_S3 isn't missed.
     bucket, _base_prefix = resolve_results_location()
 
     client = _s3()
-    rows = iter_source_keys(client, bucket=bucket, deduction_prefix=deduction_prefix)
+    rows = iter_source_keys(client, bucket=bucket)
     per_model: Dict[Tuple[str, str], Dict[str, int]] = collections.defaultdict(
         lambda: {"objects": 0, "bytes": 0}
     )

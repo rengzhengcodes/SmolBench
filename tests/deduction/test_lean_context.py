@@ -1,4 +1,5 @@
-"""Test render() and is_trivial_rung() in smolbench.deduction.lean.context.
+"""Tests for Lean context rendering and rung triviality.
+
 Goldens below were checked by hand, not copied from output.
 """
 
@@ -18,10 +19,7 @@ from tests._paths import LEAN_MINI as FIXTURE
 def thms(monkeypatch: pytest.MonkeyPatch,
          tmp_path: Path) -> Iterator[dict[str, corpus.BenchmarkTheorem]]:
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
-    # Empty HOME: no ~/.cache/lean_dojo traced repo, so `premises._traced_root`
-    # returns None and `body_with_proof` falls back to the fixture's own code --
-    # the CI configuration, and what keeps the hint-rung goldens deterministic
-    # on a developer box that HAS a traced mathlib4.
+    # An empty HOME forces fixture code, keeping goldens deterministic despite a traced checkout.
     monkeypatch.setenv("HOME", str(tmp_path))
     corpus.reset_caches()
     by_name = {t.full_name: t for t in corpus.load_split("random", "val")}
@@ -54,7 +52,7 @@ def test_state_parsing() -> None:
     assert context.extract_goal_only("n : ℕ\nh : P n\n⊢ Q n") == "⊢ Q n"
 
 
-#: A post-`cases`/`constructor` state -- the NORMAL shape once a proof branches.
+#: A post-``cases``/``constructor`` state, the normal shape once a proof branches.
 _TWO_GOALS = (
     "case inl\n"
     "n : ℕ\n"
@@ -69,7 +67,7 @@ _TWO_GOALS = (
 
 
 def test_extract_goal_only_drops_hypotheses_from_EVERY_goal() -> None:
-    """stepk:0 must withhold hypotheses from every goal, not just the first (extract_goal_only used to delegate to split_state, which stops at the first ⊢ and leaked the rest)."""
+    """stepk:0 must withhold hypotheses from every goal."""
     got = context.extract_goal_only(_TWO_GOALS)
     for keep in ("case inl", "case inr", "⊢ Q n", "⊢ R m"):
         assert keep in got, f"{keep!r} missing from {got!r}"
@@ -180,7 +178,7 @@ def test_noise_rejects_impossible_targets(
 
 def test_noise_pad_is_matched_on_the_full_prompt(
         thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch) -> None:
-    """Constructed case (the fixture corpus never produces one) where matching on CONTEXT and matching on PROMPT disagree: context-matching stops at r=2 (15 tokens, exact) but ships a 42-token prompt against the hint arm's 43; matching on PROMPT takes r=3 and lands on 43."""
+    """Match full prompts: context matching yields 42 tokens instead of target 43."""
     pytest.importorskip("tiktoken")
     base = "## Current goal\n```\n⊢ Q n\n```"
     target = base + " Q m"
@@ -281,7 +279,7 @@ def test_lean_noise_stoplist_has_no_dead_entries() -> None:
 
 
 def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path: Path) -> None:
-    """Noise-rung rendering must not reach into smolbench.induction._common (another study's private module); run in a subprocess because a sys.meta_path blocker only bites pre-import, and this module may already be imported in-process by an induction test."""
+    """Noise rendering must not import another study's private module."""
     import subprocess
     import sys as _sys
 

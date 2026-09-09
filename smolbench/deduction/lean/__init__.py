@@ -1,5 +1,4 @@
-"""Lean 4 theorem-proving eval: progressive-context tactic completion over LeanDojo/Mathlib4.
+"""Lean 4 tactic-completion evaluation.
 
-Imports nothing, so neither ``tiktoken`` (via ``context``) nor ``lean_interact``
-(via ``verify``) loads on a bare ``import smolbench.deduction.lean``.
+Imports nothing so bare imports avoid `tiktoken` and `lean_interact`.
 """

@@ -1,13 +1,6 @@
 # Architecture facts for the family-ladder roster
 
-Records what each of the study's 21 checkpoints actually is: how every layer
-mixes tokens, how every layer encodes position, where the feed-forward goes
-sparse — read from each checkpoint's own `config.json`.
-
-The study's own record (`smolbench/evals/providers/ec2.py`, `scripts/fleet/run_fleet.py`,
-`notebooks/induction/run_study.py`) captures how each checkpoint was *served* —
-tensor parallelism, context window, reasoning wiring — but nothing about what
-each one *is*. This closes that gap so the results can be read mechanistically.
+Architecture facts for the study's 21 checkpoints, read from each `config.json`.
 
 ## Contents
 
@@ -20,32 +13,19 @@ kv_budget.py             KV-cache sizing for the roster, over
                          arch_configs_raw.json
 ```
 
-`arch_configs_raw.json` is tracked: it is the audit trail `kv_budget.py` and
-`tests/tooling/test_kv_budget.py` read, and the archived config record
-`smolbench/evals/providers/ec2.py` cites. `arch_facts.json` is not tracked; regenerate it
-with `fetch_arch_facts.py` (needs network).
+`arch_configs_raw.json` is the tracked audit trail for `kv_budget.py` and its
+tests. Regenerate untracked `arch_facts.json` with `fetch_arch_facts.py` (network required).
 
 ## Where each claim comes from
 
-**Structural numbers** — layer counts, head counts and dimensions, RoPE bases
-and scaling parameters, expert counts, window sizes, SSM state sizes, vocab
-sizes — are read from each checkpoint's own `config.json`, fetched from the
-exact repo the fleet served, and stamped with that repo's resolved commit SHA.
-Nothing structural is transcribed by hand.
-
-**Prose** — what a mechanism is called, how many parameters a checkpoint
-has, and which config fields the reference implementation actually reads —
-cannot come from a config file. That is the table below; each row's
-sources column is where those names come from.
-
-Where the two layers disagree, the config wins, and the divergence column
-says which fields an implementation ignores (Nemotron-3, for one, declares
-RoPE fields nothing reads).
+Structural values come from each served repo's `config.json` and resolved SHA;
+nothing structural is transcribed by hand. The table sources mechanism names
+and implementation behavior. Config wins on disagreement; divergences identify
+ignored fields such as Nemotron-3's declared RoPE fields that nothing reads.
 
 ## Family facts
 
-One row per family; see "Where each claim comes from" for what a claim
-requires and what a divergence means.
+One row per family.
 
 | Family | Rungs (spec keys, params) | Token mixing | Positional encoding | FFN / sparsity | Reasoning toggle (as served) | Config-vs-implementation divergences | Primary sources |
 |---|---|---|---|---|---|---|---|
@@ -64,11 +44,8 @@ requires and what a divergence means.
 .venv/bin/python -m pytest tests/tooling/test_kv_budget.py  # KV formulas vs the audit table
 ```
 
-`--check` compares the fetched configs against
-`tests/fixtures/roster_configs.json`, the fixture `tests/evals/test_deploy_specs.py`
-pins against, on the four fields both hold; a mismatch means an upstream
-checkpoint moved under the study.
-
-There is no page builder here on purpose -- the page was a presentation
-artifact, not study tooling; its built outputs survive only in the release
-archives (see `notebooks/ARCHIVE.md`).
+`--check` compares four shared fields with `tests/fixtures/roster_configs.json`,
+which `tests/evals/test_deploy_specs.py` also pins; a mismatch means an upstream
+checkpoint moved. There is no page builder because the page was a presentation
+artifact, not study tooling; built output lives only in release archives
+(`notebooks/ARCHIVE.md`).

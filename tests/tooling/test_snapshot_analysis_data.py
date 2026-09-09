@@ -1,8 +1,7 @@
-"""Offline contract for scripts/results/snapshot_analysis_data.py; no AWS.
+"""Offline contract for snapshot_analysis_data; no AWS.
 
-``MANIFEST.json`` no longer carries hand-written per-dataset notes; the
-reading rules live in a dated, version-controlled provenance doc copied
-next to the data instead.
+``MANIFEST.json`` has no hand-written dataset notes; reading rules live in a
+dated provenance document copied beside the data.
 """
 
 import json
@@ -20,7 +19,7 @@ DATASET_LITERALS = ("74 cells", "232", "712", "68/30/50", "5.9", "24.6")
 
 
 class FakeS3:
-    """Records every call; serves one tiny listing per prefix."""
+    """Record calls and serve listings."""
 
     def __init__(self, listings: dict[str, list[dict[str, Any]]]) -> None:
         self.listings = listings
@@ -36,10 +35,6 @@ class FakeS3:
     def paginate(self, Bucket: str, Prefix: str, **kwargs: Any) -> list[dict[str, Any]]:
         self.listed.append((Bucket, Prefix))
         return [{"Contents": self.listings.get(Prefix, [])}]
-
-    # -- object ops -----------------------------------------------------
-    def head_object(self, Bucket: str, Key: str) -> dict[str, Any]:
-        raise RuntimeError("absent")  # nothing is already present at the destination
 
     def copy_object(self, **kwargs: Any) -> None:
         self.copies.append(kwargs)
@@ -63,8 +58,7 @@ def run_snapshot(
             "induction/": [{"Key": "induction/glm-4.7/seed=0/intens--x.yaml", "Size": 10}],
             "dp/": [{"Key": "dp/scaling_glm-4.7/all_rows.jsonl", "Size": 20}],
         })
-        # head_object is only consulted for the skip check; a copy must still
-        # verify, so serve the expected size on the second lookup.
+        # A copy still verifies after its skip check, so the second lookup succeeds.
         sizes = {"analysis/t/induction/glm-4.7/seed=0/intens--x.yaml": 10,
                  "analysis/t/deduction/glm-4.7/all_rows.jsonl": 20}
         seen: set = set()
@@ -77,9 +71,9 @@ def run_snapshot(
 
         fake.head_object = head_object
         monkeypatch.setattr(snap, "_s3", lambda: fake)
+        monkeypatch.setenv("LEAN_SPOOL_PREFIX", "dp")
         monkeypatch.setattr(sys, "argv", [
-            "snapshot_analysis_data.py", "--dest", "analysis/t",
-            "--spool-prefix", "dp", *argv])
+            "snapshot_analysis_data.py", "--dest", "analysis/t", *argv])
         assert snap.main() == 0
         manifest = json.loads(
             [body for _b, key, body in fake.puts if key.endswith("MANIFEST.json")][0])
@@ -91,21 +85,18 @@ def run_snapshot(
 def test_manifest_carries_only_computed_fields(
     run_snapshot: Callable[..., tuple[FakeS3, dict[str, Any]]],
 ) -> None:
-    """No prose notes; the provenance pointer is built from what was written."""
+    """Build the provenance pointer from written files."""
     fake, manifest = run_snapshot()
-    assert "notes" not in manifest
     assert set(manifest) == {
         "snapshot_prefix", "source_bucket", "total_objects", "total_bytes",
         "copied", "skipped_already_present", "provenance_docs", "per_model",
         "provenance_keys",
     }
-    # Computed from this run's walk, not from constants.
+    # Compute totals from this run, not constants.
     assert manifest["total_objects"] == 2 and manifest["total_bytes"] == 30
     assert manifest["copied"] == 2
-    # provenance_keys mirrors the actual put_object calls, so a missing doc
-    # shows up instead of being claimed present. notebooks/README.md and
-    # notebooks/deduction/README.md share a basename and collide to one key;
-    # this assertion holds either way.
+    # Mirror writes so missing docs are not claimed present; duplicate README
+    # basenames can collide to one key, so accept either result.
     put_provenance = [key for _b, key, _body in fake.puts if "/provenance/" in key]
     assert manifest["provenance_keys"] == put_provenance
     assert manifest["provenance_docs"] == len(put_provenance)
@@ -113,14 +104,13 @@ def test_manifest_carries_only_computed_fields(
 
 
 def test_the_reading_rules_ship_as_a_dated_document() -> None:
-    """The counts moved into git, where they can be dated and reviewed."""
+    """Keep dated, reviewable counts in git."""
     doc = REPO_ROOT / "notebooks" / "deduction" / "analysis" / "SNAPSHOT_NOTES.md"
     assert "notebooks/deduction/analysis/SNAPSHOT_NOTES.md" in snap.PROVENANCE_DOCS
     text = doc.read_text()
     for literal in ("74", "232", "151", "81", "712", "944", "5.9", "24.6", "68/30/50"):
         assert literal in text, literal
-    assert "2026-08-16" in text  # dated: these counts describe ONE dataset
-    # ...and none of them is emitted from Python any more.
+    assert "2026-08-16" in text  # These counts describe one dated dataset.
     source = (REPO_ROOT / "scripts" / "results" / "snapshot_analysis_data.py").read_text()
     for literal in DATASET_LITERALS:
         assert literal not in source, literal
@@ -129,13 +119,13 @@ def test_the_reading_rules_ship_as_a_dated_document() -> None:
 def test_the_bucket_follows_smolbench_results_s3(
     run_snapshot: Callable[..., tuple[FakeS3, dict[str, Any]]],
 ) -> None:
-    """A redirected results store must not silently miss this script."""
+    """Follow redirected results stores so this script is not silently skipped."""
     fake, manifest = run_snapshot(bucket_env="s3://redirected-bucket/base")
     assert manifest["source_bucket"] == "redirected-bucket"
     assert {b for b, _p in fake.listed} == {"redirected-bucket"}
     assert {b for b, _k, _body in fake.puts} == {"redirected-bucket"}
     assert {c["Bucket"] for c in fake.copies} == {"redirected-bucket"}
     assert {c["CopySource"]["Bucket"] for c in fake.copies} == {"redirected-bucket"}
-    # Default (env unset) is the documented fallback literal.
+    # The documented fallback applies when the environment is unset.
     _fake2, manifest2 = run_snapshot()
     assert manifest2["source_bucket"] == "smolbench-results-414266451290"

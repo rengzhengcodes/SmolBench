@@ -1,20 +1,11 @@
-"""Load LeanDojo Benchmark 4 splits (per-theorem tactic traces).
+"""Load post-cutoff LeanDojo-v2 theorem traces.
 
-`LeanDojo Benchmark 4 <https://zenodo.org/records/10929138>`_ is a mathlib4
-snapshot (commit ``fe4454af``, March 2024) traced by LeanDojo; its parallel
-premise corpus lives in ``smolbench.deduction.lean.premises``. Pool sizes and
-bootstrap instructions: ``notebooks/deduction/README.md``.
-
-Loaders are keyed by ``(kind, split)``; ``kind="novel_premises"`` is the harder
-generalization slice (val/test theorems whose premises are under-represented in
-train), ``"random"`` is i.i.d. The ~700 MB dataset is not shipped here; loaders
-raise ``FileNotFoundError`` naming the remedy when a file is missing.
-
-Loaders also accept a *post-cutoff* corpus: one traced at a recent mathlib4
-commit and restricted, by declaration-name set difference against an older
-commit, to theorems provably absent from that older snapshot. Such a corpus
-carries an extra ``postcutoff`` block in `metadata()` and a per-row
-``"postcutoff": true`` flag; see `postcutoff_metadata`.
+Benchmark 4 is a March 2024 ``fe4454af`` mathlib4 trace; its premise corpus is
+``smolbench.deduction.lean.premises``. The ~700 MB corpus is not shipped;
+missing files name the ``notebooks/deduction/README.md`` bootstrap remedy.
+Post-cutoff corpora require recent-trace name-set difference from an older
+commit, matching metadata, and row flags so plain Benchmark 4 exports cannot
+silently pass as post-cutoff.
 """
 
 from __future__ import annotations
@@ -30,12 +21,10 @@ import smolbench
 
 
 def data_root() -> Path:
-    """Root of the LeanDojo Benchmark 4 dataset; not guaranteed to exist.
+    """Return ``SMOLBENCH_LEAN_DATA`` or the installed package's dataset root.
 
-    ``SMOLBENCH_LEAN_DATA`` if set, else
-    ``notebooks/deduction/data/leandojo_benchmark_4`` anchored off the installed
-    ``smolbench`` package, never cwd. Read at *call* time, so a late-set env var
-    takes effect -- but call `reset_caches` to drop stale memoized results.
+    Never use cwd. Read per call so late environment changes apply; call
+    `reset_caches` for cached loaders.
     """
     override = os.getenv("SMOLBENCH_LEAN_DATA")
     if override:
@@ -50,27 +39,22 @@ def data_root() -> Path:
 
 
 Split = Literal["train", "val", "test"]
-SplitKind = Literal["random", "novel_premises"]
+SplitKind = Literal["random"]
 
 
 @dataclass(frozen=True)
 class TracedTactic:
     """One tactic application from LeanDojo's trace: one ``traced_tactics`` entry."""
 
-    #: The tactic text as written in the proof (e.g. ``"simp"``,
-    #: ``"exact Mini.premiseA h"``).
+    #: Proof tactic text.
     tactic: str
-    #: Pretty-printed Lean tactic state (hypotheses followed by goal(s),
-    #: separated by a line starting with ``⊢``) immediately before `tactic`
-    #: is applied. See ``smolbench.deduction.lean.context.split_state``.
+    #: State before the tactic.
     state_before: str
-    #: Pretty-printed Lean tactic state immediately after `tactic` is
-    #: applied (``"no goals"`` when the tactic closes the last goal).
+    #: State after the tactic.
     state_after: str
-    #: Premises referenced by name inside `tactic`, one dict per reference:
-    #: ``{full_name, def_path, def_pos, def_end_pos}`` -- lighter than
-    #: ``premises.Premise`` (no ``code``/``kind``). ``full_name`` joins into
-    #: ``premises.lookup``. Empty for most tactics.
+    #: Referenced ``{full_name, def_path, def_pos, def_end_pos}`` records, lighter than
+    #: ``premises.Premise`` because they omit ``code``/``kind``; ``full_name`` is the
+    #: join key to ``premises.lookup``. Empty when none.
     premises: list[dict]
 
 
@@ -78,56 +62,43 @@ class TracedTactic:
 class BenchmarkTheorem:
     """One theorem entry from a LeanDojo Benchmark 4 ``<kind>/<split>.json`` file."""
 
-    #: GitHub URL of the traced repo (mathlib4).
+    #: Traced repository URL.
     url: str
-    #: Commit hash the theorem was traced at (e.g. ``fe4454af...``).
+    #: Traced commit hash.
     commit: str
-    #: Path to the theorem's declaring file, relative to the repo root
-    #: (e.g. ``Mathlib/Algebra/Group/Basic.lean``).
+    #: Declaring path relative to the repository.
     file_path: str
-    #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``).
+    #: Fully qualified declaration name.
     full_name: str
-    #: ``(line, column)`` of the declaration's start, as recorded in the
-    #: LeanDojo trace. Nothing here slices source with it, unlike
-    #: ``premises.Premise.start`` (provably 1-indexed); treat both as opaque
-    #: trace positions.
+    #: Trace start position; opaque because this module never slices source.
     start: tuple[int, int]
-    #: ``(line, column)`` of the declaration's end. See `start`.
+    #: Trace end position.
     end: tuple[int, int]
-    #: The theorem's tactic-by-tactic trace, in proof order. Empty for
-    #: theorems LeanDojo could not trace (see `has_proof`).
+    #: Tactics in proof order; empty for untraceable proofs.
     traced_tactics: list[TracedTactic]
-    #: True when this theorem's name is absent from the corpus's `postcutoff`
-    #: metadata block's ``old_commit`` trace -- i.e. provably post-cutoff by
-    #: name-set difference, not a date heuristic. Defaults False so ordinary
-    #: rows (no ``postcutoff`` key) still parse; must stay the LAST field
-    #: since `BenchmarkTheorem` is frozen and every other field is required.
-    postcutoff: bool = False
+    #: Name-set-difference post-cutoff flag, not a date heuristic.
+    postcutoff: bool
 
     @property
     def has_proof(self) -> bool:
-        """True if LeanDojo recorded at least one traced tactic step.
-
-        Empty usually means a term-mode or otherwise untraceable proof.
-        """
+        """Whether LeanDojo recorded a tactic step."""
         return len(self.traced_tactics) > 0
 
 
 def _from_json(rec: dict) -> BenchmarkTheorem:
     """Parse one raw split-file JSON record into a `BenchmarkTheorem`.
 
-    ``annotated_tactic`` is nominally an ``[text, premises]`` pair but some
-    records give only ``[text]``; both normalize to ``premises == []``.
+    Single-item ``annotated_tactic`` values normalize to empty premises.
 
     Parameters
     ----------
     rec : dict
-        Raw split-file JSON record.
+        Split-file record.
 
     Returns
     -------
     BenchmarkTheorem
-        Parsed benchmark theorem.
+        Parsed theorem.
     """
     tts = []
     for tt in rec["traced_tactics"]:
@@ -148,36 +119,33 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
         start=tuple(rec["start"]),
         end=tuple(rec["end"]),
         traced_tactics=tts,
-        # A row that omits the key predates the post-cutoff contract (or
-        # simply isn't post-cutoff); treat that as False, not an error.
-        postcutoff=bool(rec.get("postcutoff", False)),
+        postcutoff=bool(rec["postcutoff"]),
     )
 
 
 @lru_cache(maxsize=8)
 def load_split(kind: SplitKind = "random", split: Split = "val") -> list[BenchmarkTheorem]:
-    """Every theorem in ``<data_root()>/<kind>/<split>.json``, in file order.
+    """Load a split in file order.
 
-    Memoized per ``(kind, split)`` (maxsize 8 covers all 6 combinations); the
-    key excludes `data_root()`, so repointing ``SMOLBENCH_LEAN_DATA``
-    mid-process keeps serving the first root until `reset_caches` runs.
+    The cache excludes `data_root()`, so call `reset_caches` after repointing
+    ``SMOLBENCH_LEAN_DATA``.
 
     Parameters
     ----------
     kind : SplitKind, optional
-        Corpus split family.
+        Split family.
     split : Split, optional
-        Corpus partition to load.
+        Partition.
 
     Returns
     -------
     list[BenchmarkTheorem]
-        Every theorem in ``<data_root()>/<kind>/<split>.json``, in file order.
+        Theorems in file order.
 
     Raises
     ------
     FileNotFoundError
-        If the split file is missing, naming the remedy.
+        Missing split file with bootstrap remedy.
     """
     path = data_root() / kind / f"{split}.json"
     if not path.exists():
@@ -190,57 +158,37 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
 
 
 def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
-    """Yield ``load_split(kind, split)``'s traced theorems, in file order.
-
-    Skips theorems whose `has_proof` is False (typically term-mode).
+    """Yield traced theorems in file order.
 
     Parameters
     ----------
     kind : SplitKind, optional
-        Corpus split family.
+        Split family.
     split : Split, optional
-        Corpus partition to scan.
+        Partition.
 
     Yields
     ------
     BenchmarkTheorem
-        Traced theorem in file order.
+        Traced theorem.
     """
     for t in load_split(kind, split):
         if t.has_proof:
             yield t
 
 
-#: Canonical order `eval_split_specs` reports splits in, fixed here rather
-#: than read from directory-listing order (filesystem- and
-#: machine-dependent): a holdout index built from these specs must index the
-#: same theorems in the same order everywhere.
+#: Fixed order keeps holdout indexes machine-independent.
 _SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
 
-#: The one split family `eval_split_specs` scans. ``novel_premises`` is
-#: excluded: ``build_postcutoff_corpus.py`` writes a ``novel_premises/`` dir
-#: that COPIES ``random/``'s rows rather than an independently curated slice,
-#: so indexing it would re-index the same theorems for no gain. ``random`` is
-#: also what ``run_study.py``'s ``build_config`` defaults to.
+#: Active study family; no compatibility family is emitted.
 _EVAL_SPLIT_KIND: SplitKind = "random"
 
 
 def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
-    """The ``(kind, split)`` pairs an eval holdout should cover in the active corpus.
+    """Return active ``(kind, split)`` pairs in fixed order.
 
-    Reports every ``<split>.json`` present under ``data_root() / "random"``,
-    in the fixed `_SPLIT_ORDER` (see `_EVAL_SPLIT_KIND` for why only
-    ``random`` is scanned).
-
-    Reads the filesystem on every call and memoizes nothing, not even in a
-    module-level constant: several callers repoint ``SMOLBENCH_LEAN_DATA``
-    mid-process and rely on the next call seeing the new root, as `metadata`
-    already does.
-
-    Raises `FileNotFoundError` if ``data_root() / "random"`` doesn't exist, or
-    `ValueError` if it exists but holds none of the recognised split files --
-    an empty tuple would be a silent no-op, decontaminating nothing while
-    still reporting success.
+    Do not cache: callers repoint ``SMOLBENCH_LEAN_DATA``. An empty directory
+    raises because an empty holdout would silently report success.
     """
     root = data_root()
     kind_dir = root / _EVAL_SPLIT_KIND
@@ -259,18 +207,15 @@ def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
         raise ValueError(
             f"{kind_dir} holds no recognised split file (expected at least one of "
             f"{expected}) — an eval holdout built from an empty spec list "
-            "decontaminates nothing; re-bootstrap the corpus (see "
+            "protects nothing; re-bootstrap the corpus (see "
             "notebooks/deduction/README.md's \"Data bootstrap\")"
         )
     return specs
 
 
 def metadata() -> dict:
-    """Load the benchmark's top-level ``metadata.json``.
-
-    Keys include ``dataset_name``, ``creation_time``, ``from_repo``
-    (``{url, commit}``) and ``leandojo_version``. Raises `FileNotFoundError`
-    if not bootstrapped.
+    """Load ``metadata.json`` keys ``dataset_name``, ``creation_time``, ``from_repo``
+    (``{url, commit}``), and ``leandojo_version``; raise `FileNotFoundError` if absent.
     """
     path = data_root() / "metadata.json"
     if not path.exists():
@@ -282,17 +227,10 @@ def metadata() -> dict:
 
 
 def postcutoff_metadata() -> dict | None:
-    """The `metadata()`'s ``postcutoff`` block, or None when absent.
+    """Return the ``postcutoff`` block, if present.
 
-    Reads through `metadata()` on every call rather than caching separately:
-    `metadata()` is deliberately uncached (callers repoint
-    ``SMOLBENCH_LEAN_DATA`` mid-process), and a cache here would let a stale
-    block survive a root switch.
-
-    Raises `ValueError` if the block's ``new_commit`` disagrees with
-    `metadata()`'s ``from_repo.commit`` -- a corpus traced at one commit can't
-    be a name-set difference computed at another, so the file is internally
-    incoherent and must not be trusted silently.
+    Do not cache across roots. Reject a mismatched ``new_commit`` because the
+    name-set difference and trace would otherwise describe different corpora.
     """
     meta = metadata()
     block = meta.get("postcutoff")
@@ -310,58 +248,53 @@ def postcutoff_metadata() -> dict | None:
 
 
 def is_postcutoff_corpus() -> bool:
-    """True if the current corpus carries a `postcutoff_metadata` block.
+    """Whether the corpus has post-cutoff metadata.
 
-    Propagates `postcutoff_metadata`'s exceptions rather than swallowing
-    them: an incoherent corpus must not silently report False.
+    Propagate incoherence rather than silently returning false.
     """
     return postcutoff_metadata() is not None
 
 
 def replay_passing_path(kind: SplitKind, split: Split) -> Path:
-    """Path to the `filter`-generated replay-passing sidecar for ``(kind, split)``.
+    """Return the `filter` replay-passing sidecar path.
 
-    ``<data_root().parent>/replay_passing_<kind>_<split>.jsonl`` -- beside the
-    dataset directory, so these small committed sidecars stay out of the
-    gitignored ~700 MB download. Not guaranteed to exist.
+    The sidecar sits beside the dataset so it stays outside the gitignored
+    ~700 MB download.
 
     Parameters
     ----------
     kind : SplitKind
-        Corpus split family.
+        Split family.
     split : Split
-        Corpus partition.
+        Partition.
 
     Returns
     -------
     Path
-        `filter`-generated replay-passing sidecar path.
+        Replay-passing sidecar path.
     """
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
 
 def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
-    """Yield theorems recorded ``verdict == "success"`` in the replay sidecar.
-
-    Membership comes from `replay_passing_path`; yielded in `load_split` file
-    order.
+    """Yield replay-success theorems in split-file order.
 
     Parameters
     ----------
     kind : SplitKind, optional
-        Corpus split family.
+        Split family.
     split : Split, optional
-        Corpus partition to scan.
+        Partition.
 
     Yields
     ------
     BenchmarkTheorem
-        Theorem recorded with ``verdict == "success"`` in the replay sidecar.
+        Replay-success theorem.
 
     Raises
     ------
     FileNotFoundError
-        If the sidecar is missing, naming the `filter` command to run.
+        Missing sidecar with the required `filter` command.
     """
     path = replay_passing_path(kind, split)
     if not path.exists():
@@ -381,14 +314,10 @@ def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Ite
 
 
 def reset_caches() -> None:
-    """Clear every `functools.lru_cache` in `corpus` and `premises`.
-
-    Those loaders key only on their own arguments, never on `data_root()`, so
-    call this after repointing ``SMOLBENCH_LEAN_DATA`` to force a re-read.
-    """
+    """Clear corpus and premises caches after repointing ``SMOLBENCH_LEAN_DATA``."""
     load_split.cache_clear()
 
-    # Lazy import to avoid the corpus <-> premises import cycle.
+    # Avoid the corpus <-> premises import cycle.
     from . import premises
 
     premises._index.cache_clear()

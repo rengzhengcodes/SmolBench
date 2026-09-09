@@ -1,10 +1,6 @@
-"""Behavioural pins for the ``notebooks/induction/analysis/`` report scripts.
+"""Behavioral pins for induction analysis reports.
 
-These scripts have no other tests: each walks a real 21-model x 4-arm
-replicate tree and prints a narrative report, so nothing in them can be
-exercised without a fixture tree. Three trees, each engineered for a specific
-claim, are built by ``shallow_tree``/``collapse_tree``/``clean_tree`` below
-(see ``_trees.py`` for why this directory has no ``conftest.py``).
+Synthetic trees keep reported claims conditional on their supporting data.
 """
 
 import io
@@ -16,9 +12,7 @@ from types import ModuleType
 
 import pytest
 
-# The four module fixtures are imported for their side effect of entering
-# this module's namespace: pytest collects fixtures from a test module's
-# globals, and tests/analysis has no conftest.py (see _trees.py).
+# Pytest discovers imported fixtures from module globals.
 from tests.analysis._trees import (  # noqa: F401
     DEEP_DEPTH,
     SHALLOW_DEPTH,
@@ -30,18 +24,13 @@ from tests.analysis._trees import (  # noqa: F401
     significance_report,
 )
 
-#: 90% non-compliant noise arm at the floor: a genuine padding collapse, so
-#: its failing control is explained by the pad.
+#: Collapsed noise arm whose failed control is padding-driven.
 COLLAPSE_MODEL = "ds_pro"
-#: Compliant intens arm at the floor: not explained by the pad, so it must
-#: not be swept into the exoneration.
+#: Compliant failed control that padding cannot exonerate.
 WEAK_MODEL = "min3_3b"
-#: intens covers 16 seeds, noise_intens only the first 10, with all of
-#: intens's non-compliance on the 6 seeds noise lacks: whole-cell and
-#: common-seed deltas disagree.
+#: Mismatched seed coverage makes whole-cell and common-seed deltas differ.
 SKEW_MODEL = "exaone_32b"
-#: noise_intens is a byte copy of extens: an exact tie, which the direction
-#: label had no branch for.
+#: Byte copy creates an exact tie.
 TIED_MODEL = "nemo3_30b"
 
 _SKEW_SPLIT = 10
@@ -54,10 +43,6 @@ def _run(fn: Callable[[], None]) -> str:
         fn()
     return buf.getvalue()
 
-
-# ---------------------------------------------------------------------------
-# Trees
-# ---------------------------------------------------------------------------
 
 def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(SHALLOW_DEPTH)
@@ -73,7 +58,7 @@ def _collapse_profile(
     if model == WEAK_MODEL and info == "intens":
         return 0.10, 0.0, "empty", seeds
     if model == SKEW_MODEL and info == "intens":
-        # Non-compliant ONLY on the seeds the noise arm lacks.
+        # Non-compliance is outside noise's seed coverage.
         return 0.90, (lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0), \
             "empty", seeds
     if model == SKEW_MODEL and info == "noise_intens":
@@ -142,8 +127,7 @@ def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
     assert "INCOMPLETE SYNC" in out
     # The blanket exoneration must NOT print under a floor-bound family.
     assert "whitespace padding drove" not in out
-    # The banner itself has to carry the arithmetic that justifies it, so a
-    # reader can check the comparison rather than take the label on trust.
+    # Include threshold arithmetic so the banner is auditable.
     banner = out.split("INCOMPLETE SYNC", 1)[1][:800]
     assert re.search(r"2\s*/\s*2\W*\W?6|3\.12\d*e-0?2", banner), banner
     assert re.search(r"2\.38\d*e-0?4|0\.05\s*/\s*210", banner), banner
@@ -155,9 +139,7 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
     out = report(collapse_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     fails = [ln for ln in controls.splitlines() if ln.strip().startswith("FAILS")]
-    # Derived from the printed rows, not hard-coded: a row qualifies for the
-    # padding exoneration only if its arm is `noise_intens` AND the census
-    # flagged that cell at or above COLLAPSE_THRESHOLD.
+    # Exoneration requires a collapsed noise arm.
     qualifying = [ln for ln in fails if "noise_intens" in ln and "[COLLAPSE:" in ln]
     assert fails and qualifying and len(qualifying) < len(fails), fails
 

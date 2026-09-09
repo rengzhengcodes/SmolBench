@@ -1,31 +1,29 @@
-"""Constants and path helpers shared by ``notebooks/{induction,deduction}/analysis/power_analysis.py``.
+"""Shared analysis constants and result-path helpers.
 
-Each caller keeps its own roster, contrasts, and statistics; this module stays
-stdlib-only so it imports under any interpreter.
+Stdlib-only so either study can import it.
 """
 
 from pathlib import Path
 
-# Fixed so that running either script twice produces identical output.
+# Fixed for reproducible output.
 SEED = 0
 ALPHA = 0.05
 POWER_TARGETS = (0.80, 0.90)
 
 
 def results_dir(file: str, up: int = 0) -> Path:
-    """Resolve a study's ``results/`` dir, anchored on `file`, never the process cwd.
+    """Resolve a study results directory from `file`.
 
-    `up` is a level count, not a study path: `results_store.experiment_name` matches
-    ``notebooks/<study>/results`` exactly three components deep, so a typo in a
-    caller-supplied path would mint a new S3 prefix.
+    `up` is a level count, not a path: ``experiment_name`` matches
+    ``notebooks/<study>/results`` exactly three deep, so a typo'd path would
+    mint a new S3 prefix.
 
     Parameters
     ----------
     file : str
         Caller file path anchoring the results directory.
     up : int
-        Levels above the caller's directory; ``0`` = sibling ``results/``, ``1`` for a
-        caller in a role subdirectory like ``notebooks/induction/analysis/``.
+        Levels above the caller; ``0`` is sibling ``results/``.
 
     Returns
     -------
@@ -41,8 +39,7 @@ def fmt_r(r: int | None, max_replicates: int) -> str:
     Parameters
     ----------
     r : int | None
-        ``None`` means the scan cap was reached without hitting the target; renders as
-        ``">max_replicates"``.
+        ``None`` renders as ``">max_replicates"``.
     max_replicates : int
         Scan cap displayed when the target was not reached.
 

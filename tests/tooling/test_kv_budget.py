@@ -1,20 +1,18 @@
-"""Pin ``scripts/arch/kv_budget.py``'s corrected KV@131k figures for the roster.
+"""Pin roster KV@131k figures from ``arch_configs_raw.json``.
 
-Every expected value below was hand-derived from ``arch_configs_raw.json`` --
-the arithmetic is written out per row as ``layers x kv_heads x head_dim x 2
-(K,V) x 2 bytes (BF16) x context`` -- and only then compared against the tool.
+Every expected value was hand-derived with the formulas below and only then
+compared against the tool, so the table is not pinned against its own output.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 
 import pytest
 
-from tests._paths import SCRIPTS
+from tests._paths import SCRIPTS, load_by_path
 
-sys.path.insert(0, str(SCRIPTS / "arch"))
+load_by_path(SCRIPTS / "arch" / "kv_budget.py", "kv_budget")
 
 from kv_budget import (  # noqa: E402
     kv_bytes, _is_shared_latent, _kv_layers, _layer_kv_shape, _layer_mix,
@@ -30,74 +28,34 @@ def _kv_gb(model: str, tp: int = 1, naive: bool = False) -> float:
     return kv_bytes(_text_config(RAW[model]), CTX, tp=tp, naive=naive) / GB
 
 
-# The audit's headline corrections (naive GB, corrected GB) at 131,072 tokens, tp=1.
-#
-# Naive = every layer holds full-context KV at the model-level head geometry:
-#   num_hidden_layers x 2(K,V) x num_key_value_heads x head_dim x 2B x 131072.
-#
-# gemma-4-31b   n_kv 16, head_dim 256, global_head_dim 512,
-#               num_global_key_value_heads 4, 60 layers = 50 sliding@1024 + 10 full
-#   naive   60 x 2x16x256 x2B x131072       = 60 x 2.147e9   = 128.85 GB
-#   sliding 50 x 2x16x256 x2B x  1024       = 50 x 16.777e6  =   0.839 GB
-#   global  10 x 2x 4x512 x2B x131072       = 10 x 1.0737e9  =  10.737 GB -> 11.58
-# gemma-4-12b   n_kv 8, head_dim 256, global_head_dim 512,
-#               num_global_key_value_heads 1, 48 layers = 40 sliding@1024 + 8 full
-#   naive   48 x 2x8x256 x2B x131072        = 48 x 1.0737e9  =  51.54 GB
-#   sliding 40 x 2x8x256 x2B x  1024        = 40 x 8.389e6   =   0.336 GB
-#   global   8 x 2x1x512 x2B x131072        =  8 x 268.4e6   =   2.147 GB ->  2.48
-# gemma-4-e2b   n_kv 1, head_dim 256, global_head_dim 512,
-#               num_global_key_value_heads null -> falls back to n_kv 1,
-#               35 layers = 28 sliding@512 + 7 full, num_kv_shared_layers 20 so
-#               only layers 0-14 allocate: layer_types full at 4, 9, 14
-#               -> 12 sliding + 3 global
-#   naive   35 x 2x1x256 x2B x131072        = 35 x 134.2e6   =   4.70 GB
-#   sliding 12 x 2x1x256 x2B x   512        = 12 x 524288    =   0.006 GB
-#   global   3 x 2x1x512 x2B x131072        =  3 x 268.4e6   =   0.805 GB ->  0.81
-# glm-4.7-flash MLA: no head_dim field, so naive falls back to
-#               hidden 2048 // 20 heads = 102 (floor), n_kv 20, 47 layers
-#   naive   47 x 2x20x102 x2B x131072       = 47 x 1.0695e9  =  50.27 GB
-#   MLA     47 x (kv_lora 512 + qk_rope 64) x2B x131072 = 47 x 150.99e6 = 7.10
-# qwen3.5-27b   n_kv 4, head_dim 256, 64 layers = 48 linear + 16 full
-#   naive   64 x 2x4x256 x2B x131072        = 64 x 536.9e6   =  34.36 GB
-#   full    16 x 536.9e6                                     =   8.59 GB
-# exaone-4.0-32b / exaone-4.5-33b  n_kv 8, head_dim 128 (4.5 has no head_dim
-#               field: hidden 5120 // 40 heads = 128), 64 layers,
-#               sliding_window_pattern LLLG -> 48 sliding@4096 + 16 full
-#   naive   64 x 2x8x128 x2B x131072        = 64 x 536.9e6   =  34.36 GB
-#   sliding 48 x 2x8x128 x2B x  4096        = 48 x 16.777e6  =   0.805 GB
-#   full    16 x 536.9e6                                     =   8.59 GB ->  9.40
-# deepseek-v3.1 MLA: no head_dim field -> 7168 // 128 heads = 56, n_kv 128,
-#               61 layers
-#   naive   61 x 2x128x56 x2B x131072       = 61 x 3.758e9   = 229.24 GB
-#   MLA     61 x (512 + 64) x2B x131072     = 61 x 150.99e6  =   9.21 GB
-# nemotron-3-nano-4b  n_kv 8, head_dim 128, 42 layers; hybrid_override_pattern
-#               'M-M-M-MM-M-M*-M-M*-M-M-M*-M-M-MM*-MMM-M-M-' = 21 M + 17 '-'
-#               + 4 '*', and only the 4 attention layers hold KV
-#   naive   42 x 2x8x128 x2B x131072        = 42 x 536.9e6   =  22.55 GB
-#   attn     4 x 536.9e6                                     =   2.15 GB
-# nemotron-3-nano-30b-a3b  n_kv 2, head_dim 128, 52 layers; pattern = 23 M +
-#               23 E + 6 '*'
-#   naive   52 x 2x2x128 x2B x131072        = 52 x 134.2e6   =   6.98 GB
-#   attn     6 x 134.2e6                                     =   0.81 GB
-# nemotron-3-super-120b-a12b  n_kv 2, head_dim 128, 88 layers; pattern = 40 M +
-#               40 E + 8 '*'
-#   naive   88 x 2x2x128 x2B x131072        = 88 x 134.2e6   =  11.81 GB
-#   attn     8 x 134.2e6                                     =   1.07 GB
-# deepseek-v4-pro / -flash  SHARED LATENT (no kv_lora_rank field): one
-#               head_dim 512 + qk_rope 64 = 576-wide row per token per layer,
-#               shared by K and V, so no x2 and no tp replication. n_kv 1,
-#               head_dim 512; 61 layers (pro) / 43 layers (flash).
-#   latent  per layer per token (512 + 64) x2B             = 1152 B
-#           x131072                                        = 150.99e6
-#   pro     61 x 150.99e6                                  =   9.21 GB
-#   flash   43 x 150.99e6                                  =   6.49 GB
-#   naive   per layer per token 2x1x512 x2B                = 2048 B
-#           x131072                                        = 268.44e6
-#   pro     61 x 268.44e6                                  =  16.37 GB
-#   flash   43 x 268.44e6                                  =  11.54 GB
-#   (pro's 9.21 GB coinciding with deepseek-v3.1's is arithmetic, not a
-#    copy-paste: both are 61 layers x 576 dims x 2B x ctx -- V3.1 as
-#    kv_lora_rank 512 + rope 64, V4 as head_dim 512 + rope 64.)
+# Hand derivations at 131,072 tokens and tp=1; naive is
+# ``layers x 2(K,V) x kv_heads x head_dim x 2B x 131072``.
+# gemma-4-31b: naive 60x2x16x256x2Bx131072 = 128.85 GB; corrected
+# 50x2x16x256x2Bx1024 + 10x2x4x512x2Bx131072 = 0.839+10.737 = 11.58 GB.
+# gemma-4-12b: naive 48x2x8x256x2Bx131072 = 51.54 GB; corrected
+# 40x2x8x256x2Bx1024 + 8x2x1x512x2Bx131072 = 0.336+2.147 = 2.48 GB.
+# gemma-4-e2b: 35 = 28 sliding@512 + 7 full; the last 20 share KV, so only
+# layers 0-14 allocate, with full layers 4, 9, 14. Naive is 4.70 GB; corrected
+# 12x2x1x256x2Bx512 + 3x2x1x512x2Bx131072 = 0.006+0.805 = 0.81 GB.
+# glm-4.7-flash: naive head_dim is 2048//20 = 102, so
+# 47x2x20x102x2Bx131072 = 50.27 GB; MLA is 47x(512+64)x2Bx131072 = 7.10 GB.
+# qwen3.5-27b: 64 = 48 linear + 16 full; naive 64x2x4x256x2Bx131072 =
+# 34.36 GB, while 16 full layers allocate 16x536.9e6 = 8.59 GB.
+# exaone-4.0-32b and exaone-4.5-33b: head_dim is 128 (4.5: 5120//40), and
+# 64 = 48 sliding@4096 + 16 full. Naive is 34.36 GB; corrected is 0.805+8.59 = 9.40 GB.
+# deepseek-v3.1: naive head_dim is 7168//128 = 56, so
+# 61x2x128x56x2Bx131072 = 229.24 GB; MLA is 61x(512+64)x2Bx131072 = 9.21 GB.
+# nemotron-3-nano-4b: naive 42x2x8x128x2Bx131072 = 22.55 GB; its
+# 21 M + 17 '-' + 4 '*' pattern leaves 4x536.9e6 = 2.15 GB.
+# nemotron-3-nano-30b-a3b: naive 52x2x2x128x2Bx131072 = 6.98 GB; its
+# 23 M + 23 E + 6 '*' pattern leaves 6x134.2e6 = 0.81 GB.
+# nemotron-3-super-120b-a12b: naive 88x2x2x128x2Bx131072 = 11.81 GB; its
+# 40 M + 40 E + 8 '*' pattern leaves 8x134.2e6 = 1.07 GB.
+# deepseek-v4-pro/-flash: a 576-wide latent row is shared by K and V, with no x2
+# or tp replication. It costs (512+64)x2Bx131072 = 150.99e6 per layer, so 61/43 layers use 9.21/6.49 GB;
+# naive 2x1x512x2Bx131072 = 268.44e6 per layer gives 16.37/11.54 GB.
+# Pro's 9.21 GB matching deepseek-v3.1 is arithmetic, not copy-paste: both are
+# 61x576x2Bx131072, via V3.1's latent 512+rope 64 and V4's head 512+rope 64.
 AUDIT_TABLE = {
     "gemma-4-31b": (128.85, 11.58),
     "gemma-4-12b": (51.54, 2.48),
