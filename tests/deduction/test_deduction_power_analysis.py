@@ -12,7 +12,7 @@ pa = load_by_path(
 
 
 def _write(tmp_path: Path, rows: list[dict]) -> Path:
-    # Not all_rows.jsonl: that basename triggers the unverified-input warning.
+    # Avoid `all_rows.jsonl`, which triggers the unverified-input warning.
     path = tmp_path / "verified_rows.jsonl"
     write_jsonl(path, rows)
     return path
@@ -60,14 +60,7 @@ def test_verdict_classification(tmp_path: Path) -> None:
 
 
 def test_no_answer_is_measurable_and_scores_zero(tmp_path: Path) -> None:
-    """`no_answer` is a real 0, not an unmeasurable cell.
-
-    It marks "the model was asked and returned nothing extractable" -- the
-    request completed, so it scores 0 and enters the paired denominator,
-    unlike `exception`/`replay_failed` where the model was never actually
-    tested. Pins `UNMEASURABLE_VERDICTS`' exact membership so a later edit
-    can't quietly add `no_answer` and shrink every denominator.
-    """
+    """`no_answer` is a measured zero; excluding it would shrink denominators."""
     assert pa.UNMEASURABLE_VERDICTS == frozenset({"exception", "replay_failed"})
     assert pa.grade_verdicts(["no_answer"]) == 0
     assert pa.grade_verdicts(["exception", "no_answer"]) == 0, (

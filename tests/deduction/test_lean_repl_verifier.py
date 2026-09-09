@@ -1,22 +1,7 @@
-"""Acceptance tests for the lean-interact verifier backend (Package V).
+"""Acceptance tests for the lean-interact verifier backend.
 
-Both layers are offline -- this box has no Lean toolchain, so nothing here
-starts a real REPL. `replbackend`'s pure parts (statement slicing,
-declaration renaming, module-name derivation, mathlib root resolution,
-response classification) are exercised directly, with classification fed
-REAL `lean_interact` pydantic models built on the wire keys (``proofStatus``,
-``proofState``, ...) rather than hand-rolled stand-ins, so a stand-in can't
-pass by reading field names the REPL never sends. `verify` is driven against
-a scripted fake session so all six verdicts, the prefix-replay
-`RuntimeError`, and session teardown are reached without Lean.
-
-The fixtures under ``tests/fixtures/lean_repl_project`` encode two traps
-measured against the real mathlib4 checkout: an ``autoParam`` default
-(``(h : Nat := by simp)``) puts a ``:=`` inside brackets, which a naive
-"first ``:=``" split truncates mid-signature; and a doc comment naming
-``theorem fakeName``, since 213 of mathlib4's declarations are preceded by a
-docstring containing a ``theorem``/``lemma`` word, which a naive rename
-regex would rename instead of the declaration.
+Fakes keep tests offline. Fixtures cover bracketed ``:=`` and doc-comment
+renaming traps; 213 mathlib declarations have theorem/lemma doc comments.
 """
 
 from __future__ import annotations
@@ -41,9 +26,6 @@ from smolbench.deduction.lean.corpus import BenchmarkTheorem, TracedTactic  # no
 PROJECT = FIXTURES / "lean_repl_project"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _bt(tactics: list[str], *, file_path: str = "Mini/A.lean", name: str = "Mini.theoremA",
         start: tuple[int, int] = (1, 1)) -> BenchmarkTheorem:
     """A `BenchmarkTheorem` whose tactics are `tactics` and whose source is the fixture."""
@@ -75,18 +57,12 @@ def _msg(data: str, severity: str = "error") -> dict:
 
 @dataclass
 class FakeSession:
-    """Scripted stand-in for `replbackend.ReplSession`.
-
-    `script` maps a tactic string to either a `replbackend.StepOutcome` or an
-    exception instance to raise. `closed` records that the caller tore the
-    session down, which is what proves `verify.open_at_step`'s ``finally``.
-    """
+    """Scripted `replbackend.ReplSession` stand-in."""
 
     script: dict[str, object] = field(default_factory=dict)
     closed: int = 0
     seen: list[tuple[int, str]] = field(default_factory=list)
-    #: Successive proof-state ids handed back, so a caller that reuses a stale
-    #: state instead of the returned one is detectable.
+    #: Distinct states expose stale-state reuse.
     _next_state: int = 100
 
     def step(self, proof_state: int, tactic: str) -> Any:
@@ -131,9 +107,6 @@ def _install_session(
     return calls
 
 
-# ---------------------------------------------------------------------------
-# replbackend: module name derivation
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "path, expected",
     [
@@ -152,9 +125,6 @@ def test_module_name_refuses_a_path_that_is_not_a_lean_source(bad: str) -> None:
         replbackend.module_name(bad)
 
 
-# ---------------------------------------------------------------------------
-# replbackend: mathlib root resolution
-# ---------------------------------------------------------------------------
 def test_mathlib_root_names_the_env_var_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SMOLBENCH_MATHLIB_ROOT", raising=False)
     with pytest.raises(RuntimeError) as exc:
@@ -190,9 +160,6 @@ def test_mathlib_root_accepts_a_real_lean_project(monkeypatch: pytest.MonkeyPatc
     assert replbackend.mathlib_root() == PROJECT
 
 
-# ---------------------------------------------------------------------------
-# replbackend: statement-end detection (the depth-0 `:=` rule)
-# ---------------------------------------------------------------------------
 def test_find_statement_end_takes_the_first_top_level_assignment() -> None:
     text = "theorem foo : 1 = 1 := by\n  rfl"
     assert text[: replbackend.find_statement_end(text)] == "theorem foo : 1 = 1 "
@@ -223,9 +190,6 @@ def test_find_statement_end_returns_none_without_a_top_level_assignment() -> Non
     assert replbackend.find_statement_end("theorem foo : ∀ n, n = n\n  | 0 => rfl") is None
 
 
-# ---------------------------------------------------------------------------
-# replbackend: declaration renaming
-# ---------------------------------------------------------------------------
 def test_rename_declaration_replaces_the_declaration_identifier() -> None:
     out = replbackend.rename_declaration("theorem add_comm (a b : Nat) : a + b = b + a")
     assert out.startswith(f"theorem {replbackend.TARGET_NAME} (a b : Nat)")
@@ -263,9 +227,6 @@ def test_rename_declaration_honours_an_explicit_target_name() -> None:
     assert replbackend.rename_declaration("theorem foo : True", "zzz") == "theorem zzz : True"
 
 
-# ---------------------------------------------------------------------------
-# replbackend: source slicing off a real .lean fixture
-# ---------------------------------------------------------------------------
 def test_declaration_text_treats_the_start_line_as_one_indexed() -> None:
     """`start[0] == 1` must select the FIRST line of the file, not the second."""
     text = replbackend.declaration_text(PROJECT, "Mini/A.lean", 1)
@@ -284,9 +245,6 @@ def test_declaration_text_reports_a_missing_source_file_actionably() -> None:
     assert "Mini/Nope.lean" in str(exc.value)
 
 
-# ---------------------------------------------------------------------------
-# replbackend: end-to-end statement stub
-# ---------------------------------------------------------------------------
 def test_theorem_statement_stub_renames_slices_and_appends_sorry() -> None:
     stub = replbackend.theorem_statement_stub(_bt(["rfl"]), PROJECT)
     assert stub.startswith(f"theorem {replbackend.TARGET_NAME} {{n : ℕ}} (hn : n > 0)")
@@ -313,9 +271,6 @@ def test_theorem_statement_stub_refuses_a_declaration_with_no_assignment() -> No
     assert "Mini.trapNoAssign" in str(exc.value)
 
 
-# ---------------------------------------------------------------------------
-# replbackend: response classification, against REAL lean_interact models
-# ---------------------------------------------------------------------------
 def test_classify_step_reports_completed_as_success() -> None:
     out = replbackend.classify_step(_proof_step(proofStatus="Completed", proofState=4))
     assert out.kind == "success"
@@ -377,9 +332,6 @@ def test_classify_step_reports_a_repl_level_error_as_exception_not_lean_error() 
     assert "unknown proofState" in out.error
 
 
-# ---------------------------------------------------------------------------
-# replbackend: session timeout / teardown
-# ---------------------------------------------------------------------------
 class _FakeServer:
     """Minimal `LeanServer` stand-in: records `run` calls, `kill` calls."""
 
@@ -431,15 +383,8 @@ def test_repl_session_step_sends_the_proof_state_and_tactic() -> None:
     assert request.tactic == "simp"
 
 
-# ---------------------------------------------------------------------------
-# verify: the verdict taxonomy, and its agreement with runner's glyph map
-# ---------------------------------------------------------------------------
 def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings() -> None:
-    """The taxonomy is exactly these seven strings, and each maps to a runner glyph.
-
-    An unmapped verdict would silently render as `given_up`'s glyph instead
-    of failing loudly, so the glyph-map coverage is asserted too.
-    """
+    """Assert seven verdicts map to runner glyphs to avoid silent given_up rendering."""
     from typing import get_args
 
     from smolbench.deduction.lean import runner
@@ -454,12 +399,7 @@ def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings() -> None:
 
 
 def test_verify_imports_with_lean_interact() -> None:
-    """A cold import of the verifier must succeed with only `lean_interact` present.
-
-    Pop/restore, not a bare re-import: leaving the re-executed module in
-    place would make `runner._default_verifier()` diverge from this test
-    module's `verify` global, a failure that depends on execution order.
-    """
+    """Cold import with only `lean_interact`; restore it to avoid order dependence."""
     pytest.importorskip("lean_interact")
     from smolbench.deduction import lean as lean_pkg
 
@@ -473,12 +413,7 @@ def test_verify_imports_with_lean_interact() -> None:
 
 
 def test_verify_cold_import_does_not_pull_in_lean_dojo() -> None:
-    """A cold import of `verify` must not drag `lean_dojo` in with it.
-
-    Runs in a subprocess, not against this interpreter's `sys.modules`:
-    `lean_dojo` is installed in the project venv, so an in-process assertion
-    would pass or fail on whether an earlier test happened to import it.
-    """
+    """Check cold `verify` import in a subprocess because local modules are polluted."""
     proc = subprocess.run(
         [sys.executable, "-c",
          "import sys\n"
@@ -503,9 +438,6 @@ def test_verify_dataclass_fields_are_unchanged() -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
-# verify.try_tail
-# ---------------------------------------------------------------------------
 def test_try_tail_reports_success_when_the_last_tactic_closes_every_goal() -> None:
     session = FakeSession({"intro h": _ok(), "exact foo": _DONE})
     res = verify.try_tail(session, 0, "intro h\nexact foo", "Mini.theoremA")
@@ -554,8 +486,7 @@ def test_try_tail_reports_incomplete_with_the_final_state_when_tactics_run_out()
 
 
 def test_try_tail_reports_an_empty_tail_as_no_answer() -> None:
-    """An empty tail is `no_answer`, not `lean_error`: a truncated/empty
-    generation is not the same claim as "Lean rejected this proof"."""
+    """Empty generation is `no_answer`, not Lean rejection."""
     res = verify.try_tail(FakeSession(), 0, "   \n\n  ", "t")
     assert res.verdict == "no_answer"
     assert "empty tail" in res.error
@@ -590,9 +521,6 @@ def test_try_tail_maps_an_exception_kind_outcome_to_a_raise() -> None:
     assert "unknown proofState" in str(exc.value)
 
 
-# ---------------------------------------------------------------------------
-# verify.open_at_step
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize("k", [-1, 3, 4])
 def test_open_at_step_refuses_an_out_of_range_k(k: int, monkeypatch: pytest.MonkeyPatch) -> None:
     session = FakeSession()
@@ -664,12 +592,8 @@ def test_open_at_step_closes_the_session_when_the_body_raises(
     assert session.closed == 1
 
 
-# ---------------------------------------------------------------------------
-# verify.verify_proof_tail
-# ---------------------------------------------------------------------------
 def test_verify_proof_tail_returns_try_tails_result(monkeypatch: pytest.MonkeyPatch) -> None:
-    # k=1, so the ground-truth prefix ["a"] is replayed before the tail runs;
-    # `FakeSession` raises KeyError on an unscripted tactic, so both must be here.
+    # Prefix and tail both need scripts because k=1 replays ``a`` first.
     session = FakeSession({"a": _ok(), "exact foo": _DONE})
     _install_session(monkeypatch, session)
     res = verify.verify_proof_tail(_bt(["a", "b"]), 1, "exact foo")
@@ -736,9 +660,6 @@ def test_verify_proof_tail_reports_a_failure_to_open_a_session_as_exception(
     assert "elan not found" in res.error
 
 
-# ---------------------------------------------------------------------------
-# verify.replay_ground_truth
-# ---------------------------------------------------------------------------
 def test_replay_ground_truth_reports_a_theorem_with_no_tactics_without_opening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -828,9 +749,6 @@ def test_replay_ground_truth_never_returns_replay_failed(monkeypatch: pytest.Mon
         assert verify.replay_ground_truth(_bt(tactics)).verdict != "replay_failed"
 
 
-# ---------------------------------------------------------------------------
-# Cross-module: the runner's verifier protocol still resolves and matches
-# ---------------------------------------------------------------------------
 def test_runner_default_verifier_resolves_to_this_module() -> None:
     from smolbench.deduction.lean import runner
 
@@ -857,27 +775,17 @@ def test_verify_exposes_every_name_the_runner_protocol_needs() -> None:
         assert hasattr(verify, attr), attr
 
 
-# ---------------------------------------------------------------------------
-# Docs / packaging seams
-#
-# Text-only guarantees (pyproject's `lean` extra, README, smoke skill) live in
-# test_lean_verify_docs.py instead: this module skips wholesale when
-# `lean_interact` is absent, which is when that guarantee must not vanish.
-# ---------------------------------------------------------------------------
+# `test_lean_verify_docs.py` covers text pins when `lean_interact` is absent.
 def test_verify_rows_script_guard_requires_lean_interact() -> None:
     module = load_by_path(
         SCRIPTS / "deduction" / "lean_verify_rows.py", "lvr_seam"
     )
     try:
-        # The guard passes here because lean_interact is installed in this venv.
         module.require_lean_interact()
     finally:
         sys.modules.pop("lvr_seam", None)
 
 
-# ---------------------------------------------------------------------------
-# open_session: configuration errors and retry policy
-# ---------------------------------------------------------------------------
 class _FakeTime:
     """Stand-in for the `time` module: records sleeps instead of taking them."""
 
@@ -899,10 +807,7 @@ def _command(**wire: Any) -> "object":
 def test_open_session_reports_a_misconfigured_root_as_a_repl_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`mathlib_root` raises `RuntimeError`, and `verify_proof_tail` reads a bare
-    `RuntimeError` as ``"replay_failed"`` -- a claim about the CORPUS. A missing
-    `SMOLBENCH_MATHLIB_ROOT` must not condemn every ground-truth proof, so
-    `open_session` has to translate it before it can be mistaken for one."""
+    """Translate missing `SMOLBENCH_MATHLIB_ROOT` so it cannot condemn the corpus."""
     monkeypatch.delenv("SMOLBENCH_MATHLIB_ROOT", raising=False)
     with pytest.raises(replbackend.ReplError) as exc:
         replbackend.open_session(_bt(["a"]))
@@ -947,8 +852,7 @@ class _ElaborationFailsServer:
 def test_open_session_does_not_retry_a_deterministic_statement_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unelaborable statement fails identically every time, so retrying
-    costs 20s of sleeps plus three Lean startups for no different answer."""
+    """Do not retry deterministic statements: retries cost 20s and three startups."""
     monkeypatch.setenv("SMOLBENCH_MATHLIB_ROOT", str(PROJECT))
     fake_time = _FakeTime()
     monkeypatch.setattr(replbackend, "time", fake_time)

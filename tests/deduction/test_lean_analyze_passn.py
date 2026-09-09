@@ -1,4 +1,4 @@
-"""Offline tests for cmd_analyze's pass@N and truncation additions."""
+"""Tests for `cmd_analyze` pass@N and truncation reports."""
 
 from __future__ import annotations
 
@@ -167,7 +167,7 @@ def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path: Path) -> None:
 
 def test_analyze_reports_no_answer_in_its_own_column(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """`analyze`'s table separates `noans` from `lerr` (an empty candidate used to be recorded as `lean_error`); pins the column by name and value, and pins header/row width agreement."""
+    """`analyze` separates `noans` from `lerr` with matching table widths."""
     rows = [
         cell_row(model="model-a", rung="stepk:0", theorem_id="T1", verdict="no_answer",
              raw_response=""),
@@ -190,7 +190,7 @@ def test_analyze_reports_no_answer_in_its_own_column(
 
 def test_analyze_collapses_an_exception_then_retry_duplicate(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A resumed cell (retried after an exception) is one cell, not a 50% pass rate with a spurious N=2 pass@N table; deduping must happen before the pass@N groups are built."""
+    """Dedupe retries before pass@N; one resumed cell is not a 50% N=2 result."""
     rows = [
         cell_row(theorem_id="T1", verdict="exception"),
         cell_row(theorem_id="T1", verdict="success"),
@@ -208,7 +208,7 @@ def test_analyze_collapses_an_exception_then_retry_duplicate(
 
 def test_analyze_keeps_an_exception_only_cell_visible(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Collapsing an exception-only cell must not make it vanish: with no surviving row the first row stands in, still counted once in `exc`, not dropped from the denominator."""
+    """Exception-only cells must remain once in `exc` and the denominator."""
     rows = [
         cell_row(theorem_id="T1", verdict="exception"),
         cell_row(theorem_id="T1", verdict="exception"),
@@ -225,7 +225,7 @@ def test_analyze_keeps_an_exception_only_cell_visible(
 
 def test_analyze_still_sees_real_replicates(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Dedupe is keyed on the full row key, including `replicate_idx`, so two genuine replicates of one cell remain two cells and pass@N still reports N=2."""
+    """Dedupe includes `replicate_idx`, so real replicates retain N=2."""
     rows = [
         cell_row(theorem_id="T1", replicate_idx=0, verdict="lean_error"),
         cell_row(theorem_id="T1", replicate_idx=1, verdict="success"),

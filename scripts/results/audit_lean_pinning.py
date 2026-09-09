@@ -1,13 +1,7 @@
-"""Audit that all 21 deduction lanes ran the SAME pinned theorems.
+"""Audit that all 21 deduction lanes used the same pinned theorems.
 
-Every cross-model claim of the family-ladder study (ladder contrasts, paired
-McNemar, block bootstrap) assumes the lanes are paired, and nothing in the
-pipeline enforces it. Four S3 checks run weakest to strongest, comparing
-rendered prompts by S3 ETag rather than downloading them, so a mismatch is
-still caught if it slips past an earlier check. A pass means the lanes were
-ASKED the same questions, not that their surviving data is identical, and it
-does not vouch for the corpus itself. Read-only, with ambient AWS
-credentials.
+Paired cross-model claims require identical prompts; ETags avoid downloading spool data.
+A pass checks asked questions, not surviving data or corpus validity.
 """
 
 from __future__ import annotations
@@ -24,16 +18,11 @@ from smolbench.evals._aws import fresh_client
 from smolbench.evals.spool import spool_prefix
 from smolbench.evals.study_config import load_study_config, roster_keys
 
-#: From the committed ``study_config.toml`` -- the same file the study writes
-#: to, so this can't check the wrong bucket. Safe at module scope: pure file
-#: I/O, no env vars, so it can't break ``--help`` the way an import-time
-#: `spool_prefix()` call would.
+#: Committed config prevents auditing the wrong bucket; pure I/O keeps `--help` safe.
 _RESULTS = load_study_config().results
 BUCKET = _RESULTS.bucket
 REGION = _RESULTS.region
-#: The 21 lane spec keys, read from the committed study config so the audit
-#: and the audited lanes agree BY CONSTRUCTION, not via a hand-maintained
-#: copy that could silently drop a lane the study actually ran.
+#: Read lane keys from config so a maintained copy cannot silently omit a lane.
 LANES = list(roster_keys())
 
 def _read(s3: Any, key: str) -> str:
@@ -48,23 +37,19 @@ def fetch_manifests(s3: Any, *, run_prefix: str) -> dict[str, dict]:
 def fetch_spool_index(
     s3: Any, *, run_prefix: str
 ) -> tuple[dict[str, set[str]], dict[str, dict[str, str]]]:
-    """List each lane's output-cell keys and prompt ETags in one pass.
-
-    Small single-part uploads make the ETag the object's MD5, so comparing
-    ETags across lanes checks byte equality without downloading ~19 MB x 21
-    of spool.
+    """List lane output keys and prompt ETags; ETags avoid downloading ~19 MB × 21.
 
     Parameters
     ----------
     s3 : Any
         S3 client.
     run_prefix : str
-        Prefix for the audited run.
+        Audited run prefix.
 
     Returns
     -------
     tuple[dict[str, set[str]], dict[str, dict[str, str]]]
-        Per-lane output-cell keys and prompt ETags.
+        Output keys and prompt ETags by lane.
     """
     cells: dict[str, set[str]] = {}
     prompts: dict[str, dict[str, str]] = {}
@@ -89,23 +74,19 @@ def fetch_spool_index(
 def divergent_prompt_cells(
     cell_keys: set[str], prompts: dict[str, dict[str, str]]
 ) -> set[str]:
-    """Cells whose ``prompts/<rung>.md`` is not one shared ETag across `LANES`.
-
-    A missing artifact contributes ``None``, which counts as divergent --
-    otherwise a cell no lane spooled a prompt for would be certified
-    byte-identical on absent evidence.
+    """Return cells without one shared prompt ETag; missing artifacts diverge.
 
     Parameters
     ----------
     cell_keys : set[str]
-        Cell keys to compare.
+        Cell keys.
     prompts : dict[str, dict[str, str]]
-        Prompt ETags by lane and cell key.
+        Prompt ETags by lane and cell.
 
     Returns
     -------
     set[str]
-        Cell keys with divergent prompt ETags.
+        Cells with divergent ETags.
     """
     out: set[str] = set()
     for key in cell_keys:
@@ -118,29 +99,23 @@ def divergent_prompt_cells(
 def reproduce_pin(
     val_json: Path, replay_jsonl: Path, *, limit: int, seed: int
 ) -> tuple[list[str], int]:
-    """Re-derive a pinned theorem set from its documented recipe.
-
-    Mirrors `runner._select_theorems`: keep, in split order, the theorems
-    whose ground-truth proof replays, then sample `limit` of them with
-    ``random.Random(seed).sample`` only when ``0 < limit < len(pool)`` --
-    otherwise the whole pool is kept unsampled. Split order is load-bearing,
-    since ``rng.sample`` is order-sensitive.
+    """Re-derive a pin in split order because seeded sampling is order-sensitive.
 
     Parameters
     ----------
     val_json : Path
-        Benchmark validation JSON file.
+        Validation JSON.
     replay_jsonl : Path
-        Replay results JSONL file.
+        Replay JSONL.
     limit : int
-        Maximum number of passing theorems to sample.
+        Maximum passing theorems.
     seed : int
-        Random-sampling seed.
+        Sampling seed.
 
     Returns
     -------
     tuple[list[str], int]
-        ``(names, pool_size)``, with ``pool_size`` measured before sampling.
+        Names and pre-sampling pool size.
     """
     val = json.loads(val_json.read_text())
     rows = (json.loads(line) for line in replay_jsonl.read_text().splitlines() if line.strip())
@@ -196,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
              "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args(argv)
-    # No inherited pinned shape: each mode makes the operator state its own.
+    # Require each mode's expected shape; inherited values could audit the wrong run.
     if not args.offline and (args.expect_theorems is None or args.expect_cells is None):
         ap.error("--expect-theorems and --expect-cells are required without --offline")
     if (args.reproduce or args.emit_manifest) and args.limit is None:
@@ -206,8 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         ap.error("--val-json and --replay-jsonl are required with --reproduce/--emit-manifest")
 
-    # Corpus root = split file's grandparent; resolved after parsing so an
-    # explicit --metadata always wins.
+    # Resolve after parsing so explicit `--metadata` wins.
     if args.metadata is None and args.val_json is not None:
         args.metadata = args.val_json.parent.parent / "metadata.json"
 
@@ -221,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         run_prefix = args.spool_prefix or spool_prefix()
         s3 = fresh_client("s3", REGION)
 
-        # -- Layer 1: as-run config --------------------------------------
+        # As-run config.
         mans = fetch_manifests(s3, run_prefix=run_prefix)
         blocks = {k: json.dumps(m["config"]["theorems"], sort_keys=True) for k, m in mans.items()}
         seeds = {k: m["config"]["seed"] for k, m in mans.items()}
@@ -232,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[1/4] config      : {len(set(blocks.values()))} distinct theorems block, "
               f"{len(set(seeds.values()))} distinct seed  -> {next(iter(blocks.values()))}")
 
-        # -- Layers 2-4: what actually landed in the spool ----------------
+        # What landed in the spool.
         cells, prompts = fetch_spool_index(s3, run_prefix=run_prefix)
         thm_sets = {k: {c.split("|")[0] for c in v} for k, v in cells.items()}
         inter, union = set.intersection(*thm_sets.values()), set.union(*thm_sets.values())
@@ -254,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[4/4] prompt bytes: {len(cunion) - len(divergent)}/{len(cunion)} cells "
               f"byte-identical across all {len(LANES)} lanes")
 
-    # -- Optional: rederive the pin from its documented recipe --------
+    # Optional pin reproduction.
     if args.reproduce or args.emit_manifest:
         names, pool_size = reproduce_pin(
             args.val_json, args.replay_jsonl, limit=args.limit, seed=args.seed)
@@ -263,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             print("[+  ] reproduce   : --offline set, skipping the reproduced-pin-vs-"
                   f"spooled-set comparison (no spool to compare against); sha256={digest[:16]}")
         else:
-            # The audit deliberately shares the production artifact slug.
+            # Use the production slug to compare like-for-like artifacts.
             from smolbench.deduction.lean import runner
 
             slugged = {runner.slug_theorem(n) for n in names}

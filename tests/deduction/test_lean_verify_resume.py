@@ -1,4 +1,4 @@
-"""Tests for scripts/deduction/lean_verify_rows.py: resume, pairing, sentinel gate, pure units."""
+"""Tests for `lean_verify_rows.py`."""
 
 from __future__ import annotations
 
@@ -130,7 +130,6 @@ def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(
     assert _proj(out[1:3], "verify_ms") == [(111,), (222,)]
     assert _proj([out[0], out[5]], "verdict", "tactics_applied") == [("success", 5)] * 2
     assert out[0]["ms"] == 42  # a prior replay is not reverted to the all_rows placeholder
-    # t1 skipped; t2 dedups; t3's slot holds the PRIOR row wholesale, so OLD text replays too.
     assert sorted(fake.tried) == [("t2", "tac"), ("t3", "NEW"), ("t3", "OLD"), ("t4", "tac")]
 
 
@@ -157,7 +156,6 @@ def test_full_pass_sentinel_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         if prior is None:
             assert verdicts == [verdict, verdict]
         else:
-            # Resume really marked a group done, so the gate carries no `not done` term.
             assert {"success", "unverified"} <= set(verdicts)
 
 
@@ -225,8 +223,7 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(
 
     monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
 
-    # Drive main() itself, intercepting at list_runs, so this proves main resolves
-    # the default rather than merely computing it correctly.
+    # Exercise `main()` so the call-time default is tested.
     seen = {}
 
     def _list_runs(client: Any, bucket: str, key_prefix: str, pattern: str) -> list[str]:
@@ -242,17 +239,13 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(
     assert key == f"{DEDUCTION_SPOOL_PREFIX}/scaling_glm-4.7/verified_rows.jsonl"
     assert "//" not in key and not key.startswith("/")
 
-    # An explicit flag overrides the default.
     other = lvr._build_arg_parser().parse_args(
         ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/somewhere/else"])
     assert lvr.parse_s3_uri(other.s3_prefix) == (lvr.SPOOL_BUCKET, "somewhere/else")
 
 
-# A group of only replay_failed/exception cells is not done.
-
-
 def test_resume_treats_an_all_replay_failed_group_as_pending() -> None:
-    """A group where every cell reads replay_failed/exception was never measured and must stay pending; resume_done_groups used to treat "no unverified cell" as done, disagreeing with error_bars, which scores those same cells as failures."""
+    """All `replay_failed`/`exception` groups must stay pending as unmeasured."""
     unmeasured = [_cell("T", rung="stepk:1", verdict="replay_failed"),
                   _cell("T", rung="hint:2", verdict="exception")]
     assert lvr.resume_done_groups(unmeasured) == set(), (
@@ -268,13 +261,10 @@ def test_resume_treats_an_all_replay_failed_group_as_pending() -> None:
     assert lvr.resume_done_groups(pending_sentinel) == set()
 
 
-# A torn final line, and per-run isolation.
-
-
 def test_download_rows_tolerates_and_reports_a_torn_final_line(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
-    """A half-written last line (SIGKILL mid-write on a spot box) must be dropped AND reported, not silently swallowed alongside real corruption."""
+    """A torn final line must be dropped and reported."""
     fake = _Fake()
     good = [_cell("T", rung="stepk:1"), cell_row(kind="sanity", theorem_id="T")]
     fake.objects["k"] = _dump(good)[:-1] + b'\n{"kind": "cell", "theo'
@@ -289,7 +279,7 @@ def test_download_rows_tolerates_and_reports_a_torn_final_line(
 
 
 def test_download_rows_still_refuses_mid_file_corruption(tmp_path: Path) -> None:
-    """Only the final line is recoverable; a corrupt line elsewhere is real damage that must propagate, since resume can't re-derive a row from the middle of a file."""
+    """Only final-line corruption is recoverable; mid-file damage must raise."""
     fake = _Fake()
     fake.objects["k"] = b'{"kind": "cell", "theo\n' + _dump([_cell("T")])
 
@@ -300,7 +290,7 @@ def test_download_rows_still_refuses_mid_file_corruption(tmp_path: Path) -> None
 def test_one_run_failing_does_not_abort_the_others(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """One bad run must not abort the rest of _verify_every_run's loop; each run is isolated and counted as failed instead of dying mid-pass."""
+    """One bad run must not abort the remaining runs."""
     seen = []
 
     def _verify_run(*, run: str, **kw: Any) -> int:

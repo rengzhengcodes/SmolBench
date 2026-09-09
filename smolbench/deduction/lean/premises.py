@@ -1,12 +1,7 @@
-"""Premise lookup over LeanDojo Benchmark 4 `corpus.jsonl`.
+"""Look up traced Lean premises and their source text.
 
-`corpus.jsonl` has one record per Lean source file in the traced repo:
-    {path, imports: [paths], premises: [{full_name, code, start, end, kind}]}
-
-Two layers of premise text: `signature(p)` (the prefix of `code` before the
-first top-level `:=`) and `body_with_proof(p)` (slices the source file from the
-premise's `start` to the next top-level declaration, so theorem proof bodies
-are captured too).
+`body_with_proof` slices source through the next declaration so theorem proofs
+survive the signature-only corpus record.
 """
 
 from __future__ import annotations
@@ -22,38 +17,25 @@ from .corpus import data_root, metadata
 
 @dataclass(frozen=True)
 class Premise:
-    """One premise (theorem/def/instance/etc.) declared in the traced repo.
+    """A declaration in the traced repository."""
 
-    Built from one entry of a `corpus.jsonl` record's ``premises`` list.
-    ``full_name`` is the join key to the lighter per-reference dicts in
-    ``corpus.TracedTactic.premises``, which `context.py` resolves via `lookup`.
-    """
-
-    #: Fully-qualified Lean declaration name (e.g. ``Nat.add_comm``), unique
-    #: within the index (see `_index`'s collision-handling note).
+    #: Fully-qualified declaration name.
     full_name: str
-    #: Source text as captured by the corpus: signature-only for theorems
-    #: (proof omitted), signature plus ``:= body`` for defs.
+    #: Corpus source text.
     code: str
-    #: ``(line, column)`` of the declaration's start in `file_path`; line is
-    #: 1-indexed (see `slice_full_decl`'s ``start_line - 1``).
+    #: 1-indexed start ``(line, column)``.
     start: tuple[int, int]
-    #: ``(line, column)`` of the declaration's end in `file_path`; see `start`.
+    #: End ``(line, column)``.
     end: tuple[int, int]
-    #: Corpus-reported declaration kind (e.g. ``"theorem"``, ``"def"``,
-    #: ``"instance"``), surfaced alongside the premise's signature/body in
-    #: rendered hint-chain prompts (``context._render_hint_parts``).
+    #: Corpus declaration kind.
     kind: str
-    #: Path (relative to the traced repo root) of the source file this premise
-    #: is declared in; used by `_resolve_source` to locate the source for
-    #: `body_with_proof`'s slicing. Comes from the file record's `path`, not
-    #: the premise's own JSON dict, so every `Premise` from one file shares it.
+    #: Corpus-relative source path.
     file_path: str
 
 
 @lru_cache(maxsize=1)
 def _index() -> dict[str, Premise]:
-    """Load corpus.jsonl into a full_name -> Premise dict (~5s, cached)."""
+    """Load the ~5s cached ``corpus.jsonl`` index."""
     path = data_root() / "corpus.jsonl"
     idx: dict[str, Premise] = {}
     with path.open() as f:
@@ -61,7 +43,7 @@ def _index() -> dict[str, Premise]:
             rec = json.loads(line)
             for p in rec["premises"]:
                 fn = p["full_name"]
-                # On collisions keep the first; mathlib4 has very few duplicates.
+                # Keep the first collision.
                 if fn in idx:
                     continue
                 idx[fn] = Premise(
@@ -76,42 +58,37 @@ def _index() -> dict[str, Premise]:
 
 
 def lookup(full_name: str) -> Premise | None:
-    """Look up a premise by fully-qualified name; None when absent.
+    """Look up a premise by full name.
 
-    Absent means declared outside the traced repo, or dropped as a duplicate
-    by `_index`. Callers treat None as "premise unavailable", not an error --
-    `_render_hint_parts` renders a placeholder instead of raising.
+    Absence renders as a placeholder rather than an error.
 
     Parameters
     ----------
     full_name : str
-        Fully-qualified premise name.
+        Premise name.
 
     Returns
     -------
     Premise | None
-        Matching premise, or None when absent.
+        Matching premise, if present.
     """
     return _index().get(full_name)
 
 
 def signature(p: Premise) -> str:
-    """The premise signature: `p.code` up to the first top-level `:=`, rstripped.
+    """Return source through the first top-level ``:=``.
 
-    "Top-level" means outside any ``[]``, ``()`` or ``{}``: Lean attribute
-    syntax like ``@[to_additive (attr := simp) "..."]`` puts a ``:=`` inside the
-    attribute, so a naive split would chop the declaration in half. Many mathlib
-    theorems have no top-level ``:=``; those return the full `code`.
+    Ignore bracketed ``:=`` so attributes do not truncate declarations.
 
     Parameters
     ----------
     p : Premise
-        Premise whose source text is parsed.
+        Premise to parse.
 
     Returns
     -------
     str
-        Signature text with trailing whitespace removed.
+        Rstripped signature.
     """
     s = p.code
     depth = 0
@@ -126,11 +103,6 @@ def signature(p: Premise) -> str:
             return s[:i].rstrip()
         i += 1
     return s.rstrip()
-
-
-# ---------------------------------------------------------------------------
-# Source-file slicing — captures real proof bodies (theorems too)
-# ---------------------------------------------------------------------------
 
 
 _TOP_LEVEL_RE = re.compile(
@@ -149,22 +121,14 @@ _TOP_LEVEL_RE = re.compile(
 
 @lru_cache(maxsize=1)
 def _traced_root() -> Path | None:
-    """The cached, traced mathlib4 repo matching the current corpus's commit, or None.
+    """Return the cached repository matching the corpus commit.
 
-    A box that traced mathlib4 twice has multiple
-    ``leanprover-community-mathlib4-*/mathlib4`` dirs under
-    ``~/.cache/lean_dojo``; picking sorted-first would silently slice premise
-    text from the wrong mathlib4, so this matches the dir whose commit equals
-    `corpus.metadata()`'s ``from_repo.commit``. Memoized like
-    `corpus.load_split`, so repointing ``SMOLBENCH_LEAN_DATA`` mid-process
-    needs `corpus.reset_caches` to retarget it.
-
-    Returns None (never raises) when no corpus is bootstrapped, its metadata
-    lacks ``from_repo.commit``, or no cache dir matches: the traced repo is an
-    optional enrichment (upgrades `body_with_proof` from the corpus's stored
-    `Premise.code` to a full source slice), so a machine without it must
-    still render every rung. Only `FileNotFoundError` and `KeyError` are
-    caught, so any other failure still surfaces.
+    Match the commit to avoid silently slicing another trace; missing source is
+    optional, so return ``None`` while other failures surface; only
+    `FileNotFoundError` and `KeyError` are caught. Call
+    `corpus.reset_caches` after changing ``SMOLBENCH_LEAN_DATA`` mid-process.
+    The matching directory is
+    ``~/.cache/lean_dojo/leanprover-community-mathlib4-{commit}/mathlib4``.
     """
     try:
         commit = metadata()["from_repo"]["commit"]
@@ -176,19 +140,17 @@ def _traced_root() -> Path | None:
 
 
 def _resolve_source(file_path: str) -> Path | None:
-    """Resolve a corpus `file_path` against the traced repo root; None if absent.
-
-    Also ``None`` when there is no traced repo at all (`_traced_root`).
+    """Resolve a corpus path in the traced repository.
 
     Parameters
     ----------
     file_path : str
-        Corpus-relative source path.
+        Corpus-relative path.
 
     Returns
     -------
     Path | None
-        Resolved source path, or None if absent.
+        Source path, if present.
     """
     root = _traced_root()
     if root is None:
@@ -199,28 +161,25 @@ def _resolve_source(file_path: str) -> Path | None:
 
 @lru_cache(maxsize=8192)
 def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: int = 200) -> str:
-    """Slice the full declaration (statement + proof body) from a source file.
+    """Slice a declaration and proof from source.
 
-    Reads `file_path` (corpus-relative, via `_resolve_source`) from 1-indexed
-    `start_line` and stops at the first of: the next column-0 line matching a
-    top-level keyword (theorem/def/...), searched from 1-indexed `end_line`
-    onward; `max_lines` lines consumed; or end of file.
+    Stop at the next top-level declaration, ``max_lines``, or EOF.
 
     Parameters
     ----------
     file_path : str
-        Corpus-relative source path.
+        Corpus-relative path.
     start_line : int
-        1-indexed declaration start line.
+        1-indexed start line.
     end_line : int
-        1-indexed declaration end line.
+        1-indexed end line.
     max_lines : int, optional
-        Maximum number of lines to consume.
+        Maximum slice length.
 
     Returns
     -------
     str
-        The slice rstripped, or ``""`` if the source file is not found.
+        Rstripped slice, if source exists.
     """
     src = _resolve_source(file_path)
     if src is None:
@@ -229,7 +188,6 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
     s = max(0, start_line - 1)
     if s >= len(lines):
         return ""
-    # Search forward starting one line *after* end_line for the next top-level decl.
     search_from = max(s + 1, end_line)
     cap = min(s + max_lines, len(lines))
     for i in range(search_from, cap):
@@ -239,62 +197,47 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
 
 
 def body_with_proof(p: Premise) -> str:
-    """The full declaration including any proof body, via `slice_full_decl`.
-
-    Falls back to `p.code` when the source file is not accessible.
+    """Return a full declaration or its corpus fallback.
 
     Parameters
     ----------
     p : Premise
-        Premise whose declaration is retrieved.
+        Premise to retrieve.
 
     Returns
     -------
     str
-        Full declaration text, or the corpus source fallback.
+        Declaration text.
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
 
 
 def has_full_source(p: Premise) -> bool:
-    """True iff `body_with_proof(p)` returned a real traced-repo slice, not the corpus fallback.
+    """Whether a traced-source slice is available.
 
-    `body_with_proof`'s return value alone can't distinguish the two: a
-    corpus `code` field that already includes a proof (common for `def`s)
-    looks identical to a genuine slice. `context._render_hint_parts` needs
-    this to label its `hint:2` section accurately. A separate function
-    rather than changing `body_with_proof`'s signature, since other callers
-    depend on it always returning usable text, never a bool. Calling
-    `slice_full_decl` again here is cheap: it's `lru_cache`d on
-    ``(file_path, start, end)``.
+    A corpus ``code`` field can include a proof, so text alone cannot identify
+    a slice; `context._render_hint_parts` needs this distinction. Keep
+    `body_with_proof` returning usable text for its callers; the second slice
+    call is cheap because `slice_full_decl` is cached.
 
     Parameters
     ----------
     p : Premise
-        Premise whose source availability is checked.
+        Premise to check.
 
     Returns
     -------
     bool
-        Whether `body_with_proof(p)` returned a real traced-repo slice.
+        Whether traced source was sliced.
     """
     return bool(slice_full_decl(p.file_path, p.start[0], p.end[0]))
 
 
-# ---------------------------------------------------------------------------
-# Per-premise dependency graph (proper transitive closure for hint:3 / hint:4)
-# ---------------------------------------------------------------------------
-
-
-# Lean 4 identifier: letter/underscore start, then alnum/underscore/prime/dot.
-# ASCII-leaning since lookups go against the corpus index, whose full_names
-# are ASCII.
+# ASCII identifiers match corpus full names.
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
-#: Lean keywords, tactic vocabulary, and short identifiers excluded from the
-#: premise dependency graph. Frozen once because membership is checked for
-#: every token; single-character names are handled separately.
+#: Excluded Lean tokens; frozen because every identifier checks membership.
 _LEAN_NOISE: frozenset[str] = frozenset({
     "theorem", "lemma", "def", "instance", "structure", "inductive",
     "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
@@ -314,11 +257,7 @@ _LEAN_NOISE: frozenset[str] = frozenset({
 
 @lru_cache(maxsize=1)
 def _short_name_index() -> dict[str, list[str]]:
-    """Map each premise's last-dot segment to the list of full_names sharing it.
-
-    Proof bodies reference premises both fully qualified (``Set.subset_def``)
-    and by bare short name (after ``open Set``); this index matches the latter.
-    """
+    """Index full names by final segment for bare-name references."""
     out: dict[str, list[str]] = {}
     for full in _index().keys():
         short = full.rsplit(".", 1)[-1]
@@ -328,22 +267,20 @@ def _short_name_index() -> dict[str, list[str]]:
 
 @lru_cache(maxsize=4096)
 def referenced_premises(full_name: str) -> tuple[Premise, ...]:
-    """Find premises referenced by name in `full_name`'s body (proof plus signature).
+    """Find references in a premise body.
 
-    Resolves each identifier-like token against the premise index by exact
-    full-name match, or by short-name match when unambiguous, filtering out
-    `_LEAN_NOISE`. Returned as a tuple so the result stays hashable and
-    lru-cacheable.
+    Prefer exact full names; bare names resolve only when unambiguous. Tuples
+    keep cached results hashable.
 
     Parameters
     ----------
     full_name : str
-        Fully-qualified premise name.
+        Premise name.
 
     Returns
     -------
     tuple[Premise, ...]
-        Referenced premises, empty if `full_name` is unknown or references nothing.
+        Referenced premises.
     """
     p = lookup(full_name)
     if p is None:
@@ -358,16 +295,12 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     seen: set[str] = {full_name}
     out: list[Premise] = []
     for tok in _IDENT_RE.findall(text):
-        # `len(tok) <= 1` makes single-char identifiers unreachable regardless
-        # of `_LEAN_NOISE`.
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
-        # Exact full-name match (e.g. `Set.subset_def`).
         if tok in idx and tok not in seen:
             seen.add(tok)
             out.append(idx[tok])
             continue
-        # Short-name match — only when unambiguous (one full_name candidate).
         if "." not in tok:
             cands = short_idx.get(tok)
             if cands and len(cands) == 1 and cands[0] not in seen:
@@ -379,28 +312,24 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 def premise_dep_closure(
     seeds: list[Premise], depth: int, max_premises: int = 500,
 ) -> list[Premise]:
-    """BFS over per-premise references from `seeds`, to depth `depth`.
+    """Return a breadth-first premise closure.
 
-    `seeds` are excluded from the result. Empty `seeds` or ``depth <= 0``
-    short-circuits to ``[]``. `max_premises` is checked mid-frontier, so the
-    BFS returns the instant it's reached. Result is in strictly hop-major
-    order (within a hop: frontier order, then per-premise reference order),
-    deduped at first-discovered hop, so the `max_premises` cut always drops
-    the deepest, least-relevant tail.
+    Excludes seeds; order is hop-major and first-discovered, so the cap drops
+    the deepest, least-relevant references.
 
     Parameters
     ----------
     seeds : list[Premise]
-        Starting premises, excluded from the result.
+        Starting premises, excluded from results.
     depth : int
-        Maximum reference-hop depth.
+        Maximum hop depth.
     max_premises : int, optional
-        Maximum number of premises to return.
+        Result cap.
 
     Returns
     -------
     list[Premise]
-        BFS-ordered referenced-premise closure.
+        Breadth-first closure.
     """
     if depth <= 0 or not seeds:
         return []

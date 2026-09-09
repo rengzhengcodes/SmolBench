@@ -1,17 +1,7 @@
-"""Open a lean-interact REPL session, replay tactics, return a verdict.
+"""Replay Lean tactics and assign verification verdicts.
 
-Two patterns:
-  - `verify_proof_tail(bt, k, tail)` — one REPL session per call: replay
-    the prefix, then run the tail. Used by `run-cell`.
-  - `open_at_step(bt, k)` + `try_tail(session, state, tail)` — open once and
-    branch many tails from the same checkpoint, without re-replaying the
-    prefix. Used by `sweep`, where the rungs, models, and replicates of a
-    (theorem, k) share one session, saving a Lean process startup per cell.
-
-The session itself -- starting a Lean REPL on a mathlib4 checkout, deriving the
-theorem's statement, and turning a REPL reply into a `replbackend.StepOutcome`
--- lives in `smolbench.deduction.lean.replbackend`. This module owns only the
-verdict policy on top of it.
+`open_at_step` shares a checkpoint among tails to avoid a Lean startup per
+cell; `replbackend` owns session mechanics while this module owns verdict policy.
 """
 
 from __future__ import annotations
@@ -23,8 +13,7 @@ from typing import Iterator, Literal
 try:
     import lean_interact  # noqa: F401
 except ImportError as exc:
-    # Only this module -- the Lean-side verifier -- needs lean_interact; the
-    # generation/analysis modules import without it. Re-raise with the fix.
+    # Keep generation and analysis importable without the Lean-only dependency.
     raise ImportError(
         "smolbench.deduction.lean.verify requires the 'lean_interact' package "
         "(the `lean` extra). Install it into the project venv with\n"
@@ -35,55 +24,20 @@ except ImportError as exc:
         "lean_interact."
     ) from exc
 
-# Imported as a MODULE, not `from .replbackend import open_session`: every
-# call below goes through `replbackend.open_session`/`ReplError`, so tests
-# can monkeypatch the backend without a Lean toolchain.
+# Import the module so tests can monkeypatch its backend without Lean.
 from . import replbackend
 from .corpus import BenchmarkTheorem
 
 
-# ---------------------------------------------------------------------------
-# Verdict taxonomy
-# ---------------------------------------------------------------------------
-#
-# All 7 values are valid for `ProofResult.verdict`. `ReplayResult.verdict`
-# (`replay_ground_truth`) only takes 5: a full ground-truth replay has no
-# prefix/tail split and no LLM candidate to be empty, so it never produces
-# "replay_failed" or "no_answer" -- both describe a candidate tail.
-#
-#   success       -- proofStatus == "Completed": every goal closed.
-#   lean_error    -- Lean rejected a tactic (error-severity message, or
-#                    proofStatus == Error); `error` holds Lean's message.
-#                    Warnings don't count. A tail that splits to no tactics
-#                    is "no_answer", not this -- Lean never saw anything to
-#                    reject.
-#   incomplete    -- every tactic ran without error, but a goal remained
-#                    open when tactics ran out.
-#   given_up      -- a tactic left a `sorry` behind.
-#   no_answer     -- (ProofResult only) `tail` split to zero tactics: the
-#                    model returned nothing extractable, most often a
-#                    reasoning model truncated inside an unclosed `<think>`
-#                    block (see `prompt.extract_tactic_block`). Scored 0 by
-#                    `power_analysis.grade_verdicts` (not in
-#                    `UNMEASURABLE_VERDICTS`) but kept out of `lean_error`'s
-#                    bucket: "Lean said no" and "there was nothing to say"
-#                    are different failure modes for the axis this study
-#                    measures.
-#   exception     -- an unexpected Python exception (network, REPL, or
-#                    parsing) rather than a Lean-reported outcome; `error`
-#                    holds `f"{type(exc).__name__}: {exc}"`. A REPL timeout
-#                    lands here too (a `replbackend.ReplError` with a
-#                    `timeout:`-shaped message) rather than an eighth
-#                    `"timeout"` verdict, since `runner.py`'s verdict->glyph
-#                    map enumerates exactly these seven. Distinct from
-#                    "no_answer": here the candidate was never run to a
-#                    verdict at all.
-#   replay_failed -- (ProofResult only) `open_at_step`'s prefix replay
-#                    (tactics 0..k-1) failed to leave an open goal state.
-#                    `verify_proof_tail` catches that `RuntimeError` and
-#                    reports this rather than "exception", so a broken
-#                    ground-truth prefix stays distinguishable from a broken
-#                    candidate tail.
+# `ProofResult` has all 7 verdicts; ground-truth replay has 5 because it has
+# neither a candidate tail nor a prefix/tail split. Empty tails are `no_answer`,
+# not `lean_error`, because Lean received no tactic. Timeouts remain `exception`
+# rather than an eighth `timeout`: runner.py's glyph map enumerates these seven.
+# `no_answer` scores 0 but is not `UNMEASURABLE_VERDICTS`: no response and a
+# Lean rejection are distinct study failures. Warnings do not count as errors.
+# `success` closes goals, `incomplete` leaves one, and `given_up` leaves `sorry`.
+# `exception` is a Python or REPL failure rather than a Lean verdict.
+# `replay_failed` keeps a broken ground-truth prefix distinct from a bad tail.
 Verdict = Literal[
     "success", "lean_error", "incomplete", "given_up", "no_answer", "exception", "replay_failed",
 ]
@@ -91,69 +45,55 @@ Verdict = Literal[
 
 @dataclass
 class ReplayResult:
-    """Outcome of replaying a theorem's full recorded ground-truth proof.
+    """Outcome of replaying a theorem's recorded proof.
 
-    Produced by `replay_ground_truth`, the sanity gate (`cli.py`'s ``replay`` /
-    ``filter``, `runner.sweep`'s per-theorem sanity row) that the ground truth is
-    replayable before any LLM tail is compared against it.
+    Ground-truth replay is a sanity gate before comparing candidate tails.
     """
 
-    #: The theorem's `full_name`.
+    #: Theorem full name.
     theorem: str
-    #: One of the 5 values a ground-truth replay can take (see the module's
-    #: verdict taxonomy comment); never "replay_failed" or "no_answer".
+    #: Ground-truth verdict; never ``"replay_failed"`` or ``"no_answer"``.
     verdict: Verdict
-    #: Tactics successfully applied before `verdict` was reached. Equals
-    #: `tactics_total` for ``"success"``/``"incomplete"``, less for
-    #: ``"lean_error"``/``"given_up"``, which stop mid-replay.
+    #: Tactics applied before the verdict.
     tactics_applied: int
-    #: Total number of tactics in the theorem's recorded proof
-    #: (``len(bt.traced_tactics)``). 0 when `bt.has_proof` is False.
+    #: Recorded tactic count; 0 without a proof.
     tactics_total: int
-    #: Lean's error message (``"lean_error"``) or
-    #: ``f"{type(exc).__name__}: {exc}"`` (``"exception"``); None for every
-    #: other verdict.
+    #: Lean or Python error message.
     error: str | None = None
-    #: Pretty-printed final tactic state, only when replay ends
-    #: ``"incomplete"`` with goals still open; None otherwise.
+    #: Final goals for ``"incomplete"``.
     final_state_pp: str | None = None
 
 
 def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
-    """Re-raise a REPL-level outcome as `replbackend.ReplError`.
+    """Raise a returned REPL failure.
 
-    The production session raises these failures directly, but the session is
-    an injectable seam whose substitutes may return an exception outcome.
+    Injectable test sessions return failures while production sessions raise them.
 
     Parameters
     ----------
     outcome : replbackend.StepOutcome
-        REPL-level outcome to inspect.
+        REPL outcome.
     """
     if outcome.kind == "exception":
         raise replbackend.ReplError(outcome.error or "REPL-level failure with no message")
 
 
 def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResult:
-    """Open a REPL session, apply the recorded tactics in order, report verdict.
+    """Replay recorded tactics and report a verdict.
 
-    Every exception from opening or driving the session is reported as
-    `verdict="exception"` rather than propagated:
-    callers loop over many theorems, and one failure must not abort the
-    batch.
+    Reports exceptions so one theorem cannot abort a batch.
 
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem whose recorded tactics are replayed.
+        Theorem to replay.
     timeout : int, optional
-        REPL session timeout.
+        Session timeout.
 
     Returns
     -------
     ReplayResult
-        "incomplete" with zero counts, without opening a session, when
-        `bt.has_proof` is False.
+        Replay outcome; proofless theorems are incomplete with zero counts.
     """
     if not bt.has_proof:
         return ReplayResult(bt.full_name, "incomplete", 0, 0, error="no traced tactics")
@@ -161,9 +101,7 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
     tactics = [tt.tactic for tt in bt.traced_tactics]
 
     try:
-        # Opened OUTSIDE the try/finally: if open() itself raises, there is no
-        # session to close, and a `finally` referencing an unbound name would
-        # replace the real diagnosis with a `NameError`.
+        # Open before ``finally`` so an open failure keeps its diagnosis.
         session, state = replbackend.open_session(bt, timeout=timeout)
         try:
             outcome = None
@@ -171,7 +109,7 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
                 outcome = session.step(state, tac)
                 _raise_if_repl_failure(outcome)
                 if outcome.kind == "lean_error":
-                    # `i` counts the tactics applied BEFORE the failure.
+                    # ``i`` excludes the rejected tactic.
                     return ReplayResult(
                         bt.full_name, "lean_error", i, len(tactics),
                         error=outcome.error,
@@ -184,7 +122,6 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
                     return ReplayResult(
                         bt.full_name, "success", i + 1, len(tactics),
                     )
-                # "incomplete": thread the new proof state into the next step.
                 state = outcome.proof_state
             return ReplayResult(
                 bt.full_name, "incomplete", len(tactics), len(tactics),
@@ -200,46 +137,34 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
 
 @dataclass
 class ProofResult:
-    """Outcome of trying a candidate proof tail from a specific proof step.
+    """Outcome of trying a candidate proof tail."""
 
-    Produced by `try_tail` (and its wrapper `verify_proof_tail`), and
-    constructed directly by `runner`'s exception handlers.
-    """
-
-    #: The theorem's `full_name`.
+    #: Theorem full name.
     theorem: str
-    #: Outcome of trying `tail_tried`; see the module's verdict taxonomy
-    #: comment.
+    #: Candidate-tail verdict.
     verdict: Verdict
-    #: The candidate tail text attempted, recorded even on failure so result
-    #: rows and summaries can show what was actually tried.
+    #: Attempted tail, retained for result rows.
     tail_tried: str
-    #: Lean's error message, prefixed with which tail step failed
-    #: ("lean_error"); the prefix-replay failure message ("replay_failed");
-    #: `f"{type(exc).__name__}: {exc}"` ("exception"); or a fixed string
-    #: naming the tail as empty ("no_answer"). None otherwise.
+    #: Failure message, if any.
     error: str | None = None
-    #: Pretty-printed final tactic state, only when the tail ends
-    #: ``"incomplete"`` with goals still open; None otherwise.
+    #: Final goals for ``"incomplete"``.
     final_state_pp: str | None = None
 
 
 def _split_tactics(tail: str) -> list[str]:
-    """Split an LLM-produced tail into one stripped, non-blank line per tactic.
+    """Split a tail into stripped, non-blank tactic lines.
 
-    The REPL's `ProofStep` takes one tactic per request. Deliberately does *not*
-    split on ``;`` or ``<;>``: those are combinators, and ``t1 <;> t2`` is one
-    tactic.
+    Do not split ``;`` or ``<;>``: they are single-tactic combinators.
 
     Parameters
     ----------
     tail : str
-        LLM-produced tactic text.
+        Candidate tactic text.
 
     Returns
     -------
     list[str]
-        Stripped, non-blank tactic lines.
+        Tactic lines.
     """
     return [line.strip() for line in tail.splitlines() if line.strip()]
 
@@ -247,46 +172,35 @@ def _split_tactics(tail: str) -> list[str]:
 def try_tail(
     session: replbackend.ReplSession, state_at_k: int, tail: str, theorem_name: str
 ) -> ProofResult:
-    """Apply each line of `tail` as a separate tactic from `state_at_k`.
+    """Try tail tactics from a checkpoint.
 
-    Proof states are immutable and `replbackend.ReplSession.step` returns a
-    new one, so many calls branch independently from the same `state_at_k`
-    checkpoint with no re-replay. The four parameters are positional:
-    `runner.py` calls them positionally.
-
-    `replbackend.ReplError` is deliberately propagated rather than turned
-    into a verdict, so callers' `except Exception -> "exception"` handlers
-    never record an infrastructure outage as a Lean judgement.
+    Propagates `ReplError` so infrastructure failures are not Lean verdicts.
+    Parameters stay positional because `runner.py` calls them positionally.
 
     Parameters
     ----------
     session : replbackend.ReplSession
-        REPL session that applies the candidate tactics.
+        REPL session.
     state_at_k : int
-        Proof-state checkpoint from which to start.
+        Starting proof state.
     tail : str
-        Candidate proof-tail text.
+        Candidate tail.
     theorem_name : str
-        Caller-supplied (neither `session` nor `state_at_k` identifies a theorem) and
-        recorded verbatim.
+        Theorem name to record.
 
     Returns
     -------
     ProofResult
-        "success", "given_up", "incomplete" (`final_state_pp` holds the last
-        goals), "lean_error" (`error` names which step Lean rejected), or
-        "no_answer" (`tail` splits to no tactics). Never "exception" or
-        "replay_failed" -- wrappers produce those.
+        Tail verdict; never ``"exception"`` or ``"replay_failed"``.
 
     Raises
     ------
     replbackend.ReplError
-        If the REPL itself fails (timeout, closed pipe, unknown proof state).
+        REPL failure such as timeout or closed pipe.
     """
     tactics = _split_tactics(tail)
     if not tactics:
-        # Not "lean_error": Lean was never handed a tactic to reject, so
-        # recording one would misattribute a truncated/empty generation.
+        # Empty tails are not errors because Lean received no tactic.
         return ProofResult(
             theorem_name, "no_answer", tail,
             error="empty tail: the response contained no extractable tactic lines",
@@ -306,8 +220,6 @@ def try_tail(
             )
         if outcome.kind == "given_up":
             return ProofResult(theorem_name, "given_up", tail)
-        # "incomplete": branch the next tactic off the state just reached, not
-        # off `state_at_k`.
         state = outcome.proof_state
     return ProofResult(
         theorem_name, "incomplete", tail,
@@ -317,37 +229,31 @@ def try_tail(
 
 @contextlib.contextmanager
 def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[tuple]:
-    """Open a REPL session, replay tactics 0..k-1, yield `(session, state_at_k)`.
+    """Replay a prefix and yield its session and state.
 
-    The prefix is replayed once so many `try_tail` calls can branch from the
-    same checkpoint. The session always closes, whether the `with`-block
-    completes, raises, or the prefix replay raises first.
-
-    That is a ground-truth problem, distinct from a tail-verification failure, which is
-    reported as a `ProofResult` verdict, never raised.
+    Shares one replay among tails; a broken prefix raises rather than becoming a tail verdict.
+    Always closes the session.
 
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem whose tactic prefix is replayed.
+        Theorem to replay.
     k : int
-        Index of the proof-state checkpoint to open.
+        Checkpoint index.
     timeout : int, optional
-        REPL session timeout.
+        Session timeout.
 
     Yields
     ------
     tuple
-        REPL session and proof state at step `k`.
+        Session and proof state at ``k``.
 
     Raises
     ------
     ValueError
-        If `k` is outside ``[0, len(bt.traced_tactics))``, before any session
-        opens.
+        ``k`` outside the recorded tactics.
     RuntimeError
-        If a prefix tactic doesn't leave an open goal state; a plain `RuntimeError`, not
-        `replbackend.ReplError`.
+        Prefix did not leave an open goal state; this is not a REPL failure.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         raise ValueError(f"k={k} out of range [0, {len(bt.traced_tactics)})")
@@ -358,8 +264,7 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
         for tac in prefix:
             outcome = session.step(state, tac)
             if outcome.kind != "incomplete":
-                # "success" counts as a failure here: k < len(traced_tactics),
-                # so the recorded prefix must not close the proof.
+                # The prefix must leave a goal because ``k`` precedes the tail.
                 raise RuntimeError(
                     f"prefix tactic {tac!r} -> {outcome.kind} on {bt.full_name}"
                 )
@@ -370,37 +275,31 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
 
 
 def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600) -> ProofResult:
-    """One-shot verifier: open a session, replay 0..k-1, run tail, return verdict.
+    """Replay a prefix and verify one tail.
 
-    Opens exactly one REPL session per call -- what `runner.run_cell` needs,
-    each cell being independent; contrast `runner.sweep`, which shares one
-    session per ``(theorem, k)`` via `open_at_step` + `try_tail`.
+    Opens one session per independent `runner.run_cell` call.
 
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem whose proof tail is verified.
+        Theorem to verify.
     k : int
-        Proof-state checkpoint at which to start the tail.
+        Tail checkpoint.
     tail : str
-        Candidate proof-tail text.
+        Candidate tail.
     timeout : int, optional
-        REPL session timeout.
+        Session timeout.
 
     Returns
     -------
     ProofResult
-        "exception" without opening a session if `k` is out of range,
-        "no_answer" if `tail` splits to no tactics (checked before opening a
-        session, same reason), "replay_failed" if the prefix replay raises
-        `RuntimeError`, "exception" if anything else raises, otherwise
-        `try_tail`'s result.
+        Tail verdict, including invalid checkpoint or failed prefix; empty tails
+        return before opening a session.
     """
     if not (0 <= k < len(bt.traced_tactics)):
         return ProofResult(bt.full_name, "exception", tail, error=f"k={k} out of range")
     if not _split_tactics(tail):
-        # Mirrors `try_tail`'s own empty-tail check: not "lean_error", since
-        # Lean never saw a tactic to reject.
+        # Empty tails are not errors because Lean received no tactic.
         return ProofResult(
             bt.full_name, "no_answer", tail,
             error="empty tail: the response contained no extractable tactic lines",
@@ -408,10 +307,7 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
     try:
         with open_at_step(bt, k, timeout=timeout) as (session, state):
             return try_tail(session, state, tail, bt.full_name)
-    # `RuntimeError` must be caught before `Exception`: `replbackend.ReplError`
-    # is not a `RuntimeError` subclass, so a REPL outage falls through to the
-    # clause below while a broken ground-truth prefix does not. Inverting
-    # either half would report infrastructure failures as broken ground truth.
+    # Catch this first to keep broken prefixes distinct from REPL failures.
     except RuntimeError as exc:
         return ProofResult(bt.full_name, "replay_failed", tail, error=str(exc))
     except Exception as exc:  # noqa: BLE001

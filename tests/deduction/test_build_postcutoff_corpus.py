@@ -1,11 +1,7 @@
-"""Acceptance tests for scripts/deduction/build_postcutoff_corpus.py and the EC2 runbook.
+"""Acceptance tests for the post-cutoff corpus builder and runbook.
 
-Expected values (split assignment, digest recipe, refusal messages, summary schema)
-come from POSTCUTOFF_SPEC_B2, not from the implementation.
-
-The fixture under ``tests/fixtures/postcutoff/mini_export`` is a synthetic
-LeanDojo-v2 export whose three random-split theorems exercise re-splitting.
-Only ``Mini.postB`` survives (post-cutoff AND >= 2 tactics).
+Expectations come from POSTCUTOFF_SPEC_B2, not implementation; the synthetic
+fixture leaves only `Mini.postB` after the post-cutoff two-tactic filter.
 """
 
 import hashlib
@@ -59,9 +55,6 @@ def built(tmp_path: Path) -> Path:
     return _build(tmp_path / "out")
 
 
-# Happy path
-
-
 def test_only_the_postcutoff_multi_tactic_theorem_survives(built: Path) -> None:
     """Pre-cutoff and single-tactic post-cutoff rows are dropped; one row remains."""
     rows = _json(built / "random" / "val.json")
@@ -70,7 +63,7 @@ def test_only_the_postcutoff_multi_tactic_theorem_survives(built: Path) -> None:
     assert row["postcutoff"] is True
     assert row["postcutoff_provenance"] == {
         "introduced_commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        # null pr_number/pr_created_at are legal (reason="commit-date"); only a missing key is a refusal.
+        # Null PR fields are legal; missing keys are not.
         "pr_number": None,
         "pr_created_at": None,
         "reason": "commit-date",
@@ -91,7 +84,7 @@ def test_local_url_is_rewritten_to_github(built: Path) -> None:
 
 
 def test_split_assignment_is_sha256_deterministic(built: Path) -> None:
-    """sha256(full_name)[:8] % 100 buckets Mini.postB into val (89) though the fixture files it under random/test, proving splits are re-derived, not inherited."""
+    """Splits are re-derived: `Mini.postB` hashes to val bucket 89."""
     assert int(hashlib.sha256(b"Mini.postB").hexdigest()[:8], 16) % 100 == 89
     assert _json(built / "random" / "train.json") == []
     assert _json(built / "random" / "test.json") == []
@@ -103,7 +96,6 @@ def test_metadata_block_matches_package_a_contract(built: Path) -> None:
     meta = _json(built / "metadata.json")
     assert meta["dataset_name"] == DATASET_NAME
     assert meta["from_repo"] == {"url": GITHUB_URL, "commit": NEW_COMMIT}
-    # creation_time / leandojo_version are copied through from the export.
     assert meta["leandojo_version"] == "2.0.0"
     assert meta["postcutoff"] == {
         "method": "name-set-difference+pr-opened-after-T",
@@ -146,11 +138,9 @@ def test_build_summary_records_every_filter_step(tmp_path: Path, built: Path) ->
         "d3ce8aa996d11342f560ea4afd0c4fc4650313b8187e6e8cd891df526fa99ca6")
 
 
-# Digest recipe with >1 name: a 1-name pool can't distinguish join separators.
-
-
+# Use multiple names: one name cannot distinguish digest join separators.
 def _synthetic_export(root: Path, names_and_tactics: dict[str, int]) -> Path:
-    """Write a minimal v2 export carrying ``{full_name: n_traced_tactics}``."""
+    """Write a minimal v2 export carrying `{full_name: n_traced_tactics}`."""
     rows = []
     for i, (name, ntac) in enumerate(sorted(names_and_tactics.items())):
         rows.append({
@@ -207,10 +197,6 @@ def test_two_survivor_pool_pins_the_digest_and_lands_in_two_splits(tmp_path: Pat
         "0b74faf6265d2bcc451cbdb928c96947f6162b201f85e529e5ba9b4fa7a87064")
     assert summary["sha256_of_sorted_full_names"] == hashlib.sha256(
         "\n".join(sorted(summary["full_names"])).encode()).hexdigest()
-
-
-# Refusals each start from a real, buildable export and break exactly one thing,
-# so none can pass merely because the input was unreadable.
 
 
 def _real_export_copy(tmp_path: Path) -> Path:
@@ -288,9 +274,6 @@ def test_refuses_when_a_required_export_file_is_missing(tmp_path: Path) -> None:
     assert "corpus.jsonl" in str(exc.value)
 
 
-# The built corpus loads through the real loader (Package A's API).
-
-
 def test_built_corpus_metadata_reads_through_the_corpus_module(
     built: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -318,9 +301,6 @@ def test_built_corpus_satisfies_package_a_postcutoff_api(
         assert thms[0].url == GITHUB_URL and thms[0].has_proof
     finally:
         corpus.reset_caches()
-
-
-# trace_mathlib_ec2.sh: only --dry-run is executable on this box.
 
 
 def test_runbook_parses(tmp_path: Path) -> None:
@@ -357,7 +337,7 @@ def test_runbook_dry_run_prints_the_plan(tmp_path: Path) -> None:
 
 
 def test_runbook_dry_run_writes_nothing(tmp_path: Path) -> None:
-    """--dry-run writes nothing; --workdir is pointed inside tmp_path so this can't pass vacuously against $HOME, which the script never touches anyway."""
+    """Dry runs write nothing under the supplied workdir."""
     workdir = tmp_path / "wd"
     _dry_run(tmp_path, ["--workdir", str(workdir)])
     assert not workdir.exists(), "dry-run created its workdir (log/mkdir not gated)"

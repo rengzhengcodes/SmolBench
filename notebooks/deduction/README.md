@@ -1,423 +1,125 @@
 # Deduction: family-ladder scaling study (Lean 4 next-tactic success)
 
-This is the DEDUCTION side of the family-ladder scaling study. The sweep
-configuration is assembled by `run_study.py` (`build_config`) out of the knobs
-in `sweep.yaml`, the roster is imported from `notebooks/induction/run_study.py`
-(`MODELS`, `COT_ARGS`), and the fleet-aware entry point for exploring and
-validating the study is `lean_eval.ipynb`. There is no run-from-cells
-workflow: this study's driver is a per-lane subprocess launched from a
-terminal (see `lean_eval.ipynb`'s "Fleet Launch" section).
+`run_study.py` builds each lane from `sweep.yaml`; `lean_eval.ipynb` is for
+exploration, not running cells. The driver launches per-lane subprocesses.
 
 ## Layout
 
 ```
 deduction/
-  run_study.py           the per-lane, generation-only driver  <- pinned here
-  sweep.yaml             the sweep knobs every lane ran under  <- see below
-  lean_eval.ipynb        the exploration notebook
-  results/, data/        S3-mirrored; both archived out of the tree
-  analysis/              the numbers that got published
+  run_study.py           per-lane generation driver
+  sweep.yaml             shared sweep settings
+  lean_eval.ipynb        exploration notebook
+  results/, data/        archived S3 mirrors
+  analysis/              report scripts
 ```
 
-`sweep.yaml` holds the sweep's knob values -- the ones identical across all 21
-lanes (temperature, token and timeout budgets, rungs, concurrency, and the
-`theorems` selection block), each with the rationale comment that justifies it.
-`run_study.py`'s `build_config` loads it through
-`smolbench.deduction.lean.runner.load_sweep_config` (the same loader the
-`run-sweep` CLI subcommand's `--config` uses) and overlays this lane's identity
--- `run_name`, seeds, the served model, an optional shard and cell whitelist --
-on a deep copy of it. Those identity keys come from the environment, and the
-driver REFUSES a `sweep.yaml` that sets any of them, or that omits any knob.
-`build_config` also stamps the file's SHA-256 into the config it returns
-(`sweep_config: {path, sha256}`), and `runner.sweep` writes the config verbatim
-into each run's `manifest.json` -- so an archived run records which knob values
-it ran under, rather than that being recoverable only by diffing driver source
-at the matching commit.
+`run_study.py` loads shared settings with `smolbench.deduction.lean.runner.load_sweep_config`,
+overlays lane identity, and refuses a `sweep.yaml` that supplies identity keys or omits a knob.
+It records the file SHA-256 and `runner.sweep` stores the resulting config in `manifest.json`,
+so archived runs retain their settings.
 
-`run_study.py` stays at this study root because `scripts/fleet/run_fleet.py`
-builds each lane's argv from the literal path `notebooks/deduction/run_study.py`
-(as does `scripts/deduction/merge_lean_shards.py`), and `results/` stays
-directly beneath it because `notebooks/deduction/results` is the path
-`results_store.experiment_name` matches -- and what
-`smolbench.deduction.lean.runner.results_root()` falls back to.
+Keep `notebooks/deduction/run_study.py` and `notebooks/deduction/results` at these paths:
+`scripts/fleet/run_fleet.py`, `scripts/deduction/merge_lean_shards.py`, and `results_root()`
+depend on them. Analysis siblings import by bare name; a process loading both study legs must give
+each a unique `sys.modules` name because their module names collide.
 
-`analysis/` holds three read-only report scripts plus the reader module they
-share. Each puts its own directory on `sys.path` and imports its siblings by
-bare name, so anything importing them programmatically must register each
-under a UNIQUE `sys.modules` name -- the bare names collide with the induction
-leg's same-named modules. Load order does not matter provided each load first
-evicts any cached sibling owned by another directory;
-`tests/deduction/test_deduction_analysis_reports.py` implements exactly that
-discipline in its `_load` helper.
-
-All three report scripts read the same rows and offer the same choice of where
-those rows come from: `--s3 [PREFIX]` to pull them from the archive, or
-`--rows-dir` to analyse a local tree. The archive's address, prefix resolver,
-the retired-artifact guard and the downloader itself live once, in
-`rows_source.py`.
-
-| File | What it's for |
+| File | Purpose |
 | --- | --- |
-| `rows_source.py` | The shared reader: **not a report**. Owns the bucket/region (from `study_config`), the spool-prefix resolver, the retired-artifact guard, and the S3 downloader that lands `<prefix>/scaling_<key>/verified_rows.jsonl` as `<dir>/<model>/verified_rows.jsonl` -- the one layout all three scripts can read. |
-| `power_analysis.py` | Power analysis for this study: model-vs-model paired McNemar plus block bootstrap. `--s3 [PREFIX]` or `--rows-dir`; it keys models off each row's own `model` field, so the directory names in its scratch tree are immaterial to it, and it is the only one of the three that falls back to `all_rows.jsonl` when a run has no verified file. |
-| `error_bars.py` | Block sign-flip error bars over theorem blocks. **This -- not `power_analysis.py` -- produces the published 14/21**; `--s3` or `--rows-dir`. `--recovery-dir` stays local-only, and NOT because those rows are unarchived -- they are, under their own `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl` tree. That run directory does not start with `scaling_` and its file is not `verified_rows.jsonl`, so `rows_source.download_scaling_rows` excludes it by construction; fetching the recovery arm from S3 is simply not implemented here. |
-| `hint_vs_noise.py` | Focused test: hint-padded vs noise-padded context, per model. `--s3` or `--rows-dir`. |
-
-Note both legs ship a file named `power_analysis.py`. A process loading
-this one and the induction one together must give each a unique
-`sys.modules` name -- see `notebooks/README.md`, "Sibling imports".
+| `rows_source.py` | Shared reader and S3 downloader; maps `<prefix>/scaling_<key>/verified_rows.jsonl` to `<dir>/<model>/verified_rows.jsonl`. |
+| `power_analysis.py` | Paired McNemar and bootstrap analysis; uniquely falls back to `all_rows.jsonl`. |
+| `error_bars.py` | Published block sign-flip error bars; `--recovery-dir` is local-only because recovery paths are neither `scaling_*` nor `verified_rows.jsonl`. |
+| `hint_vs_noise.py` | Hint-versus-noise comparison. |
 
 ## Data layout
 
-The corpus lives under `notebooks/deduction/data/leandojo_benchmark_4/`
-(not committed; see "Data bootstrap" below), the output layout written by
-`scripts/deduction/build_postcutoff_corpus.py --out <root>`:
+The uncommitted corpus is `notebooks/deduction/data/leandojo_benchmark_4/`.
+`scripts/deduction/build_postcutoff_corpus.py --out <root>` writes `corpus.jsonl`, provenance
+`metadata.json`, `random/{train,val,test}.json`, and `licenses/`.
+`replay_passing_<kind>_<split>.jsonl` sidecars contain proofs that replay; this study selects
+`corpus.iter_replay_passing`.
 
-- `corpus.jsonl` -- every premise (theorem/def/etc.) declared in the traced
-  mathlib4 repo, with its source position and containing file
-  (`smolbench.deduction.lean.premises`).
-- `metadata.json` -- the corpus's provenance: `dataset_name`,
-  `creation_time`, `from_repo` (`url`/`commit`), `leandojo_version`, and --
-  for a post-cutoff corpus -- an extra `postcutoff` block (see "Corpus date
-  vs. model cutoffs" below).
-- `random/{train,val,test}.json` -- the split family emitted by
-  `build_postcutoff_corpus.py` and loaded by
-  `smolbench.deduction.lean.corpus`. The driver reads `random` and lets
-  `LEAN_CORPUS_SPLIT` select its split. Each file is a JSON array of theorem records
-  (`url`, `commit`, `file_path`, `full_name`, `start`, `end`,
-  `traced_tactics`).
-- `licenses/` -- upstream license files for the traced repo and the tools
-  LeanDojo depends on (CMark.lean, LeanInk, ProofWidgets4, aesop, ...).
-
-Alongside the corpus, sidecars record which theorems' GROUND-TRUTH proofs
-actually replay successfully against a live Lean session:
-`replay_passing_<kind>_<split>.jsonl` -- e.g. `replay_passing_random_val.jsonl`
-for this study's default pool. These are produced by
-`python -m smolbench.deduction.lean.cli filter --kind <kind> --split <split>`
-and are small enough to commit (unlike the multi-hundred-MB raw corpus). A
-theorem whose recorded proof does not replay (a tracing artifact, a premise
-that no longer resolves, etc.) is excluded from every sweep that draws its
-pool via `corpus.iter_replay_passing`, which this study's `build_config`
-always does (`theorems.source == "replay_passing"`).
-
-**Pool size** (measured against the checked-out data, not assumed):
+Measure the active `random`/`val` pool instead of assuming a count:
 
 ```
 .venv/bin/python -c "from smolbench.deduction.lean import corpus; print(len(list(corpus.iter_replay_passing('random','val'))))"
 ```
 
-No number is recorded here: the `replay_passing`/`random`/`val` pool depends
-on which built corpus is checked out. Run the command above against the active
-corpus to find out.
-
-### Data bootstrap
-
-The corpus itself is not shipped in this repo. Build the POST-CUTOFF corpus
-with `scripts/deduction/build_postcutoff_corpus.py` (see that script's
-module docstring for the full pipeline: a LeanDojo-v2 `generate_benchmark`
-export of mathlib4 at a NEW commit, plus
-`scripts/deduction/postcutoff_names.py`'s declaration-name-difference JSON
-against an OLD commit) and point `SMOLBENCH_LEAN_DATA` at wherever you built
-it -- see `smolbench.deduction.lean.corpus.data_root`'s docstring for the
-exact resolution order.
-
-**The driver requires a post-cutoff corpus.** `notebooks/deduction/run_study.py`'s
-`build_config` calls `corpus.postcutoff_metadata()` before any AWS call and
-`SystemExit`s if it is `None` (see that function's docstring, "Post-cutoff
-corpus gate"): every roster checkpoint's knowledge cutoff postdates the
-reference trace, so older theorems are not a valid held-out set -- a model may
-simply have memorised their proofs during training.
-
-Every loader in `smolbench.deduction.lean.corpus` raises an actionable
-`FileNotFoundError` naming the exact missing path if the corpus has not been
-built. The `replay_passing_*.jsonl` sidecars are generated from the built
-corpus (`python -m smolbench.deduction.lean.cli filter --kind random --split
-val`, ~70 min per split) and live beside it at `data_root().parent`; they
-are not tracked.
+Build the post-cutoff corpus with `scripts/deduction/build_postcutoff_corpus.py` and set
+`SMOLBENCH_LEAN_DATA`. Missing corpus files raise an actionable `FileNotFoundError`; generate
+sidecars with `python -m smolbench.deduction.lean.cli filter --kind random --split val`
+(about 70 minutes per split).
 
 ### Corpus date vs. model cutoffs
 
-**What the code now enforces.** A re-collection is underway on a NEW mathlib4
-snapshot, restricted by declaration-name set difference against the old
-`fe4454af` trace to theorems provably absent from it -- see
-`scripts/deduction/build_postcutoff_corpus.py` for how that corpus is built;
-this section only covers what consumes it. Such a corpus's `metadata.json`
-carries an extra `postcutoff` block (`method`, `old_commit`,
-`old_commit_date`, `new_commit`, `new_commit_date`, `target_date`,
-`n_old_decls`, `n_new_decls`, `n_postcutoff_decls`), and every theorem row it
-emits carries a per-row `postcutoff` boolean flag.
-`smolbench.deduction.lean.corpus.is_postcutoff_corpus()` (backed by
-`corpus.postcutoff_metadata()`) reports whether the ACTIVE corpus
-(`SMOLBENCH_LEAN_DATA`, or the default LeanDojo Benchmark 4 location) carries
-that block, and raises rather than silently reporting False if the block's
-`new_commit` disagrees with the corpus's own traced commit -- an incoherent
-corpus must not be trusted.
+`require_postcutoff` is enforced through `is_postcutoff_corpus`, `ROSTER_LATEST_RELEASE`, and
+`build_postcutoff_corpus.py`. `metadata.json` records the old/new commits and dates; each row has
+`postcutoff`. A mismatched traced commit raises rather than silently accepting an incoherent corpus.
 
-The runner enforces this at the point theorems are actually selected:
-`smolbench.deduction.lean.runner._select_theorems` refuses a corpus that is
-not `is_postcutoff_corpus()`, and separately refuses any pool containing a
-theorem whose `postcutoff` flag is unset -- both checks raise `ValueError`
-rather than silently proceeding.
-`notebooks/deduction/run_study.py`'s `build_config` runs a second, earlier
-gate, BEFORE any AWS call: it requires `corpus.postcutoff_metadata()` to be
-non-`None` (else `SystemExit`, naming the corpus root and its traced commit)
-and requires the block's `target_date` to be `>=` `ROSTER_LATEST_RELEASE`
-(`"2026-06-03"`, the latest weights-publication date across the 21-model
-roster: the last Hugging Face commit touching a weight file at each lane's
-pinned revision; weights cannot encode data published after they were
-written, so this is the floor a post-cutoff corpus's target date must clear).
-`runner.sweep` therefore re-checks the corpus and every selected theorem at
-sweep time, independent of the earlier gate.
-
-## What the eval exposes per theorem
-
-Each `BenchmarkTheorem` carries a `traced_tactics` list: one `TracedTactic`
-per proof step, with the pretty-printed Lean tactic state immediately
-BEFORE the tactic (`state_before`), the tactic text itself, and the state
-immediately AFTER (`state_after`). `smolbench.deduction.lean.context.render`
-turns step `k` of a theorem into a prompt: at minimum the current goal
-(`stepk:0`), and at higher rungs the full tactic state, the proof-so-far,
-and premise information (`hint:0..4` -- this study runs `stepk:1`,
-`hint:2`, `noise:3`, and `hint:3`; see `lean_eval.ipynb`'s framing cell for
-what each is for and why exactly these four). A sweep row then pairs that
-rendered context with the theorem's GROUND-TRUTH next tactic
-(`traced_tactics[k].tactic`) as the target a model's candidate is compared
-against.
-
-So, per theorem, the eval exposes: its goal states at every step `k`
-(`state_before` for each traced tactic), its tactic PREFIX (every tactic
-before step `k`, surfaced at `stepk:2` and above as "proof so far"), and
-its ground-truth tactic TAIL (the tactic actually asked for at each `k`,
-plus -- implicitly, by construction -- everything after it in the recorded
-proof).
+`runner._select_theorems` rejects a corpus or selected row without post-cutoff status. Before any
+AWS call, `run_study.build_config` requires post-cutoff metadata and
+`target_date >= ROSTER_LATEST_RELEASE` (`"2026-06-03"`), because weights cannot encode data
+published after their release. `runner.sweep` rechecks both at sweep time.
 
 ## Results policy: S3-only
 
-Every lane's results are spooled to S3, never accumulated locally for the
-long term. Bucket `smolbench-results-414266451290`, region `us-west-2`,
-key layout `deduction_postcutoff/runs/scaling_<spec-key>/<relative path>`
-(e.g. `deduction_postcutoff/runs/scaling_glm-4.7/all_rows.jsonl`) -- from
-`smolbench.evals.spool.DEDUCTION_SPOOL_PREFIX`, resolved per call by
-`smolbench.evals.spool.spool_prefix()` and overridable via `LEAN_SPOOL_PREFIX`.
+Results use `deduction_postcutoff/runs/scaling_<spec-key>/<relative path>`. `spool_to_s3`
+verifies every upload by `ContentLength` and prunes only after all pass; it keeps `manifest.json`
+so resume can identify a run without downloading the spool. The 21 lanes resolve this prefix per
+call and may override it with `LEAN_SPOOL_PREFIX`.
 
-`run_study.py`'s `spool_to_s3` runs exactly once, after the sweep returns:
-it uploads every file under the run directory, verifies each upload
-against S3's own `ContentLength` (raising, and leaving local data intact,
-on any mismatch), and only once every file has passed verification does it
-prune the local run directory -- deleting everything EXCEPT
-`manifest.json`. The manifest is deliberately kept: it is the run's
-config/run-id record, and keeping it lets a later resume of the same run
-recognise that it already exists without first re-downloading the whole
-spool from S3 just to check.
+## Generation and verification
 
-## Generation -> verification split
+Generation defers Lean work, so its boxes need neither `lean-interact`, elan, nor mathlib.
+Verification uses `lean-interact` with the community REPL; Dojo cannot drive Lean >= v4.20, while
+this corpus uses Lean v4.34.0-rc2.
 
-Lean verification is deliberately deferred to a separate pass: it is a
-separate, slow, Lean-touching step that runs later against a downloaded
-`all_rows.jsonl`, so generation boxes never need `lean-interact`, elan, or a
-built mathlib4 checkout.
-
-The verification backend is the PyPI package `lean-interact`, which drives a
-[`leanprover-community/repl`](https://github.com/leanprover-community/repl)
-session (`smolbench.deduction.lean.replbackend`). It is not LeanDojo's `Dojo`:
-LeanDojo v1's interaction layer is deprecated and cannot drive Lean >= v4.20,
-while the post-cutoff corpus is mathlib4 at Lean v4.34.0-rc2, so `Dojo` cannot
-reach it at all.
-
-Verification therefore needs three things on the box that runs phase 2:
-`elan` on `PATH`, a mathlib4 checkout that has actually been BUILT with
-`elan`/`lake`, and `SMOLBENCH_MATHLIB_ROOT` set to that checkout:
+Verification requires `elan` on `PATH`, a built mathlib checkout, and `SMOLBENCH_MATHLIB_ROOT`:
 
 ```
 SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4 \
   .venv/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
 ```
 
-The variable is read at CALL time (`replbackend.mathlib_root`), never cached at
-import, so setting it late still takes effect. Verification no longer needs the
-`~/.cache/lean_dojo/` traced-corpus download at all. That cache is NOT obsolete
-repo-wide, though: `smolbench.deduction.lean.premises`'s source slicing still
-resolves `~/.cache/lean_dojo/leanprover-community-mathlib4-<commit>/mathlib4`
-(`premises._traced_root`) to render hint/noise context, and `lean-dojo` remains
-a declared dependency of the `lean` extra for corpus tracing and premise
-slicing. Only VERIFICATION has stopped depending on it.
+The variable is read at call time. That cache is NOT obsolete repo-wide:
+`premises` still uses `~/.cache/lean_dojo/` through `_traced_root` for hint/noise context. Only VERIFICATION has stopped depending on it.
 
-**Limitation, stated plainly: the elaboration environment is import-only.**
-`replbackend.open_session` builds the environment for a theorem's statement with
-a single `import <Module>` of the theorem's own module. That restores the
-module's *imports* but NOT its file-level `open` / `variable` / `namespace`
-scope, nor any `local notation`. A statement that depends on such scope fails to
-elaborate and is reported as `exception` (or `replay_failed` when it happens
-under a prefix replay -- and phase 2's cell rows always show `replay_failed`
-regardless; see trap 1 below). Re-elaborating the whole file prefix up to the
-declaration would be correct but much more expensive; the spec chose cost. See
-`replbackend.py`'s module docstring, which also records that no part of the REPL
-interaction has been exercised against a real Lean toolchain.
+The REPL environment imports only the theorem module, so file-level `open`, `variable`,
+`namespace`, and local notation are absent. Replaying the file prefix would be correct but is too
+expensive; such statements report `exception` or `replay_failed`.
 
-- **Phase 1 (generation)** runs on `.venv`. `notebooks/deduction/run_study.py`
-  calls a model, extracts a candidate tactic block, and writes each cell row
-  with `verdict == "unverified"` (a placeholder -- nothing has been checked
-  against Lean yet) and each per-theorem sanity row with `verdict ==
-  "skipped"`. By default it uses `NullVerifier` (`LEAN_VERIFY=defer`), which
-  never imports `smolbench.deduction.lean.verify` or its `lean_interact`
-  dependency. Once verification (below) assigns a real verdict, a candidate
-  that extracted to zero tactic lines (typically a reasoning model truncated
-  mid-`<think>`) is graded `no_answer`, not `lean_error`: Lean never saw a
-  tactic to reject, so it must not read as "the model wrote a wrong proof."
-- **Phase 2 (verification)** also runs on `.venv`, via
-  `scripts/deduction/lean_verify_rows.py`. It downloads a run's
-  `all_rows.jsonl` from S3, replays every recorded candidate proof against a
-  real REPL session, and uploads `verified_rows.jsonl` beside it --
-  **the original `all_rows.jsonl` is never modified or re-uploaded**; every
-  write goes to the sibling `verified_rows.jsonl` key so a verification bug
-  can never corrupt or lose a candidate proof that already cost real
-  inference spend to collect. Typical invocation (see that script's own
-  module docstring and `--help` for the full flag set):
+Phase 1 writes `unverified` cells and `skipped` sanity rows through `NullVerifier`; an empty
+extracted tactic is `no_answer`, not `lean_error`, because Lean never saw a tactic. Phase 2 writes
+sibling `verified_rows.jsonl`; it never modifies `all_rows.jsonl`, so a verification bug cannot
+lose paid candidate proofs.
 
-  ```
-  .venv/bin/python scripts/deduction/lean_verify_rows.py --dry-run
-  .venv/bin/python scripts/deduction/lean_verify_rows.py --runs 'scaling_glm-4.7*'
-  ```
+### Phase-2 traps
 
-### Two traps in phase 2, both of which fail SILENTLY
+`SMOLBENCH_MATHLIB_ROOT` and `elan` must be valid. A missing root produces an `exception` in
+sanity rows but `replay_failed` in cell rows; inspect sanity rows so an environment error does not
+condemn ground-truth proofs. Missing elan fails after retry backoff; non-login shells may need:
 
-**1. `SMOLBENCH_MATHLIB_ROOT` and `elan` must both be right, or the whole pass
-"verifies" nothing.**
+```
+export PATH=/root/.elan/bin:$PATH
+```
 
-- **`SMOLBENCH_MATHLIB_ROOT` unset (or pointing at a directory that is missing,
-  or has no `lean-toolchain`)** stops every session before a Lean process is
-  even started, with a message naming `SMOLBENCH_MATHLIB_ROOT` verbatim -- grep
-  the `lean_error` column for that string, it is the fastest positive
-  identification of this trap.
+Resume is keyed by groups, not candidate proofs. Use `--no-resume` after regenerating a lane and
+archive its superseded file; compare `all_rows.jsonl` and `verified_rows.jsonl` LastModified values.
+Gate on verdicts, not exit status: a broken pass has widespread `replay_failed` with
+`verify_ms == 0`. Never analyse unverified `all_rows.jsonl` success rates.
 
-  **The verdict differs by row kind, and the cell rows are misleading.** At the
-  `smolbench.deduction.lean.verify` boundary this is deliberately an
-  `exception`, never a `replay_failed`: `replay_failed` means "the RECORDED
-  ground-truth prefix does not replay", a claim about the CORPUS, and a
-  forgotten environment variable must not condemn all 300 ground-truth proofs.
-  `replbackend.open_session` translates `mathlib_root`'s `RuntimeError` into a
-  `ReplError`, which is deliberately NOT a `RuntimeError` subclass, so
-  `verify.verify_proof_tail`'s `except RuntimeError` clause cannot catch it
-  (pinned by `tests/deduction/test_lean_repl_verifier.py`). The per-theorem
-  SANITY rows, which go through `verify.replay_ground_truth`, therefore land on
-  `exception` as intended.
-
-  The per-cell rows do NOT. `lean_verify_rows.py` drives a group through
-  `verify.open_at_step` directly, and its group-level handler records
-  `verdict == "replay_failed"` for every failure that is not a `RuntimeError`
-  whose message begins `prefix tactic ` -- so the `ReplError` carrying the
-  `SMOLBENCH_MATHLIB_ROOT` message is flattened into `replay_failed` with
-  `dojo_failure_hint`'s text attached. That hint text is itself stale (it still
-  talks about a LeanDojo traced-corpus pull and advises deleting
-  `~/.cache/lean_dojo`, neither of which is relevant to this backend). Both are
-  known follow-ups. Until they are fixed: **read the sanity rows, not the cell
-  rows, to tell a misconfigured box from a genuinely unreplayable corpus.**
-- **`elan` missing from `PATH`** fails later, when the REPL process itself is
-  started, and only after `open_session`'s retry backoff has been spent on each
-  group -- so the tell is a pass that is slow AND barren rather than fast and
-  barren. It reaches the same group-level handler, so it too lands on
-  `replay_failed` for cell rows. (Exactly which exception `lean-interact` raises
-  for a missing `elan` has not been observed: no box in this project's CI has a
-  Lean toolchain.) Under a non-login shell (`ssh cmd`, SSM
-  `AWS-RunShellScript`, cron) `/root/.elan/bin` is absent from `PATH`. Always:
-
-  ```
-  export PATH=/root/.elan/bin:$PATH
-  ```
-
-Other tells of a broken pass, independent of which of the two it is: no `repl`
-or `lake` processes alive, one Python process pinned at ~100% CPU (rather than
-the worker count), and implausible throughput.
-
-**2. Resume is keyed on GROUPS, not on the proofs inside them.** If phase 1
-regenerated a lane after it was verified, every `(theorem_id, k)` group still looks
-done while the candidate proofs beneath are completely different, so the pass reports
-`0 to process` and leaves `verified_rows.jsonl` describing text that no longer exists.
-Use `--no-resume` for any regenerated lane, and archive the superseded file first.
-Compare `all_rows.jsonl`'s LastModified against `verified_rows.jsonl`'s to find them.
-
-**Gate on the verdicts, not on the exit status.** A healthy pass writes a mix of
-`success` / `lean_error` / `no_answer` (the last for a candidate that split to
-zero tactic lines -- a real miss, but not a Lean rejection) with
-`verify_ms > 0`. A broken one writes
-`replay_failed` almost everywhere with `verify_ms == 0` and a REPL-open error
-attached -- read that error rather than the verdict, per trap 1: one naming
-`SMOLBENCH_MATHLIB_ROOT` is a misconfigured box, one quoting Lean's own messages
-about an unresolved identifier or notation is most likely the import-only
-environment limitation described in "Generation -> verification split", and only
-one shaped `prefix tactic ... -> ...` is a genuine ground-truth replay failure.
-Cross-check against the sanity rows, whose verdicts are not flattened.
-
-**Analysing `all_rows.jsonl` before phase 2 has run shows all-zero success
-rates.** That is an artifact of every cell still carrying the `unverified`
-placeholder, not a finding about any model -- always check for a
-`verified_rows.jsonl` sibling before drawing conclusions from a run's
-results.
-
-## Running one lane standalone
+## Running one lane
 
 ```
 LEAN_MODEL=<spec key> .venv/bin/python notebooks/deduction/run_study.py
 ```
 
-`<spec key>` must name a key of `run_study.MODELS` (imported from
-`notebooks/induction/run_study.py`; the driver's `SystemExit` message on an
-unset or unknown key lists every valid key). Useful flags:
+`<spec key>` must be in `run_study.MODELS`. `--no-s3` leaves local rows. Use `--teardown` only
+standalone: fleet reuses each box across legs and owns its lifecycle, so teardown would terminate a
+box required by the supervisor.
 
-- `--no-s3` -- skip the end-of-run S3 spool sync and leave this lane's
-  replicate rows on local disk only.
-- `--teardown` -- terminate this lane's EC2 instance after the sweep (or
-  after a failure) and exit. **STANDALONE USE ONLY.** Under the fleet
-  supervisor (`scripts/fleet/run_fleet.py`), a lane's box is reused across the
-  induction and deduction phases (same `EC2_EXPERIMENT_TAG`, same state
-  file) and the supervisor owns that box's lifecycle end-to-end,
-  terminating it itself once every phase scheduled for the lane has
-  finished. Passing `--teardown` from fleet-driven automation would
-  terminate the instance out from under that bookkeeping -- it exists
-  purely for a solo smoke test of this file with nothing else depending on
-  the box.
+## Scope
 
-`LEAN_STATE_FILE` and `LEAN_RUN_NAME` are also read from the environment
-(see `run_study.py`'s module docstring, "Environment," for the full list);
-neither needs to be set for an ad hoc standalone run against a fresh box.
-
-## Replicate terminology
-
-The replication axis is called **replicates**: `n_replicates` in a sweep
-config, `replicate_idx` on a result row. Use that word exclusively in this
-study's code, notebooks, and documentation.
-
-## What's not in scope
-
-- **Term-mode (or otherwise untraceable) theorems.** LeanDojo's tactic-mode
-  tracer only records `traced_tactics` for theorems it can trace
-  tactic-by-tactic; a theorem proved entirely in term mode (or one
-  LeanDojo's tracer otherwise could not step through) has an empty
-  `traced_tactics` list (`BenchmarkTheorem.has_proof` is `False`) and is
-  excluded by every loader in this package that iterates "theorems with a
-  proof" (`corpus.iter_with_proof`). This study only ever draws from
-  `iter_replay_passing`, which is already a subset of traced theorems, so
-  this exclusion is inherited rather than applied again.
-- **Levels beyond this study's four rungs.** The full rung universe this
-  README documents is `stepk:0..2` / `hint:0..4` (`context.render` accepts
-  any of them); `run_study.build_config` runs exactly four of
-  those rungs (`stepk:1`, `hint:2`, `noise:3`, `hint:3` -- see
-  `lean_eval.ipynb`'s framing cell for what each is for and why). The
-  renderer's own range check (`context.validate`) additionally accepts
-  `hint`/`noise` levels up to 9 -- deeper transitive premise-dependency-
-  closure hops (`hint:5..9`, `noise` mirroring the same range) -- but those
-  are neither part of this documented rung universe nor exercised by any
-  sweep this study runs; nothing in the renderer breaks past `hint:4`, but
-  a deeper hop count is progressively more likely to hit the renderer's own
-  50k-token cap before its expanded content actually reaches a rendered
-  prompt.
-- **Live REPL interaction during generation.** Everything in this
-  study's generation phase (`run_study.py`, and by extension
-  `lean_eval.ipynb`'s cells) uses `NullVerifier` by default and therefore
-  never imports `smolbench.deduction.lean.verify` or opens a real REPL
-  session -- see "Generation -> verification split" above.
-
-## Results and data
-
-`results/` and `data/` are not in this tree; see `notebooks/ARCHIVE.md`
-for where they live and how to restore or regenerate each.
+The study uses replay-passing, tactic-traceable theorems and four rungs: `stepk:1`, `hint:2`,
+`noise:3`, and `hint:3`. Generation uses `NullVerifier` and never opens a REPL. `results/` and
+`data/` are archived; see `notebooks/ARCHIVE.md` for restoration or regeneration.

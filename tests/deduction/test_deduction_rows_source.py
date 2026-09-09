@@ -1,12 +1,4 @@
-"""The shared S3 row reader the three deduction analysis scripts use.
-
-power_analysis.py could read the archive; error_bars.py and hint_vs_noise.py --
-the scripts the published numbers come from -- read only a local --rows-dir
-layout that nothing else writes. This module gives all three one archive layout.
-
-Most tests inject a fake S3 client. One instead patches the shared fresh-client
-factory and drives `hint_vs_noise.main(["--s3", ...])` end to end.
-"""
+"""Tests for the deduction analysis scripts' shared S3 row reader."""
 
 from __future__ import annotations
 
@@ -32,11 +24,9 @@ def rows_source() -> ModuleType:
 
 
 class FakePaginator:
-    """`list_objects_v2` paginator over an in-memory ``{key: body}`` bucket.
+    """Two-page in-memory `list_objects_v2` paginator.
 
-    Always splits output over two pages, so a caller that doesn't paginate can't
-    pass by accident -- real ListObjectsV2 caps a response at 1000 keys and
-    continues past that.
+    Two pages prevent a non-paginating caller from passing accidentally.
     """
 
     def __init__(self, objects: "dict[str, str]", calls: list[Any]) -> None:
@@ -52,8 +42,7 @@ class FakePaginator:
             for chunk in (keys[:half], keys[half:]):
                 yield {"Contents": [{"Key": k} for k in chunk]}
             return
-        # Delimiter mode: roll each key up to its first path segment past `Prefix`,
-        # exactly as S3's CommonPrefixes does.
+        # Match S3 `CommonPrefixes` by retaining the segment after `Prefix`.
         common = sorted({
             Prefix + k[len(Prefix):].split(Delimiter, 1)[0] + Delimiter
             for k in keys if Delimiter in k[len(Prefix):]
@@ -92,15 +81,13 @@ def _bucket(**runs: "dict[str, str]") -> "dict[str, str]":
 def test_download_lands_the_rows_dir_layout_the_report_scripts_read(
     rows_source: ModuleType, tmp_path: Path
 ) -> None:
-    """scaling_<key>/ on S3 becomes <key>/ locally, the layout error_bars.lane_outcomes and hint_vs_noise.main already expect from --rows-dir (power_analysis keys models off each row's own `model` field instead)."""
+    """S3 `scaling_<key>/` lands as local `<key>/`."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": '{"kind": "cell"}\n',
                             "manifest.json": "{}"},
         "scaling_gemma-4-12b": {"verified_rows.jsonl": '{"kind": "cell"}\n'},
-        # No candidate present: silently omitted, not an error -- a partially collected
-        # study is a legitimate power_analysis input.
+        # Missing candidates are allowed for partially collected studies.
         "scaling_ministral-3-3b": {"manifest.json": "{}"},
-        # Not a run at all.
         "corpus": {"metadata.json": "{}"},
     }))
     landed = rows_source.download_scaling_rows(
@@ -118,7 +105,7 @@ def test_download_lands_the_rows_dir_layout_the_report_scripts_read(
 def test_download_prefers_verified_rows_over_the_all_rows_fallback(
     rows_source: ModuleType, tmp_path: Path
 ) -> None:
-    """`candidates` is a preference order; the landed basename keeps the choice visible, so power_analysis's "this input is unverified" banner still fires on the all_rows.jsonl fallback (error_bars/hint_vs_noise pass only the verified name)."""
+    """Keep fallback basenames so unverified-input warnings remain accurate."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {"verified_rows.jsonl": "V\n", "all_rows.jsonl": "A\n"},
         "scaling_gemma-4-12b": {"all_rows.jsonl": "A\n"},
@@ -129,8 +116,7 @@ def test_download_prefers_verified_rows_over_the_all_rows_fallback(
     assert [p.relative_to(tmp_path).as_posix() for p in landed] == [
         "gemma-4-12b/all_rows.jsonl", "glm-4.7/verified_rows.jsonl"]
 
-    # With the single-element default, the fallback-only lane vanishes instead of
-    # arriving under a name that hides what it is.
+    # The default omits fallback-only lanes rather than hiding their status.
     other = tmp_path / "strict"
     landed = rows_source.download_scaling_rows(other, prefix=BUCKET_PREFIX, client=client)
     assert [p.relative_to(other).as_posix() for p in landed] == [
@@ -140,7 +126,7 @@ def test_download_prefers_verified_rows_over_the_all_rows_fallback(
 def test_a_superseded_object_in_the_bucket_refuses_before_any_download(
     rows_source: ModuleType, tmp_path: Path
 ) -> None:
-    """The retired-artifact guard fires first, on the S3 path too: a 404-probe loop would never see an all_rows_SUPERSEDED-<stamp>.jsonl sitting beside live rows, so the reader lists a run instead of blind-downloading, and must refuse before anything lands on disk."""
+    """Superseded S3 artifacts must refuse before writing locally."""
     client = FakeS3(_bucket(**{
         "scaling_glm-4.7": {
             "verified_rows.jsonl": "V\n",
@@ -159,7 +145,7 @@ def test_a_superseded_object_in_the_bucket_refuses_before_any_download(
 
 
 def test_bucket_and_region_come_from_the_config(rows_source: ModuleType) -> None:
-    """The archive's address is READ from study_config, never re-typed here."""
+    """Read the archive address from `study_config`."""
     from smolbench.evals.study_config import load_study_config
 
     results = load_study_config().results
@@ -202,9 +188,6 @@ def test_resolve_rows_dir_names_the_uri_when_nothing_landed(rows_source: ModuleT
     assert f"s3://{rows_source.S3_BUCKET}/{BUCKET_PREFIX}" in str(excinfo.value)
 
 
-# End to end: hint_vs_noise reads the archive with no local tree at all.
-
-
 def _lane_rows(n_theorems: int, b: int) -> str:
     """One lane's verified rows: `b` cells where hint:3 wins and noise:3 does not."""
     lines = []
@@ -236,10 +219,9 @@ def test_hint_vs_noise_runs_from_s3_with_no_local_rows_dir(
     assert hvn.main(["--s3"]) == 0
     out = capsys.readouterr()
 
-    # The default prefix was resolved AFTER parsing, from spool_prefix().
     assert all(k.startswith(BUCKET_PREFIX) for k in client.downloads), client.downloads
     assert len(client.downloads) == 21
-    # The progress line goes to stderr; stdout is the report itself.
+    # Progress goes to stderr so stdout remains the report.
     assert "Downloading run rows" in out.err and "Downloading" not in out.out
     assert "DEDUCTION: hint:3 vs noise:3, per model" in out.out
     for model in hvn.MODELS:

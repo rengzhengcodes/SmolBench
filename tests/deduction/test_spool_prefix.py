@@ -1,4 +1,4 @@
-"""The deduction S3 spool prefix: one constant, resolved from the env at call time."""
+"""Deduction S3 spool-prefix contracts."""
 
 import os
 import subprocess
@@ -14,7 +14,6 @@ from tests._paths import NOTEBOOKS, REPO_ROOT, SCRIPTS, load_by_path
 
 NEW = "deduction_postcutoff/runs"
 
-#: Consumers that expose the prefix as a CLI override.
 READERS = [
     SCRIPTS / "results" / "audit_lean_pinning.py",
     SCRIPTS / "results" / "audit_run_completeness.py",
@@ -24,12 +23,7 @@ READERS = [
 
 
 def _help(path: Path, **env: str) -> subprocess.CompletedProcess[str]:
-    """Run ``<path> --help`` in a clean interpreter.
-
-    ``python <script>`` puts the SCRIPT's directory on ``sys.path[0]``, not the
-    cwd, so `smolbench` would otherwise resolve through the venv's editable
-    install -- which may point at a different checkout than the tree under test.
-    """
+    """Run `--help` against this checkout, not an editable install."""
     child = {k: v for k, v in os.environ.items() if k != "LEAN_SPOOL_PREFIX"}
     child["PYTHONPATH"] = os.pathsep.join(
         [str(REPO_ROOT)] + ([child["PYTHONPATH"]] if child.get("PYTHONPATH") else []))
@@ -79,12 +73,7 @@ def _fake_s3(keys: list[str]) -> Any:
 def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`spool_prefix()` returns no trailing "/", but this module slices by `len(prefix)`.
-
-    Forget the appended "/" and every deduction model name comes back empty
-    (``"/scaling_x/f".split("/", 1)[0] == ""``) and every destination key is off
-    by one character -- silently, on a 55k-object copy.
-    """
+    """Append `/`: prefix slicing otherwise silently corrupts 55k-object keys."""
     if not (SCRIPTS / "results" / "snapshot_analysis_data.py").exists():
         pytest.skip("snapshot_analysis_data.py lives in a later stack slice")
     name = "_snapshot_prefix_check"

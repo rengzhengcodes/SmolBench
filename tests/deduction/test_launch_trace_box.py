@@ -1,21 +1,7 @@
-"""Offline acceptance tests for scripts/deduction/launch_trace_box.sh.
+"""Offline acceptance tests for the trace-box launcher.
 
-The launcher's job is to emit an EC2 user-data script, so what's pinned is
-properties of that emitted text plus the order of the AWS calls around it,
-checked by running the real script with a fake ``aws`` first on ``PATH`` (no
-credentials, no network, no instance) that records every argv it is handed,
-including the ``--user-data`` blob.
-
-What is pinned, and why:
-
-* The GitHub token never reaches the instance as a value -- user-data is
-  readable from the EC2 console and a ``-c`` argv is readable from ``ps``, so
-  these tests export a sentinel token and assert it appears nowhere emitted.
-* The token is resolved on the box, from SSM, decrypted; only the parameter
-  name travels.
-* ``run-instances`` is guarded by a ``describe-instances`` check on the tag,
-  filtered to pending/running so a terminated box from a prior trace of the
-  same commit cannot block a relaunch.
+Tokens never enter readable user-data or argv; only its decrypted SSM parameter name travels.
+Pending/running tag checks prevent duplicate launches without blocking terminated relaunches.
 """
 
 from __future__ import annotations
@@ -31,21 +17,13 @@ from tests._paths import SCRIPTS
 
 SCRIPT = SCRIPTS / "deduction" / "launch_trace_box.sh"
 
-#: Written into the launcher's environment under the old variable name; must
-#: not survive into the emitted user-data.
+#: Must not survive into emitted user-data.
 SENTINEL = "ghp_SENTINEL_TOKEN_MUST_NOT_LEAK_0123456789"
 
 
 @pytest.fixture
 def fake_aws(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
-    """Put a recording ``aws`` stub first on PATH; yield the call-log directory.
-
-    The stub logs each invocation's subcommand (for ordering) and dumps its
-    full argv NUL-separated to its own ``argv.<n>`` file, so a multi-line
-    ``--user-data`` blob can be inspected verbatim without a newline-separated
-    dump splitting it across records. ``describe-instances`` answers
-    ``None`` -- awscli's "no match" -- so the launcher proceeds to launch.
-    """
+    """Provide an AWS recorder with NUL-separated argv so multiline user-data survives."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     log = tmp_path / "calls.log"
@@ -91,10 +69,7 @@ def test_script_parses() -> None:
 
 
 def test_dry_run_needs_no_aws_at_all(tmp_path: Path) -> None:
-    """The plan prints with an empty environment and no `aws` binary on PATH,
-    proving the dry-run makes no AWS call at all (the AMI lookup is skipped
-    and printed unresolved) -- reviewable without an account.
-    """
+    """Dry run must need neither AWS nor credentials, making its plan reviewable."""
     proc = subprocess.run(
         ["env", "-i", "PATH=/usr/bin:/bin", f"HOME={tmp_path}",
          f"GITHUB_ACCESS_TOKEN={SENTINEL}", "bash", str(SCRIPT), "--dry-run"],
@@ -106,9 +81,7 @@ def test_dry_run_needs_no_aws_at_all(tmp_path: Path) -> None:
 
 
 def test_token_value_never_reaches_the_user_data(fake_aws: tuple[Path, Path]) -> None:
-    """The emitted user-data carries the SSM parameter name, never a token
-    value -- the box resolves the token itself, through its instance role.
-    """
+    """User-data carries an SSM name, never the token value."""
     workdir, bindir = fake_aws
     proc = _run(bindir)
     assert proc.returncode == 0, proc.stderr
@@ -116,24 +89,21 @@ def test_token_value_never_reaches_the_user_data(fake_aws: tuple[Path, Path]) ->
 
     assert SENTINEL not in user_data, "the token VALUE leaked into user-data"
     assert SENTINEL not in proc.stdout + proc.stderr
-    # The fetch happens on the instance, decrypted, by parameter name.
+    # The instance decrypts by parameter name.
     assert "ssm get-parameter" in user_data
     assert "--with-decryption" in user_data
     assert "/smolbench/deduction/github_access_token" in user_data
-    # The `su` line must not carry the secret on its argv at all -- neither a
-    # literal nor a launcher-interpolated one.
+    # `su` argv must not carry the secret.
     su_lines = [ln for ln in user_data.splitlines() if ln.lstrip().startswith("su ubuntu")]
     assert len(su_lines) == 1, su_lines
     assert "GITHUB_ACCESS_TOKEN" not in su_lines[0], su_lines[0]
     assert "trace_mathlib_ec2.sh" in su_lines[0]
-    # A missing/empty parameter must fail loudly rather than run unauthenticated.
+    # Missing parameters must not run unauthenticated.
     assert "exit 1" in user_data
 
 
 def test_launcher_env_token_is_not_required(fake_aws: tuple[Path, Path]) -> None:
-    """The launcher no longer needs the token in its own environment: the
-    point of moving to SSM is that nothing but the instance ever holds it.
-    """
+    """Only the instance needs the token after moving resolution to SSM."""
     workdir, bindir = fake_aws
     env = dict(os.environ)
     env["PATH"] = f"{bindir}:{env['PATH']}"
@@ -145,13 +115,7 @@ def test_launcher_env_token_is_not_required(fake_aws: tuple[Path, Path]) -> None
 
 
 def test_describe_instances_guards_run_instances(fake_aws: tuple[Path, Path]) -> None:
-    """An in-flight box for this commit's tag stops a second launch.
-
-    Three properties, because only the combination is the fix: the check runs
-    before `run-instances`; it filters on instance-state-name so a terminated
-    box from a prior trace of the same commit does not block a relaunch; and
-    `--force` skips it.
-    """
+    """Check pending/running tags before launch so terminated boxes do not block relaunch."""
     workdir, bindir = fake_aws
     proc = _run(bindir)
     assert proc.returncode == 0, proc.stderr

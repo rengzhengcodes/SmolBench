@@ -1,18 +1,6 @@
-"""The roster, results bucket and region have one source; pin every consumer to it.
+"""Pin the roster, bucket, and region to `study_config` as their sole source.
 
-``smolbench/evals/study_config.toml`` (parsed by
-``smolbench.evals.study_config``) is the committed source for this study's
-21-checkpoint roster and its results bucket/region. Three deduction-side
-consumers (power_analysis's ``FAMILIES``, audit_lean_pinning's ``LANES``,
-run_study's ``SPOOL_BUCKET``/``SPOOL_REGION``) now read it instead of
-re-declaring it by hand. These tests pin that the consumers agree with
-``study_config`` (not merely with each other) and that the old literals are
-gone from the sources -- an equality check alone would still pass against a
-hand-typed copy that happens to be correct today.
-
-The induction driver's own ``MODELS`` is pinned here too, as a second,
-independent route to the same roster: if either side stopped reading the
-config the two would diverge here.
+Equality alone misses a stale hand-typed copy, so consumers must not spell the old literals.
 """
 
 from __future__ import annotations
@@ -36,14 +24,7 @@ DEDUCTION_DRIVER = NOTEBOOKS / "deduction" / "run_study.py"
 
 
 def _load(path: Path, name: str) -> ModuleType:
-    """Exec `path` as module `name`, restoring os.environ afterwards.
-
-    The induction driver reads ``LEAN_*``/``EC2_*`` at import time, so this
-    would otherwise mutate the environment for every later test in the
-    session. Registered in ``sys.modules`` before ``exec_module`` because a
-    ``@dataclass`` in a module absent from ``sys.modules`` fails to resolve
-    its own annotations.
-    """
+    """Load a module with restored environment; `sys.modules` enables dataclass annotations."""
     saved = dict(os.environ)
     try:
         return load_by_path(path, name)
@@ -69,22 +50,13 @@ def power_analysis() -> ModuleType:
 
 # Pin each consumer to study_config itself, and pin the literals gone.
 
-#: Files that must no longer spell the results bucket or its region. The bucket
-#: string is checked verbatim; the region is checked as a quoted literal, so a
-#: prose mention inside a docstring is not what trips this (the point is that no
-#: code path re-declares the value, not that the words are unmentionable).
+#: Consumers must not redeclare bucket or region literals.
 _NO_LITERALS = (POWER_ANALYSIS, AUDIT, DEDUCTION_DRIVER)
 _BUCKET_LITERAL = "smolbench-results-414266451290"
 
 
 def test_power_analysis_roster_is_the_config_roster(power_analysis: ModuleType) -> None:
-    """FAMILIES and MODELS come from study_config, family names included.
-
-    Name equality is the half a "same 21 keys" check misses: before this
-    landed, `FAMILIES` grouped the identical keys under three different family
-    labels (``nemotron3``/``ministral3``/``deepseek``), which show up in every
-    within-family contrast label and in `error_bars.py --out-json`.
-    """
+    """Family names and models come from config because labels enter contrasts and JSON."""
     assert dict(power_analysis.FAMILIES) == {f: tuple(r) for f, r in families().items()}
     assert tuple(power_analysis.MODELS) == tuple(roster_keys())
 
@@ -120,12 +92,7 @@ def test_bucket_and_region_come_from_the_config() -> None:
 
 @pytest.mark.parametrize("path", _NO_LITERALS, ids=lambda p: p.name)
 def test_bucket_and_region_literals_are_gone_from_consumers(path: Path) -> None:
-    """The value must be read, not re-typed.
-
-    An equality assertion alone cannot catch a hand-typed copy that is correct
-    today and silently stale after the bucket moves, so this pins the absence of
-    the literal rather than the presence of the right value.
-    """
+    """Read values rather than retype them; equality cannot catch a future stale copy."""
     source = path.read_text()
     assert _BUCKET_LITERAL not in source, (
         f"{path.name} still spells the results bucket literally; read it from "

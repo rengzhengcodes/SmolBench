@@ -111,14 +111,7 @@ def test_merge_drops_a_torn_tail_but_aborts_on_mid_file_corruption(tmp_path: Pat
 
 
 def test_merge_collapses_an_exception_then_retry_duplicate(tmp_path: Path) -> None:
-    """Ordinary resume produces duplicate keys; merge must not abort on them.
-
-    `runner._existing_keys` re-runs a cell whose only row is an
-    ``"exception"``, and the sweep appends the retry, so a resumed lane can
-    carry two rows for one key. Both rows are kept in the merged file --
-    `power_analysis.grade_verdicts` already applies earliest-surviving-wins
-    to them -- but the key counts once against ``--expect-cells``.
-    """
+    """Resumed exception/retry pairs stay; their key counts once for `--expect-cells`."""
     runs = tmp_path / "runs"
     _write_shard(runs, "resumed", 0, 1, [
         cell_row(kind="sanity", theorem_id="A"),
@@ -145,13 +138,7 @@ def test_merge_collapses_an_exception_only_cell(tmp_path: Path) -> None:
 
 
 def test_merge_still_aborts_on_two_surviving_rows_for_one_key(tmp_path: Path) -> None:
-    """The gate keeps its teeth for the failure it was written for.
-
-    Two rows that both reached a real verdict for one cell key is a
-    mis-sharded or double-run lane. Checked across shards and with two graded
-    verdicts, so the collapse rule cannot be read as "any duplicate is fine
-    now".
-    """
+    """Two real verdicts for one key must abort as a mis-shard or double run."""
     runs = tmp_path / "runs"
     _write_shard(runs, "twice", 0, 2, [cell_row(theorem_id="A")])
     _write_shard(runs, "twice", 1, 2, [cell_row(theorem_id="A", verdict="lean_error")])

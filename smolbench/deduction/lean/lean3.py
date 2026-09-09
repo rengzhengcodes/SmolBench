@@ -1,12 +1,6 @@
-"""Detect Lean 3 syntax relics in generated Lean 4 proofs.
+"""Detect parse-level Lean 3 syntax relics in generated Lean 4 proofs.
 
-Lean 3 syntax survives SFT/LoRA training as a residue: `refl` for `rfl`,
-`existsi` for `use`, `begin...end`, `λ x, e` binders, and trailing commas.
-Detection is parse-level only; no mathlib3-to-mathlib4 lemma rename rule is
-attempted. Bracket depth accumulates across the whole text so commas inside a
-multi-line bracketed term are not misclassified. An unclosed opener can
-therefore suppress a later trailing-comma flag, and string contents are not
-skipped.
+Bracket depth spans lines so nested-term commas are not flagged; strings are scanned too.
 """
 
 from __future__ import annotations
@@ -39,19 +33,17 @@ _REFL_HEAD_MARKERS = (";", "<;>", "·", "{")
 
 
 def _bracket_delta(ch: str) -> int:
-    """Return the nesting delta contributed by one character.
-
-    A shared helper keeps line-depth and binder-depth calculations consistent.
+    """Classify a bracket character for shared line and binder depth.
 
     Parameters
     ----------
     ch : str
-        Character to classify.
+        Character.
 
     Returns
     -------
     int
-        ``1`` for an opener, ``-1`` for a closer, otherwise ``0``.
+        `1` for opener, `-1` for closer, else `0`.
     """
     if ch in _OPEN_BRACKETS:
         return 1
@@ -61,41 +53,36 @@ def _bracket_delta(ch: str) -> int:
 
 
 def _is_head_position(line_prefix: str) -> bool:
-    """Return whether following text occupies tactic-head position.
-
-    This excludes term-position occurrences such as ``exact refl``.
+    """Return whether a following token can be a tactic head.
 
     Parameters
     ----------
     line_prefix : str
-        Text preceding the possible tactic.
+        Preceding text.
 
     Returns
     -------
     bool
-        Whether a tactic may start after the prefix.
+        Whether a tactic may start there.
     """
     prefix = line_prefix.rstrip()
     return prefix == "" or prefix.endswith(_REFL_HEAD_MARKERS)
 
 
 def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
-    """Find the binder's own comma or arrow after `start`.
-
-    Relative depth prevents commas inside destructured binder patterns from
-    counting as the binder separator.
+    """Find a binder separator after `start`, ignoring nested-pattern commas.
 
     Parameters
     ----------
     text : str
-        Whole text being scanned.
+        Text.
     start : int
-        Position immediately after ``fun`` or ``λ``.
+        Position after ``fun`` or ``λ``.
 
     Returns
     -------
     tuple[str, int, int] | None
-        Kind and bounds of the first separator, or ``None``.
+        Separator kind and bounds, if present.
     """
     depth = 0
     i = start
@@ -113,15 +100,12 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
 
 
 def find_relics(text: str) -> list[Relic]:
-    """Scan `text` for parse-level Lean 3 syntax relics.
-
-    Rules run line by line except binder commas, whose separator may occur on
-    a later line. Findings are deduplicated by kind, text, and line.
+    """Find parse-level Lean 3 relics, deduplicated by kind, text, and line.
 
     Parameters
     ----------
     text : str
-        Lean text to scan.
+        Lean text.
 
     Returns
     -------

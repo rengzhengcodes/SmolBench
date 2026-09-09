@@ -1,15 +1,7 @@
-"""Where this study's verified rows live on S3, and which of them are retired.
+"""Resolve verified study rows and reject retired artifacts.
 
-Centralizes the bucket/prefix lookup and the retired-artifact guard so all
-three report scripts read one archive instead of each expecting a local
-``--rows-dir`` tree that nothing writes. S3's
-``<prefix>/scaling_<key>/verified_rows.jsonl`` lands locally as
-``<key>/<candidate>`` (``scaling_`` stripped), matching what ``error_bars``
-and ``hint_vs_noise`` already expect from ``--rows-dir``.
-
-These scripts run under ``uv run --no-project`` (no smolbench or boto3
-installed by default); ``boto3`` is imported lazily inside
-`download_scaling_rows` so every non-S3 path stays usable there.
+S3 rows land in the local layout report scripts expect. Import boto3 only for
+S3 downloads so ``uv run --no-project`` local paths remain usable.
 """
 
 from __future__ import annotations
@@ -28,19 +20,13 @@ from smolbench.evals.spool import spool_prefix  # noqa: E402
 from smolbench.evals.study_config import load_study_config  # noqa: E402
 from smolbench.evals import _aws  # noqa: E402
 
-# The archive's address.
-# Read from the committed study_config.toml (same file the fleet driver and
-# results store read), not restated as a literal, so no script can point at a
-# bucket a run never wrote to. study_config reads no env vars, so resolving at
-# import time (load_study_config is memoized) can't miss a late override. The
-# spool PREFIX, by contrast, is env-overridable and resolved per call instead
-# -- see `spool_prefix`.
+# Use committed study config so readers cannot target an unwritten bucket.
+# Resolve the env-overridable spool prefix per call.
 S3_BUCKET = load_study_config().results.bucket
 S3_REGION = load_study_config().results.region
 
-# The retired-artifact guard.
 def _banner(title: str, lines: Iterable[str]) -> str:
-    """The loud guards all print the same 78-column "!!" frame; build it once."""
+    """Build the shared 78-column refusal frame."""
     bar = "!" * 78
     return "\n".join([bar, f"!!  {title}", bar, *lines, bar])
 
@@ -48,15 +34,13 @@ def _banner(title: str, lines: Iterable[str]) -> str:
 def reject_superseded(paths: Iterable[str | Path]) -> None:
     """Refuse retired row artifacts, loudly and by name.
 
-    Raises ``SystemExit`` naming every path `retired_markers.is_retired`
-    rejects. A warning would not do: these files parse and their rows are
-    well-formed, so ingesting one yields a complete, plausible, wrong report.
+    Raise ``SystemExit`` for every path `retired_markers.is_retired` rejects:
+    well-formed retired rows would yield a plausible wrong report.
 
     Parameters
     ----------
     paths : Iterable[str | Path]
-        accepts full ``s3://bucket/key`` URIs, not just local paths --
-        matched on the basename, so the message still names the offending run.
+        Paths or S3 URIs, matched on basename.
     """
     bad = [str(p) for p in paths if is_retired(p)]
     if not bad:
@@ -73,7 +57,6 @@ def reject_superseded(paths: Iterable[str | Path]) -> None:
         ]))
 
 
-# S3 -> local.
 def download_scaling_rows(
     dest_dir: Path,
     *,
@@ -83,48 +66,32 @@ def download_scaling_rows(
 ) -> list[Path]:
     """Download this study's ``scaling_*`` run row files from S3 into `dest_dir`.
 
-    Lists each run's objects before downloading, rather than probing candidate
-    keys and swallowing 404s: this makes every object visible to the
-    retired-artifact guard before anything downloads, and turns a missing
-    candidate into a listing fact instead of a caught ``ClientError``.
-
-    A run with none of
-    `candidates` present is silently omitted rather than raising: a partially
-    collected study is a legitimate input to `power_analysis` (its
-    ``--models`` filter exists for that), while ``error_bars`` and
-    ``hint_vs_noise`` each already fail on a missing lane in their own terms.
+    List before downloading so the retired guard sees every object. Omit runs
+    without candidates because partial studies are valid `power_analysis` input.
 
     Parameters
     ----------
     dest_dir : Path
-        Local directory for downloaded row files.
+        Download destination.
     prefix : str
-        S3 key prefix WITH a trailing "/"; callers resolve it
-        (`spool_prefix`, or a CLI value) rather than a module constant, so a
-        late ``LEAN_SPOOL_PREFIX`` override applies per call.
+        Trailing-slash S3 prefix, resolved per call for late ``LEAN_SPOOL_PREFIX`` overrides.
     candidates : tuple[str, ...]
-        basenames tried in preference order; the chosen name is also
-        the landed basename, so `power_analysis`'s unverified-input banner
-        still fires on its ``all_rows.jsonl`` fallback.
+        Candidate basenames; retain the chosen name so `power_analysis` flags ``all_rows.jsonl`` as unverified.
     client : Any
-        optional S3 client, for tests; only
-        ``get_paginator("list_objects_v2")`` and ``download_file`` are called
-        on it.
+        Optional S3 client.
 
     Returns
     -------
     list[Path]
-        Downloaded local paths, sorted.
+        Sorted downloaded paths.
     """
     if client is None:
-        # Lazy, and skipped entirely for an injected client: keeps every
-        # non-S3 code path in these scripts boto3-free.
+        # Keep non-S3 paths boto3-free.
         client = _aws.fresh_client("s3", S3_REGION)
 
     paginator = client.get_paginator("list_objects_v2")
 
-    # Phase 1: discover the run prefixes. Delimiter="/" makes S3 roll each
-    # <prefix>/scaling_<key>/... family up into one CommonPrefixes entry.
+    # Delimiter groups each scaling run into one prefix.
     run_prefixes = sorted(
         common["Prefix"]
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix, Delimiter="/")
@@ -132,7 +99,6 @@ def download_scaling_rows(
         if Path(common["Prefix"].rstrip("/")).name.startswith("scaling_")
     )
 
-    # Phase 2: per run, list -> guard -> download at most one file.
     downloaded: list[Path] = []
     for run_prefix in run_prefixes:
         keys = [
@@ -140,14 +106,13 @@ def download_scaling_rows(
             for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=run_prefix)
             for obj in page.get("Contents", [])
         ]
-        # Full URIs, not bare basenames: `reject_superseded` matches on the
-        # basename either way, and the refusal message then says which run.
+        # Full URIs identify the offending run in refusals.
         reject_superseded(f"s3://{S3_BUCKET}/{key}" for key in keys)
 
         present = {Path(key).name for key in keys}
         chosen = next((name for name in candidates if name in present), None)
         if chosen is None:
-            continue  # partial collection is valid input; see docstring above
+            continue  # Partial collection is valid input.
 
         model_key = Path(run_prefix.rstrip("/")).name[len("scaling_"):]
         local_dir = dest_dir / model_key
@@ -165,39 +130,26 @@ def resolve_rows_dir(
     candidates: tuple[str, ...] = ("verified_rows.jsonl",),
     client: Any = None,
 ) -> Path:
-    """Return a local directory of ``<model>/verified_rows.jsonl``, fetching if asked.
+    """Return local rows, downloading S3 rows when requested.
 
-    The single entry point the report scripts call once in `main`.
-
-    Raises `ValueError` if both or neither of `rows_dir` / `s3_prefix` is
-    given -- the CLIs also enforce this via a required mutually-exclusive
-    group, but the function is directly importable. Raises `SystemExit` if
-    the download found no run files, or via `download_scaling_rows`'
-    retired-artifact guard.
-
-    The fetch temp directory is left uncleaned: a reader commonly re-runs the
-    same report against rows just fetched and should not pay the download
-    again, and the path is printed to stderr for reuse or manual removal.
-    That progress line goes to stderr rather than stdout so it never lands in
-    a captured transcript of the report itself.
+    Exactly one source is required. Keep fetched rows for reuse; progress goes
+    to stderr so it cannot enter report output.
 
     Parameters
     ----------
     rows_dir : Path | None
-        Local rows directory returned as-is; mutually exclusive with `s3_prefix`.
+        Local rows directory.
     s3_prefix : str | None
-        normalized to a single trailing "/"; an empty prefix is
-        refused (`ValueError`) rather than guessed at, since it would
-        silently list the whole bucket.
+        S3 prefix; empty prefixes are refused to avoid listing the whole bucket.
     candidates : tuple[str, ...], optional
-        Row-file basenames tried in preference order.
+        Candidate row basenames.
     client : Any, optional
-        S3 client for downloads.
+        S3 client.
 
     Returns
     -------
     Path
-        Local directory containing the resolved row files.
+        Resolved row directory.
     """
     if (rows_dir is None) == (s3_prefix is None):
         raise ValueError(
@@ -236,9 +188,8 @@ def resolve_rows_dir(
 
 
 def add_source_args(parser: argparse.ArgumentParser) -> None:
-    """Add the ``--rows-dir`` / ``--s3 [PREFIX]`` source group the report scripts share."""
-    # Required on the GROUP, not on `--rows-dir`: argparse rejects a required
-    # argument inside a mutually-exclusive group at parser-construction time.
+    """Add shared ``--rows-dir`` / ``--s3 [PREFIX]`` arguments."""
+    # argparse rejects required arguments inside mutually exclusive groups.
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--rows-dir", type=Path, default=None,
                         help="local directory of <model>/verified_rows.jsonl "
@@ -257,22 +208,20 @@ def add_source_args(parser: argparse.ArgumentParser) -> None:
 
 
 def resolve_from_args(args: argparse.Namespace) -> Path:
-    """`resolve_rows_dir` for a parser built by `add_source_args`.
+    """Resolve rows for a parser built by `add_source_args`.
 
-    ``--s3`` with no value arrives as "" (its ``const``), so the default prefix
-    is resolved here rather than as an argparse default. The single-element
-    `candidates` default stands: neither caller has an ``all_rows.jsonl``
-    fallback, and those rows carry the ungraded "unverified" sentinel.
+    Resolve valueless ``--s3`` here. Keep the verified-only candidate because
+    ``all_rows.jsonl`` carries the ungraded ``unverified`` sentinel.
 
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed source arguments.
+        Parsed arguments.
 
     Returns
     -------
     Path
-        Resolved rows directory.
+        Row directory.
     """
     return resolve_rows_dir(
         rows_dir=args.rows_dir,

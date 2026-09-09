@@ -29,14 +29,13 @@ IMAGE = "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7
 BUCKET = "smolbench-results-414266451290"
 LANE_KEYS = ("EC2_EXPERIMENT_TAG", "EC2_STATE_FILE", "EC2_VLLM_IMAGE", "LEAN_STATE_FILE",
              "SMOLBENCH_LEAN_RESULTS")
-#: A fleet-supervisor export: its tag is the lane's own (run_fleet's
-#: `Lane.experiment_tag`), the other two are values only it knows.
+#: Fleet exports include the lane tag and fleet-owned values.
 FLEET = {"EC2_EXPERIMENT_TAG": f"scaling-{KEY}", "EC2_VLLM_IMAGE": "fleet/image:pinned",
          "SMOLBENCH_LEAN_RESULTS": "/tmp/fleet-owned-results"}
 #: `build_config`'s locked `theorems` block.
 THEOREMS = {"source": "replay_passing", "kind": "random", "split": "val",
             "limit": 300, "seed": 0}
-#: The old corpus's trace commit, which `build_config` must name when it refuses.
+#: Refused corpus trace commit.
 OLD_CORPUS_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
 #: The re-collection's S3 spool prefix.
 SPOOL_PREFIX = "deduction_postcutoff/runs"
@@ -47,10 +46,9 @@ RUN_FILES = {"manifest.json": '{"run_name": "scaling_glm-4.7"}',
 
 
 def _load_isolated(path: Path, name: str, **env: str) -> ModuleType:
-    """Exec `path` as module `name`; these files load_dotenv() and read LEAN_* at import."""
+    """Load a module with isolated import-time `LEAN_*` configuration."""
     saved = dict(os.environ)
-    # Scrub the lane vars the ambient shell may carry: a stray EC2_EXPERIMENT_TAG
-    # trips the driver's import-time lane guard and fails collection for the whole module.
+    # Ambient lane tags trigger the import guard and would fail collection.
     for stale in LANE_KEYS + ("LEAN_RUN_NAME", "LEAN_SHARD", "LEAN_CELL_WHITELIST"):
         os.environ.pop(stale, None)
     os.environ.update(env)
@@ -68,10 +66,7 @@ def driver() -> ModuleType:
 
 @pytest.fixture
 def postcutoff_corpus(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Repoint the dataset root at the post-cutoff fixture.
-
-    build_config validates the corpus at call time, so every test using it needs one.
-    """
+    """Use the post-cutoff fixture because `build_config` validates at call time."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(POSTCUTOFF))
     corpus.reset_caches()
     yield POSTCUTOFF
@@ -89,9 +84,7 @@ def test_build_config_locked_overridable_and_unshared(
         "theorem_workers": 4, "n_replicates": 1, "k": {"strategy": "last"},
         "theorems": THEOREMS, "rungs": ["stepk:1", "hint:2", "noise:3", "hint:3"],
         "models": cfg["models"],
-        # Provenance stamp for sweep.yaml's bytes; recomputed from the file rather
-        # than pinned as a hex string, so an intentional knob edit doesn't touch
-        # this test -- what's pinned is that the digest matches the committed file.
+        # Hash source bytes so intentional knob edits update the expected digest.
         "sweep_config": {
             "path": "notebooks/deduction/sweep.yaml",
             "sha256": hashlib.sha256(SWEEP_YAML.read_bytes()).hexdigest(),
@@ -161,7 +154,7 @@ def test_lane_env_defaults_are_pure_and_anchored(driver: ModuleType, tmp_path: P
 
 
 def _run_driver(env: dict[str, str], checks: str = "") -> subprocess.CompletedProcess[str]:
-    """Import the driver in a clean interpreter; only a fresh one can witness ordering."""
+    """Import in a fresh interpreter to observe import ordering."""
     child = {k: v for k, v in os.environ.items() if k not in LANE_KEYS}
     child["LEAN_MODEL"] = KEY
     child.update(env)
@@ -185,8 +178,7 @@ def _run_driver(env: dict[str, str], checks: str = "") -> subprocess.CompletedPr
     (FLEET, "".join(f"assert os.environ[{k!r}] == {v!r}, os.environ[{k!r}]\n"
                     for k, v in FLEET.items()), True),
     ({"EC2_EXPERIMENT_TAG": "scaling-standalone"}, "", False),
-    # A neighbouring lane's tag: rejected only because the guard compares
-    # exactly -- "glm-4.7" is a substring of "scaling-glm-4.7-flash".
+    # Exact matching rejects `glm-4.7` inside neighboring `scaling-glm-4.7-flash`.
     ({"EC2_EXPERIMENT_TAG": f"scaling-{KEY}-flash"}, "", False)])
 def test_driver_subprocess_env_contract(env: dict[str, str], checks: str, ok: bool) -> None:
     proc = _run_driver(env, checks)
@@ -217,12 +209,12 @@ def test_end_to_end_sweep_offline(driver: ModuleType, sweep_env: Path, stub_serv
                 if r.get("body") is not None and r["path"].endswith("/chat/completions")]
 
     cfg = driver.build_config(KEY)
-    # The mini fixture has no replay_passing sidecar; the rest stays locked.
+    # The mini fixture lacks replay data, so only theorem selection changes.
     cfg["theorems"] = {"source": "explicit", "full_names": ["Mini.theoremA"],
                        "kind": "random", "split": "val"}
     cfg.update(skip_trivial=False, concurrent_gen=False, theorem_workers=1)
     run_dir = sweep_env / "runs" / cfg["run_name"]
-    # one theorem x one k (strategy "last") x 4 rungs x 1 model x 1 replicate
+    # 1 theorem × 1 k × 4 rungs × 1 model × 1 replicate.
     assert runner.sweep(cfg, run_dir, verifier=NullVerifier()) == 4
     want = {"chat_template_kwargs": driver.COT_ARGS[KEY]["chat_template_kwargs"], "seed": 0,
             "temperature": 0.7, "max_tokens": 32768}
@@ -268,8 +260,7 @@ def test_spool_uploads_preserving_paths_then_prunes(driver: ModuleType, tmp_path
         (str(run_dir / rel), BUCKET, f"{SPOOL_PREFIX}/scaling_{KEY}/{rel}")
         for rel in RUN_FILES)
     assert run_dir.is_dir() and (run_dir / "manifest.json").is_file()
-    # all_rows.jsonl survives the prune: it's the only file resume reads
-    # (runner._existing_keys / _sanity_done), so pruning it would re-provision a box.
+    # Resume reads `all_rows.jsonl`; pruning it would re-provision a box.
     assert (run_dir / "all_rows.jsonl").is_file()
     assert not (run_dir / "theorems").exists()
     assert driver.spool_to_s3(tmp_path / "nope", KEY, client=FakeS3()) == 0
@@ -335,8 +326,7 @@ def test_force_rerun_archives_old_rows_and_disables_resume(
 
 
 # ---------------------------------------------------------------------------
-# The post-cutoff corpus gate: build_config refuses before any AWS call
-# ---------------------------------------------------------------------------
+# Post-cutoff corpus gate.
 
 
 def _retarget(tmp_path: Path, **block: Any) -> Path:
@@ -423,9 +413,7 @@ def _explicit(cfg: dict[str, Any], *names: str) -> dict[str, Any]:
 
 def test_end_to_end_sweep_with_production_knobs_skips_the_trivial_rungs(
         driver: ModuleType, sweep_env: Path, stub_server: Any) -> None:
-    """With skip_trivial on and the fixture's empty 1-hop closure, only stepk:1 and
-    hint:2 render; the closure test below shows this is fixture-specific, not a
-    production bug."""
+    """An empty 1-hop fixture closure skips `noise:3`/`hint:3`; this is fixture-specific."""
     cfg = _explicit(driver.build_config(KEY), "Mini.theoremA")
     assert (cfg["skip_trivial"], cfg["concurrent_gen"], cfg["theorem_workers"]) \
         == (True, True, 4), "this test is only meaningful on the production knobs"
@@ -441,12 +429,7 @@ def test_end_to_end_sweep_with_production_knobs_skips_the_trivial_rungs(
 
 
 def _corpus_with_a_transitive_premise(src: Path, dest: Path) -> Path:
-    """Copy the post-cutoff fixture, making `Mini.premiseA` cite a third premise.
-
-    hint:3's 1-hop closure excludes its own seeds, and the shipped fixture has no
-    premise that qualifies (hence its trivial hint:3/noise:3); this adds one. Built
-    in tmp_path since the shipped fixture's trivial shape is pinned elsewhere.
-    """
+    """Add a premise because the pinned fixture has no nontrivial 1-hop `hint:3` closure."""
     shutil.copytree(src, dest)
     lines = (dest / "corpus.jsonl").read_text().splitlines()
     out = []
@@ -470,8 +453,7 @@ def _corpus_with_a_transitive_premise(src: Path, dest: Path) -> Path:
 def test_end_to_end_sweep_renders_every_rung_when_the_closure_is_non_empty(
         driver: ModuleType, sweep_env: Path, stub_server: Any, tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    """Given a non-empty 1-hop closure, all four production rungs render under
-    skip_trivial -- the only test in the suite exercising a noise rung through the sweep."""
+    """A nonempty closure renders all production rungs under `skip_trivial`."""
     root = _corpus_with_a_transitive_premise(POSTCUTOFF, tmp_path / "corpus_c")
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(root))
     corpus.reset_caches()
@@ -492,14 +474,13 @@ def test_end_to_end_sweep_renders_every_rung_when_the_closure_is_non_empty(
 
 
 # ---------------------------------------------------------------------------
-# no outstanding work -> no box
-# ---------------------------------------------------------------------------
+# No outstanding work.
 
 
 def _no_aws(
         monkeypatch: pytest.MonkeyPatch, driver: ModuleType, tmp_path: Path,
         **extra: Any) -> None:
-    """Make every billable call a test failure; keep the corpus + results dirs local."""
+    """Fail billable calls while keeping corpus and results local."""
     monkeypatch.setattr(driver.runner, "results_root", lambda: tmp_path)
     monkeypatch.setattr(driver, "selected_model", lambda: KEY)
     for obj, name in ((driver.ec2, "provision_spot_instance"),
@@ -519,16 +500,14 @@ def _sweep_to_completion(driver: ModuleType, sweep_env: Path) -> tuple[dict[str,
 
 
 def test_a_completed_lane_reports_no_outstanding_cells(driver: ModuleType, sweep_env: Path) -> None:
-    """After a full sweep, outstanding_cell_keys must return empty -- checked against
-    a real completed sweep so a naive full-product count can't fake the result."""
+    """Check a completed sweep so a naive full-product count cannot fake emptiness."""
     cfg, run_dir = _sweep_to_completion(driver, sweep_env)
     assert driver.outstanding_cell_keys(cfg, run_dir) == set()
 
 
 def test_a_lane_missing_one_cell_reports_exactly_that_cell(
         driver: ModuleType, sweep_env: Path) -> None:
-    """Deleting one cell's rows must surface exactly that key: not zero (stranding
-    the lane) and not everything (defeating the point)."""
+    """A missing cell must surface alone, neither stranding nor redoing the lane."""
     cfg, run_dir = _sweep_to_completion(driver, sweep_env)
     rows = [json.loads(x)
             for x in (run_dir / "all_rows.jsonl").read_text().splitlines()]
@@ -542,14 +521,11 @@ def test_a_lane_missing_one_cell_reports_exactly_that_cell(
 def test_main_does_not_provision_when_nothing_is_outstanding(
         driver: ModuleType, sweep_env: Path, monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path) -> None:
-    """A relaunch of a finished lane must not touch AWS: real money, and regenerated
-    rows would come from a different box than the ones they replace. The stubs
-    pytest.fail, so this also checks ordering, not just the return value."""
+    """A finished lane must not bill AWS or replace rows from another box."""
     cfg, run_dir = _sweep_to_completion(driver, sweep_env)
     monkeypatch.setattr(driver.runner, "results_root", lambda: sweep_env)
     monkeypatch.setattr(driver, "selected_model", lambda: KEY)
-    # main rebuilds its config, and production's theorems block needs a
-    # replay_passing sidecar the fixture lacks; hand back the sweep's own config instead.
+    # The fixture lacks replay data, so retain the completed sweep configuration.
     monkeypatch.setattr(driver, "build_config", lambda key: cfg)
     monkeypatch.setattr(driver.runner, "sweep", lambda *a, **k: pytest.fail(
         "swept a lane with no outstanding cells"))
@@ -580,14 +556,12 @@ def test_force_rerun_provisions_even_with_nothing_outstanding(
 
 
 # ---------------------------------------------------------------------------
-# one seed for the experiment
-# ---------------------------------------------------------------------------
+# One experiment seed.
 
 
 def test_lean_seed_drives_both_seeds(
         driver: ModuleType, postcutoff_corpus: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """LEAN_SEED couples theorem selection and decoding (default 0); the two used to
-    be independent literals with disagreeing library defaults (0 vs 1776)."""
+    """`LEAN_SEED` couples selection and decoding; both defaults are 0, not prior 0/1776."""
     cfg = driver.build_config(KEY)
     assert (cfg["seed"], cfg["theorems"]["seed"]) == (0, 0)
     monkeypatch.setenv("LEAN_SEED", "7")
@@ -597,24 +571,18 @@ def test_lean_seed_drives_both_seeds(
 
 def test_a_non_integer_lean_seed_is_refused(
         driver: ModuleType, postcutoff_corpus: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A typo'd LEAN_SEED must abort, never silently fall back to 0, which would
-    produce a run that looks like the pinned experiment and is not."""
+    """A bad `LEAN_SEED` must not silently fall back to 0 and impersonate the pinned run."""
     monkeypatch.setenv("LEAN_SEED", "abc")
     with pytest.raises(SystemExit):
         driver.build_config(KEY)
 
 
 # ---------------------------------------------------------------------------
-# The import-time tag guard runs shared structural validation
-# (validate_experiment_tag) before its own exact lane-identity compare; spool
-# bucket/region come from study_config.
-# ---------------------------------------------------------------------------
+# Shared tag validation precedes exact lane validation.
 
 
 @pytest.mark.parametrize("tag, expected_phrase", [
-    # Bare shared fleet prefix: names every lane at once (fleet teardown
-    # terminates by tag). The exact-match check would also reject it, but the
-    # shared validator's message must win, so the assertion is on the message.
+    # A fleet prefix targets every lane; the shared diagnostic must win.
     ("scaling-", "every lane"),
     ("scaling", "every lane"),
     ("   ", "empty or whitespace-only"),
@@ -631,9 +599,7 @@ def test_shared_tag_validation_runs_before_the_exact_compare(
 
 
 def test_a_neighbouring_lanes_tag_still_gets_the_exact_match_message() -> None:
-    """The strict-prefix case the shared validator can't catch: a well-formed,
-    non-bare tag passes validate_experiment_tag but must still fail this driver's
-    own exact compare."""
+    """A well-formed neighboring tag must still fail the driver's exact match."""
     proc = _run_driver({"EC2_EXPERIMENT_TAG": f"scaling-{KEY}-flash"})
     assert proc.returncode != 0
     assert "is not this lane's tag" in proc.stderr, proc.stderr
@@ -647,9 +613,7 @@ def test_spool_bucket_and_region_come_from_the_study_config(driver: ModuleType) 
 
 
 # ---------------------------------------------------------------------------
-# The sweep knobs live in a committed YAML, loaded through the same loader the
-# `cli run-sweep --config` path uses, and its digest lands in manifest.json.
-# ---------------------------------------------------------------------------
+# Sweep knobs come from committed YAML and its digest enters the manifest.
 
 
 def _sweep_yaml_copy(
@@ -667,8 +631,7 @@ def _sweep_yaml_copy(
 
 def test_sweep_yaml_is_the_only_place_the_knobs_are_written(
         driver: ModuleType, postcutoff_corpus: Path) -> None:
-    """No knob value is a literal in the driver: every config knob must come from
-    sweep.yaml, so editing the file is checked to actually change the config."""
+    """Every driver knob must come from `sweep.yaml`, not a literal."""
     cfg = driver.build_config(KEY)
     loaded, digest = runner.load_sweep_config(SWEEP_YAML)
     for knob in ("temperature", "max_tokens", "request_timeout", "max_retries",
@@ -699,8 +662,7 @@ def test_an_edited_sweep_yaml_changes_the_config_and_the_digest(
 def test_a_reserved_key_in_the_sweep_yaml_is_refused_by_name(
         driver: ModuleType, postcutoff_corpus: Path, tmp_path: Path,
         mutate: Callable[[dict[str, Any]], Any], named: str) -> None:
-    """Per-lane identity written into the sweep file would otherwise be silently
-    overwritten; the refusal message must name the offending key."""
+    """Reject YAML lane identity because it would be silently overwritten."""
     path = _sweep_yaml_copy(tmp_path, mutate)
     with pytest.raises(SystemExit) as excinfo:
         driver.build_config(KEY, sweep_config_path=path)
@@ -710,8 +672,7 @@ def test_a_reserved_key_in_the_sweep_yaml_is_refused_by_name(
 @pytest.mark.parametrize("dropped", ["max_retries", "dojo_timeout", "rungs"])
 def test_a_missing_knob_in_the_sweep_yaml_is_refused_by_name(
         driver: ModuleType, postcutoff_corpus: Path, tmp_path: Path, dropped: str) -> None:
-    """An absent key would silently fall through to runner.sweep's own library
-    default, leaving nothing in the manifest to reveal it."""
+    """Reject absent knobs to avoid undocumented runner defaults."""
     path = _sweep_yaml_copy(tmp_path, lambda d: d.pop(dropped))
     with pytest.raises(SystemExit) as excinfo:
         driver.build_config(KEY, sweep_config_path=path)
@@ -728,8 +689,7 @@ def test_a_missing_theorems_subkey_is_refused_by_name(
 
 def test_the_sweep_digest_lands_in_the_run_manifest(
         driver: ModuleType, sweep_env: Path, stub_server: Any) -> None:
-    """runner.sweep stamps the config verbatim, so an archived run records which
-    knob values it ran under instead of relying on driver source at a matching commit."""
+    """Archive the verbatim configuration rather than infer it from source."""
     cfg = driver.build_config(KEY)
     cfg["theorems"] = {"source": "explicit", "kind": "random", "split": "val",
                        "full_names": ["Mini.theoremA"]}
@@ -745,9 +705,7 @@ def test_the_sweep_digest_lands_in_the_run_manifest(
 
 
 def test_the_cli_run_sweep_path_uses_the_same_loader(tmp_path: Path) -> None:
-    """`cli run-sweep --config` goes through the same loader as the driver, so a
-    non-mapping document is refused by the same named check rather than surfacing
-    as an AttributeError mid-sweep."""
+    """CLI and driver share `load_sweep_config`, rejecting bad documents early."""
     from smolbench.deduction.lean import cli
 
     empty = tmp_path / "empty.yaml"

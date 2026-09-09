@@ -1,177 +1,100 @@
 ---
 name: run-smolbench
-description: Build, launch, and drive SmolBench — run the offline smolbench eval smoke driver, pytest suite, and induction demos, and run/smoke/test the smolbench.deduction.lean theorem-proving harness (notebooks/deduction experiment). Use when asked to run, start, test, smoke, or drive smolbench or the lean eval, or to verify a change works end-to-end.
+description: Run and test SmolBench's offline evals and Lean theorem-proving harness.
 ---
 
 # Run SmolBench
 
-One package, two runnable surfaces, no GUI/server. **smolbench** (repo root):
-an LLM-eval library — "running" it means driving the real quiz → provider →
-evaluate → grade → YAML pipeline against a local OpenAI-compatible stub, zero
-credentials. **smolbench.deduction.lean** (package `smolbench/deduction/lean/`, experiment
-`notebooks/deduction/`): a Lean 4 theorem-proving eval whose VERIFICATION path
-needs `lean-interact`, elan, and a BUILT mathlib4 checkout named by
-`SMOLBENCH_MATHLIB_ROOT`; generation/analysis need none of those. Both run
-on the same `.venv`. All paths below are relative to the repo root.
+Use the repo `.venv`; ordinary tests and demos need no credentials. Lean
+verification needs `lean-interact`, elan, and a built mathlib4 checkout at
+`SMOLBENCH_MATHLIB_ROOT`; generation and analysis do not.
 
 ## Prerequisites
 
 ```bash
-uv sync --all-extras   # single .venv (Python 3.12, pinned by .python-version), every extra
+uv sync --all-extras
 ```
 
-## Run (agent path)
+## Run
 
 ```bash
-# End-to-end smoke: generation -> provider dispatch -> stub round trip -> grading -> YAML IO.
-# `timeout` is mandatory: the provider retries transient failures FOREVER (60s backoff).
-timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py   # PASS + exit 0
+# `timeout` is required: provider retries transient failures forever (60s backoff).
+timeout 120 .venv/bin/python .claude/skills/run-smolbench/driver.py
+.venv/bin/python -m pytest tests/ -q
+.venv/bin/python -m smolbench.induction.periodic
 
-.venv/bin/python -m pytest tests/ -q          # offline suite, zero credentials
-
-.venv/bin/python -m smolbench.induction.periodic              # quiz-generation demo
-
-bash .claude/skills/run-smolbench/lean_smoke.sh           # lean Tier 0+1 (~seconds warm)
-bash .claude/skills/run-smolbench/lean_smoke.sh --replay  # + one real REPL replay (see below)
-bash .claude/skills/run-smolbench/lean_smoke.sh --e2e     # + stub LLMs, real Lean, resume check
+bash .claude/skills/run-smolbench/lean_smoke.sh
+bash .claude/skills/run-smolbench/lean_smoke.sh --replay
+bash .claude/skills/run-smolbench/lean_smoke.sh --e2e
 ```
 
-## Direct invocation (drive internals without the driver)
-
-Most PRs touch `smolbench/evals/` or `smolbench/induction/`; exercise them
-directly from the repo root — no credentials, real production code path:
-
-```python
-# .venv/bin/python - <<'EOF' ... EOF
-import os, string, sys, threading
-sys.path.insert(0, ".")  # repo root: makes tests.conftest importable
-from tests.conftest import StubServer, StubTokenizer, chat_completion
-from smolbench.evals import provider
-from smolbench.induction.periodic import (
-    PeriodicConfig, Prompter, get_periodic_numeric_quiz, numeric_count_query_gen)
-
-template = string.Template(
-    "Rules:\n$positive_info\nHow many of positions 1..$seq_len include '$label'? Integer only.")
-# `tokenizer` is keyword-only and has NO default: the noise arm pads to an
-# exact token count, so a quiz cannot be built without one.
-quiz, _, _ = get_periodic_numeric_quiz(
-    PeriodicConfig(n=2, labels=["fizz", "buzz"], seed=7),
-    Prompter(template, {}, numeric_count_query_gen),
-    tokenizer=StubTokenizer())
-
-server = StubServer()
-threading.Thread(target=server.serve_forever, daemon=True).start()
-os.environ |= {"INFERENCE_PROVIDER": "openrouter",
-               "OPENROUTER_BASE_URL": server.base_url,
-               "OPENROUTER_API_KEY": "dummy"}
-server.default_response = chat_completion("2")
-marks = provider.evaluate(quiz, "any-model", seed=7, max_parallel=1, show_progress=False)
-print(f"{marks.correct} correct / {marks.incorrect} incorrect / {marks.invalid} invalid of {len(quiz)}")
-server.shutdown()
-# -> 1 correct / 1 incorrect / 0 invalid of 2
-```
-
-## Run: smolbench.deduction.lean (theorem-proving eval)
-
-`lean_smoke.sh` handles the venv sync and a one-time 64 MB benchmark
-bootstrap (Zenodo record 10929138 → `notebooks/deduction/data/leandojo_benchmark_4/`,
-gitignored). Manual driving from the repo root with
-`export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`:
+## Lean commands
 
 ```bash
-# No Lean/REPL needed:
 .venv/bin/python -m smolbench.deduction.lean.cli metadata
 .venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5
-.venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl   # + report/show/compare
-# prompt-stats also runs here but needs the replay_passing_*.jsonl sidecar
-# that only `filter` (~70 min) produces.
+.venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl
 
-# Verification path (needs elan + a built mathlib4 checkout; not just an install):
-export SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4   # built with elan/lake
-.venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0   # needs elan; see Gotchas
+export SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4
+.venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
 .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config <sweep.yaml>
 ```
 
-The canonical sweep driver is `notebooks/deduction/run_study.py` (one lane per
-invocation, `LEAN_MODEL=<key>`); `notebooks/deduction/lean_eval.ipynb` is the
-interactive companion and `run-sweep` the headless escape hatch for the same
-config schema.
-
-`lean_smoke.sh --e2e` is the credential-free full sweep check. It starts two
-local OpenAI-compatible stubs, materializes the committed post-cutoff
-`Mini.theoremA` fixture in a temporary Lean project, and sends it through the
-production provider and real-Lean paths. It asserts the good stub
-succeeds, the bogus tactic produces `lean_error`, request and row seeds agree,
-provider dispatch is per-model, and an identical rerun resume-skips both
-cells. It needs elan but no provider credentials or external mathlib checkout.
-
-Real-model `run-cell`/`run-sweep` need a provider key
-(`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`), cost money, and are
-user-opt-in only; `filter` (~70 min/split) produces the
-`replay_passing_*.jsonl` sidecar that non-explicit sweep configs need.
-No such sidecar is checked in yet. Sweep results land under
+`lean_smoke.sh` bootstraps the 64 MB Benchmark 4 download at
+`notebooks/deduction/data/leandojo_benchmark_4/`. `filter` (~70 min/split)
+produces required `replay_passing_*.jsonl` sidecars. The canonical sweep is
+`notebooks/deduction/run_study.py`; results land in
 `notebooks/deduction/results/runs/`.
 
-## Live AWS surfaces — do NOT run without explicit user opt-in
+`lean_smoke.sh --e2e` is credential-free: it uses local provider stubs and a
+temporary Lean project, but needs elan. Real `run-cell`/`run-sweep` need
+`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`, cost money, and require
+explicit user opt-in.
 
-`scripts/smoke/bedrock_smoke.py`, `scripts/smoke/ec2_lifecycle_smoke.py <step>`,
-`scripts/fleet/run_fleet.py` and the `notebooks/{induction,deduction}/run_study.py`
-lane drivers provision/bill real AWS infra (Bedrock, EC2 spot vLLM) and need
-`keys.env` credentials (never print those files). The notebooks themselves only
-document and analyse those runs. Runbook: `scripts/README.md`'s "Live smoke runbook";
-last live-verified 2026-07-02. Everything in this skill runs without them.
+For direct provider tests, `get_periodic_numeric_quiz` needs an explicit
+`tokenizer` because its noise arm pads exact token counts. `StubServer` FIFO
+responses are deterministic only with `max_parallel=1`; use
+`server.default_response` for parallel fan-out. `provider.query()` and
+`complete()` need `context_length=` (default 0 fails token-usage responses);
+`evaluate()` resolves it with a stub GET of 100000.
+
+## Live AWS
+
+Do not run `scripts/smoke/bedrock_smoke.py`,
+`scripts/smoke/ec2_lifecycle_smoke.py <step>`, `scripts/fleet/run_fleet.py`,
+or the `notebooks/{induction,deduction}/run_study.py` lane drivers without
+explicit opt-in: they provision billable infrastructure and need `keys.env`.
+Never print credential files.
 
 ## Gotchas
 
-- Always name the interpreter explicitly: `.venv/bin/python`, never a system
-  python. `run-sweep`, `run-cell`, `replay`, and `filter` additionally need
-  elan and a built mathlib4 checkout named by `SMOLBENCH_MATHLIB_ROOT` (see
-  below); every other subcommand needs neither.
-- `uv sync` prunes packages not in the lockfile: it uninstalls the ad-hoc
-  `aws-bedrock-token-generator` that `scripts/smoke/bedrock_smoke.py` needs
-  (observed). Restore with `uv pip install aws-bedrock-token-generator`.
-  Plain `uv run` / `uv run --no-sync` likewise strips extras — resync with
-  `uv sync --all-extras`; use `uv run --no-project` for ephemeral scripts.
-- The shared `ChatClient` retries 429/5xx/connection errors **forever**
-  (60 s backoff) under openrouter — always wrap unattended runs in `timeout`.
-  Lean sweeps are exempt: the runner passes `max_retries` (config key,
-  default 4) so a wedged endpoint can't hang an open REPL session.
-- `StubServer.next_response` pops FIFO: queued-response↔question mapping is
-  only deterministic with `max_parallel=1`; for parallel fan-out set a
-  uniform `server.default_response` instead.
-- Direct `provider.query()`/`complete()` needs explicit `context_length=`
-  (default 0 fails any response that reports `usage.total_tokens`);
-  `evaluate()` resolves it internally via a GET the stub answers with 100000.
-- Repo rule: every request carries `seed` — never drop it to dodge an error.
-  Lean sweeps derive per-replicate seeds as `config["seed"] + replicate_idx`.
-- `notebooks/*/results*/` are huge generated trees (~80 M lines of YAML for
-  the induction experiments; JSONL with full raw responses for lean) — never
-  grep/glob them blindly.
-- `GITHUB_ACCESS_TOKEN` is not needed by `replay` under the REPL backend,
-  which reads a local checkout and fetches nothing. It remains relevant to
-  LeanDojo corpus TRACING and premise slicing, which can still hit anonymous
-  GitHub rate limits.
-- elan alone is not enough. Install it with
-  `curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none`,
-  then also clone and BUILD mathlib4 (`lake exe cache get && lake build`) and
-  point `SMOLBENCH_MATHLIB_ROOT` at that checkout. `lean-interact` starts the
-  REPL inside that project, so the checkout's own `lean-toolchain` is what
-  elan provisions.
+- Always use `.venv/bin/python`, never system Python. Lean `run-sweep`,
+  `run-cell`, `replay`, and `filter` additionally need elan and the built
+  `SMOLBENCH_MATHLIB_ROOT` checkout.
+- `uv sync` removes ad-hoc packages outside the lockfile, including
+  `aws-bedrock-token-generator`; restore it with `uv pip install
+  aws-bedrock-token-generator`. `uv run` and `uv run --no-sync` strip extras;
+  use `uv run --no-project` for ephemeral scripts.
+- `ChatClient` retries 429/5xx/connection failures forever, so unattended
+  runs must use `timeout`. Lean sweeps use `max_retries` (default 4) so an
+  endpoint cannot hold an open REPL forever.
+- Keep `seed` on every request; Lean sweeps derive it as `config["seed"] +
+  replicate_idx`.
+- Do not glob `notebooks/*/results*/`: generated results are huge.
+- `GITHUB_ACCESS_TOKEN` is unnecessary for REPL `replay`, but LeanDojo tracing
+  and premise slicing can hit GitHub rate limits.
+- elan alone is insufficient: build mathlib4 (`lake exe cache get && lake
+  build`) because `lean-interact` runs its REPL under that checkout's
+  `lean-toolchain`. Install elan with `curl -sSf
+  https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh
+  -s -- -y --default-toolchain none` if needed.
 
 ## Troubleshooting
 
-- `Python ... is not the project interpreter` from the driver → you used a
-  system python; rerun with `.venv/bin/python`.
-- `cannot import tests.conftest` (driver exit 2) → run from a synced repo:
-  `uv sync --all-extras` at the root.
-- `ImportError: smolbench.deduction.lean.verify requires the 'lean_interact'
-  package (the lean extra)` → run `uv sync --all-extras`.
-- `no mathlib4 checkout configured: set SMOLBENCH_MATHLIB_ROOT ...` — from the
-  verifier; or `FAIL: SMOLBENCH_MATHLIB_ROOT is not set` from
-  `lean_smoke.sh --replay`. Export it, pointing at a mathlib4 checkout built with
-  elan/lake. In a `lean_verify_rows.py` pass this text lands in the `lean_error`
-  column under verdict `replay_failed` on cell rows (and `exception` on sanity
-  rows) — match on the message, not the verdict; see
-  `notebooks/deduction/README.md`, "Two traps in phase 2".
-- `elan not found` from `lean_smoke.sh --replay` → install elan (line above)
-  or run the default Tier-0/1 smoke instead.
+- `Python ... is not the project interpreter` or `cannot import
+  tests.conftest` → run `uv sync --all-extras` and use `.venv/bin/python`.
+- Missing `lean_interact` → run `uv sync --all-extras`.
+- Missing `SMOLBENCH_MATHLIB_ROOT` → export a built elan/lake mathlib4
+  checkout; the verifier records it as `lean_error`/`replay_failed` on cells
+  and `exception` on sanity rows.
+- `elan not found` → install elan or run default Tier-0/1 smoke.

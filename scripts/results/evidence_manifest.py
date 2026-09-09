@@ -1,13 +1,11 @@
 #!/usr/bin/env python
-"""Build and verify ``EVIDENCE.json``, the manifest that pins what a writeup cites.
+"""Build and verify ``EVIDENCE.json`` for results writeups.
 
-Pins each artifact by sha256, streaming even a tarball member rather than
-extracting it -- extracting into the gitignored results dir is how untracked
-evidence gets born. References may cross via ``..``, and :func:`build` is
-deterministic, so a rebuild diff means the evidence moved.
-
-Load by file path and register in ``sys.modules`` before ``exec_module``, or
-the dataclass below can't resolve its annotations.
+Stream tarball members without extraction so untracked evidence is not created.
+``build`` is deterministic, so a diff signals moved evidence.
+References may cross via ``..``.
+When loading by path, register in ``sys.modules`` before ``exec_module`` so
+dataclass annotations resolve.
 """
 from __future__ import annotations
 
@@ -25,11 +23,11 @@ from typing import IO, Any
 MANIFEST_NAME = "EVIDENCE.json"
 SCHEMA = "smolbench-evidence-manifest/1"
 
-#: Closed role vocabulary: a typo fails loudly instead of inventing a role.
+#: Closed vocabulary makes role typos fail.
 ROLES = ("writeup", "analysis_input", "raw", "estimator", "preregistration",
          "config", "gate", "teardown", "log", "other")
 
-#: Citation-worthy suffixes, kept narrow: a false positive costs an allowlist entry.
+#: Narrow suffixes avoid needless allowlist entries.
 CITED_SUFFIXES = (".json", ".jsonl", ".gz", ".yaml", ".yml", ".txt", ".md",
                   ".sh", ".py")
 
@@ -40,7 +38,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 TARBALL_PREFIX = "tarball:"
 
-#: 1 MiB chunks keep a large gzipped raw file off the heap while hashing.
+#: 1 MiB bounds memory while hashing large gzip files.
 CHUNK_BYTES = 1 << 20
 
 _HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -50,10 +48,9 @@ _BACKTICKED = re.compile(r"`([^`\n]+)`")
 
 
 class ResolutionError(FileNotFoundError):
-    """Raised when a manifest reference does not resolve to a readable file.
+    """Raised for an unreadable manifest reference.
 
-    Subclasses :class:`FileNotFoundError` so :func:`build` can propagate it
-    while :func:`verify` collects it into a failure census.
+    Subclassing lets ``build`` raise it while ``verify`` reports it.
     """
 
 
@@ -65,13 +62,13 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
     Parameters
     ----------
     relpath : str
-        Splits ``tarball:<tarball>!<member>`` on the FIRST ``!``, since a member
-        may contain one but a tarball path effectively cannot.
+        ``tarball:<tarball>!<member>`` split on the first ``!`` because members
+        may contain it.
 
     Returns
     -------
     tuple[str, str | None]
-        on-disk path and optional tarball member
+        On-disk path and tarball member.
     """
     if not relpath.startswith(TARBALL_PREFIX):
         return relpath, None
@@ -90,13 +87,12 @@ def _candidates(relpath: str) -> list[str]:
     Parameters
     ----------
     relpath : str
-        A tarball reference offers both the archive's own path and the member
-        path, so a writeup can cite either.
+        Archive and member paths so writeups can cite either.
 
     Returns
     -------
     list[str]
-        path strings that may cover a citation
+        Paths that may cover a citation.
     """
     path, member = _split_reference(relpath)
     return [path] if member is None else [path, member]
@@ -106,26 +102,23 @@ def _candidates(relpath: str) -> list[str]:
 def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
     """Open a manifest reference for binary reading, without extracting it.
 
-    Streams a tarball member via ``extractfile`` rather than
-    ``extract``/``extractall``, so the filesystem stays byte-for-byte as
-    found.
+    Streams members with ``extractfile`` so the filesystem stays unchanged.
 
     Parameters
     ----------
     manifest_dir : Path
-        directory containing the manifest and referenced artifacts
+        Manifest and artifact directory.
     relpath : str
-        manifest reference to open
+        Reference to open.
 
     Yields
     ------
     IO[bytes]
-        binary stream for the reference
+        Binary reference stream.
     """
     tar_relpath, member = _split_reference(relpath)
     target = manifest_dir / tar_relpath
 
-    # Plain reference.
     if member is None:
         if not target.is_file():
             detail = ("missing file (not a regular file)" if target.exists()
@@ -135,7 +128,6 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
             yield handle
         return
 
-    # Tarball reference: the archive must exist before the member can.
     if not target.is_file():
         raise ResolutionError(f"{relpath}: missing tarball: {tar_relpath}")
     with tarfile.open(target, "r:gz") as archive:
@@ -144,7 +136,6 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
         except KeyError:
             raise ResolutionError(
                 f"{relpath}: missing tarball member: {member}") from None
-        # A directory/symlink/hardlink member reports "not a regular file".
         stream = archive.extractfile(info) if info.isfile() else None
         if stream is None:
             raise ResolutionError(
@@ -157,24 +148,24 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
 def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     """Stream a reference and return its sha256 as 64 lowercase hex chars.
 
-    Reads in :data:`CHUNK_BYTES` blocks.
+    Read in ``CHUNK_BYTES`` blocks.
 
     Parameters
     ----------
     manifest_dir : Path
-        Directory containing the manifest and referenced artifacts.
+        Manifest and artifact directory.
     relpath : str
-        Manifest reference to hash.
+        Reference to hash.
 
     Returns
     -------
     str
-        Sha256 as 64 lowercase hex chars.
+        64-character lowercase SHA-256 digest.
 
     Raises
     ------
     ResolutionError
-        If the reference does not resolve.
+        Unreadable reference.
     """
     digest = hashlib.sha256()
     with _open_reference(manifest_dir, relpath) as stream:
@@ -188,20 +179,17 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
-    Kept as a
-    hard rule rather than a heuristic -- a miss only costs one citation
-    going ungated.
+    Exact suffix matching avoids silently ungated citations.
 
     Parameters
     ----------
     text : str
-        writeup text to scan
+        Writeup text.
 
     Returns
     -------
     list[str]
-        sorted, deduplicated tokens verbatim: backtick-quoted, whitespace-free,
-        ending in a :data:`CITED_SUFFIXES` suffix.
+        Sorted, deduplicated artifact tokens.
     """
     found: set[str] = set()
     for raw in _BACKTICKED.findall(text):
@@ -216,19 +204,19 @@ def cited_artifacts(text: str) -> list[str]:
 def covers(cited: str, entry_path: str) -> bool:
     """Is ``cited`` a whole-path-component suffix of ``entry_path``?
 
-    Asymmetric: a longer citation is never covered by a shorter entry path.
+    A longer citation cannot be covered by a shorter entry path.
 
     Parameters
     ----------
     cited : str
-        citation path to check
+        Citation path.
     entry_path : str
-        manifest entry path that may cover the citation
+        Candidate manifest path.
 
     Returns
     -------
     bool
-        whether the entry path covers the citation
+        Whether the entry covers the citation.
     """
     cited_parts = cited.split("/")
     entry_parts = entry_path.split("/")
@@ -247,35 +235,33 @@ def build(manifest_dir: str | Path,
           write: bool = True) -> dict[str, Any]:
     """Hash every listed artifact and write the directory's ``EVIDENCE.json``.
 
-    Caller order is kept for both lists, and no timestamp is written, so
-    rebuilds are byte-identical. Coverage is NOT checked here; only
-    :func:`verify` judges a writeup's claims. A supplied ``sha256`` is
-    checked against the computed digest, never trusted.
+    Preserve order and omit timestamps so rebuilds are byte-identical.
+    ``verify`` alone checks coverage; supplied hashes are never trusted.
 
     Parameters
     ----------
     manifest_dir : str | Path
-        directory in which to build the manifest
+        Manifest directory.
     entries : Iterable[Mapping[str, Any]]
-        artifact entries to hash
+        Artifact entries.
     allowlist : Iterable[Mapping[str, Any]], optional
-        citation exceptions with names and reasons
+        Citation exceptions.
     note : str | None, optional
-        manifest note
+        Manifest note.
     write : bool, optional
-        whether to write ``EVIDENCE.json`` to the manifest directory
+        Write the manifest.
 
     Returns
     -------
     dict[str, Any]
-        constructed manifest data
+        Constructed manifest.
     """
     mdir = Path(manifest_dir)
 
     if note is not None and not isinstance(note, str):
         raise ValueError(f"note must be a string, got {type(note).__name__}")
 
-    # Allowlist first: it costs no I/O, unlike the hashing pass below.
+    # Validate the allowlist before hashing to avoid I/O on bad input.
     checked_allowlist: list[dict[str, str]] = []
     for i, raw in enumerate(allowlist):
         name = raw.get("name")
@@ -288,7 +274,7 @@ def build(manifest_dir: str | Path,
                 "allowlist entry with no reason is an undocumented hole")
         checked_allowlist.append({"name": name, "reason": reason})
 
-    # Validate cheap fields before hashing, so a bad role is a ValueError.
+    # Validate fields before hashing so bad roles fail cheaply.
     checked_entries: list[dict[str, Any]] = []
     for i, raw in enumerate(entries):
         relpath = raw.get("relpath")
@@ -302,7 +288,7 @@ def build(manifest_dir: str | Path,
         entry_note = raw.get("note")
         if entry_note is not None and not isinstance(entry_note, str):
             raise ValueError(f"entry {i} ({relpath}): note must be a string")
-        _split_reference(relpath)  # ValueError on a malformed tarball ref
+        _split_reference(relpath)
 
         digest = _sha256_of_reference(mdir, relpath)
         supplied = raw.get("sha256")
@@ -324,7 +310,7 @@ def build(manifest_dir: str | Path,
     manifest["allowlist"] = checked_allowlist
 
     if write:
-        # newline="\n" pins exact bytes: determinism covers the file too.
+        # Explicit newlines make the written manifest deterministic.
         (mdir / MANIFEST_NAME).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8", newline="\n")
@@ -337,8 +323,7 @@ def build(manifest_dir: str | Path,
 class VerifyResult:
     """Outcome of verifying one ``EVIDENCE.json``.
 
-    ``n_entries`` counts everything the manifest lists, including entries
-    the schema check rejected; ``roles`` counts only the schema-valid ones.
+    ``n_entries`` includes invalid entries; ``roles`` does not.
     """
 
     ok: bool
@@ -353,22 +338,21 @@ class VerifyResult:
 def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     """Validate one raw manifest entry, appending any defects to ``failures``.
 
-    Every check runs before returning, so a hand-edited entry reports all
-    its defects in one pass, not just the first.
+    Run every check so hand-edited entries report all defects.
 
     Parameters
     ----------
     index : int
-        entry position in the manifest
+        Manifest position.
     entry : Any
-        raw manifest entry to validate
+        Raw entry.
     failures : list[str]
-        defects to append
+        Defect accumulator.
 
     Returns
     -------
     bool
-        whether the entry is schema-valid
+        Whether the entry is valid.
     """
     if not isinstance(entry, Mapping):
         failures.append(f"entry {index}: not an object: {entry!r}")
@@ -401,7 +385,7 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
 
     if ok:
         try:
-            _split_reference(relpath)  # a str by now: checked just above
+            _split_reference(relpath)
         except ValueError as exc:
             failures.append(f"entry {index}: {exc}")
             ok = False
@@ -412,20 +396,19 @@ def _check_allowlist_schema(raw_allowlist: Any,
                             failures: list[str]) -> list[dict]:
     """Validate the manifest's allowlist, returning its usable entries.
 
-    An entry missing ``reason`` is reported AND dropped -- keeping it would
-    let deleting the justification silently pass a coverage failure.
+    Drop missing reasons so deleted justifications cannot pass coverage.
 
     Parameters
     ----------
     raw_allowlist : Any
-        raw allowlist from the manifest
+        Raw allowlist.
     failures : list[str]
-        defects to append
+        Defect accumulator.
 
     Returns
     -------
     list[dict]
-        usable allowlist entries
+        Usable entries.
     """
     if not isinstance(raw_allowlist, list):
         failures.append(f"allowlist: not a list: {raw_allowlist!r}")
@@ -454,20 +437,19 @@ def _check_allowlist_schema(raw_allowlist: Any,
 def verify(manifest_dir: str | Path) -> VerifyResult:
     """Re-hash a directory's pinned evidence and check its citation coverage.
 
-    Checks schema, resolution, sha256, then coverage, in order, and COLLECTS
-    every defect rather than raising -- a drifted writeup's sha256 mismatch
-    still gets its citations scanned -- except a missing manifest or bad
-    JSON, which propagate since there's no partial census to report.
+    Collect schema, resolution, hash, and coverage defects; a hash mismatch
+    still scans citations. Missing manifests and bad JSON raise because no
+    partial census exists.
 
     Parameters
     ----------
     manifest_dir : str | Path
-        directory containing ``EVIDENCE.json``
+        Manifest directory.
 
     Returns
     -------
     VerifyResult
-        verification outcome and failure census
+        Verification outcome and failures.
     """
     mdir = Path(manifest_dir)
     manifest_path = mdir / MANIFEST_NAME
@@ -477,7 +459,6 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
 
     failures: list[str] = []
 
-    # ---- check 1: schema -------------------------------------------------
     raw_entries = data.get("entries")
     if not isinstance(raw_entries, list):
         failures.append(f"entries: not a list: {raw_entries!r}")
@@ -486,7 +467,7 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
              if _check_entry_schema(i, e, failures)]
     allowlist = _check_allowlist_schema(data.get("allowlist", []), failures)
 
-    # Includes unresolved entries, else a broken tarball also misreports coverage.
+    # Include unresolved entries so broken tarballs do not misreport coverage.
     candidates: list[str] = []
     for entry in valid:
         candidates.extend(_candidates(entry["relpath"]))
@@ -498,12 +479,11 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
         relpath = entry["relpath"]
         roles[entry["role"]] = roles.get(entry["role"], 0) + 1
 
-        # ---- check 2+3: resolution, then sha256 --------------------------
         try:
             actual = _sha256_of_reference(mdir, relpath)
         except ResolutionError as exc:
             failures.append(str(exc))
-            continue  # nothing further is knowable about this entry
+            continue
         except (OSError, tarfile.TarError) as exc:
             failures.append(f"{relpath}: unreadable: {exc}")
             continue
@@ -511,7 +491,6 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
             failures.append(f"{relpath}: sha256 mismatch: "
                             f"manifest={entry['sha256']} actual={actual}")
 
-        # ---- check 4: citation coverage (writeups only) ------------------
         if entry["role"] != "writeup":
             continue
         try:
@@ -522,7 +501,7 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
             continue
         cited = cited_artifacts(text)
         citations[relpath] = cited
-        # Name match only; whether it's the *right* artifact is for the entry's note.
+        # Entry notes, not names, establish whether an artifact is the right one.
         for name in cited:
             if name in allowed_names:
                 continue
@@ -539,18 +518,17 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
 def find_manifests(root: Path | None = None) -> list[Path]:
     """Locate every ``EVIDENCE.json`` under ``notebooks/*/results/``.
 
-    Searches at any depth below a results directory, so a package under
-    ``results/runs/<name>/`` counts too.
+    Search ``notebooks/*/results/`` recursively so ``results/runs/<name>/`` counts.
 
     Parameters
     ----------
     root : Path | None, optional
-        root directory to search
+        Root to search.
 
     Returns
     -------
     list[Path]
-        manifest paths in sorted order
+        Sorted manifest paths.
     """
     base = REPO if root is None else Path(root)
     return sorted(base.glob(f"notebooks/*/results/**/{MANIFEST_NAME}"))
@@ -567,24 +545,23 @@ def _display_dir(path: Path) -> str:
 
 
 def _census_lines(result: VerifyResult) -> list[str]:
-    """Render the human-readable census for one verified manifest.
+    """Render one verified manifest's human-readable census.
 
-    Excludes the FAIL lines, which the caller prints unindented so they grep
-    cleanly out of a long run.
+    The caller leaves failures unindented for grep.
 
     Parameters
     ----------
     result : VerifyResult
-        verification outcome to render
+        Verification outcome.
 
     Returns
     -------
     list[str]
-        human-readable census lines
+        Census lines.
     """
     lines = [f"{_display_dir(result.manifest_dir)}: {result.n_entries} entries"]
     if result.roles:
-        # ROLES order keeps two packages' censuses diffable against each other.
+        # Role order keeps package censuses diffable.
         lines.append("  roles: " + ", ".join(
             f"{role}={result.roles[role]}" for role in ROLES
             if role in result.roles))
@@ -607,7 +584,7 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
     Returns
     -------
     int
-        0 if every manifest verified, 1 otherwise.
+        0 if all manifests verify, else 1.
     """
     targets = ([Path(d) for d in dirs] if dirs
                else [p.parent for p in find_manifests()])
@@ -622,7 +599,7 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
         try:
             result = verify(target)
         except FileNotFoundError as exc:
-            # A named directory with no manifest is a user error, not a crash.
+            # A requested missing manifest is a user error, not a crash.
             print(f"FAIL {_display_dir(target)}: {exc}")
             n_failed += 1
             continue
@@ -643,20 +620,19 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
 def _cmd_build(manifest_dir: str, spec_path: str) -> int:
     """Build one ``EVIDENCE.json`` from a JSON spec file.
 
-    The spec carries no hashes -- they're computed here, so it can be
-    hand-written and re-run after the evidence legitimately changes.
+    Compute hashes so hand-written specs can be rerun after legitimate changes.
 
     Parameters
     ----------
     manifest_dir : str
-        directory in which to write the manifest
+        Manifest directory.
     spec_path : str
-        path to the JSON build specification
+        JSON build specification.
 
     Returns
     -------
     int
-        command exit status
+        Exit status.
     """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     manifest = build(manifest_dir,

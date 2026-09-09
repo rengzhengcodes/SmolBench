@@ -1,6 +1,4 @@
-"""Test smolbench.deduction.lean.runner with a faked verifier (no lean_dojo) and
-two local OpenAI-compatible stub servers; a proof verifies iff it holds MARKER.
-"""
+"""Test `runner` with fake verification and local provider stubs."""
 
 import json
 import re
@@ -173,7 +171,7 @@ def _sweep(
 
 def _force_exception(
         run_dir: Path, theorem: str | None = None) -> tuple[Any, Any, Any, Any, Any]:
-    """Make one cell's only recorded verdict "exception" (appending can't); return key."""
+    """Make a cell retryable by replacing, not appending, its only result."""
     rows = _rows(run_dir)
     target = next(r for r in rows
                   if r.get("kind") == "cell" and theorem in (None, r["theorem_id"]))
@@ -254,9 +252,7 @@ def test_sweep_end_to_end(
         assert (tdir / "summary.md").exists()
         assert (tdir / "meta.json").exists()
     if not concurrent:
-        # gen_ms times the generation call, not the wait for it: at
-        # max_workers=1 a submit-time stamp would bill each of the 8 cells per
-        # (theorem, k) the queue wait of every cell submitted before it.
+        # Measure generation, not queue wait, or max_workers=1 cells accumulate 8 prior waits.
         assert max(r["gen_ms"] for r in cells) < 4 * gen_delay * 1000
         assert [(r["theorem_id"], r["rung"], r["model"], r["replicate_idx"])
                 for r in cells] == [
@@ -274,7 +270,7 @@ def test_sweep_end_to_end(
 @pytest.mark.parametrize("concurrent", [False, True])
 def test_fully_resumed_sweep_opens_no_dojo_session(
         sweep_ctx: SimpleNamespace, concurrent: bool) -> None:
-    """With every cell already recorded, neither path pays a Dojo session to skip them."""
+    """Resumed cells must not open a Dojo session merely to skip."""
     cfg = _make_config(concurrent)
     assert _sweep(sweep_ctx, cfg)[0] == EXPECTED_CELLS
     verifier = FakeVerifier()
@@ -307,7 +303,7 @@ def test_generation_exception_rows_carry_the_full_cell_schema(
 
 
 def test_existing_keys_reruns_only_cells_that_never_reached_the_model(tmp_path: Path) -> None:
-    """`prompt_tokens > 0` is the line between lost data and real data."""
+    """`prompt_tokens > 0` distinguishes real data from a lost request."""
     records = {
         "lost.never_asked": [("exception", "", 0), ("unverified", "", 0)],
         "data.answered_empty_after_infra": [("exception", "", 0),
@@ -402,8 +398,7 @@ def test_sweep_skips_trivial_rungs(sweep_ctx: SimpleNamespace) -> None:
                                      "exception", "replay_failed", "skipped"])
 def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(
         sweep_ctx: SimpleNamespace, verdict: str) -> None:
-    """Failure verdicts gate a theorem out; exception passes through like skipped, since
-    it signals infrastructure trouble rather than an unreplayable ground truth."""
+    """Infrastructure `exception` passes like `skipped`; replay failures gate a theorem out."""
     cfg = _make_config(concurrent=False)
     excluded = verdict not in ("skipped", "exception")
     expected = EXPECTED_CELLS // 2 if excluded else EXPECTED_CELLS
@@ -419,8 +414,7 @@ def test_sanity_gate_excludes_on_failure_and_is_sticky_on_resume(
     second = FakeVerifier()  # this one would now report success for A
     assert _sweep(sweep_ctx, cfg, verifier=second)[0] == 0
     assert second.replay_calls == []
-    # No second replay on resume: a duplicate sanity row would break
-    # merge_lean_shards.py's --expect-sanity count.
+    # Resume cannot duplicate sanity rows or shard `--expect-sanity` breaks.
     assert len(_rows(run_dir, "sanity")) == 2
     after = _rows(run_dir, "cell")
     assert len(after) == expected
@@ -497,7 +491,7 @@ def test_cell_whitelist_restricts_sweep_to_exactly_the_listed_cells(
 
 def test_cell_whitelist_bad_file_raises_and_writes_nothing(
         sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bad LEAN_CELL_WHITELIST aborts at sweep start, never a full unfiltered run."""
+    """A bad whitelist must abort before an unfiltered sweep."""
     monkeypatch.setenv("LEAN_CELL_WHITELIST", str(sweep_ctx.tmp / "missing.json"))
     with pytest.raises(ValueError):
         _sweep(sweep_ctx)
@@ -535,13 +529,11 @@ def test_ctx_len_for_falls_back_to_huge_value_on_lookup_failure() -> None:
 
 def test_l3_column_counts_parse_level_relics_and_names_its_scope(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The `l3` column counts parse-level relics only; name-level detection was removed
-    since the asset it needed was never built, so the column means the same thing everywhere."""
+    """`l3` counts parse-level relics only because no Lean3-name asset exists."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
-    # Distinct theorem_id per row: write_run_analysis dedupes on the full row key,
-    # so identity-less rows would collapse into a single 1/1 cell.
+    # Distinct theorem IDs prevent full-key dedupe collapsing rows into 1/1.
     proofs = [("lean_error", "existsi z"),      # parse-level relic
               ("lean_error", "intros f,"),      # parse-level relic
               ("lean_error", "apply supr_le"),  # mathlib3 name only -> not a relic
@@ -584,8 +576,7 @@ def test_nullverify_sweep_generates_all_theorems(sweep_ctx: SimpleNamespace) -> 
 
 
 # ---------------------------------------------------------------------------
-# The corpus gate inside `_select_theorems`.
-# ---------------------------------------------------------------------------
+# Corpus gate inside `_select_theorems`.
 
 #: Selects the fixture's whole 2-theorem pool, in file order, with no sampling.
 PC_BASE = {"source": "with_proof", "kind": "random", "split": "val", "limit": 0, "seed": 0}
@@ -620,7 +611,7 @@ def test_require_postcutoff_accepts_a_postcutoff_corpus(
 
 def test_require_postcutoff_rejects_the_old_corpus_naming_it(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 2024-03-24 benchmark has no post-cutoff tail; the refusal names the corpus."""
+    """The 2024-03-24 corpus has no post-cutoff tail; name it on refusal."""
     _repoint(monkeypatch, FIXTURE)
     with pytest.raises(ValueError, match=re.escape(str(FIXTURE))):
         runner._select_theorems(PC_BASE)
@@ -629,7 +620,7 @@ def test_require_postcutoff_rejects_the_old_corpus_naming_it(
 
 def test_require_postcutoff_rejects_a_pre_cutoff_row(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Corpus-level metadata is not enough: every selected row must carry the flag."""
+    """Every selected row, not only corpus metadata, must be post-cutoff."""
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     assert corpus.is_postcutoff_corpus() is True
     with pytest.raises(ValueError, match="Mini.theoremB"):
@@ -639,7 +630,7 @@ def test_require_postcutoff_rejects_a_pre_cutoff_row(
 
 def test_require_postcutoff_checks_the_pool_before_sampling(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`shard: "0/2"` drops the offending row, so only a pre-sample check catches it."""
+    """Check before sampling because shard `0/2` can omit the offending row."""
     _repoint(monkeypatch, _demote_one_row(tmp_path))
     sharded = {**PC_BASE, "shard": "0/2"}
     with pytest.raises(ValueError, match="Mini.theoremB"):
@@ -648,14 +639,11 @@ def test_require_postcutoff_checks_the_pool_before_sampling(
 
 
 # ---------------------------------------------------------------------------
-# the verdict vocabulary itself
-# ---------------------------------------------------------------------------
+# Verdict vocabulary.
 
 
 def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set() -> None:
-    """Pins SANITY_FAILURE_VERDICTS by exact equality: exception is infrastructure and
-    no_answer is unreachable here (replay_ground_truth has no candidate tail), so neither
-    belongs, and an equality check forces any future addition to argue for itself."""
+    """Exact failure set excludes infrastructure and tail-only verdicts."""
     assert runner.SANITY_FAILURE_VERDICTS == frozenset(
         {"lean_error", "incomplete", "given_up", "replay_failed"}
     )
@@ -665,8 +653,7 @@ def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set() -> None:
 
 
 def test_no_answer_has_its_own_glyph() -> None:
-    """no_answer is renderable and doesn't collide: an unregistered verdict would
-    silently render as given_up's glyph instead of failing loud."""
+    """`no_answer` needs a unique glyph or unknown verdicts render silently wrong."""
     assert "no_answer" in runner._VERDICT_GLYPH
     assert runner._glyph("no_answer") != runner._glyph("__not_a_verdict__")
     glyphs = list(runner._VERDICT_GLYPH.values())
@@ -675,12 +662,11 @@ def test_no_answer_has_its_own_glyph() -> None:
 
 def test_write_run_analysis_counts_no_answer_in_its_own_column(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """noans is a column separate from lerr, so a lane of truncated reasoning traces
-    doesn't read as a lane of wrong Lean proofs."""
+    """Separate `noans` from `lerr` so truncated reasoning is not reported as wrong Lean."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
-    # Distinct theorem_id per row: the analysis dedupes on the full row key.
+    # Distinct theorem IDs avoid full-key dedupe.
     _write_rows(run_dir, [
         {"kind": "cell", "rung": "stepk:0", "model": "m", "theorem_id": f"T{i}",
          "k": 1, "replicate_idx": 0, "verdict": v, "candidate_proof": p}
@@ -700,9 +686,7 @@ def test_write_run_analysis_counts_no_answer_in_its_own_column(
 
 def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """analysis.txt counts cells, not rows: a resumed cell with a retry row must not
-    read as 1/2, and a never-measured cell must still count once under exc rather than
-    disappear from the denominator."""
+    """Analysis counts cells: retries must not read as 1/2 and unmeasured cells stay in denominator."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
@@ -725,8 +709,7 @@ def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
 
 
 def test_dedupe_cell_rows_keys_on_the_full_row_key() -> None:
-    """replicate_idx is part of the row key, so genuine replicates survive dedup
-    instead of collapsing."""
+    """`replicate_idx` is part of the key so genuine replicates survive dedupe."""
     def row(rep: int, verdict: str) -> dict[str, Any]:
         return {"kind": "cell", "model": "m", "theorem_id": "T", "k": 1,
                 "rung": "stepk:0", "replicate_idx": rep, "verdict": verdict}
@@ -735,14 +718,13 @@ def test_dedupe_cell_rows_keys_on_the_full_row_key() -> None:
                                     row(1, "lean_error")])
     assert [(r["replicate_idx"], r["verdict"]) for r in kept] == [
         (0, "success"), (1, "lean_error")]
-    # Order of the surviving rows follows the input, not the key ordering.
+    # Preserve input order rather than key order.
     kept = runner.dedupe_cell_rows([row(1, "success"), row(0, "success")])
     assert [r["replicate_idx"] for r in kept] == [1, 0]
 
 
 # ---------------------------------------------------------------------------
-# sweep reconciliation, provenance, constants
-# ---------------------------------------------------------------------------
+# Sweep reconciliation, provenance, constants.
 
 
 def _manifest(run_dir: Path) -> dict[str, Any]:
@@ -751,8 +733,7 @@ def _manifest(run_dir: Path) -> dict[str, Any]:
 
 def test_unreachable_whitelist_keys_are_reported_and_fatal(
         sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A requested cell the sweep cannot reach must not exit 0; manifest.json's
-    whitelist_missed and analysis.txt must be written before the raise, not lost with it."""
+    """Unreachable requested cells must not exit 0 and must write reconciliation artifacts."""
     cfg = _make_config()
     reachable = sorted(_key(r)
                        for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
@@ -774,8 +755,7 @@ def test_unreachable_whitelist_keys_are_reported_and_fatal(
 
 def test_a_fully_reachable_whitelist_records_an_empty_missed_list(
         sweep_ctx: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
-    """whitelist_missed is written whenever a whitelist is active, so an empty list
-    (nothing missed) stays distinguishable from an absent key (no whitelist)."""
+    """An active whitelist records `[]`, distinct from no whitelist."""
     cfg = _make_config()
     reachable = sorted(_key(r)
                        for r in _rows(_sweep(sweep_ctx, cfg, name="baseline")[1], "cell"))
@@ -795,44 +775,35 @@ def test_no_whitelist_leaves_the_manifest_key_absent(sweep_ctx: SimpleNamespace)
 
 def test_manifest_records_whether_the_traced_repo_was_present(
         sweep_ctx: SimpleNamespace) -> None:
-    """Which cells a run produces depends on whether the traced mathlib4 checkout is
-    present (it changes what skip_trivial judges trivial); traced_root_present records
-    that provenance unconditionally so an archived run doesn't need re-deriving it."""
+    """Record traced mathlib4 root presence because it changes `skip_trivial` selection."""
     _, run_dir = _sweep(sweep_ctx, name="prov")
     assert isinstance(_manifest(run_dir)["traced_root_present"], bool)
 
 
 def test_dojo_timeout_has_one_default_across_all_three_entry_points() -> None:
-    """DEFAULT_DOJO_TIMEOUT has one owner across run_cell and cli run-cell/replay,
-    checked via actual signature/parser defaults so a stray literal bypassing the
-    constant fails here."""
+    """One timeout owner across API and CLI prevents stray-default drift."""
     import inspect
 
-    # 600, not run_study's 300: tightening downward would convert slow
-    # theorems into "exception" verdicts.
+    # 600, not 300: lowering it turns slow theorems into `exception`.
     assert runner.DEFAULT_DOJO_TIMEOUT == 600
     assert (inspect.signature(runner.run_cell).parameters["dojo_timeout"].default
             == runner.DEFAULT_DOJO_TIMEOUT)
 
     from smolbench.deduction.lean import cli
 
-    # --timeout lives on the subparsers; scanning parser._actions directly
-    # would pass vacuously instead of finding it.
+    # Timeouts live on subparsers; top-level scanning would pass vacuously.
     parser = cli.build_parser()
     sub = next(a for a in parser._actions if a.dest == "cmd")
     for name in ("run-cell", "replay"):
         timeout = next(a for a in sub.choices[name]._actions if a.dest == "timeout")
         assert timeout.default == runner.DEFAULT_DOJO_TIMEOUT, (name, timeout.default)
-    # filter's --timeout is deliberately different; pinned so a tidy-up that
-    # folds it in has to change this line and argue for it.
+    # `filter` deliberately has a different timeout.
     filt = next(a for a in sub.choices["filter"]._actions if a.dest == "timeout")
     assert filt.default != runner.DEFAULT_DOJO_TIMEOUT
 
 
 def test_sweep_seed_default_is_zero(sweep_ctx: SimpleNamespace) -> None:
-    """An omitted seed must not silently disagree with the driver: theorems.seed and
-    cfg.seed used to default differently (0 vs 1776); run_cell's own 1776 default is a
-    separate entry point, left unchanged."""
+    """An omitted sweep seed is 0; `run_cell` retains its separate 1776 default."""
     cfg = _make_config(run_name="seedless", rungs=["stepk:0"], n_replicates=1,
                        theorems={"source": "explicit", "kind": "random",
                                  "split": "val", "full_names": ["Mini.theoremA"]})
@@ -843,8 +814,7 @@ def test_sweep_seed_default_is_zero(sweep_ctx: SimpleNamespace) -> None:
 
 def test_resume_truncates_a_torn_final_line_before_appending(
         sweep_ctx: SimpleNamespace) -> None:
-    """A torn final line from a SIGKILL must be truncated before append-resume, or
-    the writer welds two records into one corrupt middle line."""
+    """Truncate SIGKILL-torn lines before resume so records cannot weld corruptly."""
     cfg = _make_config(run_name="torn", rungs=["stepk:0"], n_replicates=1,
                        theorems={"source": "explicit", "kind": "random",
                                  "split": "val", "full_names": ["Mini.theoremA"]})
@@ -853,11 +823,11 @@ def test_resume_truncates_a_torn_final_line_before_appending(
     path = run_dir / "all_rows.jsonl"
     good = _rows(run_dir)
 
-    # SIGKILL mid-write: a partial record with no trailing newline.
+    # SIGKILL can leave a partial record without newline.
     with path.open("a") as f:
         f.write('{"kind": "cell", "theorem_id": "Mini.theo')
 
-    # Resume. The truncated cell must be regenerated, not appended onto.
+    # Resume regenerates the truncated cell rather than appending to it.
     _write_rows(run_dir, good[:-1])
     with path.open("a") as f:
         f.write('{"kind": "cell", "theorem_id": "Mini.theo')

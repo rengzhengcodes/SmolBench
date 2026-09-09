@@ -1,9 +1,6 @@
-"""Test smolbench.deduction.lean.lean3, whose relic detection is parse-level
-only: a name-level rule (Lean 3 -> Lean 4 declaration renames) was removed
-because its on-disk map was never built anywhere in this tree.
+"""Tests parse-level Lean 3 relic detection and name-only negative controls.
 
-Covers the five parse-level relic kinds `find_relics` reports, with
-mathlib3-name cases kept as negative controls.
+Name-level detection stays absent because this tree has no on-disk rename map.
 """
 
 import pytest
@@ -20,9 +17,7 @@ from smolbench.deduction.lean.lean3 import Relic, find_relics
     pytest.param("exact le_refl x", set(), id="refl-not-in-head-position"),
     pytest.param("refine ⟨foo,\n  bar⟩", set(), id="trailing-comma-inside-open-bracket"),
     pytest.param("simp only [stdBasis_eq_pi_diag]", set(), id="snake-ish-identifier"),
-    # Negative controls for the removed name-level rule: a mathlib3 lemma name
-    # carries no parse-level relic, so a clean line holding one now reports
-    # clean. If that rule returns, these flip.
+    # Name-only Mathlib3 cases must stay clean under parse-level detection.
     pytest.param("rw [iso.inv_comp_eq]", set(), id="mathlib3-name-alone-is-clean"),
     pytest.param("exact funext (λ i, eval_f i (finset.mem_univ _))", {"binder-comma"}, id="mathlib3-name-only-its-binder-comma-counts"),
     pytest.param("apply supr_le,", {"trailing-comma"}, id="mathlib3-name-only-its-trailing-comma-counts"),
@@ -40,9 +35,7 @@ def test_find_relics(text: str, expected_kinds: set[str]) -> None:
 def test_relic_fixes_and_dedup() -> None:
     assert [r.fix for r in find_relics("refl") if r.kind == "refl"] == ["rfl"]
     assert [r.fix for r in find_relics("existsi z") if r.kind == "existsi"] == ["use"]
-    # One relic per line, not one per occurrence.
     assert len([r for r in find_relics("refl <;> refl") if r.kind == "refl"]) == 1
-    # A mathlib3 lemma name contributes nothing of its own: the whole finding is
-    # the trailing comma.
+    # The finding is the trailing comma, not the Mathlib3 lemma name.
     assert find_relics("apply supr_le,") == [
         Relic(kind="trailing-comma", text="apply supr_le,", fix="apply supr_le", line=0)]

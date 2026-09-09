@@ -1,17 +1,7 @@
-"""A verifier that verifies nothing -- for generation-only sweeps with no Lean toolchain.
+"""Provide generation-only verification without a Lean toolchain.
 
-Injected into `runner.sweep`/`run_cell` as ``verifier=NullVerifier()``: phase 1
-(call the model, write every row) then needs no `lean_interact`, elan, or
-mathlib4 checkout. Phase 2 (replaying tails against a real Lean REPL) is a
-separate pass, not implemented here.
-
-Never import `smolbench.deduction.lean.verify` here, even lazily: its
-unconditional top-level ``import lean_interact`` raises `ImportError` wherever
-`lean_interact` is absent. Hence the local mirror dataclasses.
-
-``"skipped"`` is deliberately absent from `runner.SANITY_FAILURE_VERDICTS`:
-this module never replays, so suppressing those theorems would leave a
-generation-only sweep with zero cells.
+Never import `verify`: its top-level `lean_interact` import fails where the dependency is absent.
+`"skipped"` is not a sanity failure, so generation-only sweeps still produce cells.
 """
 
 from __future__ import annotations
@@ -25,17 +15,13 @@ from .corpus import BenchmarkTheorem
 
 @dataclass(frozen=True)
 class NullReplayResult:
-    """Placeholder outcome of a (never-attempted) ground-truth replay.
-
-    Field-for-field mirror of `verify.ReplayResult` (same names, same order), so
-    `runner.py`'s per-theorem sanity-row code works unchanged.
-    """
+    """Unattempted ground-truth replay, mirroring `verify.ReplayResult` for `runner`."""
 
     theorem: str
     #: Always ``"skipped"``: replay was not attempted.
     verdict: str
     tactics_applied: int
-    #: ``len(bt.traced_tactics)``, for parity though no tactics were run.
+    #: Traced-tactic count, for result-shape parity.
     tactics_total: int
     error: str | None = None
     final_state_pp: str | None = None
@@ -43,13 +29,7 @@ class NullReplayResult:
 
 @dataclass(frozen=True)
 class NullProofResult:
-    """Placeholder outcome of a (never-attempted) proof-tail verification.
-
-    Field-for-field mirror of `verify.ProofResult`, so `runner.py`'s
-    exception handlers can construct one without importing `verify`.
-    `verdict` is therefore not restricted to ``"unverified"`` -- only this
-    module's own methods always set that.
-    """
+    """Unattempted proof-tail result, mirroring `verify.ProofResult` for `runner`."""
 
     theorem: str
     verdict: str
@@ -60,19 +40,9 @@ class NullProofResult:
 
 
 class NullVerifier:
-    """A verifier seam implementation that never touches Lean or `lean_interact`.
+    """Injected verifier that never opens Lean; stateless for concurrent reuse."""
 
-    Duck-types the surface `runner` calls on an injected `verifier`. The real
-    `verify` is a module of top-level functions where these are instance
-    methods, so callers pass an *instance*; `timeout` and `k` arguments exist
-    for interface parity and are unused.
-
-    Stateless and I/O-free, so one instance is reusable across a whole sweep,
-    including across the runner's concurrent-generation worker threads.
-    """
-
-    #: A class attribute that is itself a class is not a descriptor, so
-    #: `runner.py` can call `verifier.ProofResult(...)` with no implicit `self`.
+    #: Class attributes are not descriptors, so `runner` can call `verifier.ProofResult(...)`.
     ProofResult = NullProofResult
 
     def replay_ground_truth(self, bt: BenchmarkTheorem, timeout: int = 600) -> NullReplayResult:
@@ -89,28 +59,21 @@ class NullVerifier:
     def open_at_step(
         self, bt: BenchmarkTheorem, k: int, timeout: int = 600
     ) -> Iterator[tuple[None, None]]:
-        """Yield ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
-
-        The real `verify.open_at_step` yields a `replbackend.ReplSession` as
-        that first element, not a LeanDojo ``Dojo``; the parameter name is
-        kept because `runner.py` calls `try_tail` positionally.
-
-        Unlike `verify.open_at_step`, never raises `ValueError` for out-of-range
-        `k` -- there is no prefix to replay.
+        """Yield ``(None, None)`` because no proof prefix is replayed.
 
         Parameters
         ----------
         bt : BenchmarkTheorem
-            The theorem whose proof step would be opened.
+            The theorem.
         k : int
-            Proof-step index.
+            Step index.
         timeout : int, optional
-            Timeout accepted for API compatibility.
+            API-compatible timeout.
 
         Yields
         ------
         tuple[None, None]
-            ``(None, None)`` in place of a `(dojo, state_at_k)` pair.
+            Placeholder session and state.
         """
         yield None, None
 
@@ -123,24 +86,22 @@ class NullVerifier:
     def verify_proof_tail(
         self, bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600
     ) -> NullProofResult:
-        """One-shot `try_tail` variant, for the `run-cell` CLI's session-per-call path.
-
-        `k` is never range-checked, since no session is opened.
+        """Report an unverified tail without opening a session.
 
         Parameters
         ----------
         bt : BenchmarkTheorem
-            The theorem whose proof tail is reported.
+            The theorem.
         k : int
-            Proof-step index.
+            Step index.
         tail : str
-            Candidate tactic tail.
+            Candidate tail.
         timeout : int, optional
-            Timeout accepted for API compatibility.
+            API-compatible timeout.
 
         Returns
         -------
         NullProofResult
-            ``verdict="unverified"``.
+            Unverified result.
         """
         return NullProofResult(theorem=bt.full_name, verdict="unverified", tail_tried=tail)

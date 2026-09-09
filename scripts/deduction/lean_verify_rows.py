@@ -1,19 +1,8 @@
-"""Verify recorded Lean generation rows against real Lean, in a deferred pass.
-
-Phase 2 of the two-phase deduction eval: phase 1 (``run_study.py`` +
-``runner`` with a ``NullVerifier``) writes cell rows with ``verdict ==
-"unverified"`` and sanity rows with ``"skipped"``. This downloads a run's
-``all_rows.jsonl`` from S3, replays every recorded candidate against real
-Lean, and uploads the sibling ``verified_rows.jsonl``. S3 decouples the
-phases: generation needs only a provider API, verification needs
-``elan``/Lean plus the traced mathlib4 corpus (the ``lean`` extra).
-``all_rows.jsonl`` is NEVER modified or re-uploaded, so a verification bug
-cannot lose a candidate proof that already cost inference spend. Per-decision
-rationale (grouping, resume, locking, exit codes) lives on the functions that
-implement it, not here.
-
-``lean_interact`` and ``boto3``/``botocore`` import lazily: the module imports
-without either, and ``--dry-run`` needs neither Lean nor the lock.
+"""Verify recorded Lean rows in a deferred pass.
+Phase 1 (``run_study.py``/``runner`` with ``NullVerifier``) records ``"unverified"``/``"skipped"`` rows; replay ``all_rows.jsonl`` into sibling ``verified_rows.jsonl``.
+Generation needs a provider API; verification needs ``elan`` and traced mathlib.
+Never alter ``all_rows.jsonl``: a verification bug must not lose paid proofs.
+Lazy ``lean_interact`` and boto imports keep ``--dry-run`` dependency-free.
 """
 
 from __future__ import annotations
@@ -35,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
 
-import fcntl  # POSIX-only; every host this script runs on is Linux (EC2 / dev boxes).
+import fcntl  # POSIX-only; verification hosts are Linux.
 
 from smolbench.deduction.lean.corpus import BenchmarkTheorem, load_split
 from smolbench.deduction.lean.runner import (
@@ -56,11 +45,7 @@ logging.basicConfig(level=logging.INFO)
 _error_code = _aws.error_code
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-#: Same bucket every other deduction spool writer/reader in this study uses.
-#: The key prefix comes from `spool_prefix()`, read at call time.
+#: Shared deduction spool bucket; prefix comes from `spool_prefix()` at call time.
 SPOOL_BUCKET: str = "smolbench-results-414266451290"
 DEFAULT_RUNS_GLOB: str = "scaling_*"
 S3_REGION: str = "us-west-2"
@@ -70,20 +55,15 @@ UPLOAD_EVERY_GROUPS: int = 10
 RAM_GB_PER_WORKER: int = 6
 DOJO_CACHE_DIR: Path = Path.home() / ".cache" / "lean_dojo"
 
-#: Lock file `_dojo_cache_lock` flocks inside `DOJO_CACHE_DIR` -- a file NEXT TO the
-#: cache, never the cache dir itself, which this process's worker threads read/write.
+#: Lock beside, never inside, the worker-shared cache directory.
 _LOCK_FILENAME = ".smolbench_verify.lock"
 
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 
-# ---------------------------------------------------------------------------
-# Pure: S3 key helpers
-# ---------------------------------------------------------------------------
 def run_object_key(key_prefix: str, run: str, filename: str) -> str:
     """Build one run's object key ``f"{key_prefix}/{run}/{filename}"``.
 
-    Empty segments are dropped and stray slashes stripped, so the key never
-    has a leading or doubled ``"/"`` (`key_prefix` may be ``""``).
+    Strip segments and drop empties so keys have no leading or doubled ``"/"``.
 
     Parameters
     ----------
@@ -97,20 +77,16 @@ def run_object_key(key_prefix: str, run: str, filename: str) -> str:
     Returns
     -------
     str
-        The normalized S3 object key.
+        Normalized object key.
     """
     segments = (key_prefix.strip("/"), run.strip("/"), filename.strip("/"))
     return "/".join(segment for segment in segments if segment)
 
 
-# ---------------------------------------------------------------------------
-# Pure: grouping, deduplication, fan-out, resume
-# ---------------------------------------------------------------------------
 def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
     """Group still-unverified cell rows by their ``(theorem_id, k)`` pair.
 
-    That pair is the unit of work: every cell row sharing it can share one
-    Dojo session.
+    Rows sharing a pair share one Dojo session.
 
     Parameters
     ----------
@@ -120,8 +96,7 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
     Returns
     -------
     dict[tuple[str, int], list[int]]
-        ``(theorem_id, k) -> ascending indices into rows``, first-seen key order,
-        restricted to ``kind == "cell"`` and ``verdict == "unverified"``.
+        Unverified cell-row indices by ``(theorem_id, k)``.
     """
     groups: dict[tuple[str, int], list[int]] = {}
     for index, row in enumerate(rows):
@@ -136,9 +111,8 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
 def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[int]]:
     """Group `indices` by their exact ``candidate_proof`` text.
 
-    Lean replay is deterministic, so rows sharing candidate text need exactly
-    one ``try_tail`` call. No normalisation: a one-character difference is
-    correctly two groups, since Lean need not treat them identically either.
+    Replay is deterministic, so equal text needs one ``try_tail`` call.
+    Do not normalize: one-character differences can change Lean's result.
 
     Parameters
     ----------
@@ -150,8 +124,7 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     Returns
     -------
     dict[str, list[int]]
-        Candidate text mapped to row indices; a missing or ``None`` candidate groups under
-        ``""``.
+        Row indices by candidate; missing candidates use ``""``.
     """
     groups: dict[str, list[int]] = {}
     for index in indices:
@@ -163,9 +136,7 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
 def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, Any]) -> None:
     """Apply one verification `result` to every row in `indices`, in place.
 
-    `result` must carry ``verdict``, ``lean_error``, ``final_state_pp`` and
-    ``verify_ms``; nothing else on the row is read or written, so `seed` and
-    every other recorded field survives untouched.
+    ``result`` must contain the four verification fields; preserve all others.
 
     Parameters
     ----------
@@ -174,7 +145,7 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
     indices : list[int]
         Indices of rows to update.
     result : Mapping[str, Any]
-        Verification fields to copy to each row.
+        Verification fields.
     """
     for index in indices:
         row = rows[index]
@@ -187,8 +158,7 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
 def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict]]:
     """Group ``kind == "cell"`` `rows` by ``(theorem_id, k)``, in `rows` order.
 
-    Shared by :func:`resume_done_groups` and :func:`verify_run`'s never-measured
-    diagnostic, so the two agree on what a "group" is by construction.
+    Shared with the never-measured diagnostic so both use the same groups.
 
     Parameters
     ----------
@@ -198,7 +168,7 @@ def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict
     Returns
     -------
     dict[tuple[str, int], list[dict]]
-        Cell rows grouped by ``(theorem_id, k)``.
+        Cell rows by ``(theorem_id, k)``.
     """
     return group_cell_rows(
         (r for r in rows if r.get("kind") == "cell"),
@@ -207,9 +177,7 @@ def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict
 
 
 def _never_measured(cell_rows: list[dict]) -> bool:
-    """True iff every row in `cell_rows` carries a :data:`_NEVER_MEASURED_VERDICTS`
-    verdict -- i.e. NOTHING in this group was ever actually tested against Lean,
-    as opposed to tested and failed.
+    """Whether no row in ``cell_rows`` was tested against Lean.
 
     Parameters
     ----------
@@ -219,7 +187,7 @@ def _never_measured(cell_rows: list[dict]) -> bool:
     Returns
     -------
     bool
-        Whether every row has a never-measured verdict.
+        Whether all verdicts are never-measured.
     """
     return all(row.get("verdict") in _NEVER_MEASURED_VERDICTS for row in cell_rows)
 
@@ -227,24 +195,12 @@ def _never_measured(cell_rows: list[dict]) -> bool:
 def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     """Find the ``(theorem_id, k)`` groups a later pass should NOT re-attempt.
 
-    ALL-cells, not ANY: ``all_rows.jsonl`` grows by appending, so a group a
-    prior pass finished can gain new sentinel cells, and an ANY rule would
-    leave them ``"unverified"`` forever. `verified_rows` must be the PAIRED
-    output of :func:`seed_out_rows`, never a prior ``verified_rows.jsonl``
-    alone -- a cell phase 1 appended to an already-graded group exists
-    nowhere in that file by itself.
-
-    A group counts as done when its cell rows all carry a non-``"unverified"``
-    verdict AND are not all in :data:`_NEVER_MEASURED_VERDICTS`
-    (:func:`_never_measured`): a group whose REPL session never opened is
-    retried, matching phase 1's own resume (`runner._existing_keys` also
-    re-runs an exception-only cell). ``"no_answer"`` counts as measured, not
-    pending -- there's nothing left to retry for an empty candidate.
-
-    Nothing recorded on a row distinguishes a permanently unopenable theorem
-    from a transient REPL hiccup, so such a group is re-attempted on every
-    subsequent full pass, forever -- bounded to one REPL-open attempt per
-    pending group per pass. See :func:`verify_run`'s never-measured diagnostic.
+    Use paired, all cells: later phase-1 cells are absent from ``verified_rows``
+    alone and would stay ``"unverified"`` under an any-cell rule. Retry
+    never-measured groups because rows cannot distinguish a transient REPL failure
+    from an unopenable theorem, matching ``runner._existing_keys``; one attempt
+    per group/pass.
+    ``"no_answer"`` is measured because no candidate remains to retry.
 
     Parameters
     ----------
@@ -254,7 +210,7 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
     Returns
     -------
     set[tuple[str, int]]
-        Groups a later pass should not re-attempt.
+        Completed groups.
     """
     groups = _group_cell_rows_by_key(verified_rows)
     return {
@@ -268,10 +224,8 @@ def resume_done_groups(verified_rows: list[dict]) -> set[tuple[str, int]]:
 def row_identity(row: dict) -> tuple:
     """Extract a row's identity: ``(kind, model, theorem_id, k, rung, replicate_idx)``.
 
-    ``row.get`` throughout, so a sanity row (no `model`/`k`/`rung`/`replicate_idx`)
-    yields ``None`` there instead of raising. The trailing five fields mirror
-    ``runner._row_key`` with `kind` prepended, so a cell and sanity row for one
-    theorem never collide.
+    Missing sanity fields yield ``None``; ``kind`` extends ``runner._row_key``
+    to prevent cell/sanity collisions.
 
     Parameters
     ----------
@@ -281,7 +235,7 @@ def row_identity(row: dict) -> tuple:
     Returns
     -------
     tuple
-        ``(kind, model, theorem_id, k, rung, replicate_idx)``.
+        Row identity tuple.
     """
     return (
         row.get("kind"),
@@ -296,14 +250,10 @@ def row_identity(row: dict) -> tuple:
 def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dict], int]:
     """Pair a prior pass's rows onto the current rows, by identity and occurrence order.
 
-    Pairing is by :func:`row_identity` plus occurrence ordinal: a positional
-    seed breaks once ``all_rows.jsonl`` grows or reorders between passes, and
-    a ``dict[identity] -> row`` map would seed one survivor into every slot of
-    an identity real lanes repeat up to 16 times. Matched rows carry over
-    wholesale, never field-merged; ``--no-resume`` is the remedy for a
-    regenerated lane. Orphans are appended, never inserted or dropped: the
-    prefix shared with `rows` stays intact, so indices computed against
-    `rows` stay valid against `out_rows`.
+    Pair by identity and occurrence: positional pairing breaks when rows move,
+    and a map aliases repeated identities, which real lanes repeat up to 16 times.
+    Keep matched rows whole; use ``--no-resume`` after regeneration. Append
+    orphans in original order so current-row indices and order stay valid.
 
     Parameters
     ----------
@@ -315,10 +265,7 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     Returns
     -------
     tuple[list[dict], int]
-        ``(out_rows, n_orphans)``: for each entry of `rows`, in order, the matching PRIOR row
-        at that identity's next unclaimed occurrence, else the current row; then every unmatched
-        prior row ("orphan") appended in its original order. This keeps the output's row order
-        identical to ``all_rows.jsonl`` regardless of a prior pass's own order or length.
+        Output rows and unmatched-prior count.
     """
     prior_by_identity: dict[tuple, collections.deque[tuple[int, dict]]] = (
         collections.defaultdict(collections.deque)
@@ -335,8 +282,7 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
         else:
             out_rows.append(row)
 
-    # Orphans = prior rows `rows` never claimed. Sort by ORIGINAL index (not identity
-    # or bucket order) so a multi-orphan identity keeps its `verified_rows` order.
+    # Sort by original index so repeated orphan identities retain prior order.
     orphans = sorted(
         (
             (original_index, prior_row)
@@ -350,14 +296,10 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     return out_rows, len(orphans)
 
 
-# ---------------------------------------------------------------------------
-# Pure: RAM budget / worker cap
-# ---------------------------------------------------------------------------
 def available_ram_gb(meminfo_text: str) -> float:
     """Extract ``MemAvailable`` (kB in the file) from ``/proc/meminfo`` TEXT, in GiB.
 
-    Takes the text rather than reading ``/proc`` itself, so the budget math is
-    unit-testable against a literal fixture.
+    Accept text so budget math is fixture-testable.
 
     Parameters
     ----------
@@ -367,12 +309,12 @@ def available_ram_gb(meminfo_text: str) -> float:
     Returns
     -------
     float
-        Available RAM in GiB.
+        Available GiB.
 
     Raises
     ------
     ValueError
-        If there is no ``"MemAvailable:"`` line.
+        Missing ``"MemAvailable:"``.
     """
     for line in meminfo_text.splitlines():
         if line.startswith("MemAvailable:"):
@@ -387,9 +329,7 @@ def available_ram_gb(meminfo_text: str) -> float:
 def max_workers_allowed(meminfo_text: str) -> int:
     """Cap worker count by available RAM at `RAM_GB_PER_WORKER` GiB each.
 
-    Floored quotient, never below 1, so a host under one worker's budget still
-    yields a comparable cap :func:`check_workers` can refuse against, not a
-    confusing 0.
+    Never return below 1 so :func:`check_workers` can give a useful refusal.
 
     Parameters
     ----------
@@ -399,7 +339,7 @@ def max_workers_allowed(meminfo_text: str) -> int:
     Returns
     -------
     int
-        RAM-budgeted worker cap.
+        RAM-budgeted cap.
     """
     return max(int(available_ram_gb(meminfo_text) // RAM_GB_PER_WORKER), 1)
 
@@ -407,9 +347,7 @@ def max_workers_allowed(meminfo_text: str) -> int:
 def check_workers(requested: int, meminfo_text: str) -> None:
     """Refuse an oversubscribed (or non-positive) ``--workers`` value up front.
 
-    A Dojo session (live Lean process + loaded environment) costs
-    `RAM_GB_PER_WORKER` (6) GiB empirically; oversubscription otherwise fails
-    hours in as an OOM kill, not fast.
+    Each Dojo session costs 6 GiB empirically; oversubscription can OOM hours later.
 
     Parameters
     ----------
@@ -432,9 +370,6 @@ def check_workers(requested: int, meminfo_text: str) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Pure: interpreter guard, Dojo-failure operator guidance
-# ---------------------------------------------------------------------------
 def require_lean_interact() -> None:
     """Raise ``SystemExit`` if ``lean_interact`` (the ``lean`` extra) is not importable."""
     if importlib.util.find_spec("lean_interact") is None:
@@ -449,11 +384,9 @@ def require_lean_interact() -> None:
 
 
 def require_mathlib_root() -> None:
-    """Exit before any work if ``SMOLBENCH_MATHLIB_ROOT`` does not resolve.
+    """Exit if ``SMOLBENCH_MATHLIB_ROOT`` does not resolve.
 
-    Without it every session open fails and every cell would be recorded as
-    ``replay_failed`` -- a configuration error masquerading as 944 broken
-    ground truths.
+    Otherwise every session fails, misreporting configuration as 944 bad truths.
     """
     from smolbench.deduction.lean.replbackend import mathlib_root  # lazy: import-safe module
     try:
@@ -463,9 +396,7 @@ def require_mathlib_root() -> None:
 
 
 def dojo_failure_hint(exc: BaseException) -> str:
-    """Build operator guidance for a session-open-class failure: `exc`'s text plus
-    the toolchain/checkout remedies (``replbackend`` has already retried server
-    start and imports).
+    """Build guidance for a session-open failure after ``replbackend`` retries.
 
     Parameters
     ----------
@@ -475,7 +406,7 @@ def dojo_failure_hint(exc: BaseException) -> str:
     Returns
     -------
     str
-        Operator guidance for the failure.
+        Failure guidance.
     """
     return (
         f"Lean REPL session failed to open: {type(exc).__name__}: {exc}\n"
@@ -489,18 +420,14 @@ def dojo_failure_hint(exc: BaseException) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Theorem corpus lookup (private -- reconstructs what a row cannot carry)
-# ---------------------------------------------------------------------------
 @functools.lru_cache(maxsize=1)
 def _theorem_index() -> dict[str, BenchmarkTheorem]:
-    """Build a ``full_name -> BenchmarkTheorem`` index over the WHOLE local corpus.
+    """Index the local corpus by ``full_name``.
 
-    A row records only `theorem_id` (a `full_name`) and `k`, never ``(kind, split)``,
-    so every combination is scanned. First-seen wins on a name collision (not expected:
-    a declaration belongs to one partition at a time). A combination never bootstrapped
-    locally (``FileNotFoundError`` from `load_split`) is skipped, not fatal -- an
-    operator may only have bootstrapped the splits they swept. Memoised per process.
+    Rows lack ``(kind, split)``, so scan all combinations. First seen wins a
+    collision because declarations belong to one partition. Skip ``load_split``
+    ``FileNotFoundError`` combinations because operators may bootstrap only swept
+    splits; cache per process.
     """
     index: dict[str, BenchmarkTheorem] = {}
     for split in _CORPUS_SPLITS:
@@ -529,8 +456,7 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     Raises
     ------
     LookupError
-        If `theorem_id` is in no locally bootstrapped ``(kind, split)`` combination
-        (:func:`_theorem_index`).
+        No local ``(kind, split)`` contains ``theorem_id``.
     """
     index = _theorem_index()
     if theorem_id not in index:
@@ -541,27 +467,22 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     return index[theorem_id]
 
 
-# ---------------------------------------------------------------------------
-# Lazy import seams -- this module must import without lean_interact or boto3
-# ---------------------------------------------------------------------------
+# Lazy imports keep this module importable without lean_interact or boto3.
 def _build_s3_client() -> Any:
     """Build a fresh boto3 S3 client bound to `S3_REGION` via ``_aws.fresh_client``.
 
-    A new Session per call (repo convention) picks up a rotated credentials file. THIS
-    call, not the top-level ``_aws`` import, is the actual boto3 opt-in.
+    A fresh session picks up rotated credentials; this is the boto3 opt-in.
     """
     return _aws.fresh_client("s3", S3_REGION)
 
 
-# ---------------------------------------------------------------------------
-# Impure: S3 I/O (client is always injected -- real or a test fake)
-# ---------------------------------------------------------------------------
+# S3 I/O; client is injected for real and test clients.
 def list_runs(
     client: Any, bucket: str, key_prefix: str, pattern: str = DEFAULT_RUNS_GLOB
 ) -> list[str]:
     """List run directory names directly under `key_prefix`, filtered by `pattern`.
 
-    `pattern` is an `fnmatch` pattern against a run's NAME, not its full key.
+    ``pattern`` matches a run name, not its full key.
 
     Parameters
     ----------
@@ -577,8 +498,7 @@ def list_runs(
     Returns
     -------
     list[str]
-        Matching ``CommonPrefixes`` names of a ``Delimiter="/"`` listing, all pages,
-        sorted ascending.
+        Sorted matching delimiter-listing names.
     """
     prefix = f"{key_prefix}/" if key_prefix else ""
     names: list[str] = []
@@ -594,8 +514,7 @@ def list_runs(
 def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     """Download one JSONL object to `dest` (parents created) and return its parsed rows.
 
-    `dest` is always written the full `body` bytes verbatim -- this function reads,
-    it never "repairs" the S3 object or the local copy.
+    Write full body bytes verbatim; never repair the object or local copy.
 
     Parameters
     ----------
@@ -611,10 +530,8 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     Returns
     -------
     list[dict]
-        ``[]`` when the object does not exist (NORMAL for a not-yet-created
-        ``verified_rows.jsonl``), detected as a ``ClientError`` with ``Error.Code``
-        ``"NoSuchKey"`` or ``"404"``; any other S3 failure propagates, since it must
-        never read as "nothing to verify yet".
+        Rows, or ``[]`` only for ``"NoSuchKey"``/``"404"``; propagate other failures
+        so they never look like nothing to verify.
     """
     from botocore.exceptions import ClientError  # lazy: importing must not need boto3
 
@@ -633,10 +550,9 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
 
 
 def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: Path) -> None:
-    """Serialise `rows` to a scratch file under `workdir`, then upload it to `key`.
+    """Serialize rows under ``workdir`` and upload them to ``key``.
 
-    `workdir`'s `VERIFIED_FILENAME` scratch file is rewritten with the full
-    row set each call, so repeated checkpoint uploads are safe.
+    Rewrite the full scratch file so repeated checkpoints are safe.
 
     Parameters
     ----------
@@ -659,16 +575,11 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
     client.upload_file(str(scratch), bucket, key)
 
 
-# ---------------------------------------------------------------------------
-# The Dojo cache lock
-# ---------------------------------------------------------------------------
 @contextlib.contextmanager
 def _dojo_cache_lock() -> Iterator[None]:
     """Hold an exclusive non-blocking flock on `_LOCK_FILENAME` in `DOJO_CACHE_DIR`.
 
-    Acquired once around the whole multi-run loop; concurrent passes would
-    otherwise race on the shared traced-repo build cache. Raises SystemExit,
-    naming the lock file, if another process already holds it.
+    Hold it for all runs: concurrent passes race on the shared build cache.
     """
     DOJO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = DOJO_CACHE_DIR / _LOCK_FILENAME
@@ -690,15 +601,11 @@ def _dojo_cache_lock() -> Iterator[None]:
         lock_file.close()
 
 
-# ---------------------------------------------------------------------------
-# Sanity-row update (private helper)
-# ---------------------------------------------------------------------------
 def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[str, Any], ms: int) -> None:
     """Update `theorem_id`'s sanity row in `out_rows` in place, appending one if absent.
 
-    Writes `payload`'s required ``verdict``/``tactics_applied``/``tactics_total``/
-    ``error`` plus ``ms`` (wall-clock). A fresh row is APPENDED, never inserted, so the
-    prefix shared with ``all_rows.jsonl`` never shifts.
+    Write payload fields and wall-clock ``ms``. Append missing rows so shared
+    ``all_rows.jsonl`` indices never shift.
 
     Parameters
     ----------
@@ -707,9 +614,9 @@ def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[s
     theorem_id : str
         Theorem identifier for the sanity row.
     payload : Mapping[str, Any]
-        Sanity replay fields.
+        Sanity fields.
     ms : int
-        Wall-clock replay duration in milliseconds.
+        Replay milliseconds.
     """
     for row in out_rows:
         if row.get("kind") == "sanity" and row.get("theorem_id") == theorem_id:
@@ -732,9 +639,6 @@ def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[s
     )
 
 
-# ---------------------------------------------------------------------------
-# Orchestration: one run
-# ---------------------------------------------------------------------------
 def verify_run(
     *,
     client: Any,
@@ -751,9 +655,8 @@ def verify_run(
 ) -> int:
     """Verify one run's unverified cell groups; upload `VERIFIED_FILENAME`.
 
-    `workdir` is the PARENT of this run's private scratch dir ``workdir / run``.
-    `verifier=None` resolves :func:`_default_verifier`, but only once a group
-    is pending -- an empty pending set or `dry_run` never imports it.
+    ``workdir`` is the parent of the private ``workdir / run`` scratch dir.
+    Resolve ``verifier=None`` only for pending groups so ``dry_run`` avoids imports.
 
     Parameters
     ----------
@@ -772,25 +675,19 @@ def verify_run(
     limit : int, optional
         Maximum number of groups to process.
     workdir : Path
-        Parent of this run's private scratch directory ``workdir / run``.
+        Parent scratch directory.
     dry_run : bool, optional
-        Whether to preview pending groups without importing the verifier.
+        Preview groups without importing the verifier.
     no_resume : bool, optional
-        Whether to discard prior verification rows.
+        Discard prior verification rows.
     verifier : Any, optional
-        Verifier instance; `verifier=None` resolves :func:`_default_verifier`, but only once a
-        group is pending -- an empty pending set or `dry_run` never imports it.
+        Verifier instance.
 
     Returns
     -------
     int
-        ``0`` on success, including "nothing to do", partial passes (``--limit``,
-        ``--theorem``, ``--dry-run``), and a full pass whose only unresolved groups ended
-        entirely on :data:`_NEVER_MEASURED_VERDICTS` (that's a separate diagnostic, not folded
-        into ``2`` -- see the gate comment in the body for why a corpus-stable population must
-        not flip the return code); ``1`` if the run has no ``all_rows.jsonl``; ``2`` if a full
-        pass left a cell on the ``"unverified"`` sentinel after its final upload (the output is
-        still uploaded -- the gate reports, never withholds).
+        ``0`` success/partial pass, ``1`` missing rows, ``2`` surviving full-pass sentinel;
+        always upload before reporting so the gate never withholds output.
     """
     run_dir = workdir / run
     rows_key = run_object_key(key_prefix, run, ROWS_FILENAME)
@@ -805,16 +702,14 @@ def verify_run(
     verified_key = run_object_key(key_prefix, run, VERIFIED_FILENAME)
     verified_rows = download_rows(client, bucket, verified_key, run_dir / VERIFIED_FILENAME)
     if no_resume:
-        # Resume is keyed on (theorem_id, k) GROUPS, not candidate text, so a lane
-        # phase 1 regenerated looks "done" with different proofs; see --no-resume help.
+        # Resume keys groups, not proofs; regenerated lanes otherwise look done.
         logging.warning(
             f"lean_verify_rows[{run}]: --no-resume: discarding {len(verified_rows)} "
             "row(s) from the prior verification pass and re-verifying every group."
         )
         verified_rows = []
 
-    # `out_rows` = `rows`'s shape plus appended orphans, so every index computed
-    # below against `rows` (the immutable download) stays valid (see seed_out_rows).
+    # Appended orphans keep indices from immutable `rows` valid in `out_rows`.
     out_rows, n_orphans = seed_out_rows(rows, verified_rows)
     if n_orphans:
         logging.warning(
@@ -823,12 +718,10 @@ def verify_run(
             f"appended to the end of {VERIFIED_FILENAME} rather than dropped."
         )
 
-    # Resume is judged on the PAIRED `out_rows` (ALL-cells rule must see cells phase 1
-    # appended to a finished group), never on `verified_rows` alone.
+    # Use paired `out_rows`: all-cells resume must see newly appended cells.
     done = resume_done_groups(out_rows)
 
-    # Grouped from `rows`, whose verdicts never change: the COMPLETE set of groups
-    # phase 1 ever wrote. Subtracting `done` is what implements resume.
+    # Immutable `rows` gives phase 1's complete groups; subtract `done` to resume.
     all_groups = group_unverified(rows)
     pending = {key: indices for key, indices in all_groups.items() if key not in done}
     if theorem is not None:
@@ -859,7 +752,7 @@ def verify_run(
     sanity_done_this_run: set[str] = set()
 
     def _verify_one_group(theorem_id: str, k: int, indices: list[int]) -> None:
-        """Do the real work for one ``(theorem_id, k)`` group; `_process_group` nets any escape."""
+        """Verify one ``(theorem_id, k)`` group; ``_process_group`` catches escapes."""
         lookup_error: Optional[BaseException] = None
         try:
             bt = _lookup_theorem(theorem_id)
@@ -867,7 +760,7 @@ def verify_run(
             bt = None
             lookup_error = exc
 
-        # Sanity replay once per THEOREM, not per group (memoised under `sanity_lock`).
+        # Replay sanity once per theorem under `sanity_lock`.
         with sanity_lock:
             first_time_this_theorem = theorem_id not in sanity_done_this_run
             sanity_done_this_run.add(theorem_id)
@@ -930,14 +823,13 @@ def verify_run(
                         }
                     with write_lock:
                         fan_out_verdict(out_rows, candidate_indices, payload)
-        except Exception as exc:  # noqa: BLE001 -- open_at_step-class failure, recorded below
+        except Exception as exc:  # noqa: BLE001 -- Record open-session failures on rows.
             message = str(exc)
             if isinstance(exc, RuntimeError) and message.startswith("prefix tactic "):
-                # open_at_step's own shape: Dojo opened but the ground-truth PREFIX did
-                # not replay -- not infra, so dojo_failure_hint would mislead.
+                # Dojo opened but its prefix failed; infrastructure guidance misleads.
                 lean_error = f"{type(exc).__name__}: {exc}"
             else:
-                # Dojo never opened (connection/EOF/subprocess, after verify.py's 3x retry).
+                # Dojo never opened after verify.py's three retries.
                 lean_error = dojo_failure_hint(exc)
             payload = {
                 "verdict": "replay_failed",
@@ -951,9 +843,8 @@ def verify_run(
     def _process_group(key: tuple[str, int]) -> tuple[str, int]:
         """Executor entry point: last-resort net around `_verify_one_group`.
 
-        That function already records every documented failure on its rows, so
-        this only catches an unanticipated bug, still landing an "exception"
-        verdict on every row of the group and never raising into the executor.
+        Catch unexpected failures so every group row gets ``"exception"`` and
+        the executor never raises.
 
         Parameters
         ----------
@@ -963,12 +854,12 @@ def verify_run(
         Returns
         -------
         tuple[str, int]
-            The processed group key.
+            Processed group key.
         """
         theorem_id, k = key
         try:
             _verify_one_group(theorem_id, k, pending[key])
-        except Exception as exc:  # noqa: BLE001 -- last-resort net, see docstring above
+        except Exception as exc:  # noqa: BLE001 -- Last-resort per-group failure record.
             payload = {
                 "verdict": "exception",
                 "lean_error": f"{type(exc).__name__}: {exc}",
@@ -983,7 +874,7 @@ def verify_run(
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(_process_group, key): key for key in pending}
         for future in concurrent.futures.as_completed(futures):
-            future.result()  # `_process_group` never raises -- see its docstring
+            future.result()  # `_process_group` records failures instead of raising.
             completed += 1
             if completed % UPLOAD_EVERY_GROUPS == 0:
                 upload_rows(client, out_rows, bucket, verified_key, run_dir)
@@ -992,16 +883,13 @@ def verify_run(
                     f"{completed}/{len(pending)} group(s)."
                 )
 
-    # A checkpoint on the last group already uploaded these exact rows.
+    # The final checkpoint already has these rows.
     if completed % UPLOAD_EVERY_GROUPS:
         upload_rows(client, out_rows, bucket, verified_key, run_dir)
     logging.info(f"lean_verify_rows[{run}]: done -- {completed} group(s) processed.")
 
-    # Full-pass sentinel gate. Only --limit/--theorem/--dry-run make this partial;
-    # resume is deliberately not a `full_pass` term, since a `done` group has zero
-    # sentinel cells by construction. A surviving sentinel means either a pending
-    # group's verdict was never written back, or an ungraded orphan absent from
-    # all_rows.jsonl (which `group_unverified` never selects).
+    # Only --limit/--theorem/--dry-run are partial; done groups have no sentinels.
+    # A sentinel means an unwritten verdict or an ungraded orphan not selectable from rows.
     full_pass = limit <= 0 and theorem is None
     if full_pass:
         n_sentinel = sum(
@@ -1023,15 +911,10 @@ def verify_run(
             )
             return 2
 
-        # Never-measured diagnostic: deliberately separate from the sentinel gate
-        # and does not change the return code. `power_analysis.py` documents
-        # "replay_failed" as a stable population across the whole study (every one
-        # of 21 models) -- a property of the CORPUS (theorems no REPL session can
-        # open), not a symptom of this pass, so it must not flip an otherwise
-        # healthy full pass to non-zero on every run, forever.
-        # Restricted to `pending` (this pass's attempted groups): an all-never-
-        # measured ORPHAN (see seed_out_rows) was never attempted this pass, and
-        # the rc=2 gate above already accounts for it separately.
+        # Keep this diagnostic separate: ``power_analysis.UNMEASURABLE_VERDICTS``
+        # covers corpus-stable failures across 21 models, which must not make every
+        # healthy full pass nonzero.
+        # Restrict to attempted groups; rc=2 separately covers unattempted orphans.
         never_measured_groups = {
             key
             for key, cell_rows in _group_cell_rows_by_key(out_rows).items()
@@ -1063,9 +946,6 @@ def verify_run(
     return 0
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 def _build_arg_parser() -> argparse.ArgumentParser:
     """Build this script's `argparse.ArgumentParser`."""
     parser = argparse.ArgumentParser(
@@ -1126,24 +1006,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    """Entry point: verify every run matching ``--runs`` under ``--s3-prefix``.
+    """Verify every matching run under ``--s3-prefix``.
 
-    Order: :func:`require_lean_interact`, :func:`check_workers` on a live
-    ``/proc/meminfo`` read, the Dojo cache lock held for the rest of the call
-    (all three skipped under ``--dry-run``), then :func:`verify_run` per
-    :func:`list_runs` match.
+    Otherwise require Lean/root, check RAM, lock the cache, then list and verify
+    runs; ``--dry-run`` skips the first three.
 
     Parameters
     ----------
     argv : Optional[list[str]], optional
-        Command-line arguments to parse.
+        Command-line arguments.
 
     Returns
     -------
     int
-        ``0`` when every matching run was processed (even with nothing to verify); otherwise the
-        count of runs that either returned non-zero or raised (`_verify_every_run` isolates each
-        run so one lane's exception doesn't abort the runs after it).
+        Failed-run count; isolate runs so one exception does not abort later lanes.
     """
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -1167,12 +1043,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     def _verify_every_run() -> int:
-        """Run :func:`verify_run` over every matched run, isolating one run's failure.
-
-        Each run gets its own try/except, logged and counted as failed, so an
-        unattended overnight pass over many lanes doesn't abort on lane 3 and
-        leave the rest unchecked.
-        """
+        """Verify each run without aborting later lanes after one failure (for example, lane 3)."""
         n_failed = 0
         for run in runs:
             try:
@@ -1188,9 +1059,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                     dry_run=args.dry_run,
                     no_resume=args.no_resume,
                 )
-            except Exception as exc:  # noqa: BLE001 -- isolate this run; never abort the pass.
-                # `Exception`, not `BaseException`: an operator's Ctrl-C (KeyboardInterrupt)
-                # must still stop the whole pass, not be swallowed as a per-run failure.
+            except Exception as exc:  # noqa: BLE001 -- Isolate one failed run.
+                # Do not catch BaseException: Ctrl-C must stop the pass.
                 logging.exception(
                     f"lean_verify_rows[{run}]: verify_run raised "
                     f"{type(exc).__name__}: {exc} -- counting this run as FAILED "

@@ -72,8 +72,6 @@ def test_unbootstrapped_loaders_name_the_remedy(
     corpus.reset_caches()
 
 
-# Post-cutoff corpus contract (A1) and the traced-root commit filter (A4)
-
 NEW_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 OLD_COMMIT = "69c8a067c87c2bb6ba583f03fbf46090564be370"
 
@@ -183,10 +181,6 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(
     corpus.reset_caches()
 
 
-# eval_split_specs: the eval holdout's split list comes from the active corpus,
-# not from a literal in a deleted SFT-dataset builder.
-
-
 def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
     """The committed fixture carries only ``random/val.json``, so that is the spec list."""
     assert corpus.eval_split_specs() == (("random", "val"),)
@@ -195,14 +189,7 @@ def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
 def test_eval_split_specs_is_canonically_ordered_and_call_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Order is train/val/test regardless of creation order, and re-read per call.
-
-    Creation order is reversed on purpose: a filesystem-listing implementation
-    would report ``test, val, train`` here and two machines' holdout manifests
-    would disagree over an ordering nobody chose. The second half repoints
-    ``SMOLBENCH_LEAN_DATA`` mid-test without re-importing anything -- a cached
-    result or an import-time constant would keep reporting the first root.
-    """
+    """Use train/val/test order and read the root at call time."""
     first = tmp_path / "first" / "random"
     first.mkdir(parents=True)
     for split in ("test", "val", "train"):

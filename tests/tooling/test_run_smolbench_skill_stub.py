@@ -1,14 +1,6 @@
-"""`.claude/skills/run-smolbench/stub_llm.py` reuses the offline suite's stub server.
+"""Offline contracts for `run-smolbench/stub_llm.py`.
 
-`lean_smoke.sh --e2e` drives a real Lean sweep against two fake LLMs, served
-through `tests/conftest.py`'s `StubServer` (the same one `driver.py` uses) so
-the smoke path's dialect cannot drift from the offline suite's.
-
-`--e2e` itself needs `elan` and drives the committed local Lean project, so
-it cannot run here. What can be checked offline is the contract that script
-depends on -- the ports line, the two fixed answers, the context-length GET
-routes, and the on-disk request log -- by driving the real script in a
-subprocess.
+`--e2e` needs `elan`, so this subprocess checks its stub-server contract.
 """
 
 from __future__ import annotations
@@ -28,12 +20,7 @@ from tests._paths import REPO_ROOT
 SKILL = REPO_ROOT / ".claude" / "skills" / "run-smolbench"
 STUB = SKILL / "stub_llm.py"
 
-#: The two answers `lean_smoke.sh --e2e` depends on. GOOD is the real
-#: ground-truth tail of the post-cutoff fixture's ``Mini.theoremA``, so the sweep row
-#: must come back ``verdict: success``; BAD names a lemma that does not exist,
-#: which is what makes real Lean return ``lean_error`` rather than a failed
-#: goal. Spelled out here rather than imported from the script: the point is
-#: that they survived the rewrite byte for byte.
+# GOOD proves the fixture theorem; BAD names no lemma, producing `lean_error`.
 GOOD = "Here is the proof:\n```lean\nexact Mini.premiseA h (Mini.premiseB n)\n```"
 BAD = "```lean\nexact nonexistent_lemma_xyz42\n```"
 
@@ -61,9 +48,7 @@ def stub_process(tmp_path: Path) -> Iterator[tuple[dict[str, int], Path]]:
         [sys.executable, str(STUB), str(reqlog)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(REPO_ROOT))
     try:
-        # The script prints its ports line before either server starts
-        # serving, so a reader never polls a port that is not yet bound --
-        # the same ordering `lean_smoke.sh` relies on when it polls ports.json.
+        # The port line precedes serving, so readers never poll an unbound port.
         line = proc.stdout.readline()
         if not line:
             proc.wait(timeout=30)
@@ -86,10 +71,7 @@ def test_the_stub_serves_both_answers_and_both_context_length_shapes(
     assert good["choices"][0]["message"]["content"] == GOOD
     assert bad["choices"][0]["message"]["content"] == BAD
 
-    # Both providers probe context length before generating, by different
-    # routes: OpenRouter's `/endpoints` and Prime Intellect's `/models/<id>`.
-    # A stub that answered only one would fail the sweep before it reached a
-    # single completion.
+    # Both context routes must work before either provider generates.
     assert _get_json(
         f"http://127.0.0.1:{ports['or']}/v1/models/stub-bad-model/endpoints"
     )["data"]["endpoints"][0]["context_length"] > 0
@@ -101,19 +83,13 @@ def test_the_stub_serves_both_answers_and_both_context_length_shapes(
 def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(
     stub_process: tuple[dict[str, int], Path],
 ) -> None:
-    """The log line keys `lean_smoke.sh --e2e` actually reads: `path` and `body`.
-
-    The script filters on ``r["path"].endswith("/chat/completions")`` then
-    reads ``r["body"]["model"]``/``r["body"].get("seed")``. The `path` filter
-    is also what makes logging GETs harmless -- they get ``"body": null`` and
-    never reach a subscript of ``None``.
-    """
+    """Completion logs need `path` and `body`; GET bodies may be null."""
     ports, reqlog = stub_process
     _post_completion(ports["pi"], "stub-good-model", 4242)
     _post_completion(ports["or"], "stub-bad-model", 4242)
     _get_json(f"http://127.0.0.1:{ports['pi']}/v1/models/stub-good-model")
 
-    # The servers write from handler threads; give the last one a moment to land.
+    # Handler threads may not have written the final record yet.
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and len(reqlog.read_text().splitlines()) < 3:
         time.sleep(0.05)
@@ -124,19 +100,12 @@ def test_every_completion_is_logged_in_the_shape_the_smoke_script_parses(
     assert {r["body"]["model"] for r in completions} == {"stub-good-model", "stub-bad-model"}
     assert all(r["body"]["seed"] == 4242 for r in completions)
     assert {r["stub"] for r in completions} == {"PI", "OR"}
-    # A GET was recorded too, and carries a null body -- the condition the
-    # script's `path` filter has to survive.
+    # GETs carry null bodies, so the path filter must exclude them.
     assert any(r["body"] is None for r in records), records
 
 
 def test_the_skill_does_not_hand_roll_a_second_stub_dialect() -> None:
-    """The response shapes and GET routes come from `tests/conftest.py`, not a copy.
-
-    Checked on the AST, not by substring: the file legitimately mentions
-    `ThreadingHTTPServer` in a comment about its log-write lock, and a bare
-    ``in`` test would flag that prose as a reimplementation. What must be
-    absent is an `http.server` import or a handler method definition.
-    """
+    """The stub reuses `tests/conftest.py` rather than a second dialect."""
     import ast
 
     source = STUB.read_text()

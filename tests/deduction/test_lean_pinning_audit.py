@@ -19,7 +19,6 @@ from tests._paths import (
     load_by_path,
 )
 
-#: The post-cutoff fixture's own provenance, for the freshly-emitted manifest.
 FIXTURE_COMMIT = "2ca39e62989124794bd8405bb2e60805f63d37bc"
 FIXTURE_CREATION_TIME = "2026-08-30 15:43:26.000000"
 FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
@@ -27,10 +26,7 @@ FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
 
 @pytest.fixture(scope="module")
 def emitted(tmp_path_factory: pytest.TempPathFactory, audit: ModuleType) -> dict[str, Any]:
-    """A manifest freshly emitted by `--emit-manifest`, offline, from the fixture.
-
-    Makes fixture provenance checkable without the full dataset or any AWS call.
-    """
+    """Fixture manifest emitted offline by `--emit-manifest`."""
     tmp = tmp_path_factory.mktemp("emit")
     sidecar = tmp / "replay_passing_random_val.jsonl"
     sidecar.write_text("".join(
@@ -98,11 +94,7 @@ def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType)
 def test_every_consumer_requires_an_explicit_expected_shape(
     path: str, flag: str, argv: list[str],
 ) -> None:
-    """No consumer may carry (or inherit) a default pinned shape: state it or fail.
-
-    Checked through the CLI rather than by importing, so an import-time-fatal
-    script on a box where these run also surfaces here.
-    """
+    """Consumers must state pinned shapes; use CLI so import failures surface."""
     script = SCRIPTS / path
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
     proc = subprocess.run(
