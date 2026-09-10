@@ -1,11 +1,9 @@
 """Shared offline OpenAI-stub, tokenizer, and optional S3 fixtures."""
 
-import hashlib
 import importlib.util
 import json
 import math
 import os
-import posixpath
 import re
 import sys
 import threading
@@ -18,6 +16,7 @@ from typing import Any, Iterator
 import pytest
 
 from tests._paths import NOTEBOOKS
+from smolbench.evals.s3_archive import S3Archive as _BaseS3Archive
 
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     """Write `rows` with the production JSONL serializer.
@@ -295,7 +294,7 @@ def _clear_provider_context_length_caches() -> Iterator[None]:
     _clear()
 
 
-class S3Archive:
+class S3Archive(_BaseS3Archive):
     """Read-only S3 archive access.
 
     Parameters
@@ -305,17 +304,6 @@ class S3Archive:
     region : str or None
         S3 region.
     """
-
-    def __init__(self, uri: str, region: str | None) -> None:
-        from smolbench.evals import _aws
-        from smolbench.evals.results_store import parse_s3_uri
-
-        self.bucket, self.prefix = parse_s3_uri(uri)
-        self._client = _aws.fresh_client("s3", region)
-
-    def _key(self, rel: str) -> str:
-        rel = posixpath.normpath(rel)
-        return f"{self.prefix}/{rel}" if self.prefix else rel
 
     def keys(self, rel_prefix: str) -> list[str]:
         """List paths below ``rel_prefix``."""
@@ -334,26 +322,6 @@ class S3Archive:
             return True
         except self._client.exceptions.ClientError:
             return False
-
-    def open(self, rel: str) -> Any:
-        """Return an object's streaming body."""
-        try:
-            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))["Body"]
-        except self._client.exceptions.NoSuchKey as exc:
-            raise FileNotFoundError(self._key(rel)) from exc
-
-    def read(self, rel: str) -> bytes:
-        return self.open(rel).read()
-
-    def text(self, rel: str) -> str:
-        return self.read(rel).decode("utf-8", errors="replace")
-
-    def sha256(self, rel: str) -> str:
-        h = hashlib.sha256()
-        for chunk in self.open(rel).iter_chunks(1 << 20):
-            h.update(chunk)
-        return h.hexdigest()
-
 
 @pytest.fixture(scope="session")
 def s3_archive() -> "S3Archive":

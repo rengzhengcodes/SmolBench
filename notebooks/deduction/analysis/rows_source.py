@@ -1,7 +1,10 @@
 """Resolve verified study rows and reject retired artifacts.
 
-S3 rows land in the local layout report scripts expect. Import boto3 only for
-S3 downloads so ``uv run --no-project`` local paths remain usable.
+S3 rows land in the local layout report scripts expect:
+``<prefix>/scaling_<key>/verified_rows.jsonl`` becomes ``<key>/<candidate>`` with
+``scaling_`` stripped. Import boto3 only for S3 downloads so ``uv run --no-project``
+local paths remain usable. ``download_scaling_rows(run_marker="")`` accepts every run
+directory, which is how the marker-less DojoInit recovery spool is fetched.
 """
 
 from __future__ import annotations
@@ -62,9 +65,10 @@ def download_scaling_rows(
     *,
     prefix: str,
     candidates: tuple[str, ...] = ("verified_rows.jsonl",),
+    run_marker: str = "scaling_",
     client: Any = None,
 ) -> list[Path]:
-    """Download this study's ``scaling_*`` run row files from S3 into `dest_dir`.
+    """Download this study's ``<run_marker>*`` run row files from S3 into `dest_dir`.
 
     List before downloading so the retired guard sees every object. Omit runs
     without candidates because partial studies are valid `power_analysis` input.
@@ -77,6 +81,8 @@ def download_scaling_rows(
         Trailing-slash S3 prefix, resolved per call for late ``LEAN_SPOOL_PREFIX`` overrides.
     candidates : tuple[str, ...]
         Candidate basenames; retain the chosen name so `power_analysis` flags ``all_rows.jsonl`` as unverified.
+    run_marker : str, optional
+        Run-directory name prefix under `prefix`; ``""`` accepts every run directory.
     client : Any
         Optional S3 client.
 
@@ -91,12 +97,13 @@ def download_scaling_rows(
 
     paginator = client.get_paginator("list_objects_v2")
 
-    # Delimiter groups each scaling run into one prefix.
+    # Delimiter groups each run into one prefix; ``run_marker=""`` matches every
+    # directory, which the recovery tree with no shared marker relies on.
     run_prefixes = sorted(
         common["Prefix"]
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix, Delimiter="/")
         for common in page.get("CommonPrefixes", [])
-        if Path(common["Prefix"].rstrip("/")).name.startswith("scaling_")
+        if Path(common["Prefix"].rstrip("/")).name.startswith(run_marker)
     )
 
     downloaded: list[Path] = []
@@ -114,7 +121,9 @@ def download_scaling_rows(
         if chosen is None:
             continue  # Partial collection is valid input.
 
-        model_key = Path(run_prefix.rstrip("/")).name[len("scaling_"):]
+        # With run_marker="" this slices at 0 and leaves the segment whole --
+        # the "strip nothing" half of the unmarked layout's contract.
+        model_key = Path(run_prefix.rstrip("/")).name[len(run_marker):]
         local_dir = dest_dir / model_key
         local_dir.mkdir(parents=True, exist_ok=True)
         local_path = local_dir / chosen
@@ -128,6 +137,7 @@ def resolve_rows_dir(
     rows_dir: Path | None,
     s3_prefix: str | None,
     candidates: tuple[str, ...] = ("verified_rows.jsonl",),
+    run_marker: str = "scaling_",
     client: Any = None,
 ) -> Path:
     """Return local rows, downloading S3 rows when requested.
@@ -143,6 +153,8 @@ def resolve_rows_dir(
         S3 prefix; empty prefixes are refused to avoid listing the whole bucket.
     candidates : tuple[str, ...], optional
         Candidate row basenames.
+    run_marker : str, optional
+        Run-directory name prefix under `prefix`; ``""`` accepts every run directory.
     client : Any, optional
         S3 client.
 
@@ -175,11 +187,16 @@ def resolve_rows_dir(
         file=sys.stderr,
     )
     landed = download_scaling_rows(
-        dest_dir, prefix=normalized, candidates=candidates, client=client
+        dest_dir, prefix=normalized, candidates=candidates, run_marker=run_marker,
+        client=client,
     )
     if not landed:
+        # `run_marker` is echoed literally (including the empty string) so the
+        # message stays true of whichever convention was actually searched,
+        # rather than hard-coding the default's "scaling_*" past the point
+        # this function started accepting other conventions too.
         raise SystemExit(
-            f"no scaling_*/{candidates[0]} objects found under "
+            f"no {run_marker}*/{candidates[0]} objects found under "
             f"s3://{S3_BUCKET}/{normalized} -- nothing to analyze. Check the "
             f"prefix (--s3 <PREFIX>, or LEAN_SPOOL_PREFIX) and that the "
             f"verification pass has run."
