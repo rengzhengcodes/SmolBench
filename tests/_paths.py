@@ -10,6 +10,7 @@ test file moves to a different directory depth.
 """
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -27,11 +28,13 @@ SCRIPTS = REPO_ROOT / "scripts"
 NOTEBOOKS = REPO_ROOT / "notebooks"
 
 
-def load_by_path(path: Path, name: str) -> ModuleType:
+def load_by_path(path: Path, name: str, *, snapshot_env: bool = False) -> ModuleType:
     """Load `path` as module `name` and register it during execution.
 
-    Path-loaded scripts commonly define dataclasses or import sibling modules;
-    both require the executing module to be present in ``sys.modules``.
+    Registered in ``sys.modules`` before exec because a PEP 563 dataclass in the
+    loaded module resolves its own module through that entry. ``snapshot_env``
+    restores ``os.environ`` afterwards for scripts that call ``load_dotenv`` or
+    set ``EC2_*`` defaults at module scope.
 
     Parameters
     ----------
@@ -39,14 +42,21 @@ def load_by_path(path: Path, name: str) -> ModuleType:
         Python source file to execute.
     name : str
         Temporary module name.
+    snapshot_env : bool, optional
+        Restore ``os.environ`` after the module executes.
 
     Returns
     -------
     ModuleType
         Executed module.
     """
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
+    saved = dict(os.environ) if snapshot_env else None
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        sys.modules[name] = module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        if saved is not None:
+            os.environ.clear()
+            os.environ.update(saved)
     return module

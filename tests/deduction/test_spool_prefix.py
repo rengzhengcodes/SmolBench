@@ -16,8 +16,6 @@ NEW = "deduction_postcutoff/runs"
 
 READERS = [
     SCRIPTS / "results" / "audit_lean_pinning.py",
-    SCRIPTS / "results" / "audit_run_completeness.py",
-    SCRIPTS / "results" / "snapshot_analysis_data.py",
     NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py",
 ]
 
@@ -84,7 +82,10 @@ def test_snapshot_prefix_arithmetic_survives_the_slashless_resolver(
                 "induction/glm-4.7/seed=0/intens--2026-08-01.yaml"]
         monkeypatch.delenv("LEAN_SPOOL_PREFIX", raising=False)
 
-        rows = snap.iter_source_keys(_fake_s3(keys))
+        # `bucket` became an explicit keyword argument when the module stopped
+        # reading a hard-coded BUCKET literal (PR #14 finding 14-15); this test
+        # is about the prefix-slice arithmetic, so any bucket name serves.
+        rows = snap.iter_source_keys(_fake_s3(keys), bucket="test-bucket")
         assert sorted((leg, model) for leg, model, _k, _s in rows) == [
             ("deduction", "gemma-4-12b"), ("deduction", "glm-4.7"),
             ("induction", "glm-4.7")]

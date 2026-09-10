@@ -213,11 +213,14 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
                                   "--tokenizer-revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7"]},
-    # tp=4: tier A's g6e.12xlarge capacity fallback lands this lane on 4x
-    # L40S in practice, and a 12B model with ~95k-token thinking budgets on
-    # ONE L40S hit the 3600s read timeout on long arms. 16 attention heads
-    # and 8 KV heads shard cleanly across 4; tp=4 does require that 4-GPU
-    # box, which the fallback list provides.
+    # tp=4: gemma-4-12b is a TIER B lane (see run_fleet.TIER_MEMBERS), and
+    # tier B's hunt list is ALL 4-GPU (g6e.12xlarge, g6e.24xlarge -- see
+    # run_fleet.TIER_INSTANCE_TYPES), which is what provides the 4x L40S box:
+    # a 12B model with ~95k-token thinking budgets on ONE L40S hit the read
+    # timeout on long arms. 16 attention heads and 8 KV heads shard cleanly
+    # across 4; tp=4 does require that 4-GPU box, which tier B's hunt list
+    # guarantees (tier A no longer hunts a 4-GPU box at all, see
+    # run_fleet.TIER_INSTANCE_TYPES).
     "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
                     "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
                                   "--revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",

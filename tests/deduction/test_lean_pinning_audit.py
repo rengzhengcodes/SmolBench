@@ -85,10 +85,9 @@ def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType)
 
 
 @pytest.mark.parametrize("path,flag,argv", [
-    ("results/audit_lean_pinning.py", "--expect-theorems",
-     ["--val-json", "x", "--replay-jsonl", "x"]),
-    ("results/audit_lean_pinning.py", "--expect-cells",
-     ["--val-json", "x", "--replay-jsonl", "x"]),
+    ("results/audit_lean_pinning.py", "--expect-theorems", []),
+    ("results/audit_lean_pinning.py", "--expect-cells", []),
+    ("results/audit_run_completeness.py", "--expect-cells", ["--local"]),
     ("deduction/merge_lean_shards.py", "--expect-cells", ["k", "--n", "1"]),
     ("deduction/merge_lean_shards.py", "--expect-sanity", ["k", "--n", "1"]),
 ])
