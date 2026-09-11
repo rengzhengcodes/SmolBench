@@ -262,7 +262,7 @@ def _resolve_arm_template(
     Raises
     ------
     ValueError
-        If `condition` is ``omit_range=True`` and ``prompter.range_free_template``...
+        If range omission is requested without a range-free template.
     """
     if not condition.omit_range:
         return prompter.template

@@ -63,17 +63,17 @@ class HFTokenizer:
         repo_id : str
             HuggingFace repository containing ``tokenizer.json``.
         revision : str | None, optional
-            Input value controlling ``revision``.
+            Git revision to fetch; ``None`` uses the repository default.
 
         Returns
         -------
         HFTokenizer
-            the loaded tokenizer.
+            Loaded tokenizer wrapper with truncation and padding disabled.
 
         Raises
         ------
         RuntimeError
-            naming the ``tokenizer_hf_id`` deploy-spec override.
+            If the repository does not provide a usable ``tokenizer.json``.
         """
         try:
             from huggingface_hub import hf_hub_download
