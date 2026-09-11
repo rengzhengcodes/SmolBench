@@ -66,15 +66,15 @@ def test_an_unsafe_tag_is_refused(tag: str, lane: str | None) -> None:
 def test_shards_partition_the_seeds() -> None:
     """Pin that shard strides partition the configured replicate seeds."""
     assert build(n_replicates=5, shard=(1, 2), state_file="s.json").seeds == (
-        1,
-        3,
+        1777,
+        1779,
     )
     assert build(n_replicates=5, shard=(0, 2), state_file="s.json").seeds == (
-        0,
-        2,
-        4,
+        1776,
+        1778,
+        1780,
     )
-    assert build(n_replicates=5).seeds == (0, 1, 2, 3, 4)
+    assert build(n_replicates=5).seeds == (1776, 1777, 1778, 1779, 1780)
 
 
 def test_shard_tags_and_state_files_are_distinct(

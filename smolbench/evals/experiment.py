@@ -43,7 +43,7 @@ class Experiment:
     n_replicates : int, optional
         Number of replicate seeds.
     base_seed : int, optional
-        First replicate seed; defaults to 0.
+        First replicate seed.
     prefix : str, optional
         Result-directory namespace prefix.
     state_file : str, optional
@@ -74,7 +74,7 @@ class Experiment:
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     info_types: Tuple[str, ...]
     n_replicates: int = 30
-    base_seed: int = 0
+    base_seed: int = 1776
     prefix: str = ""
     state_file: Optional[str] = None
     experiment_tag: Optional[str] = None
