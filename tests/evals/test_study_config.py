@@ -136,6 +136,16 @@ def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     assert cfg.roster.tags["b"] == "b_tag"
 
 
+def test_a_checkpoint_cannot_appear_in_two_families(tmp_path: Path) -> None:
+    """Reject family overlap even when every checkpoint has a unique tag."""
+    duplicate_families = GOOD_TOML.replace(
+        'fam = ["a", "b"]',
+        'fam = ["a", "b"]\nother = ["b", "c"]',
+    ).replace('b = "b_tag"', 'b = "b_tag"\nc = "c_tag"')
+    with pytest.raises(ValueError, match="more than one"):
+        sc.load_study_config(write_config(tmp_path, duplicate_families))
+
+
 @pytest.mark.parametrize(
     "mutation, expected",
     [
