@@ -42,7 +42,7 @@ Sync writes each selected S3 log entry to `{prefix}{tag}_{info}/rep_{seed}.yaml`
 
 ```
 <base-prefix>/<experiment>/<model>/seed=<seed>/<info>--<run_ts>.yaml
-induction/gemma-4-12b/seed=0/extens--20260810T193000Z.yaml
+induction/gemma-4-12b/seed=0/extens--20260810T193000.000000Z.yaml
 ```
 
 `run_ts` is shared by one seed collection and sorts chronologically, enabling earliest-wins reads.

@@ -192,6 +192,22 @@ def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
     assert seq_len in [q.answer for q in zero]
 
 
+def test_a_single_digit_range_does_not_refuse_a_range_free_template() -> None:
+    """Ordinary numbering prose sharing digits with a tiny range is not a leak."""
+    counting = string.Template(
+        "$positive_info\nPositions are counted starting from 1. "
+        "How many positions include '$label'?"
+    )
+    quizzes = get_periodic_numeric_quiz(
+        PeriodicConfig(n=1, labels=1, seed=3),
+        numeric_prompter(range_free_template=counting),
+        tokenizer=StubTokenizer(),
+        # n=1 leaves the extensional arm too short to pad against.
+        conditions={"zero": CONDITIONS["zero"]},
+    )
+    assert all("counted starting from 1" in q.prompt for q in quizzes["zero"])
+
+
 def test_a_range_free_template_that_still_states_the_range_is_refused() -> None:
     """Reject range text surviving in a supposedly range-free prompt."""
     leaky = string.Template("$positive_info\nHow many of positions 1..$seq_len include '$label'?")

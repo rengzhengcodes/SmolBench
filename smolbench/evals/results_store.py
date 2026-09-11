@@ -89,7 +89,9 @@ def utcnow() -> datetime:
 def format_run_ts(when: datetime) -> str:
     """Format a UTC timestamp for lexicographically ordered S3 keys.
 
-    ``when`` must already be UTC because the literal ``"Z"`` is not converted.
+    ``when`` must already be UTC because the literal ``"Z"`` is not converted. Microseconds
+    are carried because this stamp is a run's only identity: two writes to one address within
+    a second would otherwise share a key, and ``put_object`` would overwrite rather than log.
 
     Parameters
     ----------
@@ -99,9 +101,9 @@ def format_run_ts(when: datetime) -> str:
     Returns
     -------
     str
-        Fixed-width timestamp.
+        Fixed-width timestamp, so lexicographic order is chronological order.
     """
-    return when.strftime("%Y%m%dT%H%M%SZ")
+    return when.strftime("%Y%m%dT%H%M%S.%fZ")
 
 
 def experiment_name(results_dir: Path, prefix: str = "") -> str:

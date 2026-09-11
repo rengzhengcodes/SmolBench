@@ -20,8 +20,8 @@ from smolbench.evals.results_store import (
 
 BUCKET = "smolbench-results-414266451290"
 URI = f"s3://{BUCKET}"
-TS1 = datetime(2026, 8, 10, 19, 30, 0, tzinfo=timezone.utc)  # 20260810T193000Z
-TS2 = datetime(2026, 8, 11, 4, 5, 6, tzinfo=timezone.utc)  # 20260811T040506Z
+TS1 = datetime(2026, 8, 10, 19, 30, 0, tzinfo=timezone.utc)  # 20260810T193000.000000Z
+TS2 = datetime(2026, 8, 11, 4, 5, 6, tzinfo=timezone.utc)  # 20260811T040506.000000Z
 TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
 
@@ -155,8 +155,8 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3: FakeS3Client) -> None:
     store.dump_marks(sample_marks(score=1), moe, TS1)
     store.dump_marks(sample_marks(score=0), moe, TS2)  # a re-run adds, never overwrites
     assert sorted(fake_s3.objects) == [
-        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml",
-        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506Z.yaml"]
+        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000.000000Z.yaml",
+        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506.000000Z.yaml"]
     assert store.load_marks(moe).marks[0].score == 1
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     other = addr(seed=1777)
@@ -169,7 +169,7 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3: FakeS3Client) -> None:
     assert store.list_seeds("never-served", "decode", "intens") == []
     based = S3ResultsStore(BUCKET, "archive/2026-08", "periodic_moe", "us-west-2")
     based.dump_marks(sample_marks(), addr(seed=1), TS1)
-    assert ("archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000Z.yaml"
+    assert ("archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000.000000Z.yaml"
             in fake_s3.objects)
     # ``--`` prevents sibling info-prefix matches.
     assert store.exists(addr())
@@ -190,8 +190,8 @@ def test_resolve_store(monkeypatch: pytest.MonkeyPatch, fake_repo: Path,
                        tmp_path: Path) -> None:
     """Unset env is local; a non-repo dir stays local even with the S3 env set."""
     # Fixed-width UTC enables lexical earliest-run lookup.
-    assert format_run_ts(TS1) == "20260810T193000Z"
-    assert format_run_ts(TS2) == "20260811T040506Z"
+    assert format_run_ts(TS1) == "20260810T193000.000000Z"
+    assert format_run_ts(TS2) == "20260811T040506.000000Z"
     now = rs.utcnow()
     assert now.tzinfo is not None and now.utcoffset().total_seconds() == 0
     assert experiment_name(fake_repo / "somewhere/else") == "somewhere/else"
@@ -423,6 +423,20 @@ def test_a_marker_is_not_itself_a_run(fake_s3: FakeS3Client) -> None:
     store.dump_marks(sample_marks(), addr(seed=1777), TS1)
     store.supersede(addr(seed=1777), format_run_ts(TS1), SUPERSEDED_REASON)
     assert store.list_seeds("stub-model", "decode", "intens") == [1776]
+
+
+def test_two_writes_inside_one_second_are_two_runs(fake_s3: FakeS3Client) -> None:
+    """Sub-second stamps keep a same-second re-run from overwriting its predecessor."""
+    store = s3_store()
+    early = TS1.replace(microsecond=100_000)
+    late = TS1.replace(microsecond=900_000)
+    store.dump_marks(sample_marks(score=1), addr(), early)
+    store.dump_marks(sample_marks(score=0), addr(), late)
+    assert store.list_runs(addr()) == [format_run_ts(early), format_run_ts(late)]
+    assert store.load_marks(addr()).marks[0].score == 1
+    # A marker names one stamp, so it cannot retire the other write.
+    store.supersede(addr(), format_run_ts(early), SUPERSEDED_REASON)
+    assert store.load_marks(addr()).marks[0].score == 0
 
 
 def test_supersede_all_retires_every_surviving_run(fake_s3: FakeS3Client) -> None:

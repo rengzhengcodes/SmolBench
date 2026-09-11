@@ -270,8 +270,19 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     return prompter.range_free_template
 
 
-def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> None:
-    """Raise if `rendered` reveals any of ``RANGE_KEYS``'s values from `query`.
+# Shortest range value a rendered prompt can be searched for. Below it the decimal is a
+# substring of ordinary position-numbering prose ("counted from 1"), so only the structural
+# placeholder check speaks.
+_MIN_SEARCHABLE_RANGE_VALUE_LEN: int = 2
+
+
+def _verify_no_range_leak(
+    name: str, query: Dict[str, str], template: string.Template, rendered: str
+) -> None:
+    """Raise if `template` or `rendered` reveals any of ``RANGE_KEYS``'s values.
+
+    A range placeholder is rejected structurally; the rendered text is searched only for
+    values too long to collide with unrelated digits.
 
     Parameters
     ----------
@@ -279,11 +290,24 @@ def _verify_no_range_leak(name: str, query: Dict[str, str], rendered: str) -> No
         Condition name.
     query : Dict[str, str]
         Substitutions whose range values stay hidden.
+    template : string.Template
+        Template rendered for this condition.
     rendered : str
         Prompt to inspect.
     """
+    identifiers = template.get_identifiers()
     for key in RANGE_KEYS:
-        if key in query and str(query[key]) in rendered:
+        if key in identifiers:
+            raise ValueError(
+                f"condition {name!r} is omit_range=True (its prompt must "
+                f"never reveal the position range) but its template "
+                f"substitutes {key}: the supplied range_free_template leaks "
+                "the very thing it exists to omit."
+            )
+        if key not in query:
+            continue
+        value = str(query[key])
+        if len(value) >= _MIN_SEARCHABLE_RANGE_VALUE_LEN and value in rendered:
             raise ValueError(
                 f"condition {name!r} is omit_range=True (its prompt must "
                 f"never reveal the position range) but its rendered prompt "
@@ -362,7 +386,7 @@ def get_periodic_prompts(
                 build_substitution(query, condition.context(contexts))
             )
             if condition.omit_range:
-                _verify_no_range_leak(name, query, rendered)
+                _verify_no_range_leak(name, query, template, rendered)
             prompts[name] = rendered
             token_counts[name] = tokenizer.count(rendered)
 
@@ -377,7 +401,7 @@ def get_periodic_prompts(
                 unit=unit,
             )
             if condition.omit_range:
-                _verify_no_range_leak(name, query, rendered)
+                _verify_no_range_leak(name, query, template, rendered)
             prompts[name] = rendered
             # Padding already verified this count.
             token_counts[name] = target_count
