@@ -1,22 +1,10 @@
-"""
-Replicated-evaluation harness shared by the eval notebooks.
+"""Run persisted evaluation replicates.
 
-Each (archetype, info type, seed) replicate is addressed by a
-``results_store.ReplicateAddress`` and persisted IMMEDIATELY after grading, so
-an interruption loses at most one replicate and a rerun skips already-persisted
-ones. Only the ``ResultsStore`` interface is used here, never a path or S3 key;
-see ``smolbench.evals.results_store`` for both backends' layouts, store
-resolution and the ``SMOLBENCH_RESULTS_S3`` /
-``SMOLBENCH_RESULTS_S3_REGION`` env contract.
-
-A seed's outstanding info types are pooled into ONE ``evaluate()`` call to keep
-the GPU saturated; ``evaluate()`` preserves input order, so the marks slice
-back per info type by question count, under one shared ``run_ts``.
+Pool a seed's arms to saturate the GPU while preserving their result order.
 """
 
 import functools
 import logging
-import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
@@ -25,6 +13,7 @@ from smolbench.evals import Marks, Quiz, provider, results_store
 from smolbench.evals.results_store import (
     ReplicateAddress,
     ResultsStore,
+    S3ResultsStore,
     resolve_store,
     utcnow,
 )
@@ -32,82 +21,67 @@ from smolbench.evals.results_store import (
 
 @dataclass(frozen=True)
 class ReplicateHarness:
-    """One experiment's replication setup: a store-backed results layout
-    (local disk or S3 -- see the module docstring) plus a quiz factory."""
+    """Store-backed replication setup and quiz factory."""
 
-    #: Directory holding the per-condition replicate dirs; against an
-    #: ``S3ResultsStore`` it is instead the anchor the experiment's S3 log path
-    #: segment is derived from (``results_store.experiment_name``, which maps it
-    #: relative to ``results_store.repo_root()``).
-    #:
-    #: MUST be absolute and package/file-anchored, never cwd-relative: a
-    #: notebook kernel can run with a temp-dir cwd, and the power-analysis
-    #: scripts read this same tree.
+    #: Package-anchored store path, never cwd-relative.
     results_dir: Path
-    #: model name -> short archetype tag used in result dir names
-    #: (e.g. {"olmo-3.1-32b-instruct": "decode"}).
+    #: Model names mapped to result-directory tags.
     archetype_tags: Mapping[str, str]
-    #: (seed, model) -> {info type: quiz}, called on demand per outstanding seed
-    #: rather than eagerly, to keep notebook memory bounded (an extens replicate
-    #: embeds the fully enumerated listing in every prompt). Keyed
-    #: on the MODEL because the ``noise_intens`` arm is padded to an exact TOKEN
-    #: count under the tested model's own tokenizer, so its prompts differ per
-    #: model; ``intens``/``extens`` stay byte-identical across models, keeping
-    #: cross-model comparisons paired on identical prompts (see
-    #: ``smolbench.induction.periodic``'s tokenizer discipline).
+    #: Quiz factory; model-specific padding changes prompts.
     make_quizzes: Callable[[int, str], Dict[str, Quiz]]
     #: Replicate seeds; each doubles as the per-request decoding seed.
     seeds: Sequence[int]
-    #: Info types evaluated per replicate, in serialization order.
-    info_types: Sequence[str] = ("intens", "extens", "noise_intens")
-    #: Optional namespace so experiments can share one results_dir (e.g.
-    #: "one_hop_" -> results/one_hop_{tag}_{info}/; readers of the unprefixed
-    #: dirs never see the prefixed experiment). On the S3 log it becomes a
-    #: sub-level of the experiment name (``results_store.experiment_name``).
+    #: Required information types in serialization order.
+    info_types: Sequence[str]
+    #: Optional result-directory namespace.
     prefix: str = ""
-    #: Seeds counted as outstanding even when the store already has them: the
-    #: ``store.exists`` resume-skip is bypassed for exactly these, each being
-    #: re-collected and re-logged under a fresh ``run_ts``. ``None`` (default)
-    #: disables forcing entirely.
-    #:
-    #: WARNING: against an S3-backed store this cannot SUPERSEDE anything. Reads
-    #: resolve the EARLIEST logged run, so forcing an already-logged seed spends
-    #: real GPU money appending an object no reader here will return. Forcing is
-    #: meaningful only for a seed with no logged run, or against a LOCAL store
-    #: (which overwrites in place). Replacing logged data is an
-    #: explicit-exclusion problem -- see the results_store module docstring.
+    #: Seeds to recollect across all arms, superseding prior runs first.
     force_seeds: Optional[AbstractSet[int]] = None
 
     @functools.cached_property
     def store(self) -> ResultsStore:
-        """Return the ``ResultsStore`` backing this harness's replicates.
-
-        See ``resolve_store`` for the resolution order, including the
-        repo-anchor fallback pinning the offline test suite to the local store.
-        The caching is load-bearing: the env is read once at FIRST access, after
-        a notebook's ``load_dotenv(keys.env)`` cell, so every later call reaches
-        the same store. ``cached_property`` works on a frozen dataclass because
-        it writes straight into ``instance.__dict__``.
-        """
+        """Return the cached store for consistent environment resolution."""
         return resolve_store(self.results_dir, self.prefix)
 
     def _address(
         self, model: Optional[str], tag: str, info: str, seed: int
     ) -> ReplicateAddress:
-        """Build one replicate's store address.
+        """Build one replicate address.
 
-        ``model=None`` is the valid tag-only-read case (see
-        ``ReplicateAddress.model``), used by `cot_chain_lengths`.
+        ``model=None`` permits tag-only reads.
+
+        Parameters
+        ----------
+        model : Optional[str]
+            Model name, or None for a tag-only read.
+        tag : str
+            Archetype tag in the store address.
+        info : str
+            Information type in the store address.
+        seed : int
+            Replicate seed in the store address.
+
+        Returns
+        -------
+        ReplicateAddress
+            The store address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
     def has_outstanding(self, model: str) -> bool:
-        """Return whether any (info type, seed) for `model` still needs evaluation.
+        """Return whether `model` has outstanding work.
 
-        Lets a caller skip SERVING a model it has no work for. `model` must be a
-        key of ``archetype_tags``. The store is consulted on every call (against
-        S3, one listing request per (info type, seed)); ANY logged S3 run counts
-        as "not outstanding", a seed in ``force_seeds`` always as outstanding.
+        Forced seeds remain outstanding to replace stored runs.
+
+        Parameters
+        ----------
+        model : str
+            Model whose replicate addresses are checked.
+
+        Returns
+        -------
+        bool
+            Whether any replicate still needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -127,24 +101,24 @@ class ReplicateHarness:
         request_timeout: Optional[int] = None,
         server_config: Optional[Mapping] = None,
     ) -> None:
-        """Run every outstanding replicate, across every info type, for `model`.
+        """Run `model`'s outstanding replicates.
 
-        Only the tuning kwargs actually passed are forwarded, so an archetype
-        passing none keeps ``evaluate()``'s defaults. A CoT archetype's long
-        `request_timeout` must cover the longest chain on attempt 1, or the
-        request is censored into non-deterministic, top-truncated output.
-        `server_config` is stamped onto every dumped ``Marks``, so a stored
-        replicate self-describes its serving stack (see ``ec2.server_config``).
+        Forced seeds write their replacement before retiring the run it supersedes.
 
-        Notes
-        -----
-        ``run_ts`` is captured ONCE PER SEED, before that seed's pooled
-        ``evaluate()``, so one collection event gets one timestamp in the S3 log
-        (``LocalResultsStore`` ignores ``run_ts``).
+        Parameters
+        ----------
+        model : str
+            Model whose outstanding replicates are collected.
+        extra_args : Optional[dict], optional
+            Extra arguments forwarded to ``evaluate()``.
+        max_parallel : Optional[int], optional
+            Maximum parallel requests forwarded to ``evaluate()``.
+        request_timeout : Optional[int], optional
+            Per-request read timeout forwarded to ``evaluate()``.
+        server_config : Optional[Mapping], optional
+            Server configuration persisted with each replicate.
         """
         tag: str = self.archetype_tags[model]
-        # Before the resume-skip loop, so a direct call still names the
-        # resolved store even when nothing is outstanding.
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
         eval_kwargs: dict = {}
         if extra_args is not None:
@@ -163,13 +137,23 @@ class ReplicateHarness:
             ]
             if not outstanding:
                 continue
-            # One timestamp per SEED (see this method's "Notes" section),
-            # captured before make_quizzes/evaluate so it dates the start of the
-            # collection event, not the end of serialization.
+            reason = f"force_seeds: re-collecting seed={seed}"
+            retiring: Dict[str, list] = {}
+            if seed in forced:
+                for info in outstanding:
+                    addr = self._address(model, tag, info, seed)
+                    if isinstance(self.store, S3ResultsStore):
+                        # S3 runs are immutable and ``exists`` is marker-blind, so
+                        # retiring before a failed recollect would strand the seed:
+                        # the survivors retire only after their replacement lands.
+                        retiring[info] = self.store.list_runs(addr)
+                    else:
+                        # Local ``exists`` is file-based, so a failed recollect
+                        # stays outstanding; the audit marker can move first.
+                        self.store.supersede_all(addr, reason)
+            # Timestamp collection start, not serialization completion.
             run_ts = utcnow()
             quizzes = self.make_quizzes(seed, model)
-            # Pooled across the outstanding info types (see the module
-            # docstring); the shared decode seed is unchanged.
             combined: list = [q for info in outstanding for q in quizzes[info]]
             pooled: Marks = provider.evaluate(combined, model, seed, **eval_kwargs)
             start: int = 0
@@ -178,32 +162,36 @@ class ReplicateHarness:
                 marks = Marks(
                     model=model,
                     marks=tuple(pooled.marks[start : start + n]),
-                    # A private copy per dump, so a caller mutating its mapping
-                    # later cannot alter what a replicate claims it ran on.
+                    # Copy so later caller mutations cannot alter stored provenance.
                     server_config=dict(server_config) if server_config else None,
                 )
                 start += n
-                # No mkdir: LocalResultsStore.dump_marks creates its own parent
-                # directory, and S3ResultsStore.dump_marks needs none.
-                self.store.dump_marks(
-                    marks, self._address(model, tag, info, seed), run_ts
-                )
+                addr = self._address(model, tag, info, seed)
+                self.store.dump_marks(marks, addr, run_ts)
+                for stamp in retiring.get(info, ()):  # S3 only
+                    # The S3 supersede signature takes the stamp.
+                    # pylint: disable-next=too-many-function-args
+                    self.store.supersede(addr, stamp, reason)
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
                     f"{marks.correct}/{len(marks.marks)} correct"
                 )
 
     def summarize(self, model: str) -> None:
-        """Print per-info-type totals, over every DISTINCT SEED with a stored replicate.
+        """Print totals over stored seeds.
 
-        Against S3, "stored" means "has at least one logged run"; totals come
-        from the EARLIEST logged run of each seed, and the printed count is of
-        distinct seeds, not log objects.
+        S3 totals use each seed's earliest run.
+
+        Parameters
+        ----------
+        model : str
+            Model whose stored replicates are summarized.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
             correct = incorrect = invalid = 0
-            seeds = self.store.list_seeds(model, tag, info)
+            owned = set(self.seeds)
+            seeds = [s for s in self.store.list_seeds(model, tag, info) if s in owned]
             for seed in seeds:
                 marks = self.store.load_marks(self._address(model, tag, info, seed))
                 correct += marks.correct
@@ -217,63 +205,10 @@ class ReplicateHarness:
                 f"acc={acc}"
             )
 
-    def cot_chain_lengths(self, tag: str = "cot") -> None:
-        """Print reasoning-chain word-count stats from the stored CoT replicates.
-
-        Word count proxies token count (about 1.3 tokens/word for Llama-style
-        tokenizers); a top-truncated distribution flags a too-tight CoT
-        ``request_timeout`` (see `run_replicates`).
-
-        `tag` is a TAG, not a model, but the S3 log is keyed by model, so it is
-        reverse-looked-up through ``archetype_tags`` to the FIRST model carrying
-        it (models sharing a tag already share one local
-        ``{prefix}{tag}_{info}/`` directory). With NO such model the address
-        model is ``None``, ``S3ResultsStore.exists`` returns False, and every
-        (seed, info) is skipped.
-        """
-        model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
-        lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}
-        for seed in self.seeds:
-            for info in self.info_types:
-                addr = self._address(model, tag, info, seed)
-                if not self.store.exists(addr):
-                    continue
-                for mark in self.store.load_marks(addr).marks:
-                    if mark.reasoning:
-                        lengths_by_info[info].append(len(mark.reasoning.split()))
-        for info in self.info_types:
-            lengths = lengths_by_info[info]
-            if not lengths:
-                print(f"{tag}/{info}: no reasoning chains found")
-                continue
-            print(
-                f"{tag}/{info}: n={len(lengths):4d}  "
-                f"min={min(lengths):5d}  max={max(lengths):5d}  "
-                f"mean={statistics.mean(lengths):6.0f}  "
-                f"median={statistics.median(lengths):6.0f}  "
-                f"words  (~tokens x 1.3)"
-            )
-
     def sync_down(self) -> int:
-        """Pull this harness's S3-backed replicate log into the local layout.
+        """Sync the S3 log into the local layout.
 
-        Thin delegate to ``results_store.sync_down``, and the PRIMARY way to feed
-        the local-reading analysis tooling: the model -> tag mapping it needs
-        already lives here (the ``python -m smolbench.evals.results_store`` CLI
-        needs it re-typed by hand).
-
-        Returns
-        -------
-        int
-            Number of objects downloaded.
-
-        Raises
-        ------
-        RuntimeError
-            ``self.store`` is not S3-backed.
-        ValueError
-            The resolved S3 log prefix is empty, or a listed entry's local
-            destination resolves outside ``results_dir``.
+        Raises RuntimeError for a non-S3 store and ValueError for an escaping path.
         """
         return results_store.sync_down(
             self.results_dir, self.archetype_tags, self.prefix

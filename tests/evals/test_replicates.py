@@ -1,20 +1,22 @@
-"""Test the replication harness (pooling, resume, forcing) against the local store."""
+"""Test replication pooling, resumption, and forcing with the local store."""
 
 import dataclasses
-import re
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from smolbench.evals import Mark, Marks, Numeric, provider
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals.replicates import ReplicateHarness
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 RUN_TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
 
-def make_quizzes(seed: int, model: str):
-    """Two info types of different sizes so pooled slicing is observable."""
+def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
+    """Use uneven info types to test pooled slicing."""
     return {
         "intens": (
             Numeric(prompt=f"i1/{seed}", answer=1),
@@ -25,7 +27,8 @@ def make_quizzes(seed: int, model: str):
 
 
 @pytest.fixture
-def harness(tmp_path):
+def harness(tmp_path: Path) -> ReplicateHarness:
+    """Build a local replicate harness."""
     return ReplicateHarness(
         results_dir=tmp_path,
         archetype_tags={"stub-model": "decode"},
@@ -36,14 +39,26 @@ def harness(tmp_path):
 
 
 @pytest.fixture
-def fake_evaluate(monkeypatch):
-    """Answers every question correctly; records call shapes."""
+def fake_evaluate(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record successful evaluation calls."""
     calls = []
 
-    def _evaluate(quiz, model, seed, **kwargs):
+    def _evaluate(
+        quiz: tuple[Numeric, ...],
+        model: str,
+        seed: int,
+        **kwargs: Any,
+    ) -> Marks:
+        """Return deterministic marks for evaluation."""
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
         marks = tuple(
-            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
+            Mark(
+                query=q.prompt,
+                answer=q.answer,
+                response=str(q.answer),
+                score=1,
+                compliance=COMPLIANT,
+            )
             for q in quiz
         )
         return Marks(model=model, marks=marks)
@@ -52,7 +67,12 @@ def fake_evaluate(monkeypatch):
     return calls
 
 
-def test_run_replicates_pools_and_serializes(harness, fake_evaluate, tmp_path):
+def test_run_replicates_pools_and_serializes(
+    harness: ReplicateHarness,
+    fake_evaluate: list[dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """Run replicates concurrently and serialize their marks."""
     harness.run_replicates("stub-model", extra_args={"max_completion_tokens": 64})
     assert [c["n"] for c in fake_evaluate] == [3, 3]
     assert fake_evaluate[0]["kwargs"] == {"extra_args": {"max_completion_tokens": 64}}
@@ -73,7 +93,12 @@ def test_run_replicates_pools_and_serializes(harness, fake_evaluate, tmp_path):
     assert stored.server_config == cfg and stored.server_config is not cfg
 
 
-def test_run_replicates_resume(harness, fake_evaluate, tmp_path):
+def test_run_replicates_resume(
+    harness: ReplicateHarness,
+    fake_evaluate: list[dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    """Resume without repeating stored replicates."""
     assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
     fake_evaluate.clear()
@@ -86,11 +111,15 @@ def test_run_replicates_resume(harness, fake_evaluate, tmp_path):
     assert [c["n"] for c in fake_evaluate] == [1]
 
 
-def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
-    """The quiz factory receives (seed, model): the noise arm is token-matched per model."""
+def test_run_replicates_passes_model_to_quiz_factory(
+    tmp_path: Path,
+    fake_evaluate: list[dict[str, Any]],
+) -> None:
+    """Pass the model so each noise arm is token-matched."""
     seen: list = []
 
-    def recording_factory(seed: int, model: str):
+    def recording_factory(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
+        """Record model arguments passed to the quiz factory."""
         seen.append((seed, model))
         return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
 
@@ -108,8 +137,10 @@ def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
     )
 
 
-def test_force_seeds(harness, fake_evaluate):
-    """force_seeds bypasses the resume-skip for exactly the forced seeds."""
+def test_force_seeds(
+    harness: ReplicateHarness, fake_evaluate: list[dict[str, Any]]
+) -> None:
+    """Forced seeds bypass resumption."""
     harness.run_replicates("stub-model")
     assert not harness.has_outstanding("stub-model")
     n_first = len(fake_evaluate)
@@ -127,23 +158,12 @@ def test_force_seeds(harness, fake_evaluate):
     ).has_outstanding("stub-model")
 
 
-def test_cot_chain_lengths(harness, capsys):
-    """Word-count stats pool over seeds, skipping falsy reasoning."""
-    for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
-        marks = tuple(
-            Mark(query=f"q{i}", answer=1, response="1", score=1, reasoning=r)
-            for i, r in enumerate(texts)
-        )
-        addr = ReplicateAddress(tag="cot", info="intens", seed=seed, model=None)
-        harness.store.dump_marks(Marks(model="stub-model", marks=marks), addr, RUN_TS)
-    harness.cot_chain_lengths()
-    out = re.sub(r"\s+", "", capsys.readouterr().out)
-    assert "cot/intens:n=3min=2max=4mean=3median=3words" in out
-    assert "cot/extens:noreasoningchainsfound" in out
-
-
-def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
-    """The store resolves once, stays local for a non-repo dir, and honours prefix."""
+def test_store_is_local_and_cached(
+    harness: ReplicateHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cache the local store and honor its prefix."""
     assert isinstance(harness.store, LocalResultsStore)
     assert harness.store.root == tmp_path
     assert harness.store is harness.store
@@ -153,3 +173,84 @@ def test_store_is_local_and_cached(harness, tmp_path, monkeypatch):
     addr = ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model")
     prefixed.store.dump_marks(Marks(model="stub-model", marks=()), addr, RUN_TS)
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
+
+
+def test_summarize_counts_only_owned_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Ignore stored replicates whose seeds belong to another harness."""
+    harness = ReplicateHarness(
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        seeds=(0,),
+        info_types=("intens",),
+    )
+    for seed, score in ((0, 1), (1, 0)):
+        harness.store.dump_marks(
+            Marks(
+                model="stub-model",
+                marks=(
+                    Mark(
+                        query=f"q/{seed}",
+                        answer=1,
+                        response=str(score),
+                        score=score,
+                        compliance=COMPLIANT,
+                    ),
+                ),
+            ),
+            ReplicateAddress(
+                tag="decode",
+                info="intens",
+                seed=seed,
+                model="stub-model",
+            ),
+            RUN_TS,
+        )
+
+    harness.summarize("stub-model")
+
+    output = capsys.readouterr().out
+    assert "1/1 replicates" in output
+    assert "correct=1 incorrect=0 invalid=0" in output
+
+
+def test_forcing_a_seed_supersedes_its_stored_run_first(
+    harness: ReplicateHarness,
+    fake_evaluate: list[dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forced collection supersedes the prior run before replacement."""
+    harness.run_replicates("stub-model")
+    intens = tmp_path / "decode_intens"
+    original = (intens / "rep_1.yaml").read_bytes()
+
+    # Different scores make the reader's selected run observable.
+    monkeypatch.setattr(
+        provider,
+        "evaluate",
+        lambda quiz, model, seed, **kw: Marks(
+            model=model,
+            marks=tuple(
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response="0",
+                    score=0,
+                    compliance=COMPLIANT,
+                )
+                for q in quiz
+            ),
+        ),
+    )
+    dataclasses.replace(harness, force_seeds=frozenset({1})).run_replicates(
+        "stub-model"
+    )
+
+    assert Marks.load(intens / "rep_1.yaml").marks[0].score == 0
+    retired = list(intens.glob("rep_1.SUPERSEDED-*.yaml"))
+    assert len(retired) == 1 and retired[0].read_bytes() == original
+    assert not list(intens.glob("rep_2.SUPERSEDED-*.yaml"))
+    assert harness.store.list_seeds(None, "decode", "intens") == [1, 2]

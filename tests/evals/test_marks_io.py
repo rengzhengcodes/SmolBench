@@ -1,32 +1,57 @@
-"""Test result-file round trips: the safe plain-dict format and legacy tagged files."""
+"""Test result-file round trips through the safe plain-dict format."""
 
 import dataclasses
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import yaml
 
 from smolbench.evals import Mark, Marks
+from smolbench.evals.quiz import COMPLIANT
+
+
+def mark(compliance: str = COMPLIANT, **kwargs: Any) -> Mark:
+    """Build a test mark with the requested score."""
+    return Mark(
+        query="q", answer=1, response="1", score=1, compliance=compliance, **kwargs
+    )
 
 
 def _sample_marks() -> Marks:
+    """Build a deterministic sample result."""
     return Marks(
         model="stub-model",
         marks=(
-            Mark(query="q1", answer=7, response="7", score=1, reasoning="think\nlines"),
-            Mark(query="q2", answer=True, response="banana", score=None),
+            Mark(
+                query="q1",
+                answer=7,
+                response="7",
+                score=1,
+                compliance=COMPLIANT,
+                reasoning="think\nlines",
+            ),
+            Mark(
+                query="q2",
+                answer=True,
+                response="banana",
+                score=None,
+                compliance="empty",
+            ),
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
 
 
-def test_dump_dumps_load_loads_round_trip(tmp_path):
+def test_dump_dumps_load_loads_round_trip(tmp_path: Path) -> None:
     """dump/dumps agree byte-for-byte and every reader round-trips."""
     marks = _sample_marks()
     out = tmp_path / "rep_1.yaml"
     marks.dump(out)
     text = out.read_text()
-    assert "!!python/object" not in text
     yaml.safe_load(text)
+    # A python-object tag would force readers onto yaml.unsafe_load.
+    assert "!!python/object" not in text
     assert marks.dumps() == text
     assert Marks.load(out) == Marks.loads(text) == marks
     assert "compliance" in text
@@ -46,20 +71,27 @@ def test_dump_dumps_load_loads_round_trip(tmp_path):
     assert loaded == stamped
 
 
-def test_loads_uses_first_bytes_not_substring():
-    """A response merely mentioning ``!!python/object`` must not take the unsafe path."""
+# ---------------------------------------------------------------------------
+# COMPLIANT is an explicit label, not an overloaded None
+# ---------------------------------------------------------------------------
+
+
+def test_compliant_is_a_written_label(tmp_path: Path) -> None:
+    """The string is what lands in the YAML, so a stored row says what it means."""
     marks = Marks(
-        model="stub-model",
-        marks=(
-            Mark(
-                query="q",
-                answer=1,
-                response="!!python/object:smolbench.evals.Mark {}",
-                score=1,
-            ),
-        ),
-        date=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        model="m", marks=(mark(),), date=datetime(2026, 7, 1, tzinfo=timezone.utc)
     )
     text = marks.dumps()
-    assert "!!python/object" in text and not text.startswith("!!python/object")
-    assert Marks.loads(text) == marks
+    assert "compliance: compliant" in text
+    assert Marks.loads(text).marks[0].compliance == COMPLIANT
+
+
+def test_the_census_property_counts_the_constant_not_a_none_test() -> None:
+    """``noncompliant`` counts every mark whose label is not `COMPLIANT`."""
+    marks = Marks(
+        model="m",
+        marks=(mark(), mark("empty"), mark("multiple-values")),
+        date=datetime(2026, 7, 1, tzinfo=timezone.utc),
+    )
+    assert marks.noncompliant == 2
+    assert marks.noncompliant <= len(marks.marks)

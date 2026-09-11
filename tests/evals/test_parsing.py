@@ -1,4 +1,6 @@
-"""Test answer extraction and the violation label recording contract breaks."""
+"""Test answer extraction and violation labels."""
+
+from typing import Any
 
 import pytest
 
@@ -20,6 +22,7 @@ from smolbench.evals.parsing import (
     parse_numeric,
     parse_tof,
 )
+from smolbench.evals.quiz import COMPLIANT
 
 _TRUNCATED_CHAIN = (
     "Okay, let's tackle this. Is 191 less than 1019? No, wait -- "
@@ -51,8 +54,8 @@ _TRUNCATED_CHAIN = (
         (_TRUNCATED_CHAIN, None, TRUNCATED),
     ],
 )
-def test_tof_extraction(text, value, violation):
-    """A verdict is recovered from any shape that ends in one; unfinished chains are not."""
+def test_tof_extraction(text: str, value: bool | None, violation: str | None) -> None:
+    """Recover terminal verdicts but reject unfinished chains."""
     result = parse_tof(text)
     assert result.value is value
     assert result.violation == violation
@@ -71,11 +74,9 @@ def test_tof_extraction(text, value, violation):
         ("\\boxed{280}", 280, MARKUP),
         ("2520 // 8 = 315\n\n315", 315, MULTIPLE_VALUES),
         ("2520/2", 1260, EXPRESSION),
-        # A worked calculation after an "answer" lead-in: the terminal integer is
-        # the result; the first-after-lead would score the operand 2520.
+        # Use the terminal result: the first integer is an operand.
         ("The answer is computed as 2520 / 8 = 315", 315, MULTIPLE_VALUES),
-        # Over-long but varied bare integer: out of range, NOT a repetition
-        # collapse -- must not inflate the DEGENERATE census.
+        # Varying digits are invalid, not repetition collapse.
         ("1234567890" * 5, None, UNPARSEABLE),
         ("2520//2", 1260, EXPRESSION),
         ("1260 + 0", 1260, EXPRESSION),
@@ -84,45 +85,47 @@ def test_tof_extraction(text, value, violation):
         ("no number here", None, UNPARSEABLE),
     ],
 )
-def test_numeric_extraction(text, value, violation):
-    """An integer is graded on what the response computes, not on an operand."""
+def test_numeric_extraction(
+    text: str, value: int | None, violation: str | None
+) -> None:
+    """Grade computed results rather than operands."""
     result = parse_numeric(text)
     assert result.value == value
     assert result.violation == violation
 
 
 @pytest.mark.parametrize("text", ["9**9**9", "2520/0", "2520/7.5abc"])
-def test_numeric_refuses_unsafe_or_ill_formed_expressions(text):
-    """Exponentiation, division by zero, and junk never evaluate -- but a
-    violation is still recorded (integer-picking labels them MULTIPLE_VALUES)."""
+def test_numeric_refuses_unsafe_or_ill_formed_expressions(text: str) -> None:
+    """Unsafe expressions retain a non-expression violation."""
     result = parse_numeric(text)
     assert result.violation != EXPRESSION
     assert result.violation is not None
 
 
-def test_arithmetic_evaluation_cannot_execute_code():
-    """The evaluator walks a validated AST; it never calls ``eval``."""
+def test_arithmetic_evaluation_cannot_execute_code() -> None:
+    """Validated AST evaluation prevents code execution."""
     from smolbench.evals.parsing import _eval_arithmetic
 
     assert _eval_arithmetic("__import__('os').system('echo hi')") is None
     assert _eval_arithmetic("open('/etc/passwd')") is None
 
 
-def test_absurdly_long_integer_yields_no_answer():
-    """Python refuses int/str conversion past 4,300 digits; that must not crash grading."""
+def test_absurdly_long_integer_yields_no_answer() -> None:
+    """Huge integers must not crash grading."""
     result = parse_numeric("The count is " + "0" * 20379 + " items")
     assert result.value is None
     assert result.violation is not None
 
 
 @pytest.mark.parametrize("text", ["True", "False", "FALSE", "  true "])
-def test_tof_agrees_with_strict_parser(text):
-    """Where the legacy strict parser succeeds, the lenient one must not regrade it."""
+def test_tof_agrees_with_strict_parser(text: str) -> None:
+    """Lenient parsing preserves strict results."""
     assert parse_tof(text).value == ToF.condition(text)
 
 
 @pytest.mark.parametrize("text", ["2520", "-7", "0"])
-def test_numeric_agrees_with_strict_parser(text):
+def test_numeric_agrees_with_strict_parser(text: str) -> None:
+    """Confirm numeric parsing agrees with strict parsing."""
     assert parse_numeric(text).value == Numeric.condition(text)
 
 
@@ -137,8 +140,8 @@ def test_numeric_agrees_with_strict_parser(text):
         + "\n\nThe final answer is: 1",
     ],
 )
-def test_degenerate(text):
-    """Repetition collapse is a breakdown, not a parsing problem: no answer is mined out."""
+def test_degenerate(text: str) -> None:
+    """Repetition collapse yields no answer to avoid false recovery."""
     for result in (parse_numeric(text), parse_tof(text)):
         assert result.value is None
         assert result.violation == DEGENERATE
@@ -157,20 +160,20 @@ def test_degenerate(text):
         "True" + "\n" * 40,
     ],
 )
-def test_not_degenerate(text):
-    """Long genuine reasoning and formatting artefacts must not trip the detector."""
+def test_not_degenerate(text: str) -> None:
+    """Genuine long reasoning is not degenerate."""
     assert not is_degenerate(text)
     assert parse_tof(text).violation != DEGENERATE
 
 
-def test_parse_for_dispatches_on_question_type():
-    """ToF and Numeric questions route to their own extractors."""
+def test_parse_for_dispatches_on_question_type() -> None:
+    """Dispatch by question type."""
     assert parse_for(ToF(prompt="p", answer=True), "Answer: True").value is True
     assert parse_for(Numeric(prompt="p", answer=1), "Answer: 315").value == 315
 
 
-def test_grade_records_scores_and_compliance():
-    """Recovered right answers score correct but stay flagged; wrong ones stay wrong."""
+def test_grade_records_scores_and_compliance() -> None:
+    """Recovered answers remain noncompliant."""
     quiz = (
         ToF(prompt="q1", answer=False),
         ToF(prompt="q2", answer=True),
@@ -186,16 +189,23 @@ def test_grade_records_scores_and_compliance():
     marks = grade(quiz, responses, "stub-model")
 
     assert [m.score for m in marks.marks] == [1, 1, None, 0]
-    assert [m.compliance for m in marks.marks] == [None, PREFIXED, DEGENERATE, PREFIXED]
+    # grade translates no violation into the stored COMPLIANT label.
+    assert [m.compliance for m in marks.marks] == [
+        COMPLIANT,
+        PREFIXED,
+        DEGENERATE,
+        PREFIXED,
+    ]
     assert (marks.correct, marks.invalid, marks.noncompliant) == (2, 1, 3)
 
 
-def test_grade_survives_a_parser_exception():
-    """A parser bug degrades one mark to invalid; it must not kill the run."""
+def test_grade_survives_a_parser_exception() -> None:
+    """A parser failure invalidates only its mark."""
     import smolbench.evals.openai_compat as oc
     import smolbench.evals.parsing as parsing_mod
 
-    def exploding_parse(question, text):
+    def exploding_parse(question: Any, text: str) -> Any:
+        """Raise an error from the parser."""
         raise RuntimeError("simulated parser bug")
 
     saved = parsing_mod.parse_for

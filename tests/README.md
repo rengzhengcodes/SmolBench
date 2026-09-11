@@ -3,7 +3,7 @@
 ## Running
 
 ```
-uv sync --all-extras          # the suite imports the notebook extra (dotenv, scipy, statsmodels, matplotlib)
+uv sync --all-extras          # the suite imports the notebook extra (dotenv, scipy, statsmodels)
 .venv/bin/python -m pytest tests/ -q
 ```
 
@@ -18,7 +18,7 @@ Tests are grouped by subsystem under test:
 - `evals/` -- harness infrastructure and providers (EC2, AWS, OpenAI-compat,
   results store, marks I/O, tokenization/parsing).
 - `induction/` -- the induction benchmark (periodic quizzes,
-  golden fixtures, figures).
+  golden fixtures).
 - `deduction/` -- the Lean 4 benchmark and its pipeline scripts (corpus,
   context, prompt, runner, sft, decontam, verify, S3 archive).
 - `tooling/` -- cross-study fleet/evidence/bucket/arch analysis contracts
