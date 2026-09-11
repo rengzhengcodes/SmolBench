@@ -1,7 +1,5 @@
 """Replicate results store: local tree, S3 append-only log, env resolution, sync_down."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import hashlib
 import io
 from collections.abc import Callable, Iterator
@@ -35,6 +33,7 @@ TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
 def sample_marks(model: str = "stub-model", n: int = 2, score: int = 1) -> Marks:
     # Pinned date keeps equality and dumped bytes exact.
+    """Build deterministic marks for store tests."""
     marks = tuple(
         Mark(
             query=f"q{i}", answer=i, response=str(i), score=score, compliance=COMPLIANT
@@ -52,16 +51,19 @@ def addr(
     seed: int = 1776,
     model: str | None = "stub-model",
 ) -> ReplicateAddress:
+    """Build a replicate address."""
     return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
 
 def log_key(
     model: str, seed: int, info: str, ts: datetime, experiment: str = "periodic"
 ) -> str:
+    """Build an S3 log key."""
     return f"{experiment}/{model}/seed={seed}/{info}--{format_run_ts(ts)}.yaml"
 
 
 def patch_utcnow(monkeypatch: pytest.MonkeyPatch, fn: Callable[[], datetime]) -> None:
+    """Patch UTC clocks used by store modules."""
     for mod in (rs, replicates):  # both modules may have bound the utcnow seam
         monkeypatch.setattr(mod, "utcnow", fn)
 
@@ -70,16 +72,19 @@ class FakeS3Client:
     """In-memory stand-in for the S3 calls the store makes, over one dict."""
 
     def __init__(self) -> None:
+        """Initialize an in-memory S3 client."""
         self.objects: dict = {}
         self.etags: dict = {}  # key -> ETag override; unset = a correct quoted MD5
         self.probes: list = []  # (Prefix, MaxKeys) of every list_objects_v2 call
         self.requested: list = []  # (service, region) of every client build
 
     def _fresh(self, service: str, region: str | None = None) -> Self:
+        """Record and return a client for a service and region."""
         self.requested.append((service, region))
         return self
 
     def _entry(self, key: str) -> dict[str, Any]:
+        """Build an S3 object listing entry."""
         body = self.objects[key]
         return {
             "Key": key,
@@ -88,12 +93,15 @@ class FakeS3Client:
         }
 
     def _matching(self, prefix: str) -> list[str]:
+        """Return keys matching a prefix."""
         return sorted(k for k in self.objects if k.startswith(prefix))
 
     def put_object(self, Bucket: str, Key: str, Body: bytes) -> None:
+        """Store an object in memory."""
         self.objects[Key] = Body
 
     def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
+        """Return an object body or raise for missing keys."""
         if Key not in self.objects:
             raise ClientError(
                 {"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject"
@@ -103,6 +111,7 @@ class FakeS3Client:
     def list_objects_v2(
         self, Bucket: str, Prefix: str = "", MaxKeys: int | None = None
     ) -> dict[str, Any]:
+        """List matching objects with S3-like metadata."""
         self.probes.append((Prefix, MaxKeys))
         return {
             "Contents": [self._entry(k) for k in self._matching(Prefix)[:MaxKeys]],
@@ -110,6 +119,7 @@ class FakeS3Client:
         }
 
     def get_paginator(self, operation_name: str) -> Self:
+        """Return this fake client as a paginator."""
         return self
 
     def paginate(
@@ -123,6 +133,7 @@ class FakeS3Client:
 
 @pytest.fixture
 def fake_s3(monkeypatch: pytest.MonkeyPatch) -> FakeS3Client:
+    """Provide a patched in-memory S3 client."""
     client = FakeS3Client()
     monkeypatch.setattr(_aws, "fresh_client", client._fresh)
     return client
@@ -130,6 +141,7 @@ def fake_s3(monkeypatch: pytest.MonkeyPatch) -> FakeS3Client:
 
 @pytest.fixture
 def s3_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set the S3 results-store environment."""
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
 
@@ -144,6 +156,7 @@ def _no_ambient_store_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def fake_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     # Prevent writes to the checkout.
+    """Provide a temporary repository layout."""
     root = tmp_path / "repo"
     root.mkdir()
     monkeypatch.setattr(rs, "repo_root", lambda: root)
@@ -370,6 +383,7 @@ def test_sync_down_translates_and_guards(
 def _log(
     fake_s3: FakeS3Client, seed: int, info: str, ts: datetime, body: bytes | None = None
 ) -> None:
+    """Write a serialized result into the fake S3 client."""
     key = log_key("stub-model", seed, info, ts, experiment="periodic_moe")
     fake_s3.objects[key] = body or Marks(model="stub-model", marks=()).dumps().encode()
 
@@ -385,6 +399,7 @@ def s3_harness(
     calls: list = []
 
     def _evaluate(quiz: Any, model: str, seed: int, **kwargs: Any) -> Marks:
+        """Return deterministic marks for harness evaluation."""
         calls.append((seed, len(quiz)))
         return Marks(
             model=model,
@@ -489,6 +504,7 @@ def marker_key(
     ts: datetime = TS1,
     model: str = "stub-model",
 ) -> str:
+    """Build the supersession marker key."""
     return (
         f"periodic_moe/{model}/seed={seed}/{info}--{format_run_ts(ts)}" f".superseded"
     )

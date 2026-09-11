@@ -1,7 +1,5 @@
 """Test result-file round trips through the safe plain-dict format."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,12 +12,14 @@ from smolbench.evals.quiz import COMPLIANT
 
 
 def mark(compliance: str = COMPLIANT, **kwargs: Any) -> Mark:
+    """Build a test mark with the requested score."""
     return Mark(
         query="q", answer=1, response="1", score=1, compliance=compliance, **kwargs
     )
 
 
 def _sample_marks() -> Marks:
+    """Build a deterministic sample result."""
     return Marks(
         model="stub-model",
         marks=(
