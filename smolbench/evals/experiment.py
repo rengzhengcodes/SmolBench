@@ -70,6 +70,8 @@ class Experiment:
     force_seeds: Optional[frozenset[int]] = None
 
     def __post_init__(self) -> None:
+        # Snapshot: the frozen field must not alias a caller-mutable mapping.
+        object.__setattr__(self, "archetype_tags", dict(self.archetype_tags))
         if self.state_file is not None and not self.state_file.strip():
             raise ValueError(
                 "state_file must name a file; an empty value resolves to the "
@@ -255,6 +257,23 @@ class Experiment:
             ``model`` is not a key of ``archetype_tags``.
         """
         self.harness.summarize(model)
+
+    def sync_down(self) -> int:
+        """Materialize the S3 results log into the local results tree.
+
+        Reads S3 only; no EC2 or inference calls.
+
+        Returns
+        -------
+        int
+            Number of result files written locally.
+
+        Raises
+        ------
+        RuntimeError
+            If the store is not S3-backed.
+        """
+        return self.harness.sync_down()
 
     def agent_status(self) -> Dict[str, Any]:
         """Return the provisioned instance's control-agent status.
