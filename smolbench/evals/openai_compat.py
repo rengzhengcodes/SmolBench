@@ -386,7 +386,7 @@ class ChatClient:
         system : str, optional
             Extra system message.
         context_length : int, optional
-        Token budget used to warn when responses approach the limit.
+            Token budget used to warn when responses approach the limit.
         extra_args : dict, optional
             Merged into the request body (e.g.
         request_timeout : int, optional
