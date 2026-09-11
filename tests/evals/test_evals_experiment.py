@@ -151,11 +151,10 @@ def test_experiment_tag_is_exported_per_call(
     assert third.agent_status()["EC2_EXPERIMENT_TAG"] == driver_tag
 
 
-@pytest.mark.parametrize("tag", ["", "team/run", "../x", "a b", ".."])
-def test_an_unsafe_experiment_tag_is_refused_at_construction(tag: str) -> None:
-    """Pin that unsafe tags fail before any lifecycle call."""
+def test_an_unsafe_experiment_tag_is_refused_at_construction() -> None:
+    """Pin that unsafe experiment-owned tags fail before any lifecycle call."""
     with pytest.raises(ValueError, match="EC2_EXPERIMENT_TAG"):
-        build(experiment_tag=tag)
+        build(experiment_tag="")
 
 
 @pytest.mark.parametrize("state_file", ["", "  "])

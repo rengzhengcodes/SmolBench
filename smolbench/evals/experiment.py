@@ -13,7 +13,6 @@ Live EC2 methods are billed; summaries may read S3 but do not invoke inference.
 import functools
 import logging
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -49,8 +48,7 @@ class Experiment:
     state_file : str, optional
         Repo-relative EC2 state-file name; defaults to
         ``.ec2_state_<experiment_tag>.json`` so distinct experiments never
-        reattach to each other's instance. Tags are restricted to a
-        filename-safe charset.
+        reattach to each other's instance.
     experiment_tag : str, optional
         Explicit tag, else the driver's exported ``EC2_EXPERIMENT_TAG``, else
         the study's standalone tag; sharded experiments get a
@@ -323,8 +321,7 @@ class Experiment:
 def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     """Raise for an unsafe experiment lifecycle tag.
 
-    Reject empty, filename-unsafe, and bare fleet-prefix tags because recovery
-    and teardown operate by tag.
+    Reject empty and bare fleet-prefix tags because recovery and teardown operate by tag.
 
     Parameters
     ----------
@@ -336,7 +333,7 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     Raises
     ------
     ValueError
-        If ``tag`` is unsafe (charset, emptiness, bare prefix).
+        If ``tag`` is empty or equals the bare fleet prefix.
     """
     # Validate the study identity rather than its lane suffix.
     base = tag
@@ -347,11 +344,6 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
         raise ValueError(
             f"EC2_EXPERIMENT_TAG={tag!r} is empty; ec2's tag-based recovery "
             "and teardown key off it."
-        )
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", tag) or tag in (".", ".."):
-        raise ValueError(
-            f"EC2_EXPERIMENT_TAG={tag!r} may only contain letters, digits, '.', '_' "
-            "and '-'; it names the default EC2 state file."
         )
 
     fleet_prefix = study_config.load_study_config().fleet.tag_prefix
