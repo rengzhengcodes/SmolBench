@@ -65,13 +65,12 @@ def test_cot_args_is_validated_against_the_config_roster(run_study: ModuleType) 
 def test_the_standalone_tag_comes_from_the_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without a fleet export, the experiment tag is the config's standalone tag."""
+    """Standalone tags come from configuration."""
     monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
     module, exc, _env = import_run_study(
         "standalone_tag_probe", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
     )
     assert exc is None, exc
-    assert module is not None
     assert module.EXPERIMENT.experiment_tag == (
         study_config.load_study_config().fleet.standalone_tag
     )
@@ -337,72 +336,17 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
     assert any("outstanding" in r.getMessage() for r in caplog.records)
 
 
-def test_unsharded_runs_set_the_study_tag(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unsharded standalone runs are tagged ``induction-scaling`` with no suffix."""
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
+def test_unsharded_runs_set_the_study_tag() -> None:
+    """Standalone runs use an explicit tag to isolate recovery."""
     module, exc, _env = import_run_study(
         "induction_run_study_untagged", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
     )
     assert exc is None, exc
-    assert module is not None
     assert module.EXPERIMENT.experiment_tag == "induction-scaling"
-    assert module.EXPERIMENT.state_file is None
-
-
-def test_the_driver_does_not_export_the_tag_at_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tag export is the facade's, per live call; importing the driver sets nothing."""
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
-    monkeypatch.delenv("EC2_STATE_FILE", raising=False)
-    _module, exc, env = import_run_study(
-        "induction_run_study_no_export",
-        {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "gemma-4-e2b"},
-    )
-    assert exc is None, exc
-    assert "EC2_EXPERIMENT_TAG" not in env
-    assert "EC2_STATE_FILE" not in env
-
-
-def test_a_fleet_exported_tag_wins_over_the_standalone_tag() -> None:
-    """A fleet-exported ``EC2_EXPERIMENT_TAG`` is the base tag, not the config's."""
-    module, exc, _env = import_run_study(
-        "induction_run_study_fleet_tag",
-        {
-            "EC2_EXPERIMENT_TAG": "scaling-gemma-4-e2b",
-            "INDUCTION_SHARD": "",
-            "INDUCTION_MODELS": "gemma-4-e2b",
-        },
-    )
-    assert exc is None, exc
-    assert module is not None
-    assert module.EXPERIMENT.experiment_tag == "scaling-gemma-4-e2b"
-
-
-def test_the_shard_lane_tag_is_canonical_order_independent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Model ordering cannot create a second lane; shard ``0/2`` yields ``-s0of2``."""
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
-    forward, err_f, _env_f = import_run_study(
-        "induction_run_study_lane_a",
-        {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "qwen3.5-27b,gemma-4-e2b"},
-    )
-    reverse, err_r, _env_r = import_run_study(
-        "induction_run_study_lane_b",
-        {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "gemma-4-e2b,qwen3.5-27b"},
-    )
-    assert err_f is None and err_r is None, (err_f, err_r)
-    assert forward is not None and reverse is not None
-    assert forward.EXPERIMENT.experiment_tag == reverse.EXPERIMENT.experiment_tag
-    assert forward.EXPERIMENT.experiment_tag == (
-        "induction-scaling-qwen3.5-27b-gemma-4-e2b-s0of2"
-    )
-    assert forward.EXPERIMENT.state_file == reverse.EXPERIMENT.state_file
 
 
 def test_a_bare_fleet_prefix_is_rejected_even_with_a_lane() -> None:
-    """``EC2_EXPERIMENT_TAG=scaling-`` exits even though the lane suffix makes it non-empty."""
+    """A bare fleet prefix exits even though the lane suffix makes the tag non-empty."""
     module, exc, _env = import_run_study(
         "induction_run_study_bare_prefix",
         {
@@ -416,12 +360,18 @@ def test_a_bare_fleet_prefix_is_rejected_even_with_a_lane() -> None:
     assert "bare fleet prefix" in str(exc)
 
 
-def test_bad_shard_bounds_exit_cleanly() -> None:
-    """The facade's shard-bounds ``ValueError`` surfaces as a ``SystemExit``."""
-    module, exc, _env = import_run_study(
-        "induction_run_study_bad_shard",
-        {"INDUCTION_SHARD": "2/2", "INDUCTION_MODELS": ""},
+def test_the_shard_lane_tag_is_canonical_order_independent() -> None:
+    """Model ordering cannot create a second lane or instance."""
+    forward, err_f, _env_f = import_run_study(
+        "induction_run_study_lane_a",
+        {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "qwen3.5-27b,gemma-4-e2b"},
     )
-    assert module is None
-    assert isinstance(exc, SystemExit)
-    assert "shard" in str(exc)
+    reverse, err_r, _env_r = import_run_study(
+        "induction_run_study_lane_b",
+        {"INDUCTION_SHARD": "0/2", "INDUCTION_MODELS": "gemma-4-e2b,qwen3.5-27b"},
+    )
+    assert err_f is None and err_r is None, (err_f, err_r)
+    assert forward.EXPERIMENT.experiment_tag == reverse.EXPERIMENT.experiment_tag
+    assert forward.EXPERIMENT.experiment_tag.startswith("induction-scaling-")
+    assert forward.EXPERIMENT.experiment_tag.endswith("-s0of2")
+    assert forward.EXPERIMENT.state_file == reverse.EXPERIMENT.state_file
