@@ -487,7 +487,7 @@ class S3ResultsStore(ResultsStore):
         Returns
         -------
         bool
-            whether any logged run exists.
+            Whether any logged run exists.
         """
         if addr.model is None:
             return False
@@ -653,7 +653,7 @@ class S3ResultsStore(ResultsStore):
         Returns
         -------
         int
-            number of retired logged runs.
+            Number of retired logged runs.
         """
         survivors = self.list_runs(addr)
         for run_ts in survivors:
