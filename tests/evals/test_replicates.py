@@ -172,6 +172,47 @@ def test_store_is_local_and_cached(
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
 
 
+def test_summarize_counts_only_owned_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Ignore stored replicates whose seeds belong to another harness."""
+    harness = ReplicateHarness(
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        seeds=(0,),
+        info_types=("intens",),
+    )
+    for seed, score in ((0, 1), (1, 0)):
+        harness.store.dump_marks(
+            Marks(
+                model="stub-model",
+                marks=(
+                    Mark(
+                        query=f"q/{seed}",
+                        answer=1,
+                        response=str(score),
+                        score=score,
+                        compliance=COMPLIANT,
+                    ),
+                ),
+            ),
+            ReplicateAddress(
+                tag="decode",
+                info="intens",
+                seed=seed,
+                model="stub-model",
+            ),
+            RUN_TS,
+        )
+
+    harness.summarize("stub-model")
+
+    output = capsys.readouterr().out
+    assert "1/1 replicates" in output
+    assert "correct=1 incorrect=0 invalid=0" in output
+
+
 def test_forcing_a_seed_supersedes_its_stored_run_first(
     harness: ReplicateHarness,
     fake_evaluate: list[dict[str, Any]],

@@ -7,7 +7,7 @@ fallback counts would break byte-for-byte regeneration.
 
 import functools
 import logging
-from typing import Any, Callable, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Callable, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 
 @runtime_checkable
@@ -48,7 +48,7 @@ class HFTokenizer:
         self._tokenizer = tokenizer
 
     @classmethod
-    def from_repo(cls, repo_id: str) -> "HFTokenizer":
+    def from_repo(cls, repo_id: str, revision: str | None = None) -> "HFTokenizer":
         """Load and cache `repo_id`'s tokenizer.
 
         Disable embedded truncation and padding because they would miscount prompts.
@@ -56,6 +56,7 @@ class HFTokenizer:
         Parameters
         ----------
         repo_id : str
+        revision : str | None, optional
         Returns
         -------
         HFTokenizer
@@ -72,7 +73,11 @@ class HFTokenizer:
                 f"(pip install smolbench): {exc}"
             ) from exc
         try:
-            path = hf_hub_download(repo_id=repo_id, filename="tokenizer.json")
+            path = hf_hub_download(
+                repo_id=repo_id,
+                filename="tokenizer.json",
+                revision=revision,
+            )
         except Exception as exc:  # noqa: BLE001 -- hub raises a wide family here
             raise RuntimeError(
                 f"could not fetch tokenizer.json from {repo_id!r}: "
@@ -114,6 +119,14 @@ class TiktokenTokenizer:
         return len(self._encoding.encode(text))
 
 
+def _pinned_revision(spec: Mapping[str, Any]) -> str | None:
+    """Return the ``--tokenizer-revision`` a deploy spec serves, if pinned."""
+    args = list(spec.get("vllm_args", ()))
+    if "--tokenizer-revision" in args:
+        return args[args.index("--tokenizer-revision") + 1]
+    return None
+
+
 @functools.lru_cache(maxsize=None)
 def for_model(model: str) -> Tokenizer:
     """Return the tokenizer for served alias `model`.
@@ -136,8 +149,9 @@ def for_model(model: str) -> Tokenizer:
             "Tokenizer explicitly for models outside the spec table"
         )
     repo_id: str = spec.get("tokenizer_hf_id") or spec["hf_model_id"]
-    logging.info(f"tokenization.for_model: {model!r} -> {repo_id}")
-    return HFTokenizer.from_repo(repo_id)
+    revision = _pinned_revision(spec) if repo_id == spec["hf_model_id"] else None
+    logging.info(f"tokenization.for_model: {model!r} -> {repo_id}@{revision or 'HEAD'}")
+    return HFTokenizer.from_repo(repo_id, revision)
 
 
 # Mixed whitespace avoids BPE run merges; candidates are verified empirically.
