@@ -11,3 +11,8 @@ pipeline's output at the studies' production configs;
 `tests/induction/test_golden_quizzes.py` regenerates the quizzes and
 compares hashes, so golden answers are re-verified on every run without
 committing the full prompt text.
+
+The two `zero`-arm entries under `production_seed_0`/`production_seed_1` were
+computed from the intended rendering before the non-leaking-zero-arm code was
+written, so they are a prediction the implementation had to meet, not a
+recording of whatever it produced.
