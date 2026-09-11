@@ -11,7 +11,7 @@ smolbench/evals/
   quiz.py           QnA / ToF / Numeric / Quiz / Mark / Marks
   openai_compat.py  shared HTTP and parsing engine
   provider.py       call-time provider registry
-  providers/        openrouter.py primeintellect.py aws.py ec2.py
+  providers/        aws.py ec2.py
   _aws.py           shared AWS primitives
   parsing.py  tokenization.py  replicates.py  results_store.py
   study_config.py   loads study_config.toml
