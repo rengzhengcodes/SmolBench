@@ -3,7 +3,6 @@
 # pylint: disable=missing-function-docstring,missing-class-docstring
 
 import dataclasses
-import inspect
 from typing import Any
 
 import pytest
@@ -34,7 +33,6 @@ def test_the_base_carries_the_whole_lifecycle() -> None:
         "provision",
         "run",
         "summarize",
-        "cot_chain_lengths",
         "agent_status",
         "teardown",
         "_apply_env",
@@ -72,17 +70,6 @@ def test_the_induction_subclass_only_supplies_defaults() -> None:
     assert InductionExperiment(
         notebook_dir="periodic", archetype_tags={}, make_quizzes=make_quizzes
     ).info_types
-    # CoT tag remains explicit in the neutral base.
-    assert (
-        inspect.signature(InductionExperiment.cot_chain_lengths)
-        .parameters["tag"]
-        .default
-        == "cot"
-    )
-    assert (
-        inspect.signature(Experiment.cot_chain_lengths).parameters["tag"].default
-        is inspect.Parameter.empty
-    )
 
 
 # validate_experiment_tag.

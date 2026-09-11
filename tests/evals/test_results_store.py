@@ -2,7 +2,6 @@
 
 # pylint: disable=missing-function-docstring,missing-class-docstring
 
-import dataclasses
 import hashlib
 import io
 from collections.abc import Callable, Iterator
@@ -634,25 +633,3 @@ def test_local_supersede_renames_and_every_reader_ignores_the_file(
     # Empty superseding is a harness-wide no-op.
     assert store.supersede(addr(seed=999), SUPERSEDED_REASON) is None
     assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0
-
-
-def test_regrade_writes_a_self_describing_run_and_retires_the_old_one(
-    fake_s3: FakeS3Client,
-) -> None:
-    """Regrades name the replaced run and add a marker."""
-    store = s3_store()
-    store.dump_marks(sample_marks(score=1), addr(), TS1)
-    regraded = dataclasses.replace(
-        sample_marks(score=0), regraded_from=format_run_ts(TS1)
-    )
-    store.regrade(regraded, addr(), TS2, reason="re-graded with the fixed parser")
-
-    assert store.list_runs(addr()) == [format_run_ts(TS2)]
-    loaded = store.load_marks(addr())
-    assert loaded.marks[0].score == 0
-    assert loaded.regraded_from == format_run_ts(TS1)
-    assert marker_key(ts=TS1) in fake_s3.objects
-
-    # Refuse regrades without a self-describing predecessor.
-    with pytest.raises(ValueError):
-        store.regrade(sample_marks(score=1), addr(seed=1777), TS2, reason="x")

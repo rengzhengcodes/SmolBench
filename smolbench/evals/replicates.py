@@ -5,7 +5,6 @@ Pool a seed's arms to saturate the GPU while preserving their result order.
 
 import functools
 import logging
-import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
@@ -14,6 +13,7 @@ from smolbench.evals import Marks, Quiz, provider, results_store
 from smolbench.evals.results_store import (
     ReplicateAddress,
     ResultsStore,
+    S3ResultsStore,
     resolve_store,
     utcnow,
 )
@@ -94,7 +94,7 @@ class ReplicateHarness:
     ) -> None:
         """Run `model`'s outstanding replicates.
 
-        Supersede forced runs before replacement so readers cannot see stale data.
+        Forced seeds write their replacement before retiring the run it supersedes.
 
         Parameters
         ----------
@@ -123,13 +123,20 @@ class ReplicateHarness:
             ]
             if not outstanding:
                 continue
+            reason = f"force_seeds: re-collecting seed={seed}"
+            retiring: Dict[str, list] = {}
             if seed in forced:
-                # Retire first so stale forced runs are never readable.
-                reason = f"force_seeds: re-collecting seed={seed}"
                 for info in outstanding:
-                    self.store.supersede_all(
-                        self._address(model, tag, info, seed), reason
-                    )
+                    addr = self._address(model, tag, info, seed)
+                    if isinstance(self.store, S3ResultsStore):
+                        # S3 runs are immutable and ``exists`` is marker-blind, so
+                        # retiring before a failed recollect would strand the seed:
+                        # the survivors retire only after their replacement lands.
+                        retiring[info] = self.store.list_runs(addr)
+                    else:
+                        # Local ``exists`` is file-based, so a failed recollect
+                        # stays outstanding; the audit marker can move first.
+                        self.store.supersede_all(addr, reason)
             # Timestamp collection start, not serialization completion.
             run_ts = utcnow()
             quizzes = self.make_quizzes(seed, model)
@@ -145,9 +152,12 @@ class ReplicateHarness:
                     server_config=dict(server_config) if server_config else None,
                 )
                 start += n
-                self.store.dump_marks(
-                    marks, self._address(model, tag, info, seed), run_ts
-                )
+                addr = self._address(model, tag, info, seed)
+                self.store.dump_marks(marks, addr, run_ts)
+                for stamp in retiring.get(info, ()):  # S3 only
+                    # The S3 supersede signature takes the stamp.
+                    # pylint: disable-next=too-many-function-args
+                    self.store.supersede(addr, stamp, reason)
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
                     f"{marks.correct}/{len(marks.marks)} correct"
@@ -177,38 +187,6 @@ class ReplicateHarness:
                 f"{tag}/{info}: {len(seeds)}/{len(self.seeds)} replicates -- "
                 f"correct={correct} incorrect={incorrect} invalid={invalid} "
                 f"acc={acc}"
-            )
-
-    def cot_chain_lengths(self, tag: str) -> None:
-        """Print CoT word counts.
-
-        Shared tags resolve to their first model because they share storage.
-
-        Parameters
-        ----------
-        tag : str
-        """
-        model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
-        lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}
-        for seed in self.seeds:
-            for info in self.info_types:
-                addr = self._address(model, tag, info, seed)
-                if not self.store.exists(addr):
-                    continue
-                for mark in self.store.load_marks(addr).marks:
-                    if mark.reasoning:
-                        lengths_by_info[info].append(len(mark.reasoning.split()))
-        for info in self.info_types:
-            lengths = lengths_by_info[info]
-            if not lengths:
-                print(f"{tag}/{info}: no reasoning chains found")
-                continue
-            print(
-                f"{tag}/{info}: n={len(lengths):4d}  "
-                f"min={min(lengths):5d}  max={max(lengths):5d}  "
-                f"mean={statistics.mean(lengths):6.0f}  "
-                f"median={statistics.median(lengths):6.0f}  "
-                f"words  (~tokens x 1.3)"
             )
 
     def sync_down(self) -> int:

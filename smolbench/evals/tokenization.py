@@ -9,10 +9,6 @@ import functools
 import logging
 from typing import Any, Callable, Optional, Protocol, Tuple, runtime_checkable
 
-import requests
-
-from smolbench.evals.openai_compat import METADATA_TIMEOUT_S
-
 
 @runtime_checkable
 class Tokenizer(Protocol):
@@ -116,51 +112,6 @@ class TiktokenTokenizer:
     def count(self, text: str) -> int:
         """Return `text`'s token count under this encoding."""
         return len(self._encoding.encode(text))
-
-
-class VLLMTokenizer:
-    """Count tokens through a vLLM server's ``/tokenize`` endpoint."""
-
-    def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        """Bind to one served model.
-
-        Strip ``/v1`` because vLLM serves ``/tokenize`` at the server root.
-
-        Parameters
-        ----------
-        base_url : str
-        model : str
-        api_key : str
-        """
-        root = base_url.rstrip("/")
-        if root.endswith("/v1"):
-            root = root[: -len("/v1")]
-        self.name = f"vllm:{model}@{root}"
-        self._url = f"{root}/tokenize"
-        self._model = model
-        self._api_key = api_key
-
-    def count(self, text: str) -> int:
-        """Count `text` through the live server.
-
-        Parameters
-        ----------
-        text : str
-        Returns
-        -------
-        int
-        Raises
-        ------
-        requests.HTTPError
-        """
-        response = requests.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={"model": self._model, "prompt": text, "add_special_tokens": False},
-            timeout=METADATA_TIMEOUT_S,
-        )
-        response.raise_for_status()
-        return int(response.json()["count"])
 
 
 @functools.lru_cache(maxsize=None)

@@ -216,28 +216,6 @@ class ResultsStore(abc.ABC):
         int
         """
 
-    def regrade(
-        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime, *, reason: str
-    ) -> None:
-        """Replace every surviving run at `addr` with a self-describing regrade.
-
-        Supersede before writing: a crash must fail loudly rather than serve the old earliest run.
-
-        Parameters
-        ----------
-        marks : Marks
-        addr : ReplicateAddress
-        run_ts : datetime
-        reason : str
-        """
-        if marks.regraded_from is None:
-            raise ValueError(
-                f"ResultsStore.regrade: refusing {addr!r} -- marks.regraded_from "
-                "is None; a regrade must name the run_ts of the run it replaces."
-            )
-        self.supersede_all(addr, reason)
-        self.dump_marks(marks, addr, run_ts)
-
     @abc.abstractmethod
     def describe(self) -> str:
         """Return this store's display location."""
@@ -809,6 +787,13 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             surviving = [row for row in rows if row[0] not in marker_stamps]
             if surviving:
                 earliest[seed_info] = min(surviving, key=lambda row: row[0])
+            elif marker_stamps:
+                # Remove the local copy of a run the log no longer serves.
+                seed, info = seed_info
+                stale = _resolve_download_path(
+                    resolved_dir, f"{prefix}{tag}_{info}/rep_{seed}.yaml", "superseded"
+                )
+                stale.unlink(missing_ok=True)
 
         for (seed, info), (_run_ts, key, etag) in earliest.items():
             local_rel = f"{prefix}{tag}_{info}/rep_{seed}.yaml"

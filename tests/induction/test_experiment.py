@@ -184,13 +184,9 @@ def test_offline_delegates(exp: InductionExperiment) -> None:
         def summarize(self, model: str) -> None:
             recorded.append(("summarize", model))
 
-        def cot_chain_lengths(self, tag: str) -> None:
-            recorded.append(("cot_chain_lengths", tag))
-
     exp.__dict__["harness"] = _Recorder()
     exp.summarize("stub-model")
-    exp.cot_chain_lengths()
-    assert recorded == [("summarize", "stub-model"), ("cot_chain_lengths", "cot")]
+    assert recorded == [("summarize", "stub-model")]
 
 
 @pytest.mark.parametrize(
@@ -329,7 +325,6 @@ def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one() -> Non
     from smolbench.evals.experiment import Experiment
 
     assert issubclass(InductionExperiment, Experiment)
-    # Only cot_chain_lengths supplies the induction tag default.
     for name in (
         "provision",
         "run",

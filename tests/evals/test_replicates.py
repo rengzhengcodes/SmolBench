@@ -3,7 +3,6 @@
 # pylint: disable=missing-function-docstring,missing-class-docstring
 
 import dataclasses
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -154,31 +153,6 @@ def test_force_seeds(
     assert not dataclasses.replace(
         harness, force_seeds=frozenset({999})
     ).has_outstanding("stub-model")
-
-
-def test_cot_chain_lengths(
-    harness: ReplicateHarness,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Pool nonempty reasoning across seeds."""
-    for seed, texts in {1: ["a b c", None, "d e"], 2: ["", "f g h i"]}.items():
-        marks = tuple(
-            Mark(
-                query=f"q{i}",
-                answer=1,
-                response="1",
-                score=1,
-                reasoning=r,
-                compliance=COMPLIANT,
-            )
-            for i, r in enumerate(texts)
-        )
-        addr = ReplicateAddress(tag="cot", info="intens", seed=seed, model=None)
-        harness.store.dump_marks(Marks(model="stub-model", marks=marks), addr, RUN_TS)
-    harness.cot_chain_lengths("cot")
-    out = re.sub(r"\s+", "", capsys.readouterr().out)
-    assert "cot/intens:n=3min=2max=4mean=3median=3words" in out
-    assert "cot/extens:noreasoningchainsfound" in out
 
 
 def test_store_is_local_and_cached(

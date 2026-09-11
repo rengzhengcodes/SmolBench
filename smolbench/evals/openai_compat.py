@@ -22,9 +22,7 @@ from smolbench.evals.quiz import COMPLIANT
 METADATA_TIMEOUT_S: int = 120
 
 
-def metadata_get(
-    url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S
-) -> Any:
+def metadata_get(url: str, api_key: str, *, check_status: bool) -> Any:
     """Fetch a bearer-authenticated metadata JSON body.
 
     Parameters
@@ -32,7 +30,6 @@ def metadata_get(
     url : str
     api_key : str
     check_status : bool
-    timeout : float, optional
     Returns
     -------
     Any
@@ -45,7 +42,7 @@ def metadata_get(
     response = requests.get(
         url=url,
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=timeout,
+        timeout=METADATA_TIMEOUT_S,
     )
     if check_status:
         response.raise_for_status()
@@ -235,7 +232,7 @@ def grade(
     return Marks(model=model, marks=tuple(mark_list))
 
 
-def _render_progress(done: int, total: int, model: str, width: int = 30) -> None:
+def _render_progress(done: int, total: int, model: str) -> None:
     """Render the completion progress bar.
 
     Parameters
@@ -243,10 +240,9 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
     done : int
     total : int
     model : str
-    width : int, optional
     """
-    filled: int = width if total == 0 else int(width * done / total)
-    filled_bar: str = "#" * filled + "-" * (width - filled)
+    filled: int = 30 if total == 0 else int(30 * done / total)
+    filled_bar: str = "#" * filled + "-" * (30 - filled)
     pct: float = 100.0 if total == 0 else 100.0 * done / total
     end: str = "\n" if done >= total else ""
     print(

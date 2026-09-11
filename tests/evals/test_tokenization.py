@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from conftest import StubServer
 
 from smolbench.evals import tokenization
 from smolbench.evals.providers import ec2
@@ -102,22 +101,6 @@ def test_from_repo_disables_truncation_and_padding(
     tokenizer = tokenization.HFTokenizer.from_repo("fake/repo")
     assert calls == ["no_truncation", "no_padding"]
     assert tokenizer.name == "fake/repo"
-
-
-def test_vllm_tokenizer_calls_the_server_root_endpoint(stub_server: StubServer) -> None:
-    """`/tokenize` lives at the server root, not under `/v1`, and asks for no special tokens."""
-    stub_server.queue_response({"count": 17})
-    tokenizer = tokenization.VLLMTokenizer(stub_server.base_url, "stub-model", "key")
-
-    assert tokenizer.count("some prompt") == 17
-    request = stub_server.requests[-1]
-    assert request["path"] == "/tokenize"
-    assert request["body"] == {
-        "model": "stub-model",
-        "prompt": "some prompt",
-        "add_special_tokens": False,
-    }
-    assert request["headers"]["Authorization"] == "Bearer key"
 
 
 # ---------------------------------------------------------------------------

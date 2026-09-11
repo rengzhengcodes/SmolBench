@@ -172,15 +172,6 @@ class Experiment:
         """
         self.harness.summarize(model)
 
-    def cot_chain_lengths(self, tag: str) -> None:
-        """Print stored CoT reasoning-chain word-count statistics.
-
-        Parameters
-        ----------
-        tag : str
-        """
-        self.harness.cot_chain_lengths(tag)
-
     def agent_status(self) -> Dict[str, Any]:
         """Return the provisioned instance's control-agent status.
 
