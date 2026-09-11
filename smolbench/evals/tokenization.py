@@ -26,9 +26,12 @@ class Tokenizer(Protocol):
         Parameters
         ----------
         text : str
+            Text to tokenize.
+
         Returns
         -------
         int
+            Token count of `text`.
         """
         raise NotImplementedError
 
@@ -42,7 +45,9 @@ class HFTokenizer:
         Parameters
         ----------
         name : str
+            Name of the wrapped tokenizer.
         tokenizer : Any
+            duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
@@ -56,13 +61,19 @@ class HFTokenizer:
         Parameters
         ----------
         repo_id : str
+            HuggingFace repository containing ``tokenizer.json``.
         revision : str | None, optional
+            Input value controlling ``revision``.
+
         Returns
         -------
         HFTokenizer
+            the loaded tokenizer.
+
         Raises
         ------
         RuntimeError
+            naming the ``tokenizer_hf_id`` deploy-spec override.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -136,9 +147,12 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
+        A key of ``ec2.EC2_DEPLOY_SPECS``.
+
     Returns
     -------
     Tokenizer
+        The tokenizer for the served checkpoint.
     """
     from smolbench.evals.providers import ec2
 
@@ -182,12 +196,17 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Parameters
     ----------
     tokenizer : Tokenizer
+        Tokenizer whose merge table is probed.
+
     Returns
     -------
     str
+        The qualifying whitespace pad atom.
+
     Raises
     ------
     ValueError
+        No candidate whitespace unit passed the tokenization checks.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -217,13 +236,20 @@ def token_matched_noise_prompt(
     Parameters
     ----------
     render : Callable[[str], str]
+        Called repeatedly, so it must be cheap and deterministic.
     context : str
+        Context to pad with whitespace.
     target_tokens : int
+        Exact token count for the rendered prompt.
     tokenizer : Tokenizer
+        Must be the model under test's.
     unit : str | None
+        Defaults to :func:`choose_whitespace_unit`'s pick.
+
     Returns
     -------
     str
+        Rendered prompt with exact target token count.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

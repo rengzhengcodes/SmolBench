@@ -28,10 +28,14 @@ def import_run_study(
     Parameters
     ----------
     name : str
+        Input value controlling ``name``.
     env : dict[str, str] or None, optional
+        Input value controlling ``env``.
+
     Returns
     -------
     tuple[ModuleType or None, BaseException or None, dict[str, str]]
+        Computed ``tuple[ModuleType or None`` value.
     """
     saved = dict(os.environ)
     module: ModuleType | None = None
@@ -258,7 +262,9 @@ class S3Archive:
     Parameters
     ----------
     uri : str
+        ``s3://<bucket>/<prefix>`` of the archive root.
     region : str or None
+        Region for the S3 client; ``None`` lets boto3 resolve one.
     """
 
     def __init__(self, uri: str, region: str | None) -> None:
