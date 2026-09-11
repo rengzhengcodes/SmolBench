@@ -47,14 +47,10 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
-        Family p-values.
     alpha : float, optional
-        Familywise error rate.
-
     Returns
     -------
     np.ndarray
-        Rejections.
     """
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=alpha, method="simes-hochberg"
@@ -68,12 +64,9 @@ def compliance_census(compliance: dict) -> dict:
     Parameters
     ----------
     compliance : dict
-        Per-cell compliance mappings.
-
     Returns
     -------
     dict
-        Census entries; omit cells without marks so they are not treated as compliant.
     """
     out = {}
     for key, by_seed in compliance.items():
@@ -100,14 +93,10 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
     Parameters
     ----------
     cell : dict
-        Census cell.
     seeds : Iterable[int]
-        Included replicate seeds.
-
     Returns
     -------
     float | None
-        Rate, or ``None`` for no marks.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     total = sum(t for _nc, t in counts)
@@ -122,14 +111,10 @@ def collapse_note(key: tuple[str, str], census: dict) -> str:
     Parameters
     ----------
     key : tuple[str, str]
-        Cell key.
     census : dict
-        Compliance census.
-
     Returns
     -------
     str
-        Mechanism annotation or ``""``.
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -145,14 +130,10 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     Parameters
     ----------
     key_a : tuple[str, str]
-        First cell key.
     key_b : tuple[str, str]
-        Second cell key.
-
     Returns
     -------
     str
-        One of ``"finding"``, ``"arm-vs-floor"``, or ``"zero-vs-zero"``.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -175,13 +156,9 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
     Parameters
     ----------
     pvals : np.ndarray
-        P-values in row order.
     rows : list
-        Contrast rows.
     m : int
-        Hypothesis count.
     n_rej : int
-        Holm rejection count.
     """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")
@@ -237,18 +214,9 @@ def main() -> None:
                                              "Hochberg": hochberg(p_unp, ALPHA)}),
     }
 
-    # ---- DEPTH GUARD: is any rejection arithmetically reachable at all? -----
-    # Depths come from `rows`, not the census or the loader: a contrast is
-    # sign-flipped over the seeds its two arms share, so its own `n_seeds` is
-    # the only depth that bounds its p.
-    #
-    # Gates on the DEEPEST contrast, not the shallowest: the smallest p any
-    # contrast in the family can attain is the floor of the deepest one
-    # (2/2**S at depth S), and Holm rejects nothing unless that smallest p
-    # clears ALPHA/m. Gating on the shallowest instead would fire the banner
-    # on a family where every other contrast is perfectly resolvable -- an
-    # unearned conclusion. The shallowest depth is still printed, since it
-    # bounds the contrasts that touch it.
+    # ---- DEPTH GUARD: is any rejection arithmetically reachable? -----------
+    # A contrast's floor is set by the seeds its two arms share (`n_seeds`);
+    # gating on the DEEPEST contrast asks whether ANYTHING is rejectable.
     depth_min = min(r["n_seeds"] for r in rows)
     depth_max = max(r["n_seeds"] for r in rows)
     holm_first_step = ALPHA / m
@@ -257,26 +225,15 @@ def main() -> None:
     if floor_bound:
         print(f"\n{'!' * 78}\nINCOMPLETE SYNC -- the family sits below the "
               f"sign-flip resolution floor\n{'!' * 78}")
-        print(f"  Deepest contrast: {depth_max} common replicate seeds. The "
-              f"exact sign-flip test\n  enumerates 2^S assignments, so the "
-              f"smallest p ANY contrast in this family can\n  return is "
-              f"2/2**{depth_max} = {floor_deepest:.3e}. Holm's first-step "
-              f"threshold is\n  ALPHA/m = {ALPHA} / {m} = "
-              f"{holm_first_step:.4e}, and "
-              f"{floor_deepest:.3e} > {holm_first_step:.4e}.\n"
-              f"  NO contrast is rejectable at this depth, at ANY effect size "
-              f"-- including the\n  arm-vs-floor positive controls, which will "
-              f"all read as FAILS below. A null\n  result here is an INCOMPLETE "
-              f"SYNC, not a finding: every count printed below is\n  a "
-              f"statement about replicate depth, not about the models. The fix "
-              f"is to finish\n  sync_down() and re-run, not to read the "
-              f"sections that follow.\n"
-              f"  (Shallowest contrast: {depth_min} seeds, floor 2/2**"
-              f"{depth_min} = {2 / 2 ** depth_min:.3e} -- that is\n  the "
-              f"depth the closing NOT-significant paragraph quotes, so the two "
-              f"floors differ\n  by design on a ragged tree: this banner asks "
-              f"whether ANYTHING is rejectable, so\n  it takes the most "
-              f"favourable depth in the family.)\n")
+        print(f"  Deepest contrast: {depth_max} common seeds. The smallest p ANY "
+              f"contrast can return is 2/2**{depth_max} = {floor_deepest:.3e}, "
+              f"above Holm's first step\n  ALPHA/m = {ALPHA} / {m} = "
+              f"{holm_first_step:.4e}. NO contrast is rejectable at this depth,\n"
+              f"  at ANY effect size -- including the arm-vs-floor positive "
+              f"controls. This is an\n  INCOMPLETE SYNC, not a finding: finish "
+              f"sync_down() and re-run.\n"
+              f"  (Shallowest contrast: {depth_min} seeds, floor "
+              f"{2 / 2 ** depth_min:.3e} -- quoted by the closing paragraph.)\n")
 
     seeds = {r["n_seeds"] for r in rows}
     print(f"PRIMARY family: m = {m} pre-registered contrasts, FWER alpha = {ALPHA}")
@@ -318,12 +275,9 @@ def main() -> None:
     _print_signed(lost, "-", "p_item")
     _print_signed(gained, "+", "p_cluster")
     n_lad = sum(1 for r in lost if r["kind_is_ladder"])
-    # Three cases, because the loss set means different things in each: (1)
-    # floor-bound, where Holm rejects nothing so `lost` carries no clustering
-    # information at all; (2) ladder-dominated, where ladder contrasts are
-    # genuinely among the ones the correction costs; (3) no ladder loss,
-    # stated as its own branch rather than printed unconditionally, since (2)
-    # would otherwise assert the inverse of the data whenever n_lad is 0.
+    # `lost` means different things per case: floor-bound (losses carry no
+    # clustering information), ladder-dominated, and no-ladder-loss (stated as
+    # its own branch, since (2) would assert the inverse when n_lad is 0).
     if lost and floor_bound:
         print(f"   Both counts are artifacts of the resolution floor: Holm "
               f"rejects nothing at\n   this depth, so all {len(lost)} \"losses\" "
@@ -358,33 +312,27 @@ def main() -> None:
     print(f"\n{'=' * 78}\nCOLLAPSE CENSUS -- padding robustness, stated as a "
           f"result\n{'=' * 78}")
 
-    # Built before the prose below, since the intro sentence's denominator is
-    # taken from these rows: a lane needs a census cell for BOTH arms, so
-    # `len(MODELS)` would count lanes this comparison cannot make.
+    # A lane needs a census cell for BOTH arms, so `len(MODELS)` would
+    # over-count; pad_rows supplies the intro sentence's denominator.
     pad_rows = []
     for model in MODELS:
         ci = census.get((model, "intens"))
         cn = census.get((model, "noise_intens"))
         if ci is None or cn is None:
             continue
-        # Rates over the seeds the two arms SHARE, matching how every other
-        # contrast in this chain is aligned (`paired_analysis.aligned`) --
-        # the two cells are censused independently and can otherwise cover
-        # different seed sets, differencing two disjoint samples.
+        # Rates over shared seeds, matching `paired_analysis.aligned`: the
+        # cells are censused independently and could cover different seed sets.
         common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
         rate_i = common_seed_rate(ci, common)
         rate_n = common_seed_rate(cn, common)
         if rate_i is None or rate_n is None:
-            # No marks on the shared seeds: never published as 0% on a 0-seed
-            # basis, so the lane is skipped as a missing census cell is.
+            # Skip rather than publish a 0% rate on a 0-seed basis.
             continue
         pad_rows.append(dict(model=model, delta=rate_n - rate_i, rate_i=rate_i,
                              rate_n=rate_n, n_common=len(common), cn=cn))
 
-    # Mixed basis: `len(noise_over)` counts noise cells over the criterion on
-    # their whole-cell census rate, while the denominator is the matched-arm
-    # row count -- the two can disagree, so this is not a claim about the
-    # table below it.
+    # Mixed basis: numerator is whole-cell census rate, denominator is
+    # matched-arm rows -- the two can disagree.
     print("The `noise_intens` arm is the compact rule form padded with "
           "WHITESPACE to exactly\nthe extensional arm's token count under the "
           "model's own tokenizer. It adds no\ninformation and no content -- so a "

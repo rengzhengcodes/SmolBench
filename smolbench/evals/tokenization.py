@@ -30,12 +30,9 @@ class Tokenizer(Protocol):
         Parameters
         ----------
         text : str
-            Text to tokenize.
-
         Returns
         -------
         int
-            Token count.
         """
         ...
 
@@ -49,9 +46,7 @@ class HFTokenizer:
         Parameters
         ----------
         name : str
-            Tokenizer name.
         tokenizer : Any
-            Object supporting ``encode(...).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
@@ -65,17 +60,12 @@ class HFTokenizer:
         Parameters
         ----------
         repo_id : str
-            Repository containing ``tokenizer.json``.
-
         Returns
         -------
         HFTokenizer
-            Loaded tokenizer.
-
         Raises
         ------
         RuntimeError
-            If loading fails or no ``tokenizer.json`` exists.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -139,11 +129,8 @@ class VLLMTokenizer:
         Parameters
         ----------
         base_url : str
-            OpenAI-compatible URL.
         model : str
-            Model name.
         api_key : str
-            Server bearer token.
         """
         root = base_url.rstrip("/")
         if root.endswith("/v1"):
@@ -159,17 +146,12 @@ class VLLMTokenizer:
         Parameters
         ----------
         text : str
-            Prompt text.
-
         Returns
         -------
         int
-            Server-reported token count.
-
         Raises
         ------
         requests.HTTPError
-            On rejection.
         """
         response = requests.post(
             self._url,
@@ -190,12 +172,9 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
-        ``ec2.EC2_DEPLOY_SPECS`` key.
-
     Returns
     -------
     Tokenizer
-        Served checkpoint tokenizer.
     """
     from smolbench.evals.providers import ec2
 
@@ -234,17 +213,12 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Parameters
     ----------
     tokenizer : Tokenizer
-        Tokenizer to probe.
-
     Returns
     -------
     str
-        Qualifying pad atom.
-
     Raises
     ------
     ValueError
-        If no candidate qualifies.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -274,20 +248,13 @@ def token_matched_noise_prompt(
     Parameters
     ----------
     render : Callable[[str], str]
-        Deterministic context renderer.
     context : str
-        Context to pad.
     target_tokens : int
-        Exact rendered token count.
     tokenizer : Tokenizer
-        Model tokenizer.
     unit : str | None
-        Pad atom; probes when omitted.
-
     Returns
     -------
     str
-        Exact-length rendered prompt.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

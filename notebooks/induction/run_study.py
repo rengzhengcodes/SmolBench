@@ -28,17 +28,12 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     Parameters
     ----------
     var : str
-        Environment variable name.
-
     Returns
     -------
     tuple[int, int] | None
-        Shard index and count, or ``None``.
-
     Raises
     ------
     SystemExit
-        Invalid shard syntax or bounds.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -58,19 +53,13 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
     Parameters
     ----------
     raw : str
-        Rerun setting.
     full_range : range
-        Valid seeds.
-
     Returns
     -------
     frozenset[int] | None
-        Rerun seeds, or ``None``.
-
     Raises
     ------
     SystemExit
-        Invalid rerun setting or bounds.
     """
     raw = raw.strip()
     if not raw:
@@ -149,37 +138,26 @@ def derive_context_limit(lengths: "dict[str, int]") -> int:
     Parameters
     ----------
     lengths : dict[str, int]
-        Model context lengths.
-
     Returns
     -------
     int
-        Shared context length.
-
     Raises
     ------
     SystemExit
-        Empty or non-uniform lengths; varying context confounds model scaling.
     """
     if not lengths:
-        raise SystemExit(
-            "derive_context_limit: got an empty {model: context_length} mapping, "
-            "so there is no context window to derive. Check that MODELS is "
-            "non-empty."
-        )
+        raise SystemExit("derive_context_limit: empty {model: context_length} mapping")
     distinct = sorted(set(lengths.values()))
     if len(distinct) > 1:
+        # A family's ceiling must differ from its siblings' by parameter
+        # count, not by the vendor's served context budget.
         detail = "; ".join(
             f"{length} -> {sorted(k for k, v in lengths.items() if v == length)}"
             for length in distinct
         )
         raise SystemExit(
-            f"This study's roster is served with {len(distinct)} different context "
-            f"lengths ({detail}). A scaling study cannot let context vary with the "
-            "vendor's own YaRN generosity: a family's ceiling would be confounded "
-            "with its context budget rather than its parameter count. Align the "
-            "max_model_len of every EC2_DEPLOY_SPECS entry in MODELS, or drop the "
-            "outlier from the roster."
+            f"roster is served with {len(distinct)} different context lengths "
+            f"({detail}); align EC2_DEPLOY_SPECS max_model_len or drop the outlier."
         )
     return distinct[0]
 
@@ -240,9 +218,7 @@ RANGE_CLAUSE: str = " 1 through $seq_len"
 if RANGE_CLAUSE not in template.template:
     # ``replace`` would otherwise silently retain the range.
     raise RuntimeError(
-        f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template; "
-        "the study template's range clause was edited without updating "
-        "RANGE_CLAUSE, which would silently make the zero arm leak seq_len."
+        f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template."
     )
 
 def _zero_template(base: string.Template) -> string.Template:
@@ -253,55 +229,29 @@ def _zero_template(base: string.Template) -> string.Template:
     Parameters
     ----------
     base : string.Template
-        Template to make range-free.
-
     Returns
     -------
     string.Template
-        Range-free template.
     """
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
 
-# Explicit per-model entries prevent incorrect family-prefix inference.
-# Gemma-4-* and EXAONE-4.0-32B default thinking OFF, so their True is
-# load-bearing; DeepSeek uses ``thinking``, not ``enable_thinking``.
+# Derived from the roster so omissions cannot reach a billing box.
+# Ministral needs no toggle; DeepSeek spells it ``thinking``; the rest take
+# ``enable_thinking`` -- Gemma-4-* and EXAONE default thinking OFF, so their
+# True is load-bearing.
 COT_ARGS: dict[str, dict] = {
-    "qwen3.5-27b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "qwen3.5-122b-a10b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "qwen3.5-397b-a17b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-nano-4b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-nano-30b-a3b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-super-120b-a12b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-e2b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-12b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-31b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.7-flash": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.5-air": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.7": {"chat_template_kwargs": {"enable_thinking": True}},
-    "ministral-3-3b": {},
-    "ministral-3-8b": {},
-    "ministral-3-14b": {},
-    "exaone-4.0-32b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "exaone-4.5-33b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "k-exaone-236b-a23b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "deepseek-v4-flash": {"chat_template_kwargs": {"thinking": True}},
-    "deepseek-v3.1": {"chat_template_kwargs": {"thinking": True}},
-    "deepseek-v4-pro": {"chat_template_kwargs": {"thinking": True}},
-}
-
-# Raise rather than assert: optimization must not remove this billing gate.
-if tuple(COT_ARGS) != roster_keys():
-    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
-    raise RuntimeError(
-        "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
-        "the same ladder order. "
-        + (
-            f"Keys in exactly one of them: {_cot_args_roster_diff}"
-            if _cot_args_roster_diff
-            else "Same keys, but in a different order."
-        )
+    key: (
+        {}
+        if key.startswith("ministral")
+        else {
+            "chat_template_kwargs": {
+                "thinking" if key.startswith("deepseek") else "enable_thinking": True
+            }
+        }
     )
+    for key in roster_keys()
+}
 
 
 def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
@@ -312,14 +262,10 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     Parameters
     ----------
     seed : int
-        Replicate seed.
     model : str
-        Tokenizer model for the padded arm.
-
     Returns
     -------
     list[RenderedQuery]
-        Rendered replicate queries.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(
@@ -336,14 +282,10 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     Parameters
     ----------
     seed : int
-        Replicate seed.
     model : str
-        Rendering model.
-
     Returns
     -------
     dict[str, tuple]
-        Quizzes by information type.
     """
     return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
@@ -356,12 +298,9 @@ def probe_seeds(seeds: range) -> "list[int]":
     Parameters
     ----------
     seeds : range
-        Non-empty seed range.
-
     Returns
     -------
     list[int]
-        Sorted unique probe seeds.
     """
     return sorted(
         {seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)] for i in range(PROBE_SEEDS)}
@@ -376,20 +315,13 @@ def completion_budget(model: str, seeds: range) -> int:
     Parameters
     ----------
     model : str
-        Model to budget.
     seeds : range
-        Seed range for probes.
-
     Returns
     -------
     int
-        Per-model budget; a per-family cap would confound accuracy with room
-        to reason.
-
     Raises
     ------
     SystemExit
-        Budget below the viable CoT floor.
     """
     worst = 0
     for seed in probe_seeds(seeds):
@@ -398,11 +330,9 @@ def completion_budget(model: str, seeds: range) -> int:
     budget = CONTEXT_LIMIT - worst - TEMPLATE_RESERVE
     if budget < MIN_VIABLE_BUDGET:
         raise SystemExit(
-            f"{model}: worst prompt is {worst:,} tokens, leaving only {budget:,} for "
-            f"completion against a {CONTEXT_LIMIT:,} context. That is below the "
-            f"{MIN_VIABLE_BUDGET:,} floor and would collect empties, not data. "
-            "Shorten the period set or investigate why this checkpoint's prompts "
-            "are unusually large."
+            f"{model}: worst prompt {worst:,} tokens leaves {budget:,} for "
+            f"completion against a {CONTEXT_LIMIT:,} context -- below the "
+            f"{MIN_VIABLE_BUDGET:,} floor."
         )
     logging.info(
         f"{model}: worst prompt {worst:,} tok (+{TEMPLATE_RESERVE:,} reserve) "
@@ -419,12 +349,9 @@ def request_timeout_seconds(budget: int) -> int:
     Parameters
     ----------
     budget : int
-        Completion budget.
-
     Returns
     -------
     int
-        Read timeout in seconds.
     """
     return max(REQUEST_TIMEOUT_FLOOR_SECONDS, ceil(budget / MIN_DECODE_TOK_S))
 
@@ -458,9 +385,8 @@ def selected_models() -> "tuple[str, ...]":
     keys = [k.strip() for k in wanted.split(",") if k.strip()]
     if not keys:
         raise SystemExit(
-            f"INDUCTION_MODELS={wanted!r}: named no models (only commas/"
-            "whitespace after splitting). Leave it unset to select all 21, "
-            "or name at least one spec key."
+            f"INDUCTION_MODELS={wanted!r}: named no models; leave unset to "
+            "select all."
         )
     unknown = [k for k in keys if k not in MODELS]
     if unknown:
@@ -479,7 +405,6 @@ def main(argv: "list[str] | None" = None) -> None:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Optional command-line arguments.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."
@@ -488,11 +413,8 @@ def main(argv: "list[str] | None" = None) -> None:
         "--teardown",
         action="store_true",
         help=(
-            "Terminate this experiment's EC2 instance and exit immediately. "
-            "STANDALONE USE ONLY: under the fleet, the supervisor owns "
-            "instance lifecycle and tears down after the deduction phase "
-            "has also finished with the box -- do not invoke this flag from "
-            "fleet-driven automation."
+            "Terminate this experiment's EC2 instance and exit. Standalone "
+            "use only: under the fleet the supervisor owns lifecycle."
         ),
     )
     args = parser.parse_args(argv)

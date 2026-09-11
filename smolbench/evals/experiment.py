@@ -133,13 +133,9 @@ class Experiment:
         Parameters
         ----------
         model : str
-            must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
         extra_args : Optional[dict], optional
-            Extra evaluation arguments.
         max_parallel : Optional[int], optional
-            Maximum parallel requests.
         request_timeout : int, optional
-            Request timeout; CoT may need a longer value.
         """
         self._apply_env()
         # Read EC2 environment after ``_apply_env()``.
@@ -171,12 +167,9 @@ class Experiment:
         Parameters
         ----------
         model : str
-            Key of ``archetype_tags``.
-
         Raises
         ------
         KeyError
-            ``model`` is not a key of ``archetype_tags``.
         """
         self.harness.summarize(model)
 
@@ -186,7 +179,6 @@ class Experiment:
         Parameters
         ----------
         tag : str
-            CoT tag; required so studies do not inherit another's default.
         """
         self.harness.cot_chain_lengths(tag)
 
@@ -222,9 +214,7 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     Parameters
     ----------
     tag : str
-        Experiment tag.
     lane : str, optional
-        Appended lane suffix, stripped before validation.
     """
     # Validate the study identity rather than its lane suffix.
     base = tag

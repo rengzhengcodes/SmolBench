@@ -28,28 +28,17 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     Parameters
     ----------
     url : str
-        Metadata endpoint URL.
     api_key : str
-        Bearer token for the request.
     check_status : bool
-        Raise before parsing; False parses error bodies. Keyword-only with no
-        default so the split cannot be silently unified.
     timeout : float, optional
-        Request timeout in seconds.
-
     Returns
     -------
     Any
-        Parsed JSON response body.
-
     Raises
     ------
     requests.exceptions.HTTPError
-        4xx/5xx when ``check_status`` is True.
     requests.exceptions.RequestException
-        Connection failure.
     requests.exceptions.JSONDecodeError
-        Non-JSON response.
     """
     response = requests.get(
         url=url,
@@ -69,12 +58,9 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
     Parameters
     ----------
     err : requests.exceptions.RequestException
-        Request failure.
-
     Returns
     -------
     bool
-        Retry eligibility.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -92,17 +78,12 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Parameters
     ----------
     response : requests.Response
-        Open streaming response.
-
     Returns
     -------
     dict
-        Non-streamed-compatible body; usage is empty when absent.
-
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
-        Malformed or truncated stream.
     """
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
@@ -186,18 +167,12 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
     Parameters
     ----------
     quiz : Quiz
-        Questions.
     responses : List[Tuple[str, Optional[str]]]
-        Responses in quiz order.
     model : str
-        Parser model.
     log_invalid : bool
-        Log invalid responses.
-
     Returns
     -------
     Marks
-        Quiz marks.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -238,13 +213,9 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
     Parameters
     ----------
     done : int
-        Completed prompts.
     total : int
-        Total prompts.
     model : str
-        Displayed model.
     width : int, optional
-        Character width.
     """
     filled: int = width if total == 0 else int(width * done / total)
     bar: str = "#" * filled + "-" * (width - filled)
@@ -314,12 +285,9 @@ class ChatClient:
         Parameters
         ----------
         suffix : str
-            Environment-variable suffix.
-
         Returns
         -------
         bool
-            Parsed flag.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()
@@ -353,34 +321,20 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
-            User prompt.
         model : str
-            Model id.
         seed : int
-            Required decoding seed.
         system : str, optional
-            Extra system message after the provider prompt.
         context_length : int, optional
-            Post-hoc token guard; overruns still return for grading.
         extra_args : dict, optional
-            Request-body additions.
         request_timeout : int, optional
-            Read-timeout override.
         max_retries : int, optional
-            Retryable-failure cap; None retries indefinitely. ``on_unreachable``
-            still fires first on a connection-level failure.
-
         Returns
         -------
         ChatResult
-            Complete response.
-
         Raises
         ------
         requests.exceptions.RequestException
-            Non-retryable or exhausted request failure.
         RuntimeError
-            Connection-failure cap reached.
         """
         sys_prompt = self.system_prompt(model)
         messages: List[Dict[str, str]] = []
@@ -545,26 +499,16 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
-            User prompt.
         model : str
-            Model id.
         seed : int
-            Decoding seed.
         context_length : int, optional
-            Token guard.
         extra_args : Optional[Dict[str, Any]], optional
-            Request-body additions.
         request_timeout : Optional[int], optional
-            Read-timeout override.
         system : Optional[str], optional
-            Extra system message.
         max_retries : Optional[int], optional
-            Retry cap.
-
         Returns
         -------
         Tuple[str, Optional[str]]
-            Content and reasoning.
         """
         result = self.complete(
             prompt,
@@ -586,16 +530,11 @@ class ChatClient:
         Parameters
         ----------
         index : int
-            Quiz position.
         *args : Any
-            Query positional arguments.
         **kwargs : Any
-            Query keyword arguments.
-
         Returns
         -------
         Tuple[int, Tuple[str, Optional[str]]]
-            Quiz position and result.
         """
         return index, self.query(*args, **kwargs)
 
@@ -614,25 +553,15 @@ class ChatClient:
         Parameters
         ----------
         quiz : Quiz
-            Questions.
         model : str
-            Model id.
         seed : int
-            Shared decoding seed.
         extra_args : dict, optional
-            Request-body additions.
         max_parallel : int, optional
-            Thread fan-out; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS``
-            (8). Lower it for CoT or contention censors the length distribution.
         request_timeout : Optional[int], optional
-            Read-timeout override.
         show_progress : bool
-            Show progress.
-
         Returns
         -------
         Marks
-            Quiz marks.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)

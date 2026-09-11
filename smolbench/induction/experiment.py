@@ -22,6 +22,5 @@ class InductionExperiment(Experiment):
         Parameters
         ----------
         tag : str, optional
-            CoT replicate tag.
         """
         super().cot_chain_lengths(tag)

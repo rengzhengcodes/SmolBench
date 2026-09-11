@@ -48,12 +48,9 @@ class ToF(QnA):
         Parameters
         ----------
         ans : str
-            Response text.
-
         Returns
         -------
         bool
-            Parsed boolean.
         """
         # `isalpha` retains Unicode letters without a maintained charset.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])
@@ -83,12 +80,9 @@ class Numeric(QnA):
         Parameters
         ----------
         ans : str
-            Response text.
-
         Returns
         -------
         int
-            First integer.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -172,7 +166,6 @@ class Marks:
         Parameters
         ----------
         path : Path
-            YAML destination.
         """
         tmp = f"{path}.tmp"
         with open(tmp, "w") as file:

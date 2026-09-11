@@ -50,14 +50,10 @@ def direction(acc_e: float, acc_n: float) -> str:
     Parameters
     ----------
     acc_e : float
-        Accuracy for the extens arm.
     acc_n : float
-        Accuracy for the noise arm.
-
     Returns
     -------
     str
-        Label for the higher-scoring arm or an exact tie.
     """
     if acc_n > acc_e:
         return "noise HIGHER"

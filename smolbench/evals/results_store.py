@@ -41,17 +41,12 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Parameters
     ----------
     uri : str
-        URI to parse.
-
     Returns
     -------
     tuple[str, str]
-        Bucket and prefix.
-
     Raises
     ------
     ValueError
-        For malformed or whitespace-bearing URI segments.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
@@ -96,12 +91,9 @@ def format_run_ts(when: datetime) -> str:
     Parameters
     ----------
     when : datetime
-        UTC instant.
-
     Returns
     -------
     str
-        Fixed-width timestamp, so lexicographic order is chronological order.
     """
     return when.strftime("%Y%m%dT%H%M%S.%fZ")
 
@@ -115,14 +107,10 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     Parameters
     ----------
     results_dir : Path
-        Directory under ``repo_root()``.
     prefix : str, optional
-        Sub-level; one trailing ``"_"`` is stripped.
-
     Returns
     -------
     str
-        S3 experiment segment.
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -162,12 +150,9 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         bool
-            Whether a result exists.
         """
 
     @abc.abstractmethod
@@ -179,11 +164,8 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         marks : Marks
-            Result to persist.
         addr : ReplicateAddress
-            Destination address.
         run_ts : datetime
-            Collection instant.
         """
 
     @abc.abstractmethod
@@ -193,17 +175,12 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         Marks
-            Stored result.
-
         Raises
         ------
         FileNotFoundError
-            If no result is stored.
         """
 
     @abc.abstractmethod
@@ -216,16 +193,11 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         model : Optional[str]
-            S3 key; ``None`` yields no seeds.
         tag : str
-            Local key.
         info : str
-            Condition information.
-
         Returns
         -------
         list[int]
-            Sorted distinct seeds.
         """
 
     @abc.abstractmethod
@@ -237,14 +209,10 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
         reason : str
-            Operator-facing retirement reason.
-
         Returns
         -------
         int
-            Retired run count.
         """
 
     def regrade(
@@ -257,13 +225,9 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         marks : Marks
-            Must name its replaced run via ``regraded_from``.
         addr : ReplicateAddress
-            Address to replace.
         run_ts : datetime
-            New run timestamp.
         reason : str
-            Retirement reason.
         """
         if marks.regraded_from is None:
             raise ValueError(
@@ -299,12 +263,9 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         bool
-            Whether the file exists.
         """
         return self._path(addr).exists()
 
@@ -314,11 +275,8 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
-            Result to persist.
         addr : ReplicateAddress
-            Destination address.
         run_ts : datetime
-            Ignored collection timestamp.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,12 +288,9 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         Marks
-            Local result.
         """
         return Marks.load(self._path(addr))
 
@@ -347,16 +302,11 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
-            Ignored local-store model key.
         tag : str
-            Local key.
         info : str
-            Condition information.
-
         Returns
         -------
         list[int]
-            Sorted seed values.
         """
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
@@ -377,14 +327,10 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Stored-run address.
         reason : str
-            Logged retirement reason.
-
         Returns
         -------
         Optional[Path]
-            Renamed path, or ``None``.
         """
         path = self._path(addr)
         if not path.exists():
@@ -402,14 +348,10 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
         reason : str
-            Retirement reason.
-
         Returns
         -------
         int
-            Retired run count.
         """
         return 1 if self.supersede(addr, reason) is not None else 0
 
@@ -426,12 +368,9 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     Parameters
     ----------
     rel : str
-        Key remainder.
-
     Returns
     -------
     Optional[tuple[int, str, str]]
-        Parsed values, or ``None``.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -505,12 +444,9 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         bool
-            Whether a run exists.
         """
         if addr.model is None:
             return False
@@ -529,23 +465,16 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
-            Result to persist.
         addr : ReplicateAddress
-            Destination address.
         run_ts : datetime
-            Key timestamp.
         """
         if addr.model is None:
+            # model=None is the READ-only tag-lookup shape; the append-only
+            # log cannot correct a bad key.
             raise ValueError(
                 f"S3ResultsStore.dump_marks: refusing to write {addr!r} -- "
-                "the S3 log is keyed by model, and this address carries no "
-                "model. model=None is a READ-only shape (used by tag-keyed "
-                "lookups such as ReplicateHarness.cot_chain_lengths when no "
-                "configured model carries the requested tag, served by "
-                "LocalResultsStore instead, whose layout has no model "
-                "dimension); it must never be written to the append-only "
-                "log, where a bad object cannot later be corrected, only "
-                "deleted by hand."
+                "model=None is a READ-only address shape (see "
+                "ReplicateAddress.model) and the S3 log is keyed by model."
             )
         key = self._info_prefix(addr.model, addr.seed, addr.info) + format_run_ts(run_ts) + ".yaml"
         self._client().put_object(Bucket=self.bucket, Key=key, Body=marks.dumps().encode())
@@ -556,12 +485,9 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         tuple[list[str], int]
-            Sorted survivors and marker count.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -584,12 +510,9 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         list[str]
-            Sorted surviving timestamps.
         """
         survivors, _marker_count = self._list_run_partition(addr)
         return survivors
@@ -602,12 +525,9 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
-
         Returns
         -------
         Marks
-            Earliest surviving result.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         survivors, marker_count = self._list_run_partition(addr)
@@ -633,16 +553,11 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Logged-run address.
         run_ts : str
-            Run-key timestamp.
         reason : str
-            Marker-body reason.
-
         Returns
         -------
         str
-            Written marker key.
         """
         if addr.model is None:
             raise ValueError(
@@ -661,14 +576,10 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
         reason : str
-            Retirement reason.
-
         Returns
         -------
         int
-            Retired run count.
         """
         survivors = self.list_runs(addr)
         for run_ts in survivors:
@@ -685,16 +596,11 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
-            S3 model key.
         tag : str
-            Unused S3 tag.
         info : str
-            Condition information.
-
         Returns
         -------
         list[int]
-            Sorted seeds.
         """
         if model is None:
             return []
@@ -736,14 +642,10 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
-        Results directory.
     prefix : str, optional
-        Local namespace or S3 experiment subpath.
-
     Returns
     -------
     ResultsStore
-        Results store.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -783,12 +685,9 @@ def _etag_md5(etag: Optional[str]) -> Optional[str]:
     Parameters
     ----------
     etag : Optional[str]
-        S3 ETag.
-
     Returns
     -------
     Optional[str]
-        Unquoted MD5, or ``None`` for missing or multipart ETags.
     """
     if not etag:
         return None
@@ -804,21 +703,14 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     Parameters
     ----------
     resolved_dir : Path
-        Resolved local directory.
     rel : str
-        Relative destination.
     key : str
-        Source S3 key.
-
     Returns
     -------
     Path
-        Validated destination.
-
     Raises
     ------
     ValueError
-        If the destination is outside ``resolved_dir``.
     """
     candidate = (resolved_dir / rel).resolve()
     if candidate == resolved_dir or not candidate.is_relative_to(resolved_dir):
@@ -840,33 +732,25 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     Parameters
     ----------
     results_dir : Path
-        Local destination.
     tags : Mapping[str, str]
-        Model-to-local-tag mapping.
     prefix : str, optional
-        Experiment and local-directory prefix.
-
     Returns
     -------
     int
-        Downloaded object count.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):
         uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
         if not uri:
             raise RuntimeError(
-                "sync_down: SMOLBENCH_RESULTS_S3 is unset or empty -- there is "
-                f"no S3 log to sync down from. Export it, e.g. "
-                f"SMOLBENCH_RESULTS_S3={default_results_uri()!r}."
+                "sync_down: SMOLBENCH_RESULTS_S3 is unset or empty -- export "
+                f"it, e.g. SMOLBENCH_RESULTS_S3={default_results_uri()!r}."
             )
         raise RuntimeError(
             f"sync_down: {results_dir} is not under repo_root() "
-            f"({repo_root()}), so resolve_store falls back to the local "
-            "store for it (see resolve_store's hermeticity fallback) -- "
-            f"there is no S3 log to sync down from. (SMOLBENCH_RESULTS_S3 is "
-            f"set to {uri!r}; the project's default is "
-            f"{default_results_uri()!r}.)"
+            f"({repo_root()}), so resolve_store uses the local store for it "
+            f"and there is no S3 log to sync down from "
+            f"(SMOLBENCH_RESULTS_S3={uri!r})."
         )
 
     resolved_dir = results_dir.resolve()
@@ -947,12 +831,9 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None, optional
-        Command-line arguments.
-
     Returns
     -------
     int
-        Exit status.
     """
     import argparse
 

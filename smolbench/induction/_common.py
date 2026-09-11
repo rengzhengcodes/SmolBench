@@ -63,14 +63,10 @@ def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, s
     Parameters
     ----------
     query : Dict[str, str]
-        Query substitutions.
     positive_info : str
-        Arm context.
-
     Returns
     -------
     Dict[str, str]
-        Fresh merged substitutions.
     """
     return query | {"positive_info": positive_info}
 
@@ -85,16 +81,11 @@ def context_renderer(
     Parameters
     ----------
     prompter : Prompter
-        Prompter and default template.
     query : Dict[str, str]
-        Query substitutions.
     template : Optional[string.Template], optional
-        Rendering template.
-
     Returns
     -------
     Callable[[str], str]
-        Context-to-prompt function.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -117,23 +108,15 @@ def random_unique_strings(
     Parameters
     ----------
     n : int
-        Number of strings.
     length : int
-        String length.
     rng : np.random.Generator
-        Random generator.
     charset : Collection[str]
-        Source characters; must exclude downstream separators.
-
     Returns
     -------
     OrderedSet[str]
-        Unique strings in draw order.
-
     Raises
     ------
     ValueError
-        Insufficient string space.
     """
     charset = tuple(charset)
     base: int = len(charset)
@@ -176,18 +159,12 @@ def random_labels(
     Parameters
     ----------
     count : int
-        Number of labels.
     seed : int
-        Random seed.
     charset : Collection[str]
-        Label characters.
     min_length : int, optional
-        Minimum label length.
-
     Returns
     -------
     Tuple[str, ...]
-        Generated labels.
     """
     # A one-label configuration must not generate an empty label.
     length: int = max(
@@ -212,16 +189,11 @@ def quizzes_from_prompts(
     Parameters
     ----------
     prompts : Iterable[RenderedQuery]
-        Rendered queries.
     qna_cls : type[QnA]
-        Question-and-answer class.
     conditions : Iterable[str]
-        Condition names; structural typing avoids a ``periodic`` import cycle.
-
     Returns
     -------
     Dict[str, Quiz]
-        Quizzes by condition name.
     """
     condition_names = tuple(conditions)
     quizzes: Dict[str, list] = {name: [] for name in condition_names}

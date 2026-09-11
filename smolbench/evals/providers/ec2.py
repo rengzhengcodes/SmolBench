@@ -378,16 +378,11 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
     Parameters
     ----------
     model : str
-        Model name.
     instance_type : str
-        Landed instance type.
     spec : Dict[str, Any]
-        Deploy spec; ``"tp"`` is the fallback for unknown mappings.
-
     Returns
     -------
     int
-        Tensor-parallel degree for the landed instance.
     """
     heads = MODEL_ATTENTION_HEADS.get(model)
     gpus = _INSTANCE_GPU_COUNTS.get(instance_type)
@@ -456,14 +451,10 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
     Parameters
     ----------
     state : Dict[str, Any]
-        Saved state.
     model : str
-        Model name.
-
     Raises
     ------
     RuntimeError
-        Pin mismatch or unknown landed hardware.
     """
     if not EC2_REQUIRE_GPU:
         return
@@ -517,14 +508,10 @@ def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
     Parameters
     ----------
     ip : str
-        vLLM server IP.
     vllm_api_key : str
-        vLLM bearer token.
-
     Returns
     -------
     Optional[List[str]]
-        Raw matching Prometheus lines, or None.
     """
     try:
         r = requests.get(
@@ -553,12 +540,9 @@ def _fetch_agent_fingerprint(
     Parameters
     ----------
     state : Dict[str, Any]
-        State for the control-agent request.
-
     Returns
     -------
     Tuple[Optional[Dict[str, Any]], Optional[List[str]]]
-        Fingerprint and backend logs, each possibly None.
     """
     try:
         status = _agent(
@@ -586,14 +570,9 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
     Parameters
     ----------
     model : str
-        Model name.
-
     Returns
     -------
     Optional[Dict[str, Any]]
-        Full schema; None for unavailable fields. ``gpu``, ``vllm_image`` and
-        ``hf_model_id`` are configured values, not observations.
-
     Notes
     -----
     Never raises because provenance must not crash a lane.
@@ -726,7 +705,6 @@ def _save_state(state: Dict[str, Any]) -> None:
     Parameters
     ----------
     state : Dict[str, Any]
-        Instance state and secrets.
     """
     path = _state_path()
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -741,8 +719,6 @@ def _clear_state(instance_id: Optional[str] = None) -> None:
     Parameters
     ----------
     instance_id : Optional[str]
-        Instance being torn down; a different recorded id is left alone so a
-        live, billing box is not stranded. None clears unconditionally.
     """
     try:
         if instance_id is not None:
@@ -803,12 +779,9 @@ def get_model_context_length(model: str) -> int:
     Parameters
     ----------
     model : str
-        Model name.
-
     Returns
     -------
     int
-        Served context window.
     """
     spec = EC2_DEPLOY_SPECS.get(model)
     if spec and "max_model_len" in spec:
@@ -822,12 +795,9 @@ def list_models(model: str = "") -> List[str]:
     Parameters
     ----------
     model : str
-        Ignored for provider-dispatch signature parity.
-
     Returns
     -------
     List[str]
-        Served model identifiers.
     """
     response = metadata_get(f"{_base_url()}/models", _api_key(), check_status=True)
     return [m["id"] for m in response.get("data", [])]
@@ -844,8 +814,6 @@ def _raise_endpoint_unreachable(err: Exception) -> NoReturn:
     Parameters
     ----------
     err : Exception
-        Last connection failure.
-
     """
     state = _load_state()
     detail = "no state file; EC2_INFERENCE_BASE_URL override in use?"
@@ -890,12 +858,9 @@ def _connection(model: str) -> Tuple[str, str]:
     Parameters
     ----------
     model : str
-        Model requested by the client.
-
     Returns
     -------
     Tuple[str, str]
-        Chat-completions URL and vLLM bearer token.
     """
     base = os.getenv("EC2_INFERENCE_BASE_URL")
     key = os.getenv("EC2_VLLM_API_KEY")
@@ -917,12 +882,9 @@ def _system_prompt(model: str) -> Optional[str]:
     Parameters
     ----------
     model : str
-        Model whose deployment spec is consulted.
-
     Returns
     -------
     Optional[str]
-        Spec-level system prompt, or None.
     """
     return EC2_DEPLOY_SPECS.get(model, {}).get("system_prompt")
 
@@ -999,12 +961,9 @@ def _ec2_client(region: str) -> Any:
     Parameters
     ----------
     region : str
-        AWS region for the client.
-
     Returns
     -------
     Any
-        Fresh EC2 client.
     """
     return _aws.fresh_client("ec2", region)
 
@@ -1148,12 +1107,9 @@ def _ensure_instance_profile(bucket: str) -> str:
     Parameters
     ----------
     bucket : str
-        Model-cache bucket name.
-
     Returns
     -------
     str
-        Instance-profile name.
     """
     return _aws.ensure_instance_profile(EC2_INSTANCE_ROLE_NAME, bucket, _IAM_PROPAGATION_SLEEP_S)
 
@@ -1184,20 +1140,13 @@ def _decode_user_data(raw: bytes) -> str:
     Parameters
     ----------
     raw : bytes
-        Already-base64-decoded instance user data.
-
     Returns
     -------
     str
-        Rendered user-data script.
-
     Raises
     ------
     UnicodeDecodeError
-        `raw` is neither valid gzip nor valid UTF-8 text.
     EOFError
-        `raw` is gzip-magic-prefixed but truncated (the magic matches, so.
-        BadGzipFile never fires).
     """
     try:
         return gzip.decompress(raw).decode()
@@ -1219,14 +1168,10 @@ def _recover_state_from_instance(
     Parameters
     ----------
     region : str
-        AWS region containing the instance.
     instance : Dict[str, Any]
-        Live EC2 instance record.
-
     Returns
     -------
     Optional[Dict[str, Any]]
-        Rebuilt state dict, or None when its user data cannot be parsed.
     """
     import base64
 
@@ -1280,14 +1225,10 @@ def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]
     Parameters
     ----------
     region : str
-        AWS region containing the instance.
     instance_id : str
-        EC2 instance ID.
-
     Returns
     -------
     Optional[Dict[str, Any]]
-        DescribeInstances record, or None.
     """
     from botocore.exceptions import ClientError
 
@@ -1322,14 +1263,10 @@ def _instance_state(region: str, instance_id: str) -> str:
     Parameters
     ----------
     region : str
-        AWS region containing the instance.
     instance_id : str
-        EC2 instance ID.
-
     Returns
     -------
     str
-        EC2 state name, or "absent".
     """
     instance = _describe_instance(region, instance_id)
     return (instance or {}).get("State", {}).get("Name", "absent")
@@ -1345,14 +1282,10 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
     Parameters
     ----------
     region : str
-        AWS region for the launch.
     kwargs : Dict[str, Any]
-        Arguments passed to EC2 RunInstances.
-
     Returns
     -------
     str
-        Launched EC2 instance ID.
     """
     from botocore.exceptions import ClientError
 
@@ -1379,26 +1312,15 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     Parameters
     ----------
     region : str
-        AWS region containing the instance.
     instance_id : str
-        EC2 instance ID.
     timeout_s : int, optional
-        Polling timeout in seconds.
-
     Returns
     -------
     str
-        Public IPv4 address.
-
     Raises
     ------
     RuntimeError
-        The instance went ``shutting-down``/``terminated`` before ever getting
-        an IP (spot reclaimed right after launch), or stayed absent from
-        DescribeInstances for ``_ABSENT_STREAK_LIMIT`` consecutive polls; a
-        single absent poll is tolerated as eventual consistency.
     TimeoutError
-        No public IP within ``timeout_s`` (default ``_WAIT_IP_TIMEOUT_S``).
     """
 
     absent_streak = 0
@@ -1440,27 +1362,14 @@ def _agent(
     Parameters
     ----------
     state : Dict[str, Any]
-        Needs ``public_ip`` and ``control_token``.
     method : str
-        HTTP method for the agent request.
     path : str
-        Agent endpoint path.
     payload : Optional[Dict[str, Any]], optional
-        JSON request body.
     timeout : int, optional
-        Request timeout in seconds.
     connect_retries : int
-        Extra attempts, 15s apart, on CONNECT-level failures only
-        (``requests.ConnectionError``, which covers ConnectTimeout): the
-        caller's egress NAT drops connections in bursts and killed one-shot
-        ``/serve`` calls mid-sweep on a healthy box. Every agent endpoint is
-        idempotent, so connect patience is always safe; the polling loops and
-        the best-effort graceful shutdown pass 0 to keep their own cadence.
-
     Returns
     -------
     Dict[str, Any]
-        Parsed JSON response body.
     """
     for attempt in range(connect_retries + 1):
         try:
@@ -1492,17 +1401,11 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
     Parameters
     ----------
     state : Dict[str, Any]
-        Needs ``public_ip``, ``control_token``, ``region``, ``instance_id``.
     timeout_min : int, optional
-        Agent readiness deadline in minutes.
-
     Raises
     ------
     RuntimeError
-        The liveness check found the instance no longer ``pending``/``running``
-        (spot reclaimed while waiting for its agent).
     TimeoutError
-        The agent never answered within ``timeout_min``.
     """
     from botocore.exceptions import ClientError
 
@@ -1560,18 +1463,12 @@ def _attach(
     Parameters
     ----------
     state : Dict[str, Any]
-        State rebuilt or loaded for the instance.
     instance : Dict[str, Any]
-        EC2 instance record.
     my_ip : str
-        Caller's public IP address.
     how : str
-        Attach-path label for logging.
-
     Returns
     -------
     Dict[str, Any]
-        Refreshed and persisted state dict.
     """
     region = state["region"]
     _authorize_ingress(region, state["security_group_id"], my_ip)
@@ -1599,13 +1496,9 @@ def _reattach_existing_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     Parameters
     ----------
     my_ip : str
-        Caller's public IP address.
-
     Returns
     -------
     Optional[Dict[str, Any]]
-        The refreshed, already-saved state dict when the recorded instance is
-        still ``pending``/``running``, else None.
     """
     state = _load_state()
     if state is None:
@@ -1635,20 +1528,12 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     Parameters
     ----------
     my_ip : str
-        Caller's public IP address.
-
     Returns
     -------
     Optional[Dict[str, Any]]
-        The recovered, already-saved state dict, or None when no tagged
-        instance exists (the caller proceeds to a fresh launch).
-
     Raises
     ------
     RuntimeError
-        A tagged live instance exists but its user-data would not parse for
-        the control token (foreign or older-format box) -- refuse to reuse a
-        box this process cannot authenticate to.
     """
     found = _find_tagged_instance()
     if found is None:
@@ -1683,14 +1568,10 @@ def _spot_price_map(region: str, instance_types: List[str]) -> Dict[Tuple[str, s
     Parameters
     ----------
     region : str
-        AWS region to query.
     instance_types : List[str]
-        Instance types whose prices are requested.
-
     Returns
     -------
     Dict[Tuple[str, str], float]
-        Mapping of instance type and availability zone to hourly price.
     """
     try:
         resp = _ec2_client(region).describe_spot_price_history(
@@ -1734,42 +1615,19 @@ def _run_instances_kwargs(
     Parameters
     ----------
     ami : str
-        AMI for the launched instance.
     instance_type : str
-        EC2 instance type to launch.
     subnet_id : str
-        Pins the AZ for this attempt.
     group_id : str
-        Security group for the instance network interface.
     root_device : str
-        Root block-device name.
     volume_gb : int
-        Root volume size, in GiB.
     user_data : bytes
-        Gzip-compressed cloud-init script (``payloads.pack_user_data``),
-        passed through UNENCODED: boto3's ``base64_encode_user_data`` handler
-        base64-encodes bytes ``UserData`` itself.
     key_name : str
-        EC2 key pair for SSH debugging; ``""`` omits ``KeyName`` entirely.
     iam_profile : Optional[str]
-        Instance profile for the S3 model cache; ``None``/``""`` omits
-        ``IamInstanceProfile`` (no S3 cache).
     capacity_reservation_id : Optional[str]
-        Purchased EC2 Capacity Block id. When set, MarketType becomes
-        ``"capacity-block"`` (required by the API) and the instance is pinned
-        to the block instead of the Spot market; the caller must pass the
-        block's own AZ subnet and instance type or RunInstances rejects it.
     max_price : Optional[str]
-        Spot bid ceiling in USD/hour as the API's string; ``None`` leaves.
-        EC2's default ceiling (the on-demand price). Derived from live
-        ``describe_spot_price_history`` medians because price-blind defaults
-        paid 1.29-1.48x each type's cheapest AZ (see
-        ``EC2_SPOT_BID_MULTIPLIER``).
-
     Returns
     -------
     Dict[str, Any]
-        Keyword arguments for ``run_instances``.
     """
     kwargs: Dict[str, Any] = {
         "ImageId": ami,
@@ -1863,30 +1721,17 @@ def _launch_fresh(
     Parameters
     ----------
     instance_types : Tuple[str, ...]
-        Instance types to try in priority order.
     regions : Tuple[str, ...]
-        Regions to search for capacity.
     volume_gb : int
-        Root volume size, in GiB.
     idle_timeout_min : int
-        Watchdog budget in minutes.
     max_lifetime_min : int
-        Boot-scheduled-halt budget in minutes.
     my_ip : str
-        Caller's public IP, resolved ONCE by the caller (one
-        ``checkip.amazonaws.com`` round trip, not one per region).
-
     Returns
     -------
     Dict[str, Any]
-        The new instance's state dict, already saved to ``EC2_STATE_FILE``,
-        once its agent answers.
-
     Raises
     ------
     RuntimeError
-        No ``(instance_type, region)`` combination yielded capacity; the
-        message lists every attempt and its failure reason/code.
     """
     control_token = secrets.token_urlsafe(32)
     vllm_api_key = secrets.token_urlsafe(32)
@@ -2141,21 +1986,13 @@ def provision_spot_instance(
     Parameters
     ----------
     instance_types : Optional[Tuple[str, ...]], optional
-        Instance types to try.
     regions : Optional[Tuple[str, ...]], optional
-        AWS regions to try.
     volume_gb : Optional[int], optional
-        Root-volume size in GiB.
     idle_timeout_min : Optional[int], optional
-        Idle watchdog timeout in minutes.
     max_lifetime_min : Optional[int], optional
-        Maximum instance lifetime in minutes.
-
     Returns
     -------
     Dict[str, Any]
-        State dict, also persisted to ``EC2_STATE_FILE``: instance_id, region,
-        public_ip, instance_type, control_token, vllm_api_key, ...
     """
     instance_types = tuple(instance_types or EC2_INSTANCE_TYPES)
     regions = tuple(regions or EC2_REGIONS)
@@ -2202,11 +2039,8 @@ def _wait_model_ready(
     Parameters
     ----------
     state : Dict[str, Any]
-        Saved instance state for control-agent polling.
     model : str
-        Model expected to become healthy.
     timeout_min : int, optional
-        Readiness timeout in minutes.
     """
     last_status: Dict[str, Any] = {}
     consec_failures = 0
@@ -2284,26 +2118,15 @@ def serve_model(
     Parameters
     ----------
     model : str
-        Model to serve for the context body.
     timeout_min : Optional[int]
-        Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
     force : bool
-        Swap even when the box is already healthy on ``model`` with the same
-        launch payload. The default fast path skips the swap, so re-running a
-        section cell after an interruption costs seconds, not a reload.
-
     Yields
     ------
     str
-        Served model identifier.
-
     Raises
     ------
     KeyError
-        ``model`` has no ``EC2_DEPLOY_SPECS`` entry.
     RuntimeError
-        The instance became healthy serving something else (another process
-        swapped the model).
     """
     spec = EC2_DEPLOY_SPECS.get(model)
     if spec is None:
@@ -2436,9 +2259,6 @@ def shutdown_instance(wait: bool = True) -> None:
     Parameters
     ----------
     wait : bool
-        Block on the ``instance_terminated`` waiter. A waiter timeout is logged
-        and swallowed: TerminateInstances already succeeded, and p5-class
-        teardown can outlast botocore's 10-minute budget.
     """
     state = _load_state()
     region: Optional[str] = None

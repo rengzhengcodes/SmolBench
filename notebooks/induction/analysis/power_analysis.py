@@ -84,29 +84,21 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
             addr = ReplicateAddress(tag=model, info=info, seed=PILOT_SEED)
             path = store._path(addr)
             if not store.exists(addr):
+                # Results are S3-backed; sync_down() pulls them into the
+                # {model}_{info}/rep_{seed}.yaml layout this script reads.
                 raise SystemExit(
-                    f"No pilot replicate for ({model}, {info}); expected\n  {path}\n"
-                    f"This analysis SIZES R from the pilot (seed {PILOT_SEED}) -- "
-                    f"run the pilot in notebooks/induction/run_study.py first. "
-                    f"This study's results are S3-backed (SMOLBENCH_RESULTS_S3): "
-                    f"if the pilot already ran (elsewhere, or in an earlier "
-                    f"session), sync it down before re-running this script -- "
-                    f"call InductionExperiment.harness.sync_down() to pull the "
-                    f"S3-backed append-only log into the local "
-                    f"{{model}}_{{info}}/rep_{{seed}}.yaml layout this script "
-                    f"reads (it never talks to S3 directly)."
+                    f"No pilot replicate for ({model}, {info}) at {path}\n"
+                    f"Run the pilot in notebooks/induction/run_study.py first, "
+                    f"or InductionExperiment.harness.sync_down() if it ran "
+                    "elsewhere."
                 )
             scores = [m.score for m in store.load_marks(addr).marks]
             if len(scores) != N_HARMONICS:
-                # Survive ``python -O``.
                 raise SystemExit(
                     f"Pilot replicate {path} has {len(scores)} marks, "
-                    f"expected {N_HARMONICS}; the sync is incomplete or the "
-                    "file is truncated."
+                    f"expected {N_HARMONICS}; the sync is incomplete."
                 )
-            outcomes[(model, info)] = np.array(
-                [1.0 if s == 1 else 0.0 for s in scores]
-            )
+            outcomes[(model, info)] = np.array([s == 1 for s in scores], float)
     return outcomes
 
 
@@ -123,14 +115,10 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     Parameters
     ----------
     b : int | np.ndarray
-        First discordant count.
     c : int | np.ndarray
-        Second discordant count.
-
     Returns
     -------
     float | np.ndarray
-        Exact two-sided conditional p-values.
     """
     nd = b + c
     # NumPy evaluates both branches.
@@ -152,16 +140,11 @@ def cmh_stat(
     Parameters
     ----------
     succ_a : np.ndarray
-        First-condition counts.
     succ_b : np.ndarray
-        Second-condition counts.
     n : int or np.ndarray
-        Per-condition trials, scalar or per stratum.
-
     Returns
     -------
     np.ndarray
-        Statistics by batch index.
     """
     n = np.asarray(n)
     big_n = 2 * n
@@ -190,19 +173,13 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     Parameters
     ----------
     succ : np.ndarray
-        Counts by simulation, rung, and stratum.
     n_per_stratum : int
-        Uniform trials per rung and stratum.
-
     Returns
     -------
     np.ndarray
-        Statistics by simulation.
-
     Raises
     ------
     ValueError
-        Rung axis is not length 3 or trials are below 1.
     """
     _, n_rungs, _ = succ.shape
     if n_rungs != 3:
@@ -240,21 +217,14 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     Parameters
     ----------
     succ : np.ndarray
-        Counts by simulation, rung, and stratum.
     n_per_stratum : int
-        Uniform trials per rung and stratum.
     alpha : float
-        Significance threshold.
-
     Returns
     -------
     np.ndarray
-        Rejection decisions.
-
     Raises
     ------
     ValueError
-        Rung axis is not length 3 or trials are below 1.
     """
     stat = gcmh_stat(succ, n_per_stratum)
 
@@ -276,22 +246,14 @@ def simulated_power(
     Parameters
     ----------
     rates_a : np.ndarray
-        First-condition rates.
     rates_b : np.ndarray
-        Second-condition rates.
     n_reps : int
-        Replicates per harmonic.
     rng : np.random.Generator
-        Simulation generator.
     alpha : float, optional
-        Per-test threshold.
     n_sims : int, optional
-        Simulated experiments.
-
     Returns
     -------
     float
-        Estimated rejection fraction.
     """
     succ_a = rng.binomial(n_reps, rates_a, size=(n_sims, rates_a.size))
     succ_b = rng.binomial(n_reps, rates_b, size=(n_sims, rates_b.size))
@@ -331,21 +293,14 @@ def replicates_needed(
     Parameters
     ----------
     rates_a : np.ndarray
-        First-condition rates.
     rates_b : np.ndarray
-        Second-condition rates.
     alpha : float, optional
-        Per-test threshold.
-
     Returns
     -------
     _SizingScan
-        Target counts and simulated-power curve; copies protect the cache.
-
     Raises
     ------
     ValueError
-        Rate shapes differ.
     """
     if rates_a.shape != rates_b.shape:
         raise ValueError(
@@ -374,20 +329,13 @@ def fisher_check(
     Parameters
     ----------
     rates_a : np.ndarray
-        First-condition rates.
     rates_b : np.ndarray
-        Second-condition rates.
     n_reps : int
-        Replicates per harmonic.
     rng : np.random.Generator
-        Simulation generator.
     alpha : float, optional
-        Significance threshold.
-
     Returns
     -------
     float
-        Rejection fraction.
     """
     from scipy.stats import fisher_exact
 
@@ -420,22 +368,14 @@ def equivalence_replicates(
     Parameters
     ----------
     rates_a : np.ndarray
-        First-condition rates.
     rates_b : np.ndarray
-        Second-condition rates.
     delta : float
-        Equivalence margin.
     rng : np.random.Generator
-        Simulation generator.
     alpha : float, optional
-        One-sided threshold.
     n_sims : int, optional
-        Simulated experiments.
-
     Returns
     -------
     int | None
-        Smallest qualifying R, or ``None``.
     """
     from scipy.stats import norm
 
@@ -469,22 +409,14 @@ def omnibus_power(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk rates by model and information type.
     family : str
-        Family to test.
     n_reps : int
-        Uniform replicates per rung and stratum.
     rng : np.random.Generator
-        Simulation generator.
     alpha : float, optional
-        Significance threshold.
     n_sims : int, optional
-        Simulated experiments.
-
     Returns
     -------
     float
-        Estimated rejection fraction.
     """
     rungs = FAMILIES[family]
     strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]  # K = 36
@@ -514,16 +446,11 @@ def omnibus_interaction_power(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Rates by model and information type.
     n_reps : int
-        Replicates per cell.
     n_sims : int, optional
-        Simulated experiments.
-
     Returns
     -------
     float
-        Rejection fraction.
     """
     import statsmodels.api as sm
     from scipy.stats import chi2 as chi2_dist
@@ -617,18 +544,12 @@ def _compute_sizing_results(
     Parameters
     ----------
     contrasts : list[tuple[str, tuple[str, str], tuple[str, str]]]
-        Contrasts in output order.
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk-rate assumption.
     pooled : dict[tuple[str, str], np.ndarray]
-        Condition-mean sensitivity assumption.
     alpha : float
-        Per-test threshold.
-
     Returns
     -------
     list[_SizingResult]
-        Results in input order.
     """
     results: list[_SizingResult] = []
     for name, key_a, key_b in contrasts:
@@ -656,11 +577,8 @@ def _print_sizing_rows(
     Parameters
     ----------
     results : list[_SizingResult]
-        Sizing results.
     outcomes : dict[tuple[str, str], np.ndarray]
-        Pilot marks for observed rates.
     label_w : int
-        Contrast-label width.
     """
     for name, key_a, key_b, needed, needed_pooled in results:
         r80, r90 = needed[0.80], needed[0.90]
@@ -682,54 +600,37 @@ def check_design_invariants() -> None:
     Reads the module globals on each call so a patched constant re-checks; that
     is how a test demonstrates the gate fires.
     """
-    # Literal protocol denominators prevent silent redesign.
+    # Literal protocol denominators prevent silent redesign; every
+    # correction threshold divides by these pre-registered family sizes.
     if N_PRIMARY != 210 or N_SECONDARY != 63:
         raise RuntimeError(
-            f"The pre-registered family sizes have changed: N_PRIMARY is "
-            f"{N_PRIMARY} (pre-registered 210) and N_SECONDARY is "
-            f"{N_SECONDARY} (pre-registered 63). These were fixed before any "
-            f"data was collected, and every PRIMARY and SECONDARY threshold "
-            f"this study publishes divides by them. Re-sizing a family is a "
-            f"protocol decision, not a refactor: if it is genuinely intended, "
-            f"update these literals in check_design_invariants deliberately, "
-            f"and re-state the pre-registration alongside the change."
+            f"pre-registered family sizes changed: N_PRIMARY={N_PRIMARY} "
+            f"(expected 210), N_SECONDARY={N_SECONDARY} (expected 63)"
         )
 
-    # Builders depend on both structures.
+    # Both contrast builders walk MODELS and FAMILIES, so a disagreement
+    # silently changes which contrasts exist and how many there are.
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
     if MODELS != expected_models:
         raise RuntimeError(
-            f"MODELS disagrees with FAMILIES. MODELS is {MODELS!r}, but the "
-            f"concatenation of FAMILIES' rungs in FAMILIES order is "
-            f"{expected_models!r}. Both contrast builders walk these two "
-            f"structures, so a disagreement changes which contrasts exist and "
-            f"how many of them there are -- and those counts are exactly what "
-            f"ALPHA_PRIMARY and ALPHA_SECONDARY divide by, so every published "
-            f"correction would have been computed at the wrong threshold."
+            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs "
+            f"{expected_models!r}"
         )
 
     n_primary = len(build_primary_contrasts())
     if n_primary != N_PRIMARY:
         raise RuntimeError(
-            f"build_primary_contrasts() returns {n_primary} contrasts but "
-            f"N_PRIMARY is {N_PRIMARY}. ALPHA_PRIMARY was frozen at import as "
-            f"ALPHA / N_PRIMARY = {ALPHA_PRIMARY:.6g}, and every PRIMARY "
-            f"Bonferroni and Holm decision in this study is taken at that "
-            f"threshold, so a mismatch means the family is not the size its "
-            f"threshold assumes and every published correction was computed at "
-            f"the wrong one."
+            f"build_primary_contrasts() returns {n_primary}, expected "
+            f"N_PRIMARY={N_PRIMARY}; ALPHA_PRIMARY={ALPHA_PRIMARY:.6g} was "
+            "frozen at import"
         )
 
     n_secondary = len(build_secondary_contrasts())
     if n_secondary != N_SECONDARY:
         raise RuntimeError(
-            f"build_secondary_contrasts() returns {n_secondary} contrasts but "
-            f"N_SECONDARY is {N_SECONDARY}. ALPHA_SECONDARY was frozen at "
-            f"import as Q_SECONDARY / N_SECONDARY = {ALPHA_SECONDARY:.6g} (the "
-            f"conservative rank-1 BH threshold this tier is sized at), and the "
-            f"Benjamini-Hochberg thresholds q * i / m applied downstream use m "
-            f"= the family size, so a mismatch means every SECONDARY discovery "
-            f"was declared at the wrong threshold."
+            f"build_secondary_contrasts() returns {n_secondary}, expected "
+            f"N_SECONDARY={N_SECONDARY}; ALPHA_SECONDARY={ALPHA_SECONDARY:.6g} "
+            "was frozen at import"
         )
 
 
@@ -745,12 +646,9 @@ def observed_accuracy(
     Parameters
     ----------
     outcomes : dict[tuple[str, str], np.ndarray]
-        Pilot outcomes by model and information type.
-
     Returns
     -------
     list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
-        Accuracy rows in family and information order.
     """
     return [
         (
@@ -842,19 +740,13 @@ def primary_contrasts_table(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk-rate assumption.
     pooled : dict[tuple[str, str], np.ndarray]
-        Condition-mean sensitivity assumption.
-
     Returns
     -------
     dict
-        Results, recommendation inputs, and layout widths.
-
     Raises
     ------
     SystemExit
-        No PRIMARY contrast reaches 80% power within the search range.
     """
     contrasts = build_primary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
@@ -898,14 +790,10 @@ def omnibus_gates(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk rates by model and information type.
     r_star : int
-        Recommended replicate count.
-
     Returns
     -------
     list[tuple[str, float, float]]
-        Per-family power rows.
     """
     rows = []
     for family in FAMILIES:
@@ -944,14 +832,10 @@ def secondary_contrasts_table(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk-rate assumption.
     pooled : dict[tuple[str, str], np.ndarray]
-        Condition-mean sensitivity assumption.
-
     Returns
     -------
     dict
-        Results and contrast-label width.
     """
     contrasts = build_secondary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_SECONDARY)
@@ -980,14 +864,10 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
     Parameters
     ----------
     r_star : int
-        PRIMARY recommendation.
     n_censored : int
-        Censored PRIMARY contrasts.
-
     Returns
     -------
     dict
-        Recommendation and additional-run counts.
     """
     return dict(
         r_star=r_star,
@@ -1035,16 +915,11 @@ def equivalence_checks(
     Parameters
     ----------
     primary_results : list[_SizingResult]
-        PRIMARY sizing results.
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk rates by model and information type.
     r_star : int
-        Fisher replicate count.
-
     Returns
     -------
     dict
-        Fisher, near-tie, and equivalence-sizing data.
     """
     fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
@@ -1128,14 +1003,10 @@ def interaction_diagnostic(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
-        Shrunk rates by model and information type.
     r_star : int
-        Recommended replicate count.
-
     Returns
     -------
     tuple[float, float]
-        Power at recommended R and R=1.
     """
     return omnibus_interaction_power(rates, r_star), omnibus_interaction_power(rates, 1)
 

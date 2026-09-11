@@ -48,18 +48,12 @@ class ReplicateHarness:
         Parameters
         ----------
         model : Optional[str]
-            Model name or None.
         tag : str
-            Archetype tag.
         info : str
-            Information type.
         seed : int
-            Replicate seed.
-
         Returns
         -------
         ReplicateAddress
-            Replicate address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
@@ -71,12 +65,9 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
-            Model to check.
-
         Returns
         -------
         bool
-            Whether any replicate needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -103,16 +94,10 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
-            Model name.
         extra_args : Optional[dict], optional
-            Evaluation arguments.
         max_parallel : Optional[int], optional
-            Parallel-request limit.
         request_timeout : Optional[int], optional
-            Request timeout; it must cover the longest CoT chain on attempt 1
-            or the request is censored into top-truncated output.
         server_config : Optional[Mapping], optional
-            Persisted server configuration.
         """
         tag: str = self.archetype_tags[model]
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
@@ -167,7 +152,6 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
-            Model name.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
@@ -194,7 +178,6 @@ class ReplicateHarness:
         Parameters
         ----------
         tag : str
-            Archetype tag.
         """
         model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
         lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}

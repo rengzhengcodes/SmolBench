@@ -26,14 +26,10 @@ def import_run_study(
     Parameters
     ----------
     name : str
-        Unique module name.
     env : dict[str, str] or None, optional
-        Environment overlay.
-
     Returns
     -------
     tuple[ModuleType or None, BaseException or None, dict[str, str]]
-        Module, import exception, and post-import environment.
     """
     saved = dict(os.environ)
     module: ModuleType | None = None
@@ -249,9 +245,7 @@ class S3Archive:
     Parameters
     ----------
     uri : str
-        Archive URI.
     region : str or None
-        S3 region.
     """
 
     def __init__(self, uri: str, region: str | None) -> None:

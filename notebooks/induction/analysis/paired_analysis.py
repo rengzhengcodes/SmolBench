@@ -44,7 +44,6 @@ def load_marks() -> tuple[dict, dict, dict]:
     Raises
     ------
     SystemExit
-        If a condition has no replicate seeds.
     """
     correct: dict = {}
     valid: dict = {}
@@ -52,26 +51,8 @@ def load_marks() -> tuple[dict, dict, dict]:
     store = LocalResultsStore(RESULTS_DIR)
     for model in MODELS:
         for info in INFOS:
-            # Local storage keys by tag; model is unused.
+            # Default args pin the loop's current cell (local keys by tag).
             def addr_of(seed: int, _m: str = model, _i: str = info) -> ReplicateAddress:
-                """Address the current cell's replicate.
-
-                Defaults prevent capture of a later loop cell.
-
-                Parameters
-                ----------
-                seed : int
-                    Seed.
-                _m : str, optional
-                    Current model.
-                _i : str, optional
-                    Current info value.
-
-                Returns
-                -------
-                ReplicateAddress
-                    Replicate address.
-                """
                 return ReplicateAddress(tag=_m, info=_i, seed=seed)
 
             seeds = store.list_seeds(None, model, info)
@@ -79,12 +60,9 @@ def load_marks() -> tuple[dict, dict, dict]:
                 # Gate on seeds: missing and empty lanes both lack usable data.
                 cdir = store._path(addr_of(0)).parent
                 raise SystemExit(
-                    f"No replicates for ({model}, {info}); expected "
-                    f"rep_{{seed}}.yaml files in\n  {cdir}\n"
-                    f"(the directory is missing, empty, or holds no file whose "
-                    f"name parses as a seed).\n"
-                    f"Call InductionExperiment.harness.sync_down() to pull the "
-                    f"S3-backed log into the local rep_{{seed}}.yaml layout."
+                    f"No replicates for ({model}, {info}); no rep_{{seed}}.yaml "
+                    f"files in\n  {cdir}\nCall "
+                    "InductionExperiment.harness.sync_down() first."
                 )
             c_by_seed, v_by_seed, k_by_seed = {}, {}, {}
             for seed in seeds:
@@ -117,28 +95,20 @@ def aligned(
     Parameters
     ----------
     correct : dict
-        Per-cell correct-mark mappings.
     valid : dict
-        Per-cell valid-mark mappings.
     key_a : tuple[str, str]
-        First cell.
     key_b : tuple[str, str]
-        Second cell.
     drop_invalid : bool
-        Drop pairs with invalid marks.
-
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        Matched marks, replicate indices and harmonic indices.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
         # Empty overlap is a data failure, not a NumPy error.
         raise SystemExit(
             f"No common seeds between {key_a} and {key_b}; one lane has no "
-            "usable replicates. Check the load warnings above and re-run "
-            "sync_down()."
+            "usable replicates -- re-run sync_down()."
         )
     a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
     b = np.array([correct[key_b][s] for s in seeds])
@@ -160,16 +130,11 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     Parameters
     ----------
     a : np.ndarray
-        First-arm marks.
     b : np.ndarray
-        Second-arm marks.
     seed_idx : np.ndarray
-        Replicate indices.
-
     Returns
     -------
     list[int]
-        Arm differences.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -186,12 +151,9 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
     Parameters
     ----------
     diffs : Iterable[int]
-        Per-seed differences.
-
     Returns
     -------
     float
-        Exact p-value; 1.0 for empty input.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -214,16 +176,11 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     Parameters
     ----------
     a : np.ndarray
-        First-arm marks.
     b : np.ndarray
-        Second-arm marks.
     harm_idx : np.ndarray
-        Harmonic indices, which are the strata.
-
     Returns
     -------
     float
-        P-value; 1.0 with no contributing stratum.
     """
     strata = np.unique(harm_idx)
     if strata.size == 0:
@@ -242,14 +199,10 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
-        Family p-values.
     alpha : float, optional
-        FWER level.
-
     Returns
     -------
     np.ndarray
-        Rejection mask.
     """
     # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
@@ -266,14 +219,10 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
-        Family p-values.
     q : float, optional
-        FDR level.
-
     Returns
     -------
     np.ndarray
-        Rejection mask.
     """
     # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
@@ -292,18 +241,12 @@ def design_effect(
     Parameters
     ----------
     a : np.ndarray
-        First-arm marks.
     b : np.ndarray
-        Second-arm marks.
     seed_idx : np.ndarray
-        Replicate indices.
     harm_idx : np.ndarray
-        Harmonic indices, which are the strata.
-
     Returns
     -------
     float | None
-        Variance ratio or ``None``.
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
@@ -348,10 +291,8 @@ def main() -> None:
         # This local list sets correction denominators and must survive ``-O``.
         raise RuntimeError(
             f"build_primary_contrasts() returned {len(contrasts)} contrasts "
-            f"but N_PRIMARY is {N_PRIMARY}. This report's Bonferroni columns "
-            f"are taken at ALPHA/N_PRIMARY and its Holm passes are sized by "
-            f"the length of this list, so a mismatch means every correction "
-            f"printed below was computed at the wrong threshold."
+            f"but N_PRIMARY is {N_PRIMARY}; every correction below would be "
+            "sized at the wrong threshold."
         )
 
     for drop_invalid in (False, True):

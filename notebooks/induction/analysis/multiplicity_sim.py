@@ -51,7 +51,6 @@ def dump(tag: str) -> None:
     Parameters
     ----------
     tag : str
-        Checkpoint label.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as fh:
@@ -89,25 +88,15 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     Parameters
     ----------
     p_a : float
-        Arm-A mark rate.
     p_b : float
-        Arm-B mark rate.
     rho : float
-        Matched-mark correlation.
     n_sims : int
-        Simulated experiments.
     reps : int
-        Replicates per experiment.
     rng : np.random.Generator
-        Random generator.
     icc : float, optional
-        Per-replicate latent variance share.
-        Must be in ``[0.0, 1.0)`` to retain item variation.
-
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        Boolean marks for both arms.
     """
     if not (0.0 <= icc < 1.0):
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
@@ -130,11 +119,8 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     Parameters
     ----------
     rng : np.random.Generator
-        Random generator.
     n_sims : int, optional
-        Simulations per grid point.
     step : float, optional
-        Gap increment.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -171,11 +157,8 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     Parameters
     ----------
     rng : np.random.Generator
-        Random generator.
     n_sims : int, optional
-        Simulations per configuration.
     chunk : int, optional
-        Maximum simulations per chunk.
     """
     print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
     from scipy.stats import norm
@@ -248,9 +231,7 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
-        Random-number generator for simulated counts.
     n_sims : int, optional
-        Simulations per rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     # The same 28 trend tests as PART 4's reduced family, corrected over that
@@ -318,26 +299,16 @@ def _paired_powers(
     Parameters
     ----------
     p_a : float
-        Arm-A baseline rate.
     delta : float
-        Gap subtracted for arm B.
     rho : float
-        Matched-mark correlation.
     reps : int
-        Replicates per simulation.
     n_sims : int
-        Simulated datasets.
     rng : np.random.Generator
-        Random generator.
     stats : bool, optional
-        Compute diagnostics.
     icc : float, optional
-        Within-replicate correlation.
-
     Returns
     -------
     tuple
-        Powers, phi, and agreement; diagnostics are ``None`` when disabled.
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng, icc=icc)
@@ -391,11 +362,8 @@ def part2(
     Parameters
     ----------
     rng : np.random.Generator
-        Random generator.
     n_sims : int, optional
-        Main power simulations.
     search_sims : int, optional
-        Simulations per equivalent-R rung.
     """
     # Avoid results-reading import effects during simulation imports.
     import paired_analysis
@@ -513,16 +481,11 @@ def _stepup(
     Parameters
     ----------
     sortedp : np.ndarray
-        Ascending p-values.
     order : np.ndarray
-        Input-order indices.
     thresholds : np.ndarray
-        Rejection thresholds.
-
     Returns
     -------
     np.ndarray
-        Input-order rejection mask.
     """
     m = sortedp.shape[1]
     ok = sortedp <= thresholds
@@ -541,12 +504,9 @@ def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     Parameters
     ----------
     pv : np.ndarray
-        P-value families by row.
-
     Returns
     -------
     dict[str, np.ndarray]
-        Rejection masks by procedure.
     """
     m = pv.shape[1]
     out = {}
@@ -575,9 +535,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
-        Random generator.
     n_sims : int, optional
-        Simulated p-value families.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()
@@ -596,9 +554,8 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     # Raise survives ``-O``; this family sets every correction denominator.
     if m_full != N_PRIMARY:
         raise RuntimeError(
-            f"PART 4 built {m_full} full-family contrasts but power_analysis "
-            f"declares N_PRIMARY = {N_PRIMARY}; the simulated family no longer "
-            "matches the study's, so its Bonferroni alpha is wrong."
+            f"PART 4 built {m_full} contrasts but N_PRIMARY = {N_PRIMARY}; "
+            "the simulated Bonferroni alpha would be wrong."
         )
     true_diff = np.array([abs(rates[c[0], c[1], c[2]] - rates[c[3], c[4], c[5]])
                           for c in contrasts])
@@ -633,9 +590,8 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     # PART 5 uses this reduced-family correction denominator.
     if m_red != N_REDUCED:
         raise RuntimeError(
-            f"PART 4 built {m_red} reduced-family tests but N_REDUCED is "
-            f"{N_REDUCED}; PART 5's alpha_trend_studywide (ALPHA / N_REDUCED) "
-            "would then correct the trend test in a family that does not exist."
+            f"PART 4 built {m_red} reduced tests but N_REDUCED = {N_REDUCED}; "
+            "PART 5's study-wide alpha would be wrong."
         )
 
     def summarize(

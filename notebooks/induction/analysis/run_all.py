@@ -36,12 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments.
-
     Returns
     -------
     int
-        Success status; scripts raise on failure.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",

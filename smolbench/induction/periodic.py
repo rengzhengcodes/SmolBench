@@ -82,26 +82,23 @@ class PeriodicConfig:
                         if gcd(a, b) != 1:
                             raise ValueError(
                                 f"Periods must be pairwise coprime; gcd({a}, {b}) = {gcd(a, b)}. "
-                                "Without coprimality lcm(periods) < prod(periods) and the "
-                                "sequence length is no longer the product you asked for. "
-                                "Pass expect_seq_len=<length> to use a non-coprime set on "
-                                "purpose (the divisor pathway)."
+                                "Pass expect_seq_len=<length> to use a non-coprime "
+                                "set on purpose (the divisor pathway)."
                             )
             else:
                 actual = lcm(*periods)
                 if actual != self.expect_seq_len:
+                    # This pathway exists to hold the extensional listing's
+                    # size fixed.
                     raise ValueError(
                         f"lcm(periods) is {actual}, not the declared expect_seq_len "
-                        f"{self.expect_seq_len}. Every period must divide the declared "
-                        "length (and together they must reach it) or the extensional "
-                        "listing silently changes size, which is the one thing this "
-                        "pathway exists to hold fixed."
+                        f"{self.expect_seq_len}."
                     )
             object.__setattr__(self, "periods", periods)
         elif self.expect_seq_len is not None:
             raise ValueError(
-                "expect_seq_len only means something alongside an explicit `periods` "
-                "set; on the default 1..n pathway the length is lcm(1..n) by definition."
+                "expect_seq_len only means something alongside an explicit "
+                "`periods` set."
             )
         if isinstance(self.labels, int):
             if self.labels != self.n:
@@ -143,12 +140,9 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
     Parameters
     ----------
     config : PeriodicConfig
-        Periodic configuration.
-
     Returns
     -------
     Tuple[int, ...]
-        Sorted harmonic periods.
     """
     if config.periods is None:
         return tuple(range(1, config.n + 1))
@@ -161,12 +155,9 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     Parameters
     ----------
     config : PeriodicConfig
-        Periods, labels, and separator.
-
     Returns
     -------
     Tuple[PeriodToLabel, PosToCompound]
-        Generated mappings.
     """
     periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
@@ -240,32 +231,21 @@ def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -
     Parameters
     ----------
     name : str
-        Condition name.
     condition : Condition
-        Condition to render.
     prompter : Prompter
-        Prompt configuration.
-
     Returns
     -------
     string.Template
-        Selected template.
-
     Raises
     ------
     ValueError
-        Missing range-free template for an ``omit_range`` condition.
     """
     if not condition.omit_range:
         return prompter.template
     if prompter.range_free_template is None:
         raise ValueError(
             f"condition {name!r} has omit_range=True but "
-            "prompter.range_free_template is None: a range-omitting "
-            "condition must be given its own range-free question. Falling "
-            "back to prompter.template would render the ordinary, "
-            "range-stating question -- exactly the leak this condition "
-            "exists to remove."
+            "prompter.range_free_template is None."
         )
     return prompter.range_free_template
 
@@ -287,32 +267,25 @@ def _verify_no_range_leak(
     Parameters
     ----------
     name : str
-        Condition name.
     query : Dict[str, str]
-        Substitutions whose range values stay hidden.
     template : string.Template
-        Template rendered for this condition.
     rendered : str
-        Prompt to inspect.
     """
     identifiers = template.get_identifiers()
     for key in RANGE_KEYS:
         if key in identifiers:
             raise ValueError(
-                f"condition {name!r} is omit_range=True (its prompt must "
-                f"never reveal the position range) but its template "
-                f"substitutes {key}: the supplied range_free_template leaks "
-                "the very thing it exists to omit."
+                f"condition {name!r} is omit_range=True but its "
+                f"range_free_template substitutes {key}."
             )
         if key not in query:
             continue
         value = str(query[key])
         if len(value) >= _MIN_SEARCHABLE_RANGE_VALUE_LEN and value in rendered:
             raise ValueError(
-                f"condition {name!r} is omit_range=True (its prompt must "
-                f"never reveal the position range) but its rendered prompt "
-                f"still contains {key}={query[key]!r}: the supplied "
-                "range_free_template leaks the very thing it exists to omit."
+                f"condition {name!r} is omit_range=True but its rendered "
+                f"range_free_template prompt still contains "
+                f"{key}={query[key]!r}."
             )
 
 
@@ -328,23 +301,15 @@ def get_periodic_prompts(
     Parameters
     ----------
     config : PeriodicConfig
-        Periodic configuration.
     prompter : Prompter
-        Prompt configuration.
     tokenizer : Tokenizer
-        Model tokenizer defining padded-arm targets.
     conditions : Mapping[str, Condition], optional
-        Conditions to render.
-
     Yields
     ------
     RenderedQuery
-        Prompts and counts for every condition.
-
     Raises
     ------
     ValueError
-        Invalid padding target, impossible padding, or missing/leaking range-free template.
     """
     # Validate before rendering to avoid partial output.
     for name, condition in conditions.items():
@@ -357,12 +322,11 @@ def get_periodic_prompts(
                 f"condition not present in conditions ({sorted(conditions)})."
             )
         if conditions[target].match_tokens_to is not None:
+            # A padded arm's own count only exists after its pad search, so a
+            # chain of padded arms has nothing to bottom out on.
             raise ValueError(
                 f"condition {name!r}: match_tokens_to target {target!r} is "
-                f"itself padded (match_tokens_to={conditions[target].match_tokens_to!r}). "
-                "A padded arm's own count is not available to pad against "
-                "-- it depends on the very pad search that has not run yet "
-                "-- and a chain of padded arms has no count to bottom out on."
+                "itself padded."
             )
 
     period_to_label, pos_to_compound = generate_sequence(config)
@@ -425,20 +389,13 @@ def _get_periodic_quizzes(
     Parameters
     ----------
     config : PeriodicConfig
-        Periodic configuration.
     prompter : Prompter
-        Prompt configuration.
     tokenizer : Tokenizer
-        Prompt tokenizer.
     conditions : Mapping[str, Condition]
-        Conditions to render.
     qna_cls : type[QnA]
-        QnA class for prompts.
-
     Returns
     -------
     Dict[str, Quiz]
-        Quizzes by condition.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
@@ -459,18 +416,12 @@ def get_periodic_quiz(
     Parameters
     ----------
     config : PeriodicConfig
-        Periodic configuration.
     prompter : Prompter
-        Prompt configuration.
     tokenizer : Tokenizer
-        Prompt tokenizer.
     conditions : Mapping[str, Condition], optional
-        Conditions to render.
-
     Returns
     -------
     Dict[str, Quiz]
-        Quizzes by condition.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, ToF)
 
@@ -487,18 +438,12 @@ def get_periodic_numeric_quiz(
     Parameters
     ----------
     config : PeriodicConfig
-        Periodic configuration.
     prompter : Prompter
-        Prompt configuration.
     tokenizer : Tokenizer
-        Prompt tokenizer.
     conditions : Mapping[str, Condition], optional
-        Conditions to render.
-
     Returns
     -------
     Dict[str, Quiz]
-        Quizzes by condition.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, Numeric)
 
@@ -517,16 +462,11 @@ def tof_membership_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
-        Period labels.
     pos_to_compound : PosToCompound
-        Generated compounds by position.
     seed : int
-        Sampling seed.
-
     Yields
     ------
     Tuple[Dict[str, str], bool]
-        Balanced sampled queries; excludes always-true period-1 labels.
     """
     rng = np.random.default_rng(seed)
 
@@ -564,16 +504,11 @@ def numeric_count_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
-        Period labels.
     pos_to_compound : PosToCompound
-        Generated compounds by position.
     seed : int
-        Unused protocol seed.
-
     Yields
     ------
     Tuple[Dict[str, str], int]
-        One exact count query per label.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
