@@ -388,7 +388,7 @@ class ChatClient:
         context_length : int, optional
             Token budget used to warn when responses approach the limit.
         extra_args : dict, optional
-            Merged into the request body (e.g.
+            Extra request fields merged before protected seed and stream keys.
         request_timeout : int, optional
             Per-request read timeout in seconds, overriding ``read_timeout_s``.
         max_retries : int, optional

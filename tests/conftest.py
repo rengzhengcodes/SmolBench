@@ -28,14 +28,14 @@ def import_run_study(
     Parameters
     ----------
     name : str
-        Input value controlling ``name``.
+        Temporary module name used for the isolated import.
     env : dict[str, str] or None, optional
-        Input value controlling ``env``.
+        Environment overrides applied while importing the module.
 
     Returns
     -------
     tuple[ModuleType or None, BaseException or None, dict[str, str]]
-        Computed ``tuple[ModuleType or None`` value.
+        Imported module, captured exception, and resulting environment.
     """
     saved = dict(os.environ)
     module: ModuleType | None = None
