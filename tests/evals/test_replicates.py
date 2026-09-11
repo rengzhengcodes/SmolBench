@@ -16,7 +16,10 @@ RUN_TS = datetime(2026, 8, 10, tzinfo=timezone.utc)
 def make_quizzes(seed: int, model: str):
     """Two info types of different sizes so pooled slicing is observable."""
     return {
-        "intens": (Numeric(prompt=f"i1/{seed}", answer=1), Numeric(prompt=f"i2/{seed}", answer=2)),
+        "intens": (
+            Numeric(prompt=f"i1/{seed}", answer=1),
+            Numeric(prompt=f"i2/{seed}", answer=2),
+        ),
         "extens": (Numeric(prompt=f"e1/{seed}", answer=3),),
     }
 
@@ -24,8 +27,11 @@ def make_quizzes(seed: int, model: str):
 @pytest.fixture
 def harness(tmp_path):
     return ReplicateHarness(
-        results_dir=tmp_path, archetype_tags={"stub-model": "decode"}, make_quizzes=make_quizzes,
-        seeds=(1, 2), info_types=("intens", "extens"),
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        seeds=(1, 2),
+        info_types=("intens", "extens"),
     )
 
 
@@ -37,7 +43,8 @@ def fake_evaluate(monkeypatch):
     def _evaluate(quiz, model, seed, **kwargs):
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
         marks = tuple(
-            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1) for q in quiz
+            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
+            for q in quiz
         )
         return Marks(model=model, marks=marks)
 
@@ -88,11 +95,17 @@ def test_run_replicates_passes_model_to_quiz_factory(tmp_path, fake_evaluate):
         return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
 
     ReplicateHarness(
-        results_dir=tmp_path, archetype_tags={"stub-model": "decode"},
-        make_quizzes=recording_factory, seeds=(1, 2), info_types=("intens",),
+        results_dir=tmp_path,
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=recording_factory,
+        seeds=(1, 2),
+        info_types=("intens",),
     ).run_replicates("stub-model")
     assert seen == [(1, "stub-model"), (2, "stub-model")]
-    assert Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query == "i/1/stub-model"
+    assert (
+        Marks.load(tmp_path / "decode_intens" / "rep_1.yaml").marks[0].query
+        == "i/1/stub-model"
+    )
 
 
 def test_force_seeds(harness, fake_evaluate):
@@ -109,9 +122,9 @@ def test_force_seeds(harness, fake_evaluate):
     assert one.has_outstanding("stub-model")
     one.run_replicates("stub-model")
     assert len(fake_evaluate) == 2 * n_first + 1
-    assert not dataclasses.replace(harness, force_seeds=frozenset({999})).has_outstanding(
-        "stub-model"
-    )
+    assert not dataclasses.replace(
+        harness, force_seeds=frozenset({999})
+    ).has_outstanding("stub-model")
 
 
 def test_cot_chain_lengths(harness, capsys):

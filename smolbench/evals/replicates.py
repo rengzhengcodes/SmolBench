@@ -21,10 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
 
-from smolbench.evals import Marks, Quiz
-from smolbench.evals import provider
-from smolbench.evals import results_store
-from smolbench.evals.results_store import ReplicateAddress, ResultsStore, resolve_store, utcnow
+from smolbench.evals import Marks, Quiz, provider, results_store
+from smolbench.evals.results_store import (
+    ReplicateAddress,
+    ResultsStore,
+    resolve_store,
+    utcnow,
+)
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,9 @@ class ReplicateHarness:
         """
         return resolve_store(self.results_dir, self.prefix)
 
-    def _address(self, model: Optional[str], tag: str, info: str, seed: int) -> ReplicateAddress:
+    def _address(
+        self, model: Optional[str], tag: str, info: str, seed: int
+    ) -> ReplicateAddress:
         """Build one replicate's store address.
 
         ``model=None`` is the valid tag-only-read case (see
@@ -172,7 +177,7 @@ class ReplicateHarness:
                 n: int = len(quizzes[info])
                 marks = Marks(
                     model=model,
-                    marks=tuple(pooled.marks[start:start + n]),
+                    marks=tuple(pooled.marks[start : start + n]),
                     # A private copy per dump, so a caller mutating its mapping
                     # later cannot alter what a replicate claims it ran on.
                     server_config=dict(server_config) if server_config else None,
@@ -180,7 +185,9 @@ class ReplicateHarness:
                 start += n
                 # No mkdir: LocalResultsStore.dump_marks creates its own parent
                 # directory, and S3ResultsStore.dump_marks needs none.
-                self.store.dump_marks(marks, self._address(model, tag, info, seed), run_ts)
+                self.store.dump_marks(
+                    marks, self._address(model, tag, info, seed), run_ts
+                )
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
                     f"{marks.correct}/{len(marks.marks)} correct"
@@ -268,4 +275,6 @@ class ReplicateHarness:
             The resolved S3 log prefix is empty, or a listed entry's local
             destination resolves outside ``results_dir``.
         """
-        return results_store.sync_down(self.results_dir, self.archetype_tags, self.prefix)
+        return results_store.sync_down(
+            self.results_dir, self.archetype_tags, self.prefix
+        )

@@ -34,7 +34,12 @@ def test_dump_dumps_load_loads_round_trip(tmp_path):
     assert marks.server_config is None
     assert Marks.loads(text).server_config is None
     stamped = dataclasses.replace(
-        marks, server_config={"instance_type": "p6-b200.48xlarge", "gpu": "8x B200 180GB", "tp": 8}
+        marks,
+        server_config={
+            "instance_type": "p6-b200.48xlarge",
+            "gpu": "8x B200 180GB",
+            "tp": 8,
+        },
     )
     loaded = Marks.loads(stamped.dumps())
     assert loaded.server_config == stamped.server_config
@@ -58,5 +63,3 @@ def test_loads_uses_first_bytes_not_substring():
     text = marks.dumps()
     assert "!!python/object" in text and not text.startswith("!!python/object")
     assert Marks.loads(text) == marks
-
-

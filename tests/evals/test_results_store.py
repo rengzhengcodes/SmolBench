@@ -3,14 +3,21 @@
 import hashlib
 import io
 from datetime import datetime, timezone
+
 import pytest
 from botocore.exceptions import ClientError
 
 from smolbench.evals import Mark, Marks, Numeric, _aws, provider, replicates
 from smolbench.evals import results_store as rs
 from smolbench.evals.results_store import (
-    LocalResultsStore, ReplicateAddress, S3ResultsStore, experiment_name,
-    format_run_ts, parse_s3_uri, resolve_store, sync_down,
+    LocalResultsStore,
+    ReplicateAddress,
+    S3ResultsStore,
+    experiment_name,
+    format_run_ts,
+    parse_s3_uri,
+    resolve_store,
+    sync_down,
 )
 
 BUCKET = "smolbench-results-414266451290"
@@ -22,8 +29,12 @@ TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
 def sample_marks(model="stub-model", n=2, score=1) -> Marks:
     # A pinned date keeps Marks equality (and dumped bytes) exact.
-    marks = tuple(Mark(query=f"q{i}", answer=i, response=str(i), score=score) for i in range(n))
-    return Marks(model=model, marks=marks, date=datetime(2026, 8, 10, tzinfo=timezone.utc))
+    marks = tuple(
+        Mark(query=f"q{i}", answer=i, response=str(i), score=score) for i in range(n)
+    )
+    return Marks(
+        model=model, marks=marks, date=datetime(2026, 8, 10, tzinfo=timezone.utc)
+    )
 
 
 def addr(tag="decode", info="intens", seed=1776, model="stub-model"):
@@ -54,8 +65,11 @@ class FakeS3Client:
 
     def _entry(self, key):
         body = self.objects[key]
-        return {"Key": key, "Size": len(body),
-                "ETag": self.etags.get(key, f'"{hashlib.md5(body).hexdigest()}"')}
+        return {
+            "Key": key,
+            "Size": len(body),
+            "ETag": self.etags.get(key, f'"{hashlib.md5(body).hexdigest()}"'),
+        }
 
     def _matching(self, prefix):
         return sorted(k for k in self.objects if k.startswith(prefix))
@@ -65,13 +79,17 @@ class FakeS3Client:
 
     def get_object(self, Bucket, Key):
         if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject")
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject"
+            )
         return {"Body": io.BytesIO(self.objects[Key])}
 
     def list_objects_v2(self, Bucket, Prefix="", MaxKeys=None):
         self.probes.append((Prefix, MaxKeys))
-        return {"Contents": [self._entry(k) for k in self._matching(Prefix)[:MaxKeys]],
-                "IsTruncated": False}
+        return {
+            "Contents": [self._entry(k) for k in self._matching(Prefix)[:MaxKeys]],
+            "IsTruncated": False,
+        }
 
     def get_paginator(self, operation_name):
         return self
@@ -120,7 +138,9 @@ def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
     store.dump_marks(marks, addr(), TS1)
     d = tmp_path / "decode_intens"
     marks.dump(tmp_path / "reference.yaml")
-    assert (d / "rep_1776.yaml").read_bytes() == (tmp_path / "reference.yaml").read_bytes()
+    assert (d / "rep_1776.yaml").read_bytes() == (
+        tmp_path / "reference.yaml"
+    ).read_bytes()
     assert store.exists(addr()) and store.load_marks(addr()) == marks
     LocalResultsStore(tmp_path, "one_hop_").dump_marks(marks, addr(), TS1)
     assert (tmp_path / "one_hop_decode_intens" / "rep_1776.yaml").is_file()
@@ -138,7 +158,9 @@ def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
 
 def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     """Pinned key scheme; a re-run ADDS a key; reads and list_seeds take the earliest."""
-    store = S3ResultsStore(BUCKET, "", "periodic_moe", "us-west-2")  # bucket/base/exp/region
+    store = S3ResultsStore(
+        BUCKET, "", "periodic_moe", "us-west-2"
+    )  # bucket/base/exp/region
     with pytest.raises(FileNotFoundError):
         store.load_marks(addr())
     moe = ReplicateAddress(tag="moe", info="extens", seed=1776, model="gpt-oss-120b")
@@ -146,7 +168,8 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     store.dump_marks(sample_marks(score=0), moe, TS2)  # a re-run adds, never overwrites
     assert sorted(fake_s3.objects) == [
         "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml",
-        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506Z.yaml"]
+        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506Z.yaml",
+    ]
     assert store.load_marks(moe).marks[0].score == 1
     store.dump_marks(sample_marks(score=1), addr(), TS1)
     other = addr(seed=1777)
@@ -159,8 +182,10 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     assert store.list_seeds("never-served", "decode", "intens") == []
     based = S3ResultsStore(BUCKET, "archive/2026-08", "periodic_moe", "us-west-2")
     based.dump_marks(sample_marks(), addr(seed=1), TS1)
-    assert ("archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000Z.yaml"
-            in fake_s3.objects)
+    assert (
+        "archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000Z.yaml"
+        in fake_s3.objects
+    )
     # Resume-skip lists at most one key, and ``--`` stops sibling info prefixes.
     assert store.exists(addr())
     assert fake_s3.probes[-1] == ("periodic_moe/stub-model/seed=1776/intens--", 1)
@@ -193,13 +218,24 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
         (URI, "notebooks/periodic_moe/results", "", "", "periodic_moe"),
         (URI, "notebooks/divisor/results", "one_hop_", "", "divisor/one_hop"),
         (URI, "notebooks/brand_new/results", "", "", "brand_new"),  # need not exist
-        (f"{URI}/archive/2026-08", "notebooks/periodic/results", "", "archive/2026-08",
-         "periodic"),
+        (
+            f"{URI}/archive/2026-08",
+            "notebooks/periodic/results",
+            "",
+            "archive/2026-08",
+            "periodic",
+        ),
     ]:
         monkeypatch.setenv("SMOLBENCH_RESULTS_S3", uri)
         store = resolve_store(fake_repo / rel, prefix)  # S3 fields imply the S3 store
-        assert (store.bucket, store.base_prefix, store.experiment) == (BUCKET, base, exp)
-        assert store.describe() == f"s3://{BUCKET}/" + "/".join(p for p in (base, exp) if p)
+        assert (store.bucket, store.base_prefix, store.experiment) == (
+            BUCKET,
+            base,
+            exp,
+        )
+        assert store.describe() == f"s3://{BUCKET}/" + "/".join(
+            p for p in (base, exp) if p
+        )
     results = fake_repo / "notebooks/periodic/results"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     assert resolve_store(results).region is None
@@ -208,8 +244,17 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
     assert resolve_store(results).region == "us-west-2"
     assert parse_s3_uri(f"s3://{BUCKET}/") == (BUCKET, "")
-    assert parse_s3_uri(f"s3://{BUCKET}/archive/2026-08/") == (BUCKET, "archive/2026-08")
-    for bad in ("bucket", "https://bucket/x", "s3://", "s3://buck//archive", "s3://bu ck"):
+    assert parse_s3_uri(f"s3://{BUCKET}/archive/2026-08/") == (
+        BUCKET,
+        "archive/2026-08",
+    )
+    for bad in (
+        "bucket",
+        "https://bucket/x",
+        "s3://",
+        "s3://buck//archive",
+        "s3://bu ck",
+    ):
         with pytest.raises(ValueError):
             parse_s3_uri(bad)
     # Validation happens BEFORE the repo-anchor check, so a typo always fails loudly.
@@ -218,7 +263,9 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
         resolve_store(tmp_path / "somewhere-else")
 
 
-def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3, tmp_path):
+def test_sync_down_translates_and_guards(
+    monkeypatch, s3_env, fake_repo, fake_s3, tmp_path
+):
     """model -> TAG, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, earliest run only."""
     results = fake_repo / "notebooks/periodic/results"
     body = sample_marks(score=1).dumps().encode()
@@ -230,11 +277,24 @@ def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3
     assert (results / "moe_extens" / "rep_1776.yaml").read_bytes() == body
     assert (results / "decode_intens" / "rep_1777.yaml").read_bytes() == body
     divisor = fake_repo / "notebooks/divisor/results"
-    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1, "divisor/one_hop")] = body
-    fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1, "divisor/one_hop")] = body
-    argv = [str(divisor), "--tag", "stub-model=decode", "--tag", "gpt-oss-120b=moe",
-            "--prefix", "one_hop_"]
-    assert rs.main(argv) == 0  # the CLI re-types the repeatable tag map, then calls sync_down
+    fake_s3.objects[log_key("stub-model", 1776, "intens", TS1, "divisor/one_hop")] = (
+        body
+    )
+    fake_s3.objects[log_key("gpt-oss-120b", 1776, "extens", TS1, "divisor/one_hop")] = (
+        body
+    )
+    argv = [
+        str(divisor),
+        "--tag",
+        "stub-model=decode",
+        "--tag",
+        "gpt-oss-120b=moe",
+        "--prefix",
+        "one_hop_",
+    ]
+    assert (
+        rs.main(argv) == 0
+    )  # the CLI re-types the repeatable tag map, then calls sync_down
     assert (divisor / "one_hop_decode_intens" / "rep_1776.yaml").read_bytes() == body
     assert (divisor / "one_hop_moe_extens" / "rep_1776.yaml").read_bytes() == body
     with pytest.raises(SystemExit):
@@ -242,8 +302,11 @@ def test_sync_down_translates_and_guards(monkeypatch, s3_env, fake_repo, fake_s3
     # Refetch unless a local copy's MD5 verifies against the ETag: an in-place regrade
     # (byte-length preserving, different MD5) and a multipart ETag both refetch.
     assert len(rerun) == len(body) and rerun != body, "premise"
-    for seed, local, suffix, downloads in [(1, body, "", 0), (2, rerun, "", 1),
-                                           (3, body, "-2", 1)]:
+    for seed, local, suffix, downloads in [
+        (1, body, "", 0),
+        (2, rerun, "", 1),
+        (3, body, "-2", 1),
+    ]:
         fake_s3.objects.clear()
         key = log_key("stub-model", seed, "intens", TS1)
         fake_s3.objects[key] = body
@@ -284,19 +347,35 @@ def s3_harness(fake_repo, s3_env, fake_s3, monkeypatch):
 
     def _evaluate(quiz, model, seed, **kwargs):
         calls.append((seed, len(quiz)))
-        return Marks(model=model, marks=tuple(
-            Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
-            for q in quiz))
+        return Marks(
+            model=model,
+            marks=tuple(
+                Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
+                for q in quiz
+            ),
+        )
+
     monkeypatch.setattr(provider, "evaluate", _evaluate)
-    return replicates.ReplicateHarness(
-        results_dir=fake_repo / "notebooks/periodic_moe/results", seeds=(1, 2),
-        archetype_tags={"stub-model": "decode"}, info_types=("intens", "extens"),
-        make_quizzes=lambda seed, model: {
-            "intens": tuple(Numeric(prompt=f"i{i}/{seed}", answer=i) for i in (1, 2)),
-            "extens": (Numeric(prompt=f"e1/{seed}", answer=3),)}), calls
+    return (
+        replicates.ReplicateHarness(
+            results_dir=fake_repo / "notebooks/periodic_moe/results",
+            seeds=(1, 2),
+            archetype_tags={"stub-model": "decode"},
+            info_types=("intens", "extens"),
+            make_quizzes=lambda seed, model: {
+                "intens": tuple(
+                    Numeric(prompt=f"i{i}/{seed}", answer=i) for i in (1, 2)
+                ),
+                "extens": (Numeric(prompt=f"e1/{seed}", answer=3),),
+            },
+        ),
+        calls,
+    )
 
 
-def test_harness_runs_summarizes_and_syncs_down(s3_harness, fake_s3, monkeypatch, capsys):
+def test_harness_runs_summarizes_and_syncs_down(
+    s3_harness, fake_s3, monkeypatch, capsys
+):
     """The store is the cached log store; a run logs only to S3; sync_down lands it."""
     s3_harness, evaluated = s3_harness
     assert isinstance(s3_harness.store, S3ResultsStore)
@@ -310,13 +389,17 @@ def test_harness_runs_summarizes_and_syncs_down(s3_harness, fake_s3, monkeypatch
     assert evaluated == [(2, 3)]  # seed 1 skipped, seed 2 pooled
     assert sorted(fake_s3.objects) == [
         f"periodic_moe/stub-model/seed={seed}/{info}--{format_run_ts(TS1)}.yaml"
-        for seed in (1, 2) for info in ("extens", "intens")]
+        for seed in (1, 2)
+        for info in ("extens", "intens")
+    ]
     assert not s3_harness.has_outstanding("stub-model")
     assert not s3_harness.results_dir.exists()
     body = sample_marks().dumps().encode()
     _log(fake_s3, 1776, "extens", TS1, body)
     assert s3_harness.sync_down() == 5
-    assert (s3_harness.results_dir / "decode_extens" / "rep_1776.yaml").read_bytes() == body
+    assert (
+        s3_harness.results_dir / "decode_extens" / "rep_1776.yaml"
+    ).read_bytes() == body
     fake_s3.objects.clear()
     for seed in (1, 2):
         _log(fake_s3, seed, "intens", TS1, sample_marks(score=1).dumps().encode())
@@ -324,14 +407,21 @@ def test_harness_runs_summarizes_and_syncs_down(s3_harness, fake_s3, monkeypatch
     s3_harness.summarize("stub-model")
     out = capsys.readouterr().out
     # The earliest run scored 1 -> 4 correct, not 4 incorrect.
-    assert "decode/intens: 2/2 replicates -- correct=4 incorrect=0 invalid=0 acc=1.000" in out
-    assert "decode/extens: 0/2 replicates -- correct=0 incorrect=0 invalid=0 acc=n/a" in out
+    assert (
+        "decode/intens: 2/2 replicates -- correct=4 incorrect=0 invalid=0 acc=1.000"
+        in out
+    )
+    assert (
+        "decode/extens: 0/2 replicates -- correct=0 incorrect=0 invalid=0 acc=n/a"
+        in out
+    )
     fake_s3.objects.clear()
-    stamps = iter([TS1, TS2])  # one per pooled call: a per-dump utcnow() would exhaust this
+    stamps = iter(
+        [TS1, TS2]
+    )  # one per pooled call: a per-dump utcnow() would exhaust this
     patch_utcnow(monkeypatch, lambda: next(stamps))
     s3_harness.run_replicates("stub-model")
     keys = {s: [k for k in fake_s3.objects if f"seed={s}/" in k] for s in (1, 2)}
     assert [len(v) for v in keys.values()] == [2, 2]  # both infos logged, per seed
     stamps_of = {s: {k.rsplit("--", 1)[1] for k in v} for s, v in keys.items()}
     assert len(stamps_of[1]) == len(stamps_of[2]) == 1 and stamps_of[1] != stamps_of[2]
-
