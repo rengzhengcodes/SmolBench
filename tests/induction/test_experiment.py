@@ -46,8 +46,8 @@ def test_config_and_harness_passthrough(exp: InductionExperiment) -> None:
     assert harness.results_dir == exp.results_dir
     assert harness.archetype_tags == {"stub-model": "decode"}
     assert harness.make_quizzes is make_quizzes
-    # 1776 is the documented default epoch.
-    assert harness.seeds == exp.seeds == (1776, 1777, 1778)
+    # Zero is the documented default base seed.
+    assert harness.seeds == exp.seeds == (0, 1, 2)
     assert harness.info_types == ("intens", "extens")
     assert harness.prefix == ""
     assert harness.force_seeds is None
@@ -246,8 +246,8 @@ def test_shard_partition() -> None:
         archetype_tags={"stub-model": "decode"},
         make_quizzes=make_quizzes,
     ).seeds
-    # Default seeds begin at 1776.
-    assert unsharded == tuple(range(1776, 1806))
+    # Default seeds begin at zero.
+    assert unsharded == tuple(range(0, 30))
     for count in (1, 2, 3, 4, 7, 30):
         shards = [_sharded(count, i).seeds for i in range(count)]
         collected = [s for shard in shards for s in shard]
@@ -259,7 +259,7 @@ def test_shard_partition() -> None:
         assert max(sizes) - min(sizes) <= 1, f"count={count} sizes {sizes}"
         assert sum(sizes) == 30
         for index, shard in enumerate(shards):
-            assert all((s - 1776) % count == index for s in shard)
+            assert all(s % count == index for s in shard)
 
 
 @pytest.mark.parametrize("bad", [(0, 0), (3, 3), (-1, 2), (2, 2), (5, 3)])
@@ -312,9 +312,9 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(
     harness.run_replicates("stub-model")
 
     # Invoke once per seed with model.
-    assert calls == [(1776, "stub-model"), (1777, "stub-model"), (1778, "stub-model")]
+    assert calls == [(0, "stub-model"), (1, "stub-model"), (2, "stub-model")]
     for info in ("intens", "extens"):
-        for seed in (1776, 1777, 1778):
+        for seed in (0, 1, 2):
             stored = tmp_path / f"decode_{info}" / f"rep_{seed}.yaml"
             assert stored.exists(), stored
             marks = Marks.load(stored)
