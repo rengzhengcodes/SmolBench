@@ -5,8 +5,20 @@ import pytest
 from smolbench.evals import Numeric, ToF
 from smolbench.evals.openai_compat import grade
 from smolbench.evals.parsing import (
-    DEGENERATE, EMPTY, EXPRESSION, MARKUP, MULTIPLE_VALUES, PREFIXED, TRUNCATED,
-    UNPARSEABLE, VERBOSE, WRONG_LEXICON, is_degenerate, parse_for, parse_numeric, parse_tof,
+    DEGENERATE,
+    EMPTY,
+    EXPRESSION,
+    MARKUP,
+    MULTIPLE_VALUES,
+    PREFIXED,
+    TRUNCATED,
+    UNPARSEABLE,
+    VERBOSE,
+    WRONG_LEXICON,
+    is_degenerate,
+    parse_for,
+    parse_numeric,
+    parse_tof,
 )
 
 _TRUNCATED_CHAIN = (
@@ -17,13 +29,27 @@ _TRUNCATED_CHAIN = (
 
 @pytest.mark.parametrize(
     "text,value,violation",
-    [("True", True, None), ("False", False, None), ("true", True, None),
-     ("  False  ", False, None), ("Answer: False", False, PREFIXED),
-     ("Answer:\nFalse", False, PREFIXED), ("**False**", False, MARKUP),
-     ('"True".', True, MARKUP), ("Yes", True, WRONG_LEXICON), ("No", False, WRONG_LEXICON),
-     ("x" * 400 + "\n\nno entry says Wk handed to PD.\n\nAnswer: False", False, VERBOSE),
-     ("True, no wait, False", False, MULTIPLE_VALUES), ("   ", None, EMPTY),
-     ("maybe?", None, UNPARSEABLE), (_TRUNCATED_CHAIN, None, TRUNCATED)],
+    [
+        ("True", True, None),
+        ("False", False, None),
+        ("true", True, None),
+        ("  False  ", False, None),
+        ("Answer: False", False, PREFIXED),
+        ("Answer:\nFalse", False, PREFIXED),
+        ("**False**", False, MARKUP),
+        ('"True".', True, MARKUP),
+        ("Yes", True, WRONG_LEXICON),
+        ("No", False, WRONG_LEXICON),
+        (
+            "x" * 400 + "\n\nno entry says Wk handed to PD.\n\nAnswer: False",
+            False,
+            VERBOSE,
+        ),
+        ("True, no wait, False", False, MULTIPLE_VALUES),
+        ("   ", None, EMPTY),
+        ("maybe?", None, UNPARSEABLE),
+        (_TRUNCATED_CHAIN, None, TRUNCATED),
+    ],
 )
 def test_tof_extraction(text, value, violation):
     """A verdict is recovered from any shape that ends in one; unfinished chains are not."""
@@ -36,17 +62,27 @@ def test_tof_extraction(text, value, violation):
 
 @pytest.mark.parametrize(
     "text,value,violation",
-    [("2520", 2520, None), ("-7", -7, None), (" 42 ", 42, None),
-     ("Answer: 315", 315, PREFIXED), ("**42**", 42, MARKUP), ("\\boxed{280}", 280, MARKUP),
-     ("2520 // 8 = 315\n\n315", 315, MULTIPLE_VALUES), ("2520/2", 1260, EXPRESSION),
-     # A worked calculation after an "answer" lead-in: the terminal integer is
-     # the result; the first-after-lead would score the operand 2520.
-     ("The answer is computed as 2520 / 8 = 315", 315, MULTIPLE_VALUES),
-     # Over-long but varied bare integer: out of range, NOT a repetition
-     # collapse -- must not inflate the DEGENERATE census.
-     ("1234567890" * 5, None, UNPARSEABLE),
-     ("2520//2", 1260, EXPRESSION), ("1260 + 0", 1260, EXPRESSION),
-     ("2520 - 5 * 2", 2510, EXPRESSION), ("", None, EMPTY), ("no number here", None, UNPARSEABLE)],
+    [
+        ("2520", 2520, None),
+        ("-7", -7, None),
+        (" 42 ", 42, None),
+        ("Answer: 315", 315, PREFIXED),
+        ("**42**", 42, MARKUP),
+        ("\\boxed{280}", 280, MARKUP),
+        ("2520 // 8 = 315\n\n315", 315, MULTIPLE_VALUES),
+        ("2520/2", 1260, EXPRESSION),
+        # A worked calculation after an "answer" lead-in: the terminal integer is
+        # the result; the first-after-lead would score the operand 2520.
+        ("The answer is computed as 2520 / 8 = 315", 315, MULTIPLE_VALUES),
+        # Over-long but varied bare integer: out of range, NOT a repetition
+        # collapse -- must not inflate the DEGENERATE census.
+        ("1234567890" * 5, None, UNPARSEABLE),
+        ("2520//2", 1260, EXPRESSION),
+        ("1260 + 0", 1260, EXPRESSION),
+        ("2520 - 5 * 2", 2510, EXPRESSION),
+        ("", None, EMPTY),
+        ("no number here", None, UNPARSEABLE),
+    ],
 )
 def test_numeric_extraction(text, value, violation):
     """An integer is graded on what the response computes, not on an operand."""
@@ -92,11 +128,14 @@ def test_numeric_agrees_with_strict_parser(text):
 
 @pytest.mark.parametrize(
     "text",
-    ["0" * 24576,
-     "Okay, let me work through the intervals carefully. " * 5 + "‐" * 16000,
-     "## Step 1\n\n" * 300,
-     "## Step 1\n\n" * 400 + " ".join(f"unrelated token {i}" for i in range(20))
-     + "\n\nThe final answer is: 1"],
+    [
+        "0" * 24576,
+        "Okay, let me work through the intervals carefully. " * 5 + "‐" * 16000,
+        "## Step 1\n\n" * 300,
+        "## Step 1\n\n" * 400
+        + " ".join(f"unrelated token {i}" for i in range(20))
+        + "\n\nThe final answer is: 1",
+    ],
 )
 def test_degenerate(text):
     """Repetition collapse is a breakdown, not a parsing problem: no answer is mined out."""
@@ -107,10 +146,16 @@ def test_degenerate(text):
 
 @pytest.mark.parametrize(
     "text",
-    [" ".join(f"consider interval {i} where colour {i % 7} held the role until year {i * 3}"
-              for i in range(300)),
-     " ".join(f"in year {i} the role passed to colour {i % 5}" for i in range(40)) + "\n\nFalse",
-     "-" * 60 + "\nTrue", "True" + "\n" * 40],
+    [
+        " ".join(
+            f"consider interval {i} where colour {i % 7} held the role until year {i * 3}"
+            for i in range(300)
+        ),
+        " ".join(f"in year {i} the role passed to colour {i % 5}" for i in range(40))
+        + "\n\nFalse",
+        "-" * 60 + "\nTrue",
+        "True" + "\n" * 40,
+    ],
 )
 def test_not_degenerate(text):
     """Long genuine reasoning and formatting artefacts must not trip the detector."""
@@ -132,8 +177,12 @@ def test_grade_records_scores_and_compliance():
         ToF(prompt="q3", answer=True),
         ToF(prompt="q4", answer=True),
     )
-    responses = [("False", None), ("Answer: True", None), ("0" * 600, None),
-                 ("Answer: False", None)]
+    responses = [
+        ("False", None),
+        ("Answer: True", None),
+        ("0" * 600, None),
+        ("Answer: False", None),
+    ]
     marks = grade(quiz, responses, "stub-model")
 
     assert [m.score for m in marks.marks] == [1, 1, None, 0]
@@ -152,7 +201,9 @@ def test_grade_survives_a_parser_exception():
     saved = parsing_mod.parse_for
     parsing_mod.parse_for = exploding_parse
     try:
-        marks = oc.grade((ToF(prompt="q", answer=True),), [("True", None)], "stub-model")
+        marks = oc.grade(
+            (ToF(prompt="q", answer=True),), [("True", None)], "stub-model"
+        )
     finally:
         parsing_mod.parse_for = saved
 

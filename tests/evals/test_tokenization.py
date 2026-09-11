@@ -31,8 +31,14 @@ def record_repo(monkeypatch):
 
 def test_for_model_resolution(record_repo, monkeypatch):
     """hf_model_id resolves, tokenizer_hf_id overrides it, unknown aliases raise, and it caches."""
-    override = {"hf_model_id": "someone/FP8", "tokenizer_hf_id": "someone/Override", "tp": 8}
-    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "plain-model", {"hf_model_id": "someone/Base"})
+    override = {
+        "hf_model_id": "someone/FP8",
+        "tokenizer_hf_id": "someone/Override",
+        "tp": 8,
+    }
+    monkeypatch.setitem(
+        ec2.EC2_DEPLOY_SPECS, "plain-model", {"hf_model_id": "someone/Base"}
+    )
     monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "weights-only-model", override)
     assert tokenization.for_model("plain-model") == "tokenizer<someone/Base>"
     assert tokenization.for_model("weights-only-model") == "tokenizer<someone/Override>"

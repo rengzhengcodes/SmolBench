@@ -55,11 +55,19 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         for key in ("reasoning_content", "reasoning"):
             for ch in message.get(key) or "":
-                frame({"model": obj.get("model", "stub-model"),
-                       "choices": [{"delta": {key: ch}}]})
+                frame(
+                    {
+                        "model": obj.get("model", "stub-model"),
+                        "choices": [{"delta": {key: ch}}],
+                    }
+                )
         for ch in message.get("content") or "":
-            frame({"model": obj.get("model", "stub-model"),
-                   "choices": [{"delta": {"content": ch}}]})
+            frame(
+                {
+                    "model": obj.get("model", "stub-model"),
+                    "choices": [{"delta": {"content": ch}}],
+                }
+            )
         finish = (obj.get("choices") or [{}])[0].get("finish_reason", "stop")
         frame({"choices": [{"delta": {}, "finish_reason": finish}]})
         if obj.get("usage") is not None:
@@ -260,21 +268,24 @@ def _clear_provider_context_length_caches():
     gracefully (skips silently) if a provider module is ever renamed or
     removed, instead of failing collection for the whole suite.
     """
+
     def _clear() -> None:
         try:
             from smolbench.evals.providers import openrouter
+
             openrouter.get_model_context_length.cache_clear()
         except ImportError:
             pass
         try:
             from smolbench.evals.providers import primeintellect
+
             primeintellect.get_model_context_length.cache_clear()
         except ImportError:
             pass
 
-    _clear()   # drop any stale entries left by a previous test
+    _clear()  # drop any stale entries left by a previous test
     yield
-    _clear()   # leave a clean cache for whatever runs next
+    _clear()  # leave a clean cache for whatever runs next
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +331,7 @@ class S3Archive:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=full):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                out.append(key[len(self.prefix) + 1:] if self.prefix else key)
+                out.append(key[len(self.prefix) + 1 :] if self.prefix else key)
         return out
 
     def exists(self, rel: str) -> bool:
@@ -333,7 +344,9 @@ class S3Archive:
     def open(self, rel: str):
         """Return a streaming body for one object (read it, do not save it)."""
         try:
-            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))["Body"]
+            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))[
+                "Body"
+            ]
         except self._client.exceptions.NoSuchKey as exc:
             raise FileNotFoundError(self._key(rel)) from exc
 

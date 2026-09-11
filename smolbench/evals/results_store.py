@@ -34,8 +34,7 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 import smolbench
-from smolbench.evals import Marks
-from smolbench.evals import _aws
+from smolbench.evals import Marks, _aws
 
 
 def repo_root() -> Path:
@@ -76,7 +75,7 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
-    rest = uri[len("s3://"):].rstrip("/")
+    rest = uri[len("s3://") :].rstrip("/")
     segments = rest.split("/")
     for i, seg in enumerate(segments):
         kind = "bucket name" if i == 0 else "prefix segment"
@@ -214,7 +213,9 @@ class ResultsStore(abc.ABC):
         """
 
     @abc.abstractmethod
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
         No existence check; a caller wanting resume-skip calls :meth:`exists`
@@ -297,7 +298,9 @@ class LocalResultsStore(ResultsStore):
         """See ``ResultsStore.exists``. Backed by ``Path.exists``."""
         return self._path(addr).exists()
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """See ``ResultsStore.dump_marks``. Ignores `run_ts`; mkdirs its own
         parents, so one call is a complete unit of work on both backends.
         """
@@ -318,7 +321,7 @@ class LocalResultsStore(ResultsStore):
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
         for path in dirpath.glob("rep_*.yaml"):
-            seed_str = path.stem[len("rep_"):]  # "rep_1776" -> "1776"
+            seed_str = path.stem[len("rep_") :]  # "rep_1776" -> "1776"
             try:
                 seeds.add(int(seed_str))
             except ValueError:
@@ -357,7 +360,7 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     if not seed_part.startswith("seed=") or not filename.endswith(".yaml"):
         return None
     try:
-        seed = int(seed_part[len("seed="):])
+        seed = int(seed_part[len("seed=") :])
     except ValueError:
         return None
     stem = filename[: -len(".yaml")]
@@ -449,7 +452,9 @@ class S3ResultsStore(ResultsStore):
         )
         return bool(resp.get("Contents"))
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """See ``ResultsStore.dump_marks``. Backed by ``put_object`` into a key
         embedding `run_ts`; raises ``ValueError`` for ``model=None`` BEFORE the
         call, so a refused write leaves no object.
@@ -466,8 +471,14 @@ class S3ResultsStore(ResultsStore):
                 "log, where a bad object cannot later be corrected, only "
                 "deleted by hand."
             )
-        key = self._info_prefix(addr.model, addr.seed, addr.info) + format_run_ts(run_ts) + ".yaml"
-        self._client().put_object(Bucket=self.bucket, Key=key, Body=marks.dumps().encode())
+        key = (
+            self._info_prefix(addr.model, addr.seed, addr.info)
+            + format_run_ts(run_ts)
+            + ".yaml"
+        )
+        self._client().put_object(
+            Bucket=self.bucket, Key=key, Body=marks.dumps().encode()
+        )
 
     def load_marks(self, addr: ReplicateAddress) -> Marks:
         """See ``ResultsStore.load_marks``. Reads the EARLIEST logged run.
@@ -486,9 +497,7 @@ class S3ResultsStore(ResultsStore):
                 if earliest_key is None or key < earliest_key:
                     earliest_key = key
         if earliest_key is None:
-            raise FileNotFoundError(
-                f"no logged run under s3://{self.bucket}/{prefix}"
-            )
+            raise FileNotFoundError(f"no logged run under s3://{self.bucket}/{prefix}")
         obj = client.get_object(Bucket=self.bucket, Key=earliest_key)
         return Marks.loads(obj["Body"].read().decode())
 
@@ -506,7 +515,7 @@ class S3ResultsStore(ResultsStore):
         seeds: set[int] = set()
         for page in paginator.paginate(Bucket=self.bucket, Prefix=list_prefix):
             for obj in page.get("Contents", []):
-                parsed = _parse_log_entry(obj["Key"][len(list_prefix):])
+                parsed = _parse_log_entry(obj["Key"][len(list_prefix) :])
                 if parsed is None:
                     continue
                 seed, entry_info, _run_ts = parsed
@@ -697,7 +706,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 key = obj["Key"]
                 if key.endswith("/"):
                     continue  # zero-byte directory placeholder, never written by this module
-                parsed = _parse_log_entry(key[len(list_prefix):])
+                parsed = _parse_log_entry(key[len(list_prefix) :])
                 if parsed is None:
                     continue  # stray key under this prefix; not one of ours
                 seed, info, run_ts = parsed
@@ -714,7 +723,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 local_path.exists()
                 and etag_md5 is not None
                 and etag_md5
-                == hashlib.md5(local_path.read_bytes(), usedforsecurity=False).hexdigest()
+                == hashlib.md5(
+                    local_path.read_bytes(), usedforsecurity=False
+                ).hexdigest()
             ):
                 skipped += 1  # verified identical via ETag/MD5; see Notes
                 continue

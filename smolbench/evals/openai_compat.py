@@ -35,7 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 from joblib import Parallel, delayed
 
-from smolbench.evals import Quiz, Mark, Marks
+from smolbench.evals import Mark, Marks, Quiz
 
 #: HTTP timeout (seconds) for provider METADATA requests (``GET /models``,
 #: context-length lookups): small, fast payloads, so one shared constant covers
@@ -45,7 +45,9 @@ from smolbench.evals import Quiz, Mark, Marks
 METADATA_TIMEOUT_S: int = 120
 
 
-def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
+def metadata_get(
+    url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S
+) -> Any:
     """Perform one bearer-authenticated metadata GET and return its parsed JSON body.
 
     Callers build the URL, resolve the key and do all shape-specific
@@ -138,7 +140,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
             continue
         if not line.startswith("data:"):
             continue  # SSE comment/keepalive line
-        payload = line[len("data:"):].strip()
+        payload = line[len("data:") :].strip()
         if payload == "[DONE]":
             saw_done = True
             break
@@ -186,7 +188,9 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     # reasoning channel, and the caller's early-return for that case retains
     # the reasoning. "" would skip it, so the two transports would disagree on
     # retention for exactly the cap-length population.
-    message: Dict[str, Any] = {"content": "".join(content_parts) if saw_content else None}
+    message: Dict[str, Any] = {
+        "content": "".join(content_parts) if saw_content else None
+    }
     if saw_reasoning:
         message["reasoning_content"] = "".join(reasoning_parts)
     return {
@@ -211,8 +215,12 @@ def _no_extra_headers(model: str) -> Dict[str, str]:
     return {}
 
 
-def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
-          log_invalid: bool = False) -> Marks:
+def grade(
+    quiz: Quiz,
+    responses: List[Tuple[str, Optional[str]]],
+    model: str,
+    log_invalid: bool = False,
+) -> Marks:
     """Grade raw ``(content, reasoning)`` responses, one per question in quiz order.
 
     Each ``Mark`` records ``score`` (1 correct / 0 wrong / None invalid) and
@@ -245,23 +253,43 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
                 f"grade: parser raised on a response, marking invalid: "
                 f"{type(exc).__name__}: {exc}"
             )
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
-                                  reasoning=reasoning, score=None,
-                                  compliance="parser-error"))
+            mark_list.append(
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response=raw,
+                    reasoning=reasoning,
+                    score=None,
+                    compliance="parser-error",
+                )
+            )
             continue
         if parsed.value is None:
             if log_invalid:
                 logging.info(
                     f"unparseable response ({parsed.violation}): {raw[:120]!r}"
                 )
-            mark_list.append(Mark(query=q.prompt, answer=q.answer,
-                                  response=raw, reasoning=reasoning, score=None,
-                                  compliance=parsed.violation))
+            mark_list.append(
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response=raw,
+                    reasoning=reasoning,
+                    score=None,
+                    compliance=parsed.violation,
+                )
+            )
             continue
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
-                              reasoning=reasoning,
-                              score=int(q.score(parsed.value)),
-                              compliance=parsed.violation))
+        mark_list.append(
+            Mark(
+                query=q.prompt,
+                answer=q.answer,
+                response=raw,
+                reasoning=reasoning,
+                score=int(q.score(parsed.value)),
+                compliance=parsed.violation,
+            )
+        )
     return Marks(model=model, marks=tuple(mark_list))
 
 
@@ -275,7 +303,9 @@ def _render_progress(done: int, total: int, model: str, width: int = 30) -> None
     bar: str = "#" * filled + "-" * (width - filled)
     pct: float = 100.0 if total == 0 else 100.0 * done / total
     end: str = "\n" if done >= total else ""
-    print(f"\r{model}: [{bar}] {done}/{total} prompted ({pct:3.0f}%)", end=end, flush=True)
+    print(
+        f"\r{model}: [{bar}] {done}/{total} prompted ({pct:3.0f}%)", end=end, flush=True
+    )
 
 
 @dataclass(frozen=True)
@@ -486,7 +516,8 @@ class ChatClient:
                     url=url,
                     # Extra headers first, base pair second: on collision the
                     # base Authorization/Content-Type wins (``extra_headers``).
-                    headers=self.extra_headers(model) | {
+                    headers=self.extra_headers(model)
+                    | {
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
                     },
@@ -500,8 +531,11 @@ class ChatClient:
                         # include_usage puts the token counters on the final
                         # chunk; without it a streamed row loses them.
                         | {"seed": seed}
-                        | ({"stream": True, "stream_options": {"include_usage": True}}
-                           if stream else {})
+                        | (
+                            {"stream": True, "stream_options": {"include_usage": True}}
+                            if stream
+                            else {}
+                        )
                     ),
                     timeout=(
                         self.connect_timeout_s,
@@ -589,7 +623,9 @@ class ChatClient:
                         f"Response:\n{body}\n was {total_tokens} > {context_length}"
                     )
                 elif self._flag("INFO"):
-                    logging.info(f"Response:\n{body}\n was {total_tokens} <= {context_length}")
+                    logging.info(
+                        f"Response:\n{body}\n was {total_tokens} <= {context_length}"
+                    )
                 return ChatResult(
                     content=content,
                     reasoning=reasoning,
@@ -668,7 +704,9 @@ class ChatClient:
         )
         return result.content, result.reasoning
 
-    def _indexed_query(self, index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
+    def _indexed_query(
+        self, index: int, *args: Any, **kwargs: Any
+    ) -> Tuple[int, Tuple[str, Optional[str]]]:
         """Tag ``query()``'s result with the question's quiz position ``index``.
 
         Results stream back out of order (``return_as="generator_unordered"``);
@@ -706,7 +744,9 @@ class ChatClient:
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)
-        max_workers: int = max(1, min(total, max_parallel or self._default_max_parallel()))
+        max_workers: int = max(
+            1, min(total, max_parallel or self._default_max_parallel())
+        )
 
         # Stream results as they complete, so the progress bar reflects
         # finished prompts; each result carries its index to restore quiz order.
@@ -714,10 +754,17 @@ class ChatClient:
         completed: int = 0
         if show_progress:
             _render_progress(completed, total, model)
-        stream = Parallel(n_jobs=max_workers, prefer="threads", return_as="generator_unordered")(
+        stream = Parallel(
+            n_jobs=max_workers, prefer="threads", return_as="generator_unordered"
+        )(
             delayed(self._indexed_query)(
-                i, q.prompt, model, seed, ctx_len,
-                extra_args=extra_args, request_timeout=request_timeout,
+                i,
+                q.prompt,
+                model,
+                seed,
+                ctx_len,
+                extra_args=extra_args,
+                request_timeout=request_timeout,
             )
             for i, q in enumerate(quiz)
         )
@@ -726,6 +773,8 @@ class ChatClient:
             completed += 1
             if show_progress:
                 _render_progress(completed, total, model)
-        responses: List[Tuple[str, Optional[str]]] = [results_by_index[i] for i in range(total)]
+        responses: List[Tuple[str, Optional[str]]] = [
+            results_by_index[i] for i in range(total)
+        ]
 
         return grade(quiz, responses, model, log_invalid=self._flag("INFO"))

@@ -220,4 +220,3 @@ def for_model(model: str) -> Tokenizer:
     repo_id: str = spec.get("tokenizer_hf_id") or spec["hf_model_id"]
     logging.info(f"tokenization.for_model: {model!r} -> {repo_id}")
     return HFTokenizer.from_repo(repo_id)
-

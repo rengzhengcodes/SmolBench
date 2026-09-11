@@ -8,9 +8,9 @@ S3 object body; ``smolbench.evals.results_store`` owns that store.
 
 import os
 import re
-from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field
-from typing import TypeAlias, Sequence, Optional
+from datetime import datetime, timezone
+from typing import Optional, Sequence, TypeAlias
 
 Answer: TypeAlias = bool | int | str
 
