@@ -82,6 +82,13 @@ def test_a_shard_requires_an_explicit_state_file() -> None:
         build(shard=(0, 2))
 
 
+@pytest.mark.parametrize("state_file", ["", "  "])
+def test_a_blank_state_file_is_refused(state_file: str) -> None:
+    """Refuse blank state files because EC2 cannot persist at the repo root."""
+    with pytest.raises(ValueError, match="state_file"):
+        build(state_file=state_file)
+
+
 @pytest.mark.parametrize("shard", [(0, 0), (2, 2), (-1, 1)])
 def test_bad_shard_bounds_are_refused(shard: tuple[int, int]) -> None:
     """Refuse shard indices outside a positive shard-count range."""

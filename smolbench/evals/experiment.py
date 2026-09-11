@@ -54,7 +54,8 @@ class Experiment:
     Raises
     ------
     ValueError
-        If shard bounds are invalid or a shard has no explicit state file.
+        If ``state_file`` is blank, shard bounds are invalid, or a shard has no
+        explicit state file.
     """
 
     notebook_dir: str
@@ -69,6 +70,11 @@ class Experiment:
     force_seeds: Optional[frozenset[int]] = None
 
     def __post_init__(self) -> None:
+        if self.state_file is not None and not self.state_file.strip():
+            raise ValueError(
+                "state_file must name a file; an empty value resolves to the "
+                "repo root and ec2 cannot persist state there."
+            )
         if self.shard is not None:
             if self.state_file is None:
                 raise ValueError(
