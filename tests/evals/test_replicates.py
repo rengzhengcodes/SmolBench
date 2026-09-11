@@ -1,7 +1,5 @@
 """Test replication pooling, resumption, and forcing with the local store."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +28,7 @@ def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
 
 @pytest.fixture
 def harness(tmp_path: Path) -> ReplicateHarness:
+    """Build a local replicate harness."""
     return ReplicateHarness(
         results_dir=tmp_path,
         archetype_tags={"stub-model": "decode"},
@@ -50,6 +49,7 @@ def fake_evaluate(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         seed: int,
         **kwargs: Any,
     ) -> Marks:
+        """Return deterministic marks for evaluation."""
         calls.append({"n": len(quiz), "model": model, "seed": seed, "kwargs": kwargs})
         marks = tuple(
             Mark(
@@ -72,6 +72,7 @@ def test_run_replicates_pools_and_serializes(
     fake_evaluate: list[dict[str, Any]],
     tmp_path: Path,
 ) -> None:
+    """Run replicates concurrently and serialize their marks."""
     harness.run_replicates("stub-model", extra_args={"max_completion_tokens": 64})
     assert [c["n"] for c in fake_evaluate] == [3, 3]
     assert fake_evaluate[0]["kwargs"] == {"extra_args": {"max_completion_tokens": 64}}
@@ -97,6 +98,7 @@ def test_run_replicates_resume(
     fake_evaluate: list[dict[str, Any]],
     tmp_path: Path,
 ) -> None:
+    """Resume without repeating stored replicates."""
     assert harness.has_outstanding("stub-model")
     harness.run_replicates("stub-model")
     fake_evaluate.clear()
@@ -117,6 +119,7 @@ def test_run_replicates_passes_model_to_quiz_factory(
     seen: list = []
 
     def recording_factory(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
+        """Record model arguments passed to the quiz factory."""
         seen.append((seed, model))
         return {"intens": (Numeric(prompt=f"i/{seed}/{model}", answer=1),)}
 
