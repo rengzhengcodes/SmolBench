@@ -1,15 +1,10 @@
-"""Shared data types used by the eval harness.
-
-The question/answer structs a quiz is built from (``QnA``, ``ToF``,
-``Numeric``), the ``Quiz`` alias, and the ``Mark``/``Marks`` dataclasses
-recording one graded quiz. ``Marks`` round-trips through YAML, as a file or an
-S3 object body; ``smolbench.evals.results_store`` owns that store.
-"""
+"""Question, grading, and YAML result types for evaluations."""
 
 import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional, Sequence, TypeAlias
 
 Answer: TypeAlias = bool | int | str
@@ -19,21 +14,18 @@ Answer: TypeAlias = bool | int | str
 class QnA:
     """A quiz question and its ground truth answer."""
 
-    #: Prompt sent to the LLM.
+    #: Model prompt.
     prompt: str
-    #: Ground truth answer for the prompt.
+    #: Expected answer.
     answer: Answer
 
     @staticmethod
     def condition(ans: str) -> Answer:
-        """Convert a raw model response to this question's answer type.
-
-        Returns `ans` unchanged; subclasses parse and validate.
-        """
+        """Convert a raw response."""
         return ans
 
     def score(self, ans: Answer) -> bool:
-        """Return whether `ans` (normally `condition`'s output) equals the truth."""
+        """Return whether `ans` is correct."""
         return ans == self.answer
 
 
@@ -41,7 +33,7 @@ class QnA:
 class ToF(QnA):
     """A true/false question."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.answer, bool):
             raise ValueError(
                 f"self.answer = {self.answer} of type {type(self.answer)} not bool"
@@ -49,23 +41,18 @@ class ToF(QnA):
 
     @staticmethod
     def condition(ans: str) -> bool:
-        """Convert a raw model response to a bool.
+        """Convert a raw response to a boolean.
 
-        Case-insensitive, after stripping every non-letter character. The
-        lenient recovery path is ``smolbench.evals.parsing.parse_tof``.
+        Strip nonletters; accept only ``true`` or ``false``.
 
-        Raises
-        ------
-        ValueError
-            The remainder is not exactly "true"/"false" -- so ``"Answer: False"``
-            raises.
+        Parameters
+        ----------
+        ans : str
+        Returns
+        -------
+        bool
         """
-        # Strip everything but letters, so wrapping punctuation or markup
-        # (e.g. "**True**") does not block the match below. Not a regex sub:
-        # measured equal at answer-sized inputs (~0.15us either way; regex only
-        # wins past ~200 chars, where this parser rejects anyway), and
-        # str.isalpha keeps the Unicode letter class without a charset to
-        # maintain.
+        # `isalpha` retains Unicode letters without a maintained charset.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])
         match cleaned_ans.lower():
             case "false":
@@ -80,21 +67,22 @@ class ToF(QnA):
 class Numeric(QnA):
     """An integer-answer question."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.answer, int):
             raise ValueError(f"self.answer = {self.answer} is not int")
 
     @staticmethod
     def condition(ans: str) -> int:
-        """Extract the FIRST integer in a raw model response.
+        """Extract the first response integer.
 
-        First-match scores an operand when the model shows its working;
-        ``smolbench.evals.parsing.parse_numeric`` is the robust path.
+        First-match handles responses with working.
 
-        Raises
-        ------
-        ValueError
-            No integer in the response.
+        Parameters
+        ----------
+        ans : str
+        Returns
+        -------
+        int
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -105,148 +93,103 @@ class Numeric(QnA):
 Quiz: TypeAlias = Sequence[QnA]
 
 
-#: ``Mark.compliance`` value meaning "assessed: the response obeyed the output
-#: contract exactly". None (YAML ``null``) rather than a marker string, because
-#: the S3 results log is append-only and every reader of collected files --
-#: ``Marks.noncompliant`` and the analysis census's raw-YAML scan -- already
-#: keys on ``compliance: null`` = obeyed; a new marker would misread as a
-#: violation mode there.
-COMPLIANT = None
-#: ``Mark.compliance`` value meaning "never run through the compliance-aware
-#: parser". The field's DEFAULT, so a stored mark predating the field (loaded
-#: via ``Mark(**m)`` with no ``compliance`` key, or a legacy tagged file whose
-#: attribute lookup falls back to the class attribute) reads as not-assessed
-#: instead of masquerading as `COMPLIANT`.
-NOT_ASSESSED = "not-assessed"
+#: Compliance label, explicit to prevent truthiness inversions.
+COMPLIANT = "compliant"
 
 
 @dataclass(frozen=True)
 class Mark:
     """One question's grading result."""
 
-    #: Prompt sent to the model.
+    #: Model prompt.
     query: str
-    #: Ground truth answer.
+    #: Expected answer.
     answer: Answer
-    #: Raw, unprocessed model response (the content field only).
+    #: Raw response content.
     response: str
-    #: Score awarded (1=correct, 0=incorrect, None=invalid/unparseable).
+    #: `1` correct, `0` incorrect, or `None` invalid.
     score: Optional[int]
-    #: Chain-of-thought reasoning returned by the model, or None.
+    #: Format label, independent of correctness.
+    compliance: str
+    #: Returned reasoning, if any.
     reasoning: Optional[str] = None
-    #: How the response broke the prompt's output contract: a violation label
-    #: from `smolbench.evals.parsing`, `COMPLIANT` (None) when it obeyed the
-    #: contract exactly, or `NOT_ASSESSED` when nothing ever judged it -- the
-    #: default, so legacy stored marks that lack the field load as
-    #: not-assessed rather than as compliant. Separate from ``score`` so an
-    #: analysis can tell "the model was wrong" from "right but broke the
-    #: format".
-    compliance: Optional[str] = NOT_ASSESSED
 
 
 @dataclass(frozen=True)
 class Marks:
     """One model's grading result across a full quiz."""
 
-    #: The model that was evaluated.
+    #: Evaluated model.
     model: str
-    #: Per-question marks.
+    #: Per-question results.
     marks: tuple[Mark, ...]
-    #: Date the quiz was run.
+    #: Run date.
     date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    #: Serving-stack snapshot the completions were generated under (instance
-    #: type, GPUs, tensor-parallel degree, image, ...), so a result file is
-    #: self-describing about its hardware and needs no timestamp -> config side
-    #: table. None for a provider with nothing to report, and for stored results
-    #: predating the field. A plain default, not a default_factory, so a tagged
-    #: file missing the attribute falls back to the class attribute on access.
+    #: Serving-stack snapshot.
     server_config: Optional[dict] = None
+    #: Source run timestamp; S3 logs are append-only.
+    regraded_from: Optional[str] = None
 
     @property
     def correct(self) -> int:
+        """Return the number of correct marks."""
         return sum(1 for m in self.marks if m.score == 1)
 
     @property
     def incorrect(self) -> int:
+        """Return the number of incorrect marks."""
         return sum(1 for m in self.marks if m.score == 0)
 
     @property
     def invalid(self) -> int:
+        """Return the number of invalid marks."""
         return sum(1 for m in self.marks if m.score is None)
 
     @property
     def noncompliant(self) -> int:
-        """Count the marks whose response broke the prompt's output contract.
+        """Count format violations independent of correctness."""
+        return sum(1 for m in self.marks if m.compliance != COMPLIANT)
 
-        Independent of ``correct``/``incorrect``/``invalid``: a correct response
-        can still break the format, so this separates degraded instruction
-        following from degraded reasoning. `NOT_ASSESSED` marks (legacy files)
-        count as neither compliant nor noncompliant.
-        """
-        return sum(
-            1 for m in self.marks if m.compliance not in (COMPLIANT, NOT_ASSESSED)
-        )
-
-    # -- Serialization ------------------------------------------------------
-    # A result file is plain-dict YAML (safe_dump of dataclasses.asdict), NOT
-    # yaml.dump of the dataclasses: a python-object tag would weld every stored
-    # result to this class's import path (a rename would orphan the results tree)
-    # and force readers onto yaml.unsafe_load. ``load`` still reads the legacy
-    # tagged files this repo already committed. PyYAML lives in the notebook
-    # extra, so the imports stay inside the methods.
-    #
-    # ``dumps``/``loads`` are the str-in/str-out form, ``dump``/``load`` thin path
-    # wrappers. The split exists for ``S3ResultsStore``, which round-trips
-    # through put_object/get_object bodies with no path to open().
+    # Plain YAML mappings avoid Python-object tags and unsafe loaders.
 
     def dumps(self) -> str:
-        """Return this result as a ``yaml.safe_load``-able plain-mapping document."""
+        """Return a safe-loadable YAML mapping."""
         import yaml
 
         return yaml.safe_dump(asdict(self), default_flow_style=False, indent=4)
 
-    def dump(self, path) -> None:
-        """Write `dumps()`'s document to `path` atomically (tmp + ``os.replace``).
+    def dump(self, path: Path) -> None:
+        """Write YAML atomically.
 
-        Resume-skips gate on bare file presence (``ResultsStore.exists``), so
-        a file that exists must never be a torn write: an interrupted dump
-        would otherwise be skipped as already-collected forever.
+        Resume skips require intact existing files.
+
+        Parameters
+        ----------
+        path : Path
         """
         tmp = f"{path}.tmp"
-        with open(tmp, "w") as file:
+        with open(tmp, "w", encoding="utf-8") as file:
             file.write(self.dumps())
         os.replace(tmp, path)
 
     @classmethod
     def loads(cls, text: str) -> "Marks":
-        """Load a document written by `dumps`/`dump`, or by the legacy
-        ``yaml.dump(marks)`` format (``!!python/object`` tags)."""
+        """Load a YAML document written by this class."""
         import yaml
 
-        # A legacy file always opens with the top-level Marks tag. Testing the
-        # first bytes for that FULL tag (not a substring search, and not the
-        # bare "!!python/object" prefix any nested tag also carries) keeps a
-        # new-format file whose response text merely quotes a tag off the
-        # unsafe path. Committed legacy result files are still read: not dead
-        # code.
-        if text.startswith("!!python/object:smolbench.evals.Marks"):
-            # The tags name this module's class paths, so unsafe_load
-            # reconstructs the objects.
-            return yaml.unsafe_load(text)
-        # libyaml's C loader when available: summaries scan hundreds of MB of
-        # result YAML, and the pure-Python loader runs about 10x slower.
+        # Prefer the C loader for large summaries.
         data = yaml.load(text, Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
         return cls(
             model=data["model"],
             marks=tuple(Mark(**m) for m in data["marks"]),
             date=data["date"],
-            # .get: a file written before the field existed has no key.
-            server_config=data.get("server_config"),
+            server_config=data["server_config"],
+            regraded_from=data["regraded_from"],
         )
 
     @classmethod
-    def load(cls, path) -> "Marks":
-        """Read `path`'s full text and delegate to `loads`."""
-        with open(path) as file:
+    def load(cls, path: Path) -> "Marks":
+        """Load YAML from `path`."""
+        with open(path, encoding="utf-8") as file:
             text = file.read()
         return cls.loads(text)

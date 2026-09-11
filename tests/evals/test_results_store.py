@@ -1,14 +1,20 @@
 """Replicate results store: local tree, S3 append-only log, env resolution, sync_down."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import hashlib
 import io
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Self
 
 import pytest
 from botocore.exceptions import ClientError
 
 from smolbench.evals import Mark, Marks, Numeric, _aws, provider, replicates
 from smolbench.evals import results_store as rs
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals.results_store import (
     LocalResultsStore,
     ReplicateAddress,
@@ -22,30 +28,40 @@ from smolbench.evals.results_store import (
 
 BUCKET = "smolbench-results-414266451290"
 URI = f"s3://{BUCKET}"
-TS1 = datetime(2026, 8, 10, 19, 30, 0, tzinfo=timezone.utc)  # 20260810T193000Z
-TS2 = datetime(2026, 8, 11, 4, 5, 6, tzinfo=timezone.utc)  # 20260811T040506Z
+TS1 = datetime(2026, 8, 10, 19, 30, 0, tzinfo=timezone.utc)  # 20260810T193000.000000Z
+TS2 = datetime(2026, 8, 11, 4, 5, 6, tzinfo=timezone.utc)  # 20260811T040506.000000Z
 TAGS = {"gpt-oss-120b": "moe", "stub-model": "decode"}
 
 
-def sample_marks(model="stub-model", n=2, score=1) -> Marks:
-    # A pinned date keeps Marks equality (and dumped bytes) exact.
+def sample_marks(model: str = "stub-model", n: int = 2, score: int = 1) -> Marks:
+    # Pinned date keeps equality and dumped bytes exact.
     marks = tuple(
-        Mark(query=f"q{i}", answer=i, response=str(i), score=score) for i in range(n)
+        Mark(
+            query=f"q{i}", answer=i, response=str(i), score=score, compliance=COMPLIANT
+        )
+        for i in range(n)
     )
     return Marks(
         model=model, marks=marks, date=datetime(2026, 8, 10, tzinfo=timezone.utc)
     )
 
 
-def addr(tag="decode", info="intens", seed=1776, model="stub-model"):
+def addr(
+    tag: str = "decode",
+    info: str = "intens",
+    seed: int = 1776,
+    model: str | None = "stub-model",
+) -> ReplicateAddress:
     return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
 
-def log_key(model, seed, info, ts, experiment="periodic"):
+def log_key(
+    model: str, seed: int, info: str, ts: datetime, experiment: str = "periodic"
+) -> str:
     return f"{experiment}/{model}/seed={seed}/{info}--{format_run_ts(ts)}.yaml"
 
 
-def patch_utcnow(monkeypatch, fn):
+def patch_utcnow(monkeypatch: pytest.MonkeyPatch, fn: Callable[[], datetime]) -> None:
     for mod in (rs, replicates):  # both modules may have bound the utcnow seam
         monkeypatch.setattr(mod, "utcnow", fn)
 
@@ -53,17 +69,17 @@ def patch_utcnow(monkeypatch, fn):
 class FakeS3Client:
     """In-memory stand-in for the S3 calls the store makes, over one dict."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.objects: dict = {}
         self.etags: dict = {}  # key -> ETag override; unset = a correct quoted MD5
         self.probes: list = []  # (Prefix, MaxKeys) of every list_objects_v2 call
         self.requested: list = []  # (service, region) of every client build
 
-    def _fresh(self, service, region=None):
+    def _fresh(self, service: str, region: str | None = None) -> Self:
         self.requested.append((service, region))
         return self
 
-    def _entry(self, key):
+    def _entry(self, key: str) -> dict[str, Any]:
         body = self.objects[key]
         return {
             "Key": key,
@@ -71,30 +87,34 @@ class FakeS3Client:
             "ETag": self.etags.get(key, f'"{hashlib.md5(body).hexdigest()}"'),
         }
 
-    def _matching(self, prefix):
+    def _matching(self, prefix: str) -> list[str]:
         return sorted(k for k in self.objects if k.startswith(prefix))
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket: str, Key: str, Body: bytes) -> None:
         self.objects[Key] = Body
 
-    def get_object(self, Bucket, Key):
+    def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
         if Key not in self.objects:
             raise ClientError(
                 {"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject"
             )
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def list_objects_v2(self, Bucket, Prefix="", MaxKeys=None):
+    def list_objects_v2(
+        self, Bucket: str, Prefix: str = "", MaxKeys: int | None = None
+    ) -> dict[str, Any]:
         self.probes.append((Prefix, MaxKeys))
         return {
             "Contents": [self._entry(k) for k in self._matching(Prefix)[:MaxKeys]],
             "IsTruncated": False,
         }
 
-    def get_paginator(self, operation_name):
+    def get_paginator(self, operation_name: str) -> Self:
         return self
 
-    def paginate(self, Bucket=None, Prefix="", **kwargs):
+    def paginate(
+        self, Bucket: str | None = None, Prefix: str = "", **kwargs: Any
+    ) -> Iterator[dict[str, Any]]:
         """One key per page, plus a trailing page carrying no ``Contents``."""
         for key in self._matching(Prefix):
             yield {"Contents": [self._entry(key)]}
@@ -102,35 +122,35 @@ class FakeS3Client:
 
 
 @pytest.fixture
-def fake_s3(monkeypatch):
+def fake_s3(monkeypatch: pytest.MonkeyPatch) -> FakeS3Client:
     client = FakeS3Client()
     monkeypatch.setattr(_aws, "fresh_client", client._fresh)
     return client
 
 
 @pytest.fixture
-def s3_env(monkeypatch):
+def s3_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
 
 
 @pytest.fixture(autouse=True)
-def _no_ambient_store_env(monkeypatch):
-    """A shell's exported env vars must not change what these tests measure."""
+def _no_ambient_store_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear ambient store settings for isolated tests."""
     for var in ("SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION", "AWS_REGION"):
         monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture
-def fake_repo(monkeypatch, tmp_path):
-    # tmp_path/repo becomes repo_root, so nothing writes into the checkout.
+def fake_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    # Prevent writes to the checkout.
     root = tmp_path / "repo"
     root.mkdir()
     monkeypatch.setattr(rs, "repo_root", lambda: root)
     return root
 
 
-def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
+def test_local_layout_is_the_unchanged_analysis_tree(tmp_path: Path) -> None:
     """Keyed by tag/info/seed only; model and run_ts do not appear, last write wins."""
     store = LocalResultsStore(tmp_path)
     marks = sample_marks()
@@ -147,7 +167,7 @@ def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
     store.dump_marks(sample_marks(score=0), addr(model="model-b"), TS2)
     assert sorted(p.name for p in d.glob("*")) == ["rep_1776.yaml"]
     assert store.load_marks(addr()).marks[0].score == 0
-    # list_seeds: sorted distinct ints, ignoring non-replicates and non-direct children.
+    # List only direct replicate seeds.
     (d / "nested").mkdir()
     for name in ("rep_2.yaml", "rep_10.yaml", "summary.yaml", "rep_abc.yaml"):
         (d / name).write_text("x")
@@ -156,19 +176,19 @@ def test_local_layout_is_the_unchanged_analysis_tree(tmp_path):
     assert store.list_seeds(None, "never_ran", "intens") == []
 
 
-def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
-    """Pinned key scheme; a re-run ADDS a key; reads and list_seeds take the earliest."""
+def test_s3_log_is_append_only_and_earliest_wins(fake_s3: FakeS3Client) -> None:
+    """Pinned key scheme; a re-run adds a key; reads and list_seeds take the earliest."""
     store = S3ResultsStore(
         BUCKET, "", "periodic_moe", "us-west-2"
     )  # bucket/base/exp/region
     with pytest.raises(FileNotFoundError):
         store.load_marks(addr())
     moe = ReplicateAddress(tag="moe", info="extens", seed=1776, model="gpt-oss-120b")
-    store.dump_marks(sample_marks(score=1), moe, TS1)  # the directive's worked example
+    store.dump_marks(sample_marks(score=1), moe, TS1)
     store.dump_marks(sample_marks(score=0), moe, TS2)  # a re-run adds, never overwrites
     assert sorted(fake_s3.objects) == [
-        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000Z.yaml",
-        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506Z.yaml",
+        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260810T193000.000000Z.yaml",
+        "periodic_moe/gpt-oss-120b/seed=1776/extens--20260811T040506.000000Z.yaml",
     ]
     assert store.load_marks(moe).marks[0].score == 1
     store.dump_marks(sample_marks(score=1), addr(), TS1)
@@ -183,17 +203,17 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     based = S3ResultsStore(BUCKET, "archive/2026-08", "periodic_moe", "us-west-2")
     based.dump_marks(sample_marks(), addr(seed=1), TS1)
     assert (
-        "archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000Z.yaml"
+        "archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000.000000Z.yaml"
         in fake_s3.objects
     )
-    # Resume-skip lists at most one key, and ``--`` stops sibling info prefixes.
+    # ``--`` prevents sibling info-prefix matches.
     assert store.exists(addr())
     assert fake_s3.probes[-1] == ("periodic_moe/stub-model/seed=1776/intens--", 1)
     assert set(fake_s3.requested) == {("s3", "us-west-2")}
     store.dump_marks(sample_marks(), addr(info="noise_intens"), TS1)
     assert store.exists(addr(info="noise_intens"))
     assert not store.exists(addr(info="int"))  # "--" stops a prefix-of-info match
-    # A model-less address is a READ shape: a ``None/`` key would be permanent.
+    # Model-less addresses are read-only; ``None/`` would persist.
     logged = len(fake_s3.objects)
     with pytest.raises(ValueError):
         store.dump_marks(sample_marks(), addr(model=None), TS1)
@@ -201,11 +221,13 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3):
     assert not store.exists(addr(model=None))
 
 
-def test_resolve_store(monkeypatch, fake_repo, tmp_path):
+def test_resolve_store(
+    monkeypatch: pytest.MonkeyPatch, fake_repo: Path, tmp_path: Path
+) -> None:
     """Unset env is local; a non-repo dir stays local even with the S3 env set."""
-    # Fixed-width UTC stamps are load-bearing: every "earliest" lookup is a string min.
-    assert format_run_ts(TS1) == "20260810T193000Z"
-    assert format_run_ts(TS2) == "20260811T040506Z"
+    # Fixed-width UTC enables lexical earliest-run lookup.
+    assert format_run_ts(TS1) == "20260810T193000.000000Z"
+    assert format_run_ts(TS2) == "20260811T040506.000000Z"
     now = rs.utcnow()
     assert now.tzinfo is not None and now.utcoffset().total_seconds() == 0
     assert experiment_name(fake_repo / "somewhere/else") == "somewhere/else"
@@ -238,7 +260,15 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
         )
     results = fake_repo / "notebooks/periodic/results"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
+    # Only the project bucket uses the configured region fallback.
+    from smolbench.evals import study_config
+
+    assert (
+        resolve_store(results).region == study_config.load_study_config().results.region
+    )
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://a-different-bucket")
     assert resolve_store(results).region is None
+    monkeypatch.setenv("SMOLBENCH_RESULTS_S3", URI)
     monkeypatch.setenv("AWS_REGION", "eu-central-1")
     assert resolve_store(results).region == "eu-central-1"
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
@@ -257,16 +287,20 @@ def test_resolve_store(monkeypatch, fake_repo, tmp_path):
     ):
         with pytest.raises(ValueError):
             parse_s3_uri(bad)
-    # Validation happens BEFORE the repo-anchor check, so a typo always fails loudly.
+    # Validate before repository anchoring so typos fail loudly.
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://")
     with pytest.raises(ValueError):
         resolve_store(tmp_path / "somewhere-else")
 
 
 def test_sync_down_translates_and_guards(
-    monkeypatch, s3_env, fake_repo, fake_s3, tmp_path
-):
-    """model -> TAG, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, earliest run only."""
+    monkeypatch: pytest.MonkeyPatch,
+    s3_env: None,
+    fake_repo: Path,
+    fake_s3: FakeS3Client,
+    tmp_path: Path,
+) -> None:
+    """model -> tag, into ``{prefix}{tag}_{info}/rep_{seed}.yaml``, earliest run only."""
     results = fake_repo / "notebooks/periodic/results"
     body = sample_marks(score=1).dumps().encode()
     rerun = sample_marks(score=0).dumps().encode()
@@ -299,8 +333,7 @@ def test_sync_down_translates_and_guards(
     assert (divisor / "one_hop_moe_extens" / "rep_1776.yaml").read_bytes() == body
     with pytest.raises(SystemExit):
         rs.main([str(results), "--tag", "no-equals-sign"])
-    # Refetch unless a local copy's MD5 verifies against the ETag: an in-place regrade
-    # (byte-length preserving, different MD5) and a multipart ETag both refetch.
+    # Refetch on unverifiable ETags or changed same-length regrades.
     assert len(rerun) == len(body) and rerun != body, "premise"
     for seed, local, suffix, downloads in [
         (1, body, "", 0),
@@ -317,15 +350,14 @@ def test_sync_down_translates_and_guards(
         assert sync_down(results, TAGS) == downloads, seed
         assert rep.read_bytes() == body
     fake_s3.objects.clear()
-    # Guards: no tag may walk out of the tree; both local-store resolutions are misuse.
+    # Refuse path traversal and local-store resolutions.
     fake_s3.objects[log_key("evil-model", 1776, "intens", TS1)] = b"pwned"
     with pytest.raises(ValueError):
         sync_down(results, {"evil-model": "../../ESCAPED"})
     assert not (fake_repo / "ESCAPED_intens").exists()
     with pytest.raises(RuntimeError):
         sync_down(tmp_path / "elsewhere", TAGS)
-    # repo_root() itself + no base prefix = an empty log prefix: the whole
-    # bucket. Refused when the store is CONSTRUCTED, so sync_down never lists.
+    # Refuse empty log prefixes before ``sync_down`` can list a bucket.
     with pytest.raises(ValueError):
         sync_down(fake_repo, TAGS)
     with pytest.raises(ValueError):
@@ -335,22 +367,35 @@ def test_sync_down_translates_and_guards(
         sync_down(results, TAGS)
 
 
-def _log(fake_s3, seed, info, ts, body=None):
+def _log(
+    fake_s3: FakeS3Client, seed: int, info: str, ts: datetime, body: bytes | None = None
+) -> None:
     key = log_key("stub-model", seed, info, ts, experiment="periodic_moe")
     fake_s3.objects[key] = body or Marks(model="stub-model", marks=()).dumps().encode()
 
 
 @pytest.fixture
-def s3_harness(fake_repo, s3_env, fake_s3, monkeypatch):
+def s3_harness(
+    fake_repo: Path,
+    s3_env: None,
+    fake_s3: FakeS3Client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, list[tuple[int, int]]]:
     """(harness on the log store, list of (seed, quiz size) per faked evaluate() call)."""
     calls: list = []
 
-    def _evaluate(quiz, model, seed, **kwargs):
+    def _evaluate(quiz: Any, model: str, seed: int, **kwargs: Any) -> Marks:
         calls.append((seed, len(quiz)))
         return Marks(
             model=model,
             marks=tuple(
-                Mark(query=q.prompt, answer=q.answer, response=str(q.answer), score=1)
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response=str(q.answer),
+                    score=1,
+                    compliance=COMPLIANT,
+                )
                 for q in quiz
             ),
         )
@@ -374,8 +419,11 @@ def s3_harness(fake_repo, s3_env, fake_s3, monkeypatch):
 
 
 def test_harness_runs_summarizes_and_syncs_down(
-    s3_harness, fake_s3, monkeypatch, capsys
-):
+    s3_harness: tuple[Any, list[tuple[int, int]]],
+    fake_s3: FakeS3Client,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """The store is the cached log store; a run logs only to S3; sync_down lands it."""
     s3_harness, evaluated = s3_harness
     assert isinstance(s3_harness.store, S3ResultsStore)
@@ -406,7 +454,7 @@ def test_harness_runs_summarizes_and_syncs_down(
         _log(fake_s3, seed, "intens", TS2, sample_marks(score=0).dumps().encode())
     s3_harness.summarize("stub-model")
     out = capsys.readouterr().out
-    # The earliest run scored 1 -> 4 correct, not 4 incorrect.
+    # Earliest run scored one of four correct.
     assert (
         "decode/intens: 2/2 replicates -- correct=4 incorrect=0 invalid=0 acc=1.000"
         in out
@@ -425,3 +473,163 @@ def test_harness_runs_summarizes_and_syncs_down(
     assert [len(v) for v in keys.values()] == [2, 2]  # both infos logged, per seed
     stamps_of = {s: {k.rsplit("--", 1)[1] for k in v} for s, v in keys.items()}
     assert len(stamps_of[1]) == len(stamps_of[2]) == 1 and stamps_of[1] != stamps_of[2]
+
+
+SUPERSEDED_REASON = "re-collected past the resume-skip"
+
+
+def s3_store() -> S3ResultsStore:
+    """The log store the supersede tests below share."""
+    return S3ResultsStore(BUCKET, "", "periodic_moe", "us-west-2")
+
+
+def marker_key(
+    seed: int = 1776,
+    info: str = "intens",
+    ts: datetime = TS1,
+    model: str = "stub-model",
+) -> str:
+    return (
+        f"periodic_moe/{model}/seed={seed}/{info}--{format_run_ts(ts)}" f".superseded"
+    )
+
+
+def test_supersede_writes_a_json_marker_beside_the_run(fake_s3: FakeS3Client) -> None:
+    """The marker is a sibling key, so the run itself is never mutated or deleted."""
+    import json
+
+    store = s3_store()
+    store.dump_marks(sample_marks(score=1), addr(), TS1)
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+
+    assert marker_key() in fake_s3.objects
+    # Run objects remain immutable.
+    assert (
+        fake_s3.objects[
+            f"periodic_moe/stub-model/seed=1776/intens--" f"{format_run_ts(TS1)}.yaml"
+        ]
+        == sample_marks(score=1).dumps().encode()
+    )
+    body = json.loads(fake_s3.objects[marker_key()].decode())
+    assert body["reason"] == SUPERSEDED_REASON
+    # Marker timestamp remains parseable UTC.
+    assert datetime.fromisoformat(body["superseded_at"]).tzinfo is not None
+
+
+def test_reads_skip_a_superseded_run_and_take_the_earliest_survivor(
+    fake_s3: FakeS3Client,
+) -> None:
+    """Earliest-wins applies over the survivors, not over every logged run."""
+    store = s3_store()
+    store.dump_marks(sample_marks(score=1), addr(), TS1)  # the run to retire
+    store.dump_marks(sample_marks(score=0), addr(), TS2)  # its replacement
+    assert store.load_marks(addr()).marks[0].score == 1
+
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_runs(addr()) == [format_run_ts(TS2)]
+    assert store.load_marks(addr()).marks[0].score == 0
+
+
+def test_a_marker_is_not_itself_a_run(fake_s3: FakeS3Client) -> None:
+    """A ``.superseded`` key must never be listed, loaded or counted as a run."""
+    store = s3_store()
+    store.dump_marks(sample_marks(), addr(), TS1)
+    store.supersede(addr(), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_runs(addr()) == []
+    # Presence probes stay marker-blind for resume skipping.
+    assert store.exists(addr())
+    # Analytical listings drop the seed: nothing there is loadable.
+    assert store.list_seeds("stub-model", "decode", "intens") == []
+    # Empty reads name the affected prefix.
+    with pytest.raises(FileNotFoundError) as exc:
+        store.load_marks(addr())
+    assert "periodic_moe/stub-model/seed=1776/intens--" in str(exc.value)
+    assert "superseded" in str(exc.value)
+    # A replacement run restores the seed; a wholly-retired sibling stays out.
+    store.dump_marks(sample_marks(), addr(), TS2)
+    store.dump_marks(sample_marks(), addr(seed=1777), TS1)
+    store.supersede(addr(seed=1777), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_seeds("stub-model", "decode", "intens") == [1776]
+
+
+def test_two_writes_inside_one_second_are_two_runs(fake_s3: FakeS3Client) -> None:
+    """Sub-second stamps keep a same-second re-run from overwriting its predecessor."""
+    store = s3_store()
+    early = TS1.replace(microsecond=100_000)
+    late = TS1.replace(microsecond=900_000)
+    store.dump_marks(sample_marks(score=1), addr(), early)
+    store.dump_marks(sample_marks(score=0), addr(), late)
+    assert store.list_runs(addr()) == [format_run_ts(early), format_run_ts(late)]
+    assert store.load_marks(addr()).marks[0].score == 1
+    # A marker names one stamp, so it cannot retire the other write.
+    store.supersede(addr(), format_run_ts(early), SUPERSEDED_REASON)
+    assert store.load_marks(addr()).marks[0].score == 0
+
+
+def test_supersede_all_retires_every_surviving_run(fake_s3: FakeS3Client) -> None:
+    """The harness's one call: however many runs an address has, retire them all."""
+    store = s3_store()
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0  # nothing logged yet
+    store.dump_marks(sample_marks(), addr(), TS1)
+    store.dump_marks(sample_marks(), addr(), TS2)
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 2
+    assert store.list_runs(addr()) == []
+    # Markers are siblings of their runs.
+    assert sorted(fake_s3.objects) == [
+        marker_key(ts=TS1),
+        f"periodic_moe/stub-model/seed=1776/intens--{format_run_ts(TS1)}.yaml",
+        marker_key(ts=TS2),
+        f"periodic_moe/stub-model/seed=1776/intens--{format_run_ts(TS2)}.yaml",
+    ]
+    # Repeated superseding writes nothing.
+    before = dict(fake_s3.objects)
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0
+    assert fake_s3.objects == before
+
+
+def test_sync_down_skips_superseded_runs(
+    fake_repo: Path, s3_env: None, fake_s3: FakeS3Client
+) -> None:
+    """Synced trees honor superseding markers."""
+    results = fake_repo / "notebooks/periodic_moe/results"
+    _log(fake_s3, 1, "intens", TS1, sample_marks(score=1).dumps().encode())
+    _log(fake_s3, 1, "intens", TS2, sample_marks(score=0).dumps().encode())
+    store = resolve_store(results)
+    # Resolves to the S3 signature.
+    # pylint: disable=too-many-function-args
+    store.supersede(
+        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model"),
+        format_run_ts(TS1),
+        SUPERSEDED_REASON,
+    )
+
+    assert sync_down(results, {"stub-model": "decode"}) == 1
+    landed = Marks.load(results / "decode_intens" / "rep_1.yaml")
+    assert landed.marks[0].score == 0
+    assert landed == store.load_marks(
+        ReplicateAddress(tag="decode", info="intens", seed=1, model="stub-model")
+    )
+
+
+def test_local_supersede_renames_and_every_reader_ignores_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local superseding renames files without changing bytes."""
+    patch_utcnow(monkeypatch, lambda: TS1)
+    store = LocalResultsStore(tmp_path)
+    store.dump_marks(sample_marks(), addr(), TS1)
+    live = tmp_path / "decode_intens" / "rep_1776.yaml"
+    body = live.read_bytes()
+
+    retired = store.supersede(addr(), SUPERSEDED_REASON)
+    assert not live.exists()
+    assert retired.name == f"rep_1776.SUPERSEDED-{format_run_ts(TS1)}.yaml"
+    assert retired.read_bytes() == body
+    assert store.list_seeds(None, "decode", "intens") == []
+    assert not store.exists(addr())
+    with pytest.raises(FileNotFoundError):
+        store.load_marks(addr())
+
+    # Empty superseding is a harness-wide no-op.
+    assert store.supersede(addr(seed=999), SUPERSEDED_REASON) is None
+    assert store.supersede_all(addr(), SUPERSEDED_REASON) == 0

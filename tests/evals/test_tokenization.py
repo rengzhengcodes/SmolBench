@@ -1,6 +1,10 @@
 """Test `smolbench.evals.tokenization`: alias -> HF repo resolution and the vLLM cross-check."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import sys
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +13,7 @@ from smolbench.evals.providers import ec2
 
 
 @pytest.fixture(autouse=True)
-def _clear_for_model_cache():
+def _clear_for_model_cache() -> Iterator[None]:
     """`for_model` is `lru_cache`d; keep entries from leaking between tests."""
     tokenization.for_model.cache_clear()
     yield
@@ -17,11 +21,11 @@ def _clear_for_model_cache():
 
 
 @pytest.fixture
-def record_repo(monkeypatch):
+def record_repo(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Captures the repo id `for_model` resolves, without downloading it."""
     seen: list = []
 
-    def fake_from_repo(repo_id: str):
+    def fake_from_repo(repo_id: str) -> str:
         seen.append(repo_id)
         return f"tokenizer<{repo_id}>"
 
@@ -29,7 +33,9 @@ def record_repo(monkeypatch):
     return seen
 
 
-def test_for_model_resolution(record_repo, monkeypatch):
+def test_for_model_resolution(
+    record_repo: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """hf_model_id resolves, tokenizer_hf_id overrides it, unknown aliases raise, and it caches."""
     override = {
         "hf_model_id": "someone/FP8",
@@ -53,7 +59,7 @@ def test_for_model_resolution(record_repo, monkeypatch):
     assert record_repo == []
 
 
-def test_hf_tokenizer_wraps_an_existing_tokenizer_object():
+def test_hf_tokenizer_wraps_an_existing_tokenizer_object() -> None:
     """The constructor adapts any tokenizers-API object and encodes without special tokens."""
     calls: list = []
 
@@ -61,7 +67,7 @@ def test_hf_tokenizer_wraps_an_existing_tokenizer_object():
         ids = (1, 2, 3)
 
     class FakeTokenizer:
-        def encode(self, text, add_special_tokens=True):
+        def encode(self, text: str, add_special_tokens: bool = True) -> FakeEncoding:
             calls.append((text, add_special_tokens))
             return FakeEncoding()
 
@@ -71,18 +77,23 @@ def test_hf_tokenizer_wraps_an_existing_tokenizer_object():
     assert calls == [("hello", False)]
 
 
-def test_from_repo_disables_truncation_and_padding(monkeypatch, tmp_path):
+def test_from_repo_disables_truncation_and_padding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """A `truncation` stanza in tokenizer.json must not cap `count`."""
     calls: list = []
 
     class FakeTokenizer:
-        def no_truncation(self):
+        def no_truncation(self) -> None:
             calls.append("no_truncation")
 
-        def no_padding(self):
+        def no_padding(self) -> None:
             calls.append("no_padding")
 
+    # pylint: disable-next=unnecessary-lambda-assignment
     mod = lambda **kw: type("M", (), kw)  # noqa: E731
+
     download = mod(hf_hub_download=staticmethod(lambda **kw: str(tmp_path / "t.json")))
     loader = mod(Tokenizer=mod(from_file=staticmethod(lambda p: FakeTokenizer())))
     monkeypatch.setitem(sys.modules, "huggingface_hub", download)
@@ -92,17 +103,33 @@ def test_from_repo_disables_truncation_and_padding(monkeypatch, tmp_path):
     assert tokenizer.name == "fake/repo"
 
 
-def test_vllm_tokenizer_calls_the_server_root_endpoint(stub_server):
-    """`/tokenize` lives at the SERVER root, not under `/v1`, and asks for no special tokens."""
-    stub_server.queue_response({"count": 17})
-    tokenizer = tokenization.VLLMTokenizer(stub_server.base_url, "stub-model", "key")
+# ---------------------------------------------------------------------------
+# The token-matched noise pad: public API of this module, not of induction
+# ---------------------------------------------------------------------------
 
-    assert tokenizer.count("some prompt") == 17
-    request = stub_server.requests[-1]
-    assert request["path"] == "/tokenize"
-    assert request["body"] == {
-        "model": "stub-model",
-        "prompt": "some prompt",
-        "add_special_tokens": False,
-    }
-    assert request["headers"]["Authorization"] == "Bearer key"
+
+def test_the_pad_search_is_public_here() -> None:
+    """`tokenization` owns the pad primitives."""
+    for name in (
+        "WHITESPACE_UNITS",
+        "choose_whitespace_unit",
+        "token_matched_noise_prompt",
+    ):
+        assert hasattr(tokenization, name), name
+    assert isinstance(tokenization.WHITESPACE_UNITS, tuple)
+    assert tokenization.WHITESPACE_UNITS[0] == " \t"
+
+
+def test_a_merging_tokenizer_has_no_qualifying_unit() -> None:
+    """No whitespace unit survives the probes when every run merges to 1 token."""
+
+    class Merging:
+        """A tokenizer that merges every whitespace run, so no unit qualifies."""
+
+        name = "merging"
+
+        def count(self, text: str) -> int:
+            return 1
+
+    with pytest.raises(ValueError):
+        tokenization.choose_whitespace_unit(Merging())

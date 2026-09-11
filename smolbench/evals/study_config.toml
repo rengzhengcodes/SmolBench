@@ -1,0 +1,92 @@
+# Single committed source for the induction family-ladder study's results
+# bucket, fleet regions/tags, and the 21-checkpoint roster.
+#
+# Parsed by smolbench/evals/study_config.py (stdlib tomllib; no new
+# dependency) and read by:
+#   - smolbench/evals/providers/ec2.py       ([fleet].regions -> _DEFAULT_REGIONS)
+#   - smolbench/evals/results_store.py       ([results] -> default_results_uri(),
+#                                              resolve_store's region fallback)
+#   - notebooks/induction/run_study.py       ([roster] -> MODELS,
+#                                              [fleet].standalone_tag)
+#   - notebooks/induction/analysis/power_analysis.py
+#                                             ([roster] -> MODELS, FAMILIES,
+#                                              rendered into analysis tags)
+#
+# This file is the audit surface for the above: written to be read by a
+# human, hence the comments below. study_config.py reads NOTHING from the
+# environment -- each env override (SMOLBENCH_RESULTS_S3[_REGION],
+# EC2_REGIONS) is applied by the consumer that owns it; see
+# study_config.py's module docstring for why that is deliberate.
+
+[results]
+# Provisioned once by scripts/results/provision_results_bucket.py. `region`
+# is the region THAT BUCKET lives in -- resolve_store falls back to it only
+# for URIs naming THIS bucket; others resolve through boto3's own chain.
+bucket = "smolbench-results-414266451290"
+region = "us-west-2"
+# The live log sits at the bucket root: every key starts with
+# "<experiment>/...", with no extra namespace segment in front of it.
+base_prefix = ""
+
+[fleet]
+# Spot-capacity hunt regions for scripts/fleet/run_fleet.py and
+# providers/ec2.py's own provisioning retries. Overridable per-process via
+# the EC2_REGIONS environment variable (ec2.py applies that override itself;
+# this list is only the DEFAULT).
+regions = ["us-east-1", "us-east-2", "us-west-2"]
+# Prefix run_fleet.py gives each lane's EC2_EXPERIMENT_TAG ("scaling-<spec-key>"),
+# so fleet_status/fleet_teardown can recognize and enumerate fleet-owned boxes.
+tag_prefix = "scaling-"
+# Default EC2_EXPERIMENT_TAG for a STANDALONE (non-fleet) run of
+# run_study.py, deliberately outside "scaling-" so fleet_status/
+# fleet_teardown never touch a standalone box; `run_study.py --teardown`
+# owns it. A fleet-exported EC2_EXPERIMENT_TAG wins via setdefault.
+standalone_tag = "induction-scaling"
+
+# The 21-checkpoint ladder: 7 families x 3 rungs -- every EC2_DEPLOY_SPECS
+# entry except "qwen2.5-1.5b" (the cheap smoke-test spec, not a rung of any
+# family; the study has nothing to compare it against).
+[roster.families]
+# Declaration order IS the canonical ladder order: run_study.MODELS and
+# power_analysis.MODELS/FAMILIES both derive their iteration order from it.
+# Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8)
+qwen35 = ["qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b"]
+# Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B, all BF16
+nemo3  = ["nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b"]
+# Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned
+gemma4 = ["gemma-4-e2b", "gemma-4-12b", "gemma-4-31b"]
+# GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-generation, flagged)
+glm    = ["glm-4.7-flash", "glm-4.5-air", "glm-4.7"]
+# Ministral-3 Reasoning 2512 (Mistral, FR): 3B / 8B / 14B
+min3   = ["ministral-3-3b", "ministral-3-8b", "ministral-3-14b"]
+# EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B-A23B (cross-gen, flagged)
+exaone = ["exaone-4.0-32b", "exaone-4.5-33b", "k-exaone-236b-a23b"]
+# DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template)
+ds     = ["deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro"]
+
+# Spec key (EC2_DEPLOY_SPECS key, vLLM's --served-model-name) -> analysis
+# tag for result dirs and figures. Keys must appear exactly once and tags
+# must be unique -- study_config.py validates both at load, so drift cannot
+# merge two lanes' results into one directory.
+[roster.tags]
+"qwen3.5-27b" = "qwen35_27b"
+"qwen3.5-122b-a10b" = "qwen35_122b"
+"qwen3.5-397b-a17b" = "qwen35_397b"
+"nemotron-3-nano-4b" = "nemo3_4b"
+"nemotron-3-nano-30b-a3b" = "nemo3_30b"
+"nemotron-3-super-120b-a12b" = "nemo3_120b"
+"gemma-4-e2b" = "gemma4_e2b"
+"gemma-4-12b" = "gemma4_12b"
+"gemma-4-31b" = "gemma4_31b"
+"glm-4.7-flash" = "glm_flash"
+"glm-4.5-air" = "glm_air"
+"glm-4.7" = "glm_47"
+"ministral-3-3b" = "min3_3b"
+"ministral-3-8b" = "min3_8b"
+"ministral-3-14b" = "min3_14b"
+"exaone-4.0-32b" = "exaone_32b"
+"exaone-4.5-33b" = "exaone_33b"
+"k-exaone-236b-a23b" = "exaone_236b"
+"deepseek-v4-flash" = "ds_flash"
+"deepseek-v3.1" = "ds_v31"
+"deepseek-v4-pro" = "ds_pro"
