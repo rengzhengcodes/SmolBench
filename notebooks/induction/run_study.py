@@ -105,7 +105,6 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 
 SHARD = _parse_shard("INDUCTION_SHARD")
 
-# Use the canonical roster to prevent duplicate-map drift.
 # ec2 freezes EC2_* constants at import, so imports follow load_dotenv.
 from smolbench.evals import Numeric  # noqa: E402
 from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
@@ -129,6 +128,7 @@ from smolbench.induction.periodic import (  # noqa: E402
     numeric_count_query_gen,
 )
 
+# Use the canonical roster to prevent duplicate-map drift.
 MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
 # Shards need distinct tags and state files to prevent model swaps.
