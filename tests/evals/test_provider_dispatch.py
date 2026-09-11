@@ -6,17 +6,25 @@ import pytest
 
 from smolbench.evals import provider
 
-_SM_URL = "https://runtime.sagemaker.us-east-1.amazonaws.com/endpoints/{model}/openai/v1"
+_SM_URL = (
+    "https://runtime.sagemaker.us-east-1.amazonaws.com/endpoints/{model}/openai/v1"
+)
 
 
 @pytest.mark.parametrize(
     "env_value,name,expected",
-    [("ec2", None, "ec2"), ("openrouter", None, "openrouter"), (None, None, "openrouter"),
-     ("ec2", "openrouter", "openrouter"), ("openrouter", "ec2", "ec2"),
-     ("nonsense", None, ValueError), (None, "nope", ValueError)],
+    [
+        ("ec2", None, "ec2"),
+        (None, None, "ec2"),
+        ("ec2", "aws", "aws"),
+        ("ec2", "bedrock", "aws"),
+        ("aws", "ec2", "ec2"),
+        ("nonsense", None, ValueError),
+        (None, "nope", ValueError),
+    ],
 )
 def test_provider_module_resolution(monkeypatch, env_value, name, expected):
-    """Explicit name beats env, unset env defaults to openrouter, unknown raises."""
+    """Explicit name beats env, unset env defaults to ec2, unknown raises."""
     if env_value is None:
         monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     else:
@@ -27,7 +35,8 @@ def test_provider_module_resolution(monkeypatch, env_value, name, expected):
         assert (name or env_value) in str(excinfo.value)
     else:
         assert provider.provider_module(name) is importlib.import_module(
-            f"smolbench.evals.providers.{expected}")
+            f"smolbench.evals.providers.{expected}"
+        )
 
 
 @pytest.mark.parametrize("name", [None, "sagemaker"])
