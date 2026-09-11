@@ -175,7 +175,8 @@ class ReplicateHarness:
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
             correct = incorrect = invalid = 0
-            seeds = self.store.list_seeds(model, tag, info)
+            owned = set(self.seeds)
+            seeds = [s for s in self.store.list_seeds(model, tag, info) if s in owned]
             for seed in seeds:
                 marks = self.store.load_marks(self._address(model, tag, info, seed))
                 correct += marks.correct
