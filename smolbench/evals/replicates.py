@@ -64,7 +64,7 @@ class ReplicateHarness:
         Returns
         -------
         ReplicateAddress
-            the store address.
+            The store address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
@@ -81,7 +81,7 @@ class ReplicateHarness:
         Returns
         -------
         bool
-            whether any replicate still needs evaluation.
+            Whether any replicate still needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
