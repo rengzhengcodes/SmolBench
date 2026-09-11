@@ -116,10 +116,14 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     Parameters
     ----------
     b : int | np.ndarray
+        First discordant count.
     c : int | np.ndarray
+        Second discordant count.
+
     Returns
     -------
     float | np.ndarray
+        Exact two-sided conditional p-values.
     """
     nd = b + c
     # NumPy evaluates both branches.
@@ -139,11 +143,16 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.
     Parameters
     ----------
     succ_a : np.ndarray
+        Success counts for the first condition, shaped ``(..., K)``.
     succ_b : np.ndarray
+        Success counts for the second condition, shaped ``(..., K)``.
     n : int or np.ndarray
+        Trial count per condition and stratum.
+
     Returns
     -------
     np.ndarray
+        One statistic per leading batch index.
     """
     n = np.asarray(n)
     big_n = 2 * n
@@ -172,13 +181,19 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     Parameters
     ----------
     succ : np.ndarray
+        Success counts with shape ``(n_sims, 3, K)``.
     n_per_stratum : int
+        Trials per rung and stratum.
+
     Returns
     -------
     np.ndarray
+        Continuity-corrected GCMH statistics.
+
     Raises
     ------
     ValueError
+        If the rung axis is not length 3 or counts are invalid.
     """
     _, n_rungs, _ = succ.shape
     if n_rungs != 3:
@@ -216,14 +231,21 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     Parameters
     ----------
     succ : np.ndarray
+        Success counts with shape ``(n_sims, 3, K)``.
     n_per_stratum : int
+        Trials per rung per stratum.
     alpha : float
+        Test significance threshold.
+
     Returns
     -------
     np.ndarray
+        Whether each simulation rejects.
+
     Raises
     ------
     ValueError
+        If the rung axis is not length 3, or `n_per_stratum` < 1.
     """
     stat = gcmh_stat(succ, n_per_stratum)
 
@@ -245,14 +267,22 @@ def simulated_power(
     Parameters
     ----------
     rates_a : np.ndarray
+        Assumed true per-harmonic rates for the first condition.
     rates_b : np.ndarray
+        Assumed true per-harmonic rates for the second condition.
     n_reps : int
+        Replicates per harmonic.
     rng : np.random.Generator
+        Random-number generator for simulations.
     alpha : float, optional
+        Per-test significance threshold.
     n_sims : int, optional
+        Number of simulated experiments.
+
     Returns
     -------
     float
+        Estimated CMH rejection fraction.
     """
     succ_a = rng.binomial(n_reps, rates_a, size=(n_sims, rates_a.size))
     succ_b = rng.binomial(n_reps, rates_b, size=(n_sims, rates_b.size))
@@ -292,14 +322,21 @@ def replicates_needed(
     Parameters
     ----------
     rates_a : np.ndarray
+        Per-harmonic rates for the first condition.
     rates_b : np.ndarray
+        Per-harmonic rates for the second condition.
     alpha : float, optional
+        Per-test significance threshold.
+
     Returns
     -------
     _SizingScan
+        ``(needed, curve)``: `needed` maps power target -> smallest R reaching it.
+
     Raises
     ------
     ValueError
+        If `rates_a` and `rates_b` differ in shape.
     """
     if rates_a.shape != rates_b.shape:
         raise ValueError(
@@ -328,13 +365,20 @@ def fisher_check(
     Parameters
     ----------
     rates_a : np.ndarray
+        Per-harmonic rates for the first condition.
     rates_b : np.ndarray
+        Per-harmonic rates for the second condition.
     n_reps : int
+        Replicates per harmonic.
     rng : np.random.Generator
+        Random-number generator for simulations.
     alpha : float, optional
+        Test significance threshold.
+
     Returns
     -------
     float
+        The fraction of `N_SIMS` simulations rejecting at `alpha`.
     """
     from scipy.stats import fisher_exact
 
@@ -367,14 +411,22 @@ def equivalence_replicates(
     Parameters
     ----------
     rates_a : np.ndarray
+        Assumed per-harmonic rates for the first condition.
     rates_b : np.ndarray
+        Assumed per-harmonic rates for the second condition.
     delta : float
+        Equivalence margin.
     rng : np.random.Generator
+        Random-number generator for simulations.
     alpha : float, optional
+        One-sided test significance threshold.
     n_sims : int, optional
+        Number of simulated experiments.
+
     Returns
     -------
     int | None
+        Smallest replicate count reaching the requested power.
     """
     from scipy.stats import norm
 
@@ -408,14 +460,22 @@ def omnibus_power(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-toward-mean rates keyed like `load_outcomes`'s return value.
     family : str
+        Family whose rungs form the omnibus test.
     n_reps : int
+        Replicates per rung and stratum.
     rng : np.random.Generator
+        Random-number generator for simulations.
     alpha : float, optional
+        Test significance threshold.
     n_sims : int, optional
+        Number of simulated experiments.
+
     Returns
     -------
     float
+        Estimated omnibus-gate rejection fraction.
     """
     rungs = FAMILIES[family]
     strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]  # K = 36
@@ -445,11 +505,16 @@ def omnibus_interaction_power(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Rates keyed by model and info type.
     n_reps : int
+        Replicates per cell.
     n_sims : int, optional
+        Number of simulated experiments.
+
     Returns
     -------
     float
+        Rejection fraction over `n_sims`.
     """
     import statsmodels.api as sm
 
@@ -546,12 +611,18 @@ def _compute_sizing_results(
     Parameters
     ----------
     contrasts : list[tuple[str, tuple[str, str], tuple[str, str]]]
+        Contrasts to size, in output order.
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for the headline sizing results.
     pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
     alpha : float
+        Per-test threshold for both sizing runs.
+
     Returns
     -------
     list[_SizingResult]
+        One `_SizingResult` per contrast, input order.
     """
     results: list[_SizingResult] = []
     for name, key_a, key_b in contrasts:
@@ -579,8 +650,11 @@ def _print_sizing_rows(
     Parameters
     ----------
     results : list[_SizingResult]
+        Sizing results to render.
     outcomes : dict[tuple[str, str], np.ndarray]
+        Pilot marks for the observed-rate columns.
     label_w : int
+        Shared width of the contrast-label column.
     """
 
     def fmt(r: int | None) -> str:
@@ -650,9 +724,12 @@ def observed_accuracy(
     Parameters
     ----------
     outcomes : dict[tuple[str, str], np.ndarray]
+        Keyed like `load_outcomes`'s return value.
+
     Returns
     -------
     list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+        Nested family, model, and information-type accuracy records.
     """
     return [
         (
@@ -744,13 +821,19 @@ def primary_contrasts_table(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for PRIMARY sizing.
     pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
+
     Returns
     -------
     dict
+        With keys `results`, `r_star`, `n_censored`, `label_w`.
+
     Raises
     ------
     SystemExit
+        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES: the pilot...
     """
     contrasts = build_primary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
@@ -797,10 +880,14 @@ def omnibus_gates(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk rates keyed by model and information type.
     r_star : int
+        Recommended replicate count.
+
     Returns
     -------
     list[tuple[str, float, float]]
+        ``(family, power_at_r_star, power_at_1)`` per family, in `FAMILIES` order.
     """
     rows = []
     for family in FAMILIES:
@@ -839,10 +926,14 @@ def secondary_contrasts_table(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-rate assumption for SECONDARY sizing.
     pooled : dict[tuple[str, str], np.ndarray]
+        Condition-mean-only sensitivity assumption.
+
     Returns
     -------
     dict
+        Sizing results in contrast order and the maximum label width.
     """
     contrasts = build_secondary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_SECONDARY)
@@ -871,10 +962,14 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
     Parameters
     ----------
     r_star : int
+        Recommended replicate count from PRIMARY sizing.
     n_censored : int
+        Number of PRIMARY contrasts that never reached 80% power.
+
     Returns
     -------
     dict
+        With ``r_star``, ``n_censored``, ``extra_runs``.
     """
     return {
         "r_star": r_star,
@@ -922,11 +1017,16 @@ def equivalence_checks(
     Parameters
     ----------
     primary_results : list[_SizingResult]
+        PRIMARY sizing results in input order.
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk rates keyed by model and information type.
     r_star : int
+        Replicate count for the Fisher cross-check.
+
     Returns
     -------
     dict
+        With: fisher : list of (name.
     """
     fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
@@ -1020,10 +1120,14 @@ def interaction_diagnostic(
     Parameters
     ----------
     rates : dict[tuple[str, str], np.ndarray]
+        Shrunk-toward-mean, keyed like `load_outcomes`'s return value.
     r_star : int
+        Recommended replicate count.
+
     Returns
     -------
     tuple[float, float]
+        ``(power_at_r_star, power_at_1)``.
     """
     return omnibus_interaction_power(rates, r_star), omnibus_interaction_power(rates, 1)
 

@@ -46,10 +46,14 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
+        P-values in the family.
     alpha : float, optional
+        Familywise error-rate level.
+
     Returns
     -------
     np.ndarray
+        Rejection mask.
     """
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
         pvals, alpha=alpha, method="simes-hochberg"
@@ -63,9 +67,12 @@ def compliance_census(compliance: dict) -> dict:
     Parameters
     ----------
     compliance : dict
+        Per-cell compliance mappings from `paired_analysis.load_marks`.
+
     Returns
     -------
     dict
+        Cell key -> ``rate``.
     """
     out = {}
     for key, by_seed in compliance.items():
@@ -93,10 +100,14 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
     Parameters
     ----------
     cell : dict
+        Census entry for one cell.
     seeds : Iterable[int]
+        Replicate seeds to include.
+
     Returns
     -------
     float | None
+        ``None`` when the subset has no marks; otherwise its non-compliance rate.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     total = sum(t for _nc, t in counts)
@@ -111,10 +122,14 @@ def collapse_note(key: tuple[str, str], census: dict) -> str:
     Parameters
     ----------
     key : tuple[str, str]
+        Cell key.
     census : dict
+        Compliance census by cell.
+
     Returns
     -------
     str
+        Mechanism annotation, or ``""`` below `COLLAPSE_THRESHOLD`.
     """
     cell = census.get(key)
     if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
@@ -130,10 +145,14 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     Parameters
     ----------
     key_a : tuple[str, str]
+        First cell key.
     key_b : tuple[str, str]
+        Second cell key.
+
     Returns
     -------
     str
+        Contrast bucket.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -158,9 +177,13 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
     Parameters
     ----------
     pvals : np.ndarray
+        P-values in `rows` order.
     rows : list
+        Contrast rows.
     m : int
+        Number of hypotheses.
     n_rej : int
+        Holm rejection count.
     """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")

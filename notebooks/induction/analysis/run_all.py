@@ -36,9 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
+        Command-line arguments to parse.
+
     Returns
     -------
     int
+        Always 0 after all analysis scripts complete successfully.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",

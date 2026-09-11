@@ -80,6 +80,7 @@ def dump(tag: str) -> None:
     Parameters
     ----------
     tag : str
+        Checkpoint label written to the log.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w", encoding="utf-8") as fh:
@@ -124,15 +125,24 @@ def paired_marks(
     Parameters
     ----------
     p_a : float
+        Marginal mark rate for arm A.
     p_b : float
+        Marginal mark rate for arm B.
     rho : float
+        Tetrachoric correlation between matched marks.
     n_sims : int
+        Number of simulated experiments.
     reps : int
+        Number of replicates per experiment.
     rng : np.random.Generator
+        Random generator for latent draws.
     icc : float, optional
+        Shared per-replicate latent variance fraction; default is zero.
+
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
+        Simulated Boolean marks for arms A and B.
     """
     if not 0.0 <= icc < 1.0:
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
@@ -156,8 +166,11 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     Parameters
     ----------
     rng : np.random.Generator
+        Random-number generator for simulated counts.
     n_sims : int, optional
+        Number of simulations per baseline rate and gap.
     step : float, optional
+        Accuracy-gap increment to scan.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -202,8 +215,11 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     Parameters
     ----------
     rng : np.random.Generator
+        Random-number generator for simulated marks.
     n_sims : int, optional
+        Total simulations per grid configuration.
     chunk : int, optional
+        Bounds peak memory.
     """
     print(
         "\n=== PART 3: within-replicate clustering -> actual Type I error ===",
@@ -292,7 +308,9 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
+        Random-number generator for simulated counts.
     n_sims : int, optional
+        Simulations per rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     # The same 28 trend tests as PART 4's reduced family, corrected over that
@@ -385,16 +403,26 @@ def _paired_powers(
     Parameters
     ----------
     p_a : float
+        Baseline success rate for arm A.
     delta : float
+        Success-rate gap subtracted from `p_a` for arm B.
     rho : float
+        Latent correlation between matched arm marks.
     reps : int
+        Replicates in each simulation.
     n_sims : int
+        Number of simulated datasets.
     rng : np.random.Generator
+        Random-number generator for matched marks.
     stats : bool, optional
+        Whether to compute the mark-level diagnostics.
     icc : float, optional
+        Within-replicate latent correlation.
+
     Returns
     -------
     tuple
+        ``(power_unpaired, power_paired, phi_binary, agreement)``.
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng, icc=icc)
@@ -451,8 +479,11 @@ def part2(
     Parameters
     ----------
     rng : np.random.Generator
+        Random-number generator for simulated marks.
     n_sims : int, optional
+        Number of simulations for the main power calculations.
     search_sims : int, optional
+        Number of simulations at each equivalent-R search rung.
     """
     # Avoid results-reading import effects during simulation imports.
     import paired_analysis
@@ -617,11 +648,16 @@ def _stepup(
     Parameters
     ----------
     sortedp : np.ndarray
+        P-values sorted in ascending order per row.
     order : np.ndarray
+        Indices that map sorted p-values to input order.
     thresholds : np.ndarray
+        Per-rank rejection thresholds.
+
     Returns
     -------
     np.ndarray
+        Rejection mask in input order.
     """
     m = sortedp.shape[1]
     ok = sortedp <= thresholds
@@ -640,9 +676,12 @@ def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     Parameters
     ----------
     pv : np.ndarray
+        Batch of p-value families, one family per row.
+
     Returns
     -------
     dict[str, np.ndarray]
+        One rejection mask per procedure, in `pv`'s original column order.
     """
     m = pv.shape[1]
     out = {}
@@ -671,7 +710,9 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     Parameters
     ----------
     rng : np.random.Generator
+        Random-number generator for simulated counts.
     n_sims : int, optional
+        Number of simulated p-value families.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()

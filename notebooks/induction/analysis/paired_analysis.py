@@ -42,6 +42,7 @@ def load_marks() -> tuple[dict, dict, dict]:
     Raises
     ------
     SystemExit
+        If a condition yields no replicate seeds at all.
     """
     correct: dict = {}
     valid: dict = {}
@@ -97,13 +98,20 @@ def aligned(
     Parameters
     ----------
     correct : dict
+        Per-cell correct-mark mappings.
     valid : dict
+        Per-cell valid-mark mappings.
     key_a : tuple[str, str]
+        First cell key.
     key_b : tuple[str, str]
+        Second cell key.
     drop_invalid : bool
+        Drops item-pairs where either arm's mark is invalid (``score: null``).
+
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Matched correct, valid, seed-index, and harmonic-index arrays.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
@@ -132,11 +140,16 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     Parameters
     ----------
     a : np.ndarray
+        First arm's matched marks.
     b : np.ndarray
+        Second arm's matched marks.
     seed_idx : np.ndarray
+        Replicate index for each matched mark.
+
     Returns
     -------
     list[int]
+        Arm differences, one per unique seed.
     """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
@@ -153,9 +166,12 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
     Parameters
     ----------
     diffs : Iterable[int]
+        Per-seed arm differences.
+
     Returns
     -------
     float
+        Exact two-sided sign-flip p-value.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -178,11 +194,16 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     Parameters
     ----------
     a : np.ndarray
+        First arm's matched marks.
     b : np.ndarray
+        Second arm's matched marks.
     harm_idx : np.ndarray
+        Harmonic index for each matched mark.
+
     Returns
     -------
     float
+        P-value of the repo's continuity-corrected 2x2xK CMH.
     """
     strata = np.unique(harm_idx)
     if strata.size == 0:
@@ -201,10 +222,14 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
+        P-values in the family.
     alpha : float, optional
+        Familywise error-rate level.
+
     Returns
     -------
     np.ndarray
+        Rejection mask.
     """
     # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
@@ -221,10 +246,14 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     Parameters
     ----------
     pvals : np.ndarray
+        P-values in the family.
     q : float, optional
+        False discovery-rate level.
+
     Returns
     -------
     np.ndarray
+        Rejection mask.
     """
     # Monotone thresholds make unstable ordering of ties harmless.
     reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
@@ -243,12 +272,18 @@ def design_effect(
     Parameters
     ----------
     a : np.ndarray
+        First arm's matched marks.
     b : np.ndarray
+        Second arm's matched marks.
     seed_idx : np.ndarray
+        Replicate index for each matched mark.
     harm_idx : np.ndarray
+        Harmonic index for each matched mark.
+
     Returns
     -------
     float | None
+        Observed / independence-assumed variance ratio.
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
