@@ -93,7 +93,7 @@ def test_periodic_numeric_answers_and_default_pathway() -> None:
     assert max(pos_to_compound) == lcm(1, 2, 3, 4) == 12
 
 
-def test_coprime_periods_make_sequence_length_the_product() -> None:
+def test_independent_periods_make_sequence_length_the_product() -> None:
     """Coprime periods yield their product, independent of order."""
     periods = (1, 2, 3, 7, 11, 13)
     labels = ["a", "bb", "ccc", "dddd", "eeeee", "ffffff"]
