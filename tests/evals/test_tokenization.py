@@ -64,7 +64,11 @@ def test_for_model_resolution(
     ]
     with pytest.raises(KeyError):
         tokenization.for_model("model-that-does-not-exist")
-    assert record_repo == ["someone/Base", "someone/Override"]
+    assert record_repo == [
+        ("Org/M", "abc"),
+        ("someone/Override", None),
+        ("someone/Base", None),
+    ]
 
     record_repo.clear()
     tokenization.for_model("no-revision-model")

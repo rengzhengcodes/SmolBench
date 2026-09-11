@@ -172,7 +172,9 @@ def test_store_is_local_and_cached(
     assert (tmp_path / "one_hop_decode_intens" / "rep_1.yaml").is_file()
 
 
-def test_summarize_counts_only_owned_seeds(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_summarize_counts_only_owned_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
     """Ignore stored replicates whose seeds belong to another harness."""
     harness = ReplicateHarness(
         results_dir=tmp_path,
