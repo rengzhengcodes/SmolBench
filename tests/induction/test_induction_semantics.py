@@ -187,13 +187,24 @@ def numeric_prompter(**kwargs: Any) -> Prompter:
     return Prompter(NUM_TMPL, numeric_count_query_gen, **kwargs)
 
 
+CFG4 = PeriodicConfig(n=4, labels=4, seed=3)
+
+
+def _quizzes(
+    cfg: PeriodicConfig = CFG4, prompter: Prompter | None = None, **kwargs: Any
+) -> dict:
+    """Render with the range-free numeric prompter unless one is passed."""
+    return get_periodic_numeric_quiz(
+        cfg,
+        prompter or numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
+        tokenizer=StubTokenizer(),
+        **kwargs,
+    )
+
+
 def test_the_quiz_is_keyed_by_condition_in_mapping_order() -> None:
     """Quiz mappings retain condition names and order."""
-    quizzes = get_periodic_numeric_quiz(
-        PeriodicConfig(n=4, labels=4, seed=3),
-        numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
-        tokenizer=StubTokenizer(),
-    )
+    quizzes = _quizzes()
     assert (
         list(quizzes)
         == list(CONDITIONS)
@@ -204,11 +215,8 @@ def test_the_quiz_is_keyed_by_condition_in_mapping_order() -> None:
 
 def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
     """A one-entry mapping verifies that ``conditions`` controls rendering."""
-    quizzes = get_periodic_numeric_quiz(
-        PeriodicConfig(n=4, labels=4, seed=3),
-        numeric_prompter(),
-        tokenizer=StubTokenizer(),
-        conditions={"intens": CONDITIONS["intens"]},
+    quizzes = _quizzes(
+        prompter=numeric_prompter(), conditions={"intens": CONDITIONS["intens"]}
     )
     assert list(quizzes) == ["intens"]
 
@@ -218,11 +226,7 @@ def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
     cfg = PeriodicConfig(n=6, labels=6, seed=5)
     _p2l, p2c = generate_sequence(cfg)
     seq_len = max(p2c)
-    quizzes = get_periodic_numeric_quiz(
-        cfg,
-        numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
-        tokenizer=StubTokenizer(),
-    )
+    quizzes = _quizzes(cfg)
     zero = quizzes["zero"]
     assert len(zero) == len(quizzes["intens"]) == 6
     for question in zero:
@@ -241,10 +245,9 @@ def test_a_single_digit_range_does_not_refuse_a_range_free_template() -> None:
         "$positive_info\nPositions are counted starting from 1. "
         "How many positions include '$label'?"
     )
-    quizzes = get_periodic_numeric_quiz(
+    quizzes = _quizzes(
         PeriodicConfig(n=1, labels=1, seed=3),
         numeric_prompter(range_free_template=counting),
-        tokenizer=StubTokenizer(),
         # n=1 leaves the extensional arm too short to pad against.
         conditions={"zero": CONDITIONS["zero"]},
     )
@@ -257,22 +260,14 @@ def test_a_range_free_template_that_still_states_the_range_is_refused() -> None:
         "$positive_info\nHow many of positions 1..$seq_len include '$label'?"
     )
     with pytest.raises(ValueError) as exc:
-        get_periodic_numeric_quiz(
-            PeriodicConfig(n=4, labels=4, seed=3),
-            numeric_prompter(range_free_template=leaky),
-            tokenizer=StubTokenizer(),
-        )
+        _quizzes(prompter=numeric_prompter(range_free_template=leaky))
     assert "seq_len" in str(exc.value)
 
 
 def test_an_omit_range_condition_without_its_template_is_refused() -> None:
     """Reject a missing range-free template to prevent answer leaks."""
     with pytest.raises(ValueError) as exc:
-        get_periodic_numeric_quiz(
-            PeriodicConfig(n=4, labels=4, seed=3),
-            numeric_prompter(),
-            tokenizer=StubTokenizer(),
-        )
+        _quizzes(prompter=numeric_prompter())
     assert "range_free_template" in str(exc.value)
 
 
@@ -292,12 +287,7 @@ def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
         context=CONDITIONS["noise_intens"].context, match_tokens_to=target
     )
     with pytest.raises(ValueError) as exc:
-        get_periodic_numeric_quiz(
-            PeriodicConfig(n=4, labels=4, seed=3),
-            numeric_prompter(range_free_template=NUM_TMPL_RANGE_FREE),
-            tokenizer=StubTokenizer(),
-            conditions=conditions,
-        )
+        _quizzes(conditions=conditions)
     assert match in str(exc.value)
 
 

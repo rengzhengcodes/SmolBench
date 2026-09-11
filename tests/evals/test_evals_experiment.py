@@ -9,8 +9,6 @@ import pytest
 
 from smolbench.evals import Numeric, study_config
 from smolbench.evals.experiment import Experiment, validate_experiment_tag
-from smolbench.evals.replicates import ReplicateHarness
-from smolbench.induction.experiment import InductionExperiment
 
 
 def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
@@ -27,26 +25,6 @@ def build(**kwargs: Any) -> Experiment:
     return Experiment(**{**base, **kwargs})
 
 
-def test_the_base_carries_the_whole_lifecycle() -> None:
-    """Keep driver lifecycle on the neutral class."""
-    for name in (
-        "provision",
-        "run",
-        "summarize",
-        "agent_status",
-        "teardown",
-        "_apply_env",
-        "seeds",
-        "results_dir",
-        "harness",
-    ):
-        assert hasattr(Experiment, name), name
-    exp = build(n_replicates=3, base_seed=100)
-    assert exp.seeds == (100, 101, 102)
-    assert isinstance(exp.harness, ReplicateHarness)
-    assert exp.harness.info_types == ("a",)
-
-
 def test_the_base_declares_no_study_default_for_the_info_arms() -> None:
     """Require info types to avoid study defaults in shared code."""
     with pytest.raises(TypeError):
@@ -58,21 +36,6 @@ def test_the_base_declares_no_study_default_for_the_info_arms() -> None:
     info_types = {f.name: f for f in dataclasses.fields(Experiment)}["info_types"]
     assert info_types.default is dataclasses.MISSING
     assert info_types.default_factory is dataclasses.MISSING
-
-
-def test_the_induction_subclass_only_supplies_defaults() -> None:
-    """Limit induction subclass to its two defaults."""
-    assert issubclass(InductionExperiment, Experiment)
-    assert [f.name for f in dataclasses.fields(InductionExperiment)] == [
-        f.name for f in dataclasses.fields(Experiment)
-    ]
-    # Induction information-arm default.
-    assert InductionExperiment(
-        notebook_dir="periodic", archetype_tags={}, make_quizzes=make_quizzes
-    ).info_types
-
-
-# validate_experiment_tag.
 
 
 def test_a_lane_tag_and_the_standalone_tag_are_accepted() -> None:

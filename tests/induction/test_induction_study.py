@@ -1,9 +1,10 @@
 """Contracts for the family-ladder induction driver."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 from __future__ import annotations
 
 from types import ModuleType
-from typing import Any
 
 import pytest
 from conftest import StubTokenizer, import_run_study
@@ -288,15 +289,23 @@ def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(
     assert fn(1_000_000) > big
 
 
+def _stub_main(
+    monkeypatch: pytest.MonkeyPatch, run_study: ModuleType, outstanding: bool
+) -> None:
+    """Pin a one-model offline ``main``: frozen instances reject setattr."""
+    monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
+    monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
+    monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
+    monkeypatch.setattr(
+        ReplicateHarness, "has_outstanding", lambda self, model: outstanding
+    )
+
+
 def test_main_passes_the_derived_request_timeout(
     run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """main passes the derived timeout to each run."""
-    monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
-    monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
-    monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
-    # Patch classes because frozen instances reject setattr.
-    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
+    _stub_main(monkeypatch, run_study, outstanding=True)
     monkeypatch.setattr(InductionExperiment, "provision", lambda self: {})
     monkeypatch.setattr(InductionExperiment, "summarize", lambda self, model: None)
     seen = {}
@@ -316,17 +325,13 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Completed lanes must not provision billed instances."""
-    monkeypatch.setenv("INDUCTION_MODELS", "gemma-4-e2b")
-    monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
-    monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
-    # Frozen instances reject setattr.
-    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: False)
-
-    def explode(*a: Any, **k: Any) -> None:
-        raise AssertionError("must not provision or run with no outstanding work")
-
-    monkeypatch.setattr(InductionExperiment, "provision", explode)
-    monkeypatch.setattr(InductionExperiment, "run", explode)
+    _stub_main(monkeypatch, run_study, outstanding=False)
+    for name in ("provision", "run"):
+        monkeypatch.setattr(
+            InductionExperiment,
+            name,
+            lambda *a, **k: pytest.fail("no outstanding work"),
+        )
 
     with caplog.at_level("INFO"):
         run_study.main([])

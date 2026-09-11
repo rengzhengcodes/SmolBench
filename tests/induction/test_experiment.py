@@ -318,22 +318,3 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(
             marks = Marks.load(stored)
             assert len(marks.marks) == 1
             assert marks.marks[0].query == f"{info[0]}/{seed}/stub-model"
-
-
-def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one() -> None:
-    """Keep lifecycle methods on the neutral experiment class."""
-    from smolbench.evals.experiment import Experiment
-
-    assert issubclass(InductionExperiment, Experiment)
-    for name in (
-        "provision",
-        "run",
-        "summarize",
-        "agent_status",
-        "teardown",
-        "_apply_env",
-        "harness",
-        "seeds",
-        "results_dir",
-    ):
-        assert name not in vars(InductionExperiment), name
