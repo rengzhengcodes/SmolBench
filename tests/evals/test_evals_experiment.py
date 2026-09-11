@@ -77,66 +77,20 @@ def test_shards_partition_the_seeds() -> None:
     assert build(n_replicates=5).seeds == (1776, 1777, 1778, 1779, 1780)
 
 
-def test_shard_tags_and_state_files_are_distinct(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin that sharded experiments derive distinct tags and state files."""
-    fleet = study_config.load_study_config().fleet
-    monkeypatch.setenv("EC2_EXPERIMENT_TAG", f"{fleet.tag_prefix}x")
-    first = build(shard=(0, 2))
-    second = build(shard=(1, 2))
-
-    def fake_agent_status() -> dict[str, str]:
-        """Return the environment so the test can inspect exported settings."""
-        return dict(os.environ)
-
-    monkeypatch.setattr(
-        "smolbench.evals.providers.ec2.agent_status",
-        fake_agent_status,
-    )
-    first_env = first.agent_status()
-    second_env = second.agent_status()
-    assert first.experiment_tag.endswith("-s0of2")
-    assert second.experiment_tag.endswith("-s1of2")
-    assert first.experiment_tag != second.experiment_tag
-    assert first_env["EC2_STATE_FILE"] != second_env["EC2_STATE_FILE"]
-    assert first_env["EC2_STATE_FILE"].endswith(
-        f".ec2_state_{first.experiment_tag}.json"
-    )
-    assert second_env["EC2_STATE_FILE"].endswith(
-        f".ec2_state_{second.experiment_tag}.json"
-    )
-
-
-def test_shard_suffix_is_not_duplicated() -> None:
-    """Pin that an existing shard suffix is preserved exactly once."""
-    tag = "scaling-model-s0of2"
-    experiment = build(experiment_tag=tag, shard=(0, 2))
-    assert experiment.experiment_tag == tag
-
-
-def test_untagged_experiment_falls_back_to_driver_then_standalone(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin that untagged experiments resolve from the driver then study config."""
-    fleet = study_config.load_study_config().fleet
-    driver_tag = f"{fleet.tag_prefix}driver"
-    monkeypatch.setenv("EC2_EXPERIMENT_TAG", driver_tag)
-    assert build().experiment_tag == driver_tag
-    monkeypatch.delenv("EC2_EXPERIMENT_TAG")
-    assert build().experiment_tag == fleet.standalone_tag
+def test_a_shard_requires_an_explicit_state_file() -> None:
+    """Refuse shards without a state file to prevent cross-shard reattachment."""
+    with pytest.raises(ValueError, match="state_file"):
+        build(shard=(0, 2))
 
 
 def test_experiment_tag_is_exported_per_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pin that each experiment exports its immutable tag before every live call."""
+    """Pin that each experiment exports its own tag before every live call."""
     fleet = study_config.load_study_config().fleet
-    driver_tag = f"{fleet.tag_prefix}driver"
-    monkeypatch.setenv("EC2_EXPERIMENT_TAG", driver_tag)
-    third = build()
     first = build(experiment_tag=f"{fleet.tag_prefix}a")
     second = build(experiment_tag=f"{fleet.tag_prefix}b")
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
 
     def fake_agent_status() -> dict[str, str]:
         """Return the environment so the test can inspect exported settings."""
@@ -148,7 +102,7 @@ def test_experiment_tag_is_exported_per_call(
     )
     assert first.agent_status()["EC2_EXPERIMENT_TAG"] == first.experiment_tag
     assert second.agent_status()["EC2_EXPERIMENT_TAG"] == second.experiment_tag
-    assert third.agent_status()["EC2_EXPERIMENT_TAG"] == driver_tag
+    os.environ.pop("EC2_EXPERIMENT_TAG", None)
 
 
 def test_an_unsafe_experiment_tag_is_refused_at_construction() -> None:

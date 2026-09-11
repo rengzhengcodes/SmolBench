@@ -3,10 +3,10 @@
 Replicates use ``base_seed + r`` and shard by stride, so shards partition seeds.
 ``ec2`` (and boto3) is imported lazily so configuration-only uses
 (``summarize``, tests) never pay for it; the experiment-owned
-``EC2_EXPERIMENT_TAG`` is resolved and frozen at construction, then exported
-before each live call and read at call time. Remaining import-time ``EC2_*``
-provisioning knobs (instance types, regions, timeouts, and similar settings)
-stay process-global, as tracked in issue #19.
+``EC2_EXPERIMENT_TAG`` is exported before each live call and read at call
+time. Remaining import-time ``EC2_*`` provisioning knobs (instance types,
+regions, timeouts, and similar settings) stay process-global, as tracked in
+issue #19.
 Live EC2 methods are billed; summaries may read S3 but do not invoke inference.
 """
 
@@ -46,17 +46,15 @@ class Experiment:
     prefix : str, optional
         Result-directory namespace prefix.
     state_file : str, optional
-        Repo-relative EC2 state-file name; defaults to
-        ``.ec2_state_<experiment_tag>.json`` so distinct experiments never
-        reattach to each other's instance.
+        Repo-relative EC2 state-file name for this lifecycle.
     experiment_tag : str, optional
-        Explicit tag, else the driver's exported ``EC2_EXPERIMENT_TAG``, else
-        the study's standalone tag; sharded experiments get a
-        ``-s<index>of<count>`` suffix if not already present, so shards never
-        share an instance. Resolved and frozen at construction.
+        Value exported as ``EC2_EXPERIMENT_TAG`` before every live call;
+        ``None`` leaves the driver's exported tag in place. Distinct per
+        concurrent shard.
     shard : Tuple[int, int], optional
         ``(index, count)`` stride for disjoint shard seed subsets; concurrent
-        shards get distinct ``experiment_tag`` values and derived state files.
+        shards also need distinct ``experiment_tag`` values or tag-based
+        recovery reattaches them to one instance.
     force_seeds : frozenset[int], optional
         Seeds to collect despite resume skipping them.
 
@@ -64,7 +62,8 @@ class Experiment:
     ------
     ValueError
         If ``state_file`` is blank, ``experiment_tag`` is unsafe (see
-        ``validate_experiment_tag``), or shard bounds are invalid.
+        ``validate_experiment_tag``), shard bounds are invalid, or a shard has
+        no explicit state file.
     """
 
     notebook_dir: str
@@ -87,26 +86,21 @@ class Experiment:
                 "state_file must name a file; an empty value resolves to the "
                 "repo root and ec2 cannot persist state there."
             )
+        if self.experiment_tag is not None:
+            validate_experiment_tag(self.experiment_tag, None)
         if self.shard is not None:
+            if self.state_file is None:
+                raise ValueError(
+                    f"shard {self.shard!r} requires an explicit state_file: "
+                    "shards sharing ec2's default state file would reattach to "
+                    "each other's instance. Shards also need distinct "
+                    "experiment_tag values."
+                )
             index, count = self.shard
             if count < 1 or not 0 <= index < count:
                 raise ValueError(
                     f"shard {self.shard!r}: need count >= 1 and 0 <= index < count."
                 )
-        if self.experiment_tag is not None and not self.experiment_tag.strip():
-            validate_experiment_tag(self.experiment_tag, None)
-        tag = (
-            self.experiment_tag
-            or os.environ.get("EC2_EXPERIMENT_TAG")
-            or study_config.load_study_config().fleet.standalone_tag
-        )
-        if self.shard is not None:
-            index, count = self.shard
-            suffix = f"-s{index}of{count}"
-            if not tag.endswith(suffix):
-                tag += suffix
-        validate_experiment_tag(tag, None)
-        object.__setattr__(self, "experiment_tag", tag)
 
     @property
     def seeds(self) -> Tuple[int, ...]:
@@ -162,24 +156,27 @@ class Experiment:
 
         EC2 is configured through ``INFERENCE_PROVIDER``, ``EC2_STATE_FILE``,
         and ``EC2_EXPERIMENT_TAG`` environment knobs rather than method
-        arguments, so each experiment exports its resolved identity before
-        invoking EC2. The state-file default is derived from that identity to
-        prevent experiments from inheriting each other's lifecycle state.
+        arguments, so each experiment exports its call-time settings before
+        invoking EC2. Pop ``EC2_STATE_FILE`` when unset to avoid inheriting
+        another experiment's state; leave the driver's tag in place when this
+        experiment does not own one.
         """
         os.environ["INFERENCE_PROVIDER"] = "ec2"
-        state_file = self.state_file or f".ec2_state_{self.experiment_tag}.json"
-        os.environ["EC2_STATE_FILE"] = str(repo_root() / state_file)
-        os.environ["EC2_EXPERIMENT_TAG"] = self.experiment_tag
+        if self.state_file is not None:
+            os.environ["EC2_STATE_FILE"] = str(repo_root() / self.state_file)
+        else:
+            os.environ.pop("EC2_STATE_FILE", None)
+        if self.experiment_tag is not None:
+            os.environ["EC2_EXPERIMENT_TAG"] = self.experiment_tag
 
     def _ec2(self) -> ModuleType:
         """Apply the call-time environment, then import ``ec2`` lazily.
 
         ``ec2`` pulls in boto3, so it is imported only by live methods.
         ``EC2_STATE_FILE`` and ``INFERENCE_PROVIDER`` are read at call time;
-        ``EC2_EXPERIMENT_TAG`` is resolved and frozen by the owning experiment,
-        exported before this call, and read at call time. Remaining import-time
-        ``EC2_*`` provisioning knobs are process-global; consolidation is
-        tracked in issue #19.
+        ``EC2_EXPERIMENT_TAG`` is exported by the owning experiment and read
+        at call time too. Remaining import-time ``EC2_*`` provisioning knobs
+        are process-global; consolidation is tracked in issue #19.
 
         Returns
         -------
