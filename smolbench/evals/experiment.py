@@ -93,12 +93,13 @@ class Experiment:
                 raise ValueError(
                     f"shard {self.shard!r}: need count >= 1 and 0 <= index < count."
                 )
-        if self.experiment_tag is not None and not self.experiment_tag.strip():
-            validate_experiment_tag(self.experiment_tag, None)
         tag = (
             self.experiment_tag
-            or os.environ.get("EC2_EXPERIMENT_TAG")
-            or study_config.load_study_config().fleet.standalone_tag
+            if self.experiment_tag is not None
+            else (
+                os.environ.get("EC2_EXPERIMENT_TAG")
+                or study_config.load_study_config().fleet.standalone_tag
+            )
         )
         if self.shard is not None:
             index, count = self.shard
