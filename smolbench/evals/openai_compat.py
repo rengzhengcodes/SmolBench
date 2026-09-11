@@ -594,7 +594,7 @@ class ChatClient:
         Returns
         -------
         Tuple[str, Optional[str]]
-            content and reasoning.
+            Content and reasoning.
         """
         result = self.complete(
             prompt,
@@ -627,7 +627,7 @@ class ChatClient:
         Returns
         -------
         Tuple[int, Tuple[str, Optional[str]]]
-            the quiz position and ``query()`` result.
+            The quiz position and ``query()`` result.
         """
         return index, self.query(*args, **kwargs)
 

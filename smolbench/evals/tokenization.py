@@ -47,7 +47,7 @@ class HFTokenizer:
         name : str
             Name of the wrapped tokenizer.
         tokenizer : Any
-            duck-typed on ``encode(text, add_special_tokens=False).ids``.
+            Duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
