@@ -833,7 +833,7 @@ def primary_contrasts_table(
     Raises
     ------
     SystemExit
-        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES: the pilot...
+        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES.
     """
     contrasts = build_primary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
@@ -1026,7 +1026,7 @@ def equivalence_checks(
     Returns
     -------
     dict
-        With: fisher : list of (name.
+        Fisher p-values and TOST results for each eligible primary contrast.
     """
     fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
