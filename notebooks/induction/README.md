@@ -28,13 +28,16 @@ to the store, so a script's depth affects only where it reads from.
 
 ## Study driver
 
-- `run_study.py` -- headless driver for the study; defines the roster
-  (`MODELS`, `COT_ARGS`) and sweep config. `notebooks/deduction/run_study.py`
-  loads it by file path for the shared roster; the analysis scripts do NOT --
-  they take their own `MODELS` from `analysis/power_analysis.py`.
-- `induction_eval.ipynb` -- the fleet-aware notebook for exploring and
-  validating the study; framing cells document the as-served roster, config
-  epochs, and the earliest-wins selection rule.
+- `run_study.py` -- headless driver for the study; derives the roster
+  (`MODELS`, `COT_ARGS`) from `smolbench/evals/study_config.toml` and owns
+  the sweep config. Experiment tag, shard suffix and state-file resolution
+  belong to the `Experiment` facade (`smolbench/evals/experiment.py`); the
+  driver adds only the model-lane suffix and rejects a bare fleet prefix as
+  its standalone base tag. `notebooks/deduction/run_study.py` loads it by
+  file path for the shared roster; the analysis scripts do NOT -- they take
+  their own `MODELS` from `analysis/power_analysis.py`.
+- `induction_eval.ipynb` -- the notebook for exploring and validating the
+  study's prompts and budgets; nothing in it provisions.
 
 ## analysis/ -- the published numbers
 

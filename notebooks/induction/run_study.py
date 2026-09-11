@@ -1,8 +1,21 @@
 """Run the family-ladder scaling induction study.
 
-Each lane needs a distinct state file and tag to prevent EC2 reattachment from
-switching its served model. Completion budgets reserve template overhead and
-timeouts scale with them to avoid censoring long CoT responses.
+Lifecycle identity (experiment tag, ``-s<i>of<n>`` shard suffix, state-file
+default, ``EC2_EXPERIMENT_TAG`` export) is resolved by the ``Experiment``
+facade; this driver adds only the model-lane suffix, so concurrent lanes never
+reattach to each other's instance, and rejects a bare fleet prefix as the
+standalone base tag before the lane hides it. Completion budgets reserve
+template overhead and timeouts scale with them to avoid censoring long CoT
+responses.
+
+Environment knobs (``keys.env`` or the fleet's per-lane export):
+
+- ``INDUCTION_MODELS``: comma-separated spec keys; unset runs the roster.
+- ``INDUCTION_SHARD``: ``index/count`` seed stride for one of several processes.
+- ``INDUCTION_STATE_FILE``: EC2 state-file override; defaults from the tag.
+- ``INDUCTION_FORCE_RERUN``: ``1`` or ``a-b`` seeds to re-collect.
+- ``EC2_EXPERIMENT_TAG``: fleet-exported base tag; defaults to the study's
+  ``standalone_tag``.
 """
 
 import argparse
@@ -16,14 +29,39 @@ from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 
-# EC2 reads environment constants at import time, so mutations precede its import.
 # Not ``override=True``: the fleet exports a per-lane environment that
 # ``keys.env`` must not clobber.
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
+# ec2 freezes EC2_* provisioning constants from os.environ at import, so
+# load_dotenv above must run before the first smolbench import.
+from smolbench.evals import Numeric  # noqa: E402
+from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
+from smolbench.evals.providers import ec2  # noqa: E402
+from smolbench.evals.study_config import (  # noqa: E402
+    load_study_config,
+    roster_keys,
+    tag_for,
+)
+from smolbench.evals.tokenization import for_model  # noqa: E402
+from smolbench.induction._common import (  # noqa: E402
+    Prompter,
+    RenderedQuery,
+    quizzes_from_prompts,
+)
+from smolbench.induction.experiment import InductionExperiment  # noqa: E402
+from smolbench.induction.periodic import (  # noqa: E402
+    CONDITIONS,
+    PeriodicConfig,
+    get_periodic_prompts,
+    numeric_count_query_gen,
+)
+
 
 def _parse_shard(var: str) -> "tuple[int, int] | None":
     """Parse environment variable `var` as ``"index/count"``; ``None`` if unset/empty.
+
+    Bounds are the facade's to check, so this only splits the text.
 
     Parameters
     ----------
@@ -38,7 +76,7 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     Raises
     ------
     SystemExit
-        On an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``.
+        On an unparseable value.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -49,8 +87,6 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
         raise SystemExit(
             f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3"
         ) from exc
-    if count < 1 or not 0 <= index < count:
-        raise SystemExit(f"{var}={raw!r}: need count >= 1 and 0 <= index < count")
     return index, count
 
 
@@ -96,61 +132,41 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 SHARD = _parse_shard("INDUCTION_SHARD")
 
 # Use the canonical roster to prevent duplicate-map drift.
-from smolbench.evals.study_config import (  # noqa: E402
-    load_study_config,
-    roster_keys,
-    tag_for,
-)
-
 MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
-# Shards need distinct tags and state files to prevent model swaps.
-_LANE = ""
-if SHARD is not None:
-    # Canonical order makes equivalent model selections share a lane.
-    _requested = [
-        key.strip()
-        for key in os.environ.get("INDUCTION_MODELS", "").split(",")
-        if key.strip()
-    ]
-    _chosen = set(_requested)
-    _lane_models = [model for model in MODELS if model in _chosen]
-    _lane_models += [key for key in dict.fromkeys(_requested) if key not in MODELS]
-    _LANE = ("-" + "-".join(_lane_models) if _lane_models else "") + (
-        f"-s{SHARD[0]}of{SHARD[1]}"
-    )
 
-# Preserve a fleet-provided tag.
-os.environ.setdefault("EC2_EXPERIMENT_TAG", load_study_config().fleet.standalone_tag)
-if _LANE:
-    os.environ["EC2_EXPERIMENT_TAG"] += _LANE
+def _model_lane(models: "tuple[str, ...]") -> str:
+    """Return the tag suffix naming the requested model subset.
 
-# Validate before EC2 imports freeze the environment.
-from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
+    Canonical roster order makes equivalent selections share a lane, so
+    ordering cannot create a second instance; unknown keys are kept, in
+    request order, so the lane still differs from a roster run.
 
-_RESOLVED_TAG = os.environ["EC2_EXPERIMENT_TAG"]
+    Parameters
+    ----------
+    models : tuple[str, ...]
+        Requested spec keys, as listed in ``INDUCTION_MODELS``.
+
+    Returns
+    -------
+    str
+        ``""`` for the full roster, else ``"-" + "-".join(models)``.
+    """
+    chosen = set(models)
+    lane_models = [model for model in MODELS if model in chosen]
+    lane_models += [key for key in dict.fromkeys(models) if key not in MODELS]
+    return "-" + "-".join(lane_models) if lane_models else ""
+
+
+# The facade only sees the full tag, so a bare fleet prefix hidden behind a
+# lane suffix must be rejected here.
+_base_tag = (
+    os.environ.get("EC2_EXPERIMENT_TAG") or load_study_config().fleet.standalone_tag
+)
 try:
-    validate_experiment_tag(_RESOLVED_TAG, _LANE)
+    validate_experiment_tag(_base_tag, None)
 except ValueError as exc:
-    raise SystemExit(str(exc)) from exc
-
-_DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
-
-from smolbench.evals import Numeric  # noqa: E402
-from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.evals.tokenization import for_model  # noqa: E402
-from smolbench.induction._common import (  # noqa: E402
-    Prompter,
-    RenderedQuery,
-    quizzes_from_prompts,
-)
-from smolbench.induction.experiment import InductionExperiment  # noqa: E402
-from smolbench.induction.periodic import (  # noqa: E402
-    CONDITIONS,
-    PeriodicConfig,
-    get_periodic_prompts,
-    numeric_count_query_gen,
-)
+    raise SystemExit(f"run_study: {exc}") from exc
 
 
 def derive_context_limit(lengths: "dict[str, int]") -> int:
@@ -406,23 +422,37 @@ def request_timeout_seconds(budget: int) -> int:
     return max(REQUEST_TIMEOUT_FLOOR_SECONDS, ceil(budget / MIN_DECODE_TOK_S))
 
 
+# Sharded lanes need distinct tags and state files to prevent model swaps.
+_lane = ""
+if SHARD is not None:
+    _lane = _model_lane(
+        tuple(
+            key.strip()
+            for key in os.environ.get("INDUCTION_MODELS", "").split(",")
+            if key.strip()
+        )
+    )
+
 # Separates this study's result-store keys from sibling studies.
-EXPERIMENT = InductionExperiment(
-    notebook_dir="induction",
-    archetype_tags=MODELS,
-    make_quizzes=make_quizzes,
-    info_types=INFO_TYPES,
-    n_replicates=N_REPLICATES,
-    base_seed=BASE_SEED,
-    state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
-    experiment_tag=_RESOLVED_TAG,
-    shard=SHARD,
-    # Sharding limits forced reruns to owned seeds.
-    force_seeds=_parse_force_seeds(
-        os.environ.get("INDUCTION_FORCE_RERUN", ""),
-        range(BASE_SEED, BASE_SEED + N_REPLICATES),
-    ),
-)
+try:
+    EXPERIMENT = InductionExperiment(
+        notebook_dir="induction",
+        archetype_tags=MODELS,
+        make_quizzes=make_quizzes,
+        info_types=INFO_TYPES,
+        n_replicates=N_REPLICATES,
+        base_seed=BASE_SEED,
+        state_file=os.environ.get("INDUCTION_STATE_FILE") or None,
+        experiment_tag=_base_tag + _lane,
+        shard=SHARD,
+        # Sharding limits forced reruns to owned seeds.
+        force_seeds=_parse_force_seeds(
+            os.environ.get("INDUCTION_FORCE_RERUN", ""),
+            range(BASE_SEED, BASE_SEED + N_REPLICATES),
+        ),
+    )
+except ValueError as err:
+    raise SystemExit(f"run_study: {err}") from err
 
 
 def selected_models() -> "tuple[str, ...]":
