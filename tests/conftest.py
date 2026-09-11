@@ -1,5 +1,7 @@
 """Shared offline OpenAI-stub, tokenizer, and optional S3 fixtures."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import hashlib
 import importlib.util
 import json
@@ -7,8 +9,8 @@ import math
 import os
 import posixpath
 import re
-import threading
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import ModuleType
 from typing import Any, Iterator
@@ -78,11 +80,19 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         for key in ("reasoning_content", "reasoning"):
             for ch in message.get(key) or "":
-                frame({"model": obj.get("model", "stub-model"),
-                       "choices": [{"delta": {key: ch}}]})
+                frame(
+                    {
+                        "model": obj.get("model", "stub-model"),
+                        "choices": [{"delta": {key: ch}}],
+                    }
+                )
         for ch in message.get("content") or "":
-            frame({"model": obj.get("model", "stub-model"),
-                   "choices": [{"delta": {"content": ch}}]})
+            frame(
+                {
+                    "model": obj.get("model", "stub-model"),
+                    "choices": [{"delta": {"content": ch}}],
+                }
+            )
         finish = (obj.get("choices") or [{}])[0].get("finish_reason", "stop")
         frame({"choices": [{"delta": {}, "finish_reason": finish}]})
         if obj.get("usage") is not None:
@@ -222,14 +232,17 @@ def stub_server() -> Iterator[StubServer]:
 @pytest.fixture(autouse=True)
 def _clear_provider_context_length_caches() -> Iterator[None]:
     """Clear provider context-length caches around each test."""
+
     def _clear() -> None:
         try:
             from smolbench.evals.providers import openrouter
+
             openrouter.get_model_context_length.cache_clear()
         except ImportError:
             pass
         try:
             from smolbench.evals.providers import primeintellect
+
             primeintellect.get_model_context_length.cache_clear()
         except ImportError:
             pass
@@ -267,7 +280,7 @@ class S3Archive:
         for page in paginator.paginate(Bucket=self.bucket, Prefix=full):
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                out.append(key[len(self.prefix) + 1:] if self.prefix else key)
+                out.append(key[len(self.prefix) + 1 :] if self.prefix else key)
         return out
 
     def exists(self, rel: str) -> bool:
@@ -280,7 +293,9 @@ class S3Archive:
     def open(self, rel: str) -> Any:
         """Return an object's streaming body."""
         try:
-            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))["Body"]
+            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))[
+                "Body"
+            ]
         except self._client.exceptions.NoSuchKey as exc:
             raise FileNotFoundError(self._key(rel)) from exc
 

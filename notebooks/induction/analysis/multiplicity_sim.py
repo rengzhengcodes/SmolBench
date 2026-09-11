@@ -17,11 +17,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from scipy.stats import chi2
-
 from _power_common import ALPHA, SEED, results_dir
-from power_analysis import (ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY, cmh_p,
-                            cmh_stat, gcmh_stat, mcnemar_exact_p)
+from power_analysis import (
+    ALPHA_PRIMARY,
+    N_HARMONICS,
+    N_PRIMARY,
+    cmh_p,
+    cmh_stat,
+    gcmh_stat,
+    mcnemar_exact_p,
+)
+from scipy.stats import chi2
 
 K_HARM = N_HARMONICS
 ALPHA_BONF = ALPHA_PRIMARY
@@ -30,13 +36,36 @@ R_DEFAULT = 30  # Avoid importing run_study, which freezes EC2 configuration.
 
 # Equivalent-R search ladder, roughly geometric for efficient matching and
 # starting at R_DEFAULT so "pairing bought nothing" stays reachable.
-EQ_R_GRID = (R_DEFAULT, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210,
-             250, 300, 360, 430, 520, 620, 750, 900)
+EQ_R_GRID = (
+    R_DEFAULT,
+    35,
+    40,
+    45,
+    50,
+    60,
+    70,
+    85,
+    100,
+    120,
+    145,
+    175,
+    210,
+    250,
+    300,
+    360,
+    430,
+    520,
+    620,
+    750,
+    900,
+)
 
 # Include the unclustered baseline and plausible clustering range.
 ICC_GRID = (0.0, 0.2, 0.4)
 
-N_REDUCED = 154  # 28 trend tests replacing 84 ladder contrasts + the 126 shared info contrasts.
+N_REDUCED = (
+    154  # 28 trend tests replacing 84 ladder contrasts + the 126 shared info contrasts.
+)
 
 OUT = {}
 # Anchor checkpoints to the study results tree.
@@ -53,7 +82,7 @@ def dump(tag: str) -> None:
     tag : str
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT_PATH, "w") as fh:
+    with open(OUT_PATH, "w", encoding="utf-8") as fh:
         json.dump(OUT, fh, indent=2, default=float)
     print(f"[checkpoint written after {tag}]", flush=True)
 
@@ -65,13 +94,13 @@ def trend_stat(
     x = np.asarray(scores)
     n_rungs = succ.shape[-2]
     total_n = float(n_rungs * n)
-    m = succ.sum(axis=-2)                                 # (..., K) successes
-    t = (succ * x[:, None]).sum(axis=(-2, -1))            # observed
+    m = succ.sum(axis=-2)  # (..., K) successes
+    t = (succ * x[:, None]).sum(axis=(-2, -1))  # observed
     sum_nx = n * x.sum()
-    sum_nx2 = n * (x ** 2).sum()
+    sum_nx2 = n * (x**2).sum()
     e_j = sum_nx * m / total_n
-    v_j = (m * (total_n - m) / (total_n ** 2 * (total_n - 1.0))) * (
-        total_n * sum_nx2 - sum_nx ** 2
+    v_j = (m * (total_n - m) / (total_n**2 * (total_n - 1.0))) * (
+        total_n * sum_nx2 - sum_nx**2
     )
     e = e_j.sum(axis=-1)
     v = v_j.sum(axis=-1)
@@ -79,8 +108,15 @@ def trend_stat(
         return np.where(v > 0, (t - e) ** 2 / v, 0.0)
 
 
-def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
-                 rng: np.random.Generator, icc: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+def paired_marks(
+    p_a: float,
+    p_b: float,
+    rho: float,
+    n_sims: int,
+    reps: int,
+    rng: np.random.Generator,
+    icc: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
     """Simulate matched marks from a latent bivariate normal.
 
     Skip clustering draws at zero `icc` to preserve RNG order; arm latents remain independent.
@@ -98,7 +134,7 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
     -------
     tuple[np.ndarray, np.ndarray]
     """
-    if not (0.0 <= icc < 1.0):
+    if not 0.0 <= icc < 1.0:
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
     z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
     z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
@@ -110,6 +146,7 @@ def paired_marks(p_a: float, p_b: float, rho: float, n_sims: int, reps: int,
         z1 = w1 * u_a + w2 * z1
         zb = w1 * u_b + w2 * zb
     from scipy.stats import norm
+
     return z1 < norm.ppf(p_a), zb < norm.ppf(p_b)
 
 
@@ -138,17 +175,25 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
                     if pw >= 0.80:
                         found[a_lab] = (round(d, 4), float(pw))
             d += step
-        row = dict(p_a=p_a,
-                   mdd_bonf=found.get("bonf", (None, None))[0],
-                   pow_bonf=found.get("bonf", (None, None))[1],
-                   mdd_naive=found.get("naive", (None, None))[0],
-                   pow_naive=found.get("naive", (None, None))[1])
-        row["ratio"] = (row["mdd_bonf"] / row["mdd_naive"]
-                        if row["mdd_bonf"] and row["mdd_naive"] else None)
+        row = {
+            "p_a": p_a,
+            "mdd_bonf": found.get("bonf", (None, None))[0],
+            "pow_bonf": found.get("bonf", (None, None))[1],
+            "mdd_naive": found.get("naive", (None, None))[0],
+            "pow_naive": found.get("naive", (None, None))[1],
+        }
+        row["ratio"] = (
+            row["mdd_bonf"] / row["mdd_naive"]
+            if row["mdd_bonf"] and row["mdd_naive"]
+            else None
+        )
         rows.append(row)
-        print(f"  p_A={p_a:.2f}  MDD(alpha=2.38e-4)={row['mdd_bonf']}  "
-              f"MDD(alpha=0.05)={row['mdd_naive']}  ratio={row['ratio']}", flush=True)
-    OUT["part1"] = dict(n_sims=n_sims, grid_step=step, rows=rows)
+        print(
+            f"  p_A={p_a:.2f}  MDD(alpha=2.38e-4)={row['mdd_bonf']}  "
+            f"MDD(alpha=0.05)={row['mdd_naive']}  ratio={row['ratio']}",
+            flush=True,
+        )
+    OUT["part1"] = {"n_sims": n_sims, "grid_step": step, "rows": rows}
 
 
 def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) -> None:
@@ -160,8 +205,12 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     n_sims : int, optional
     chunk : int, optional
     """
-    print("\n=== PART 3: within-replicate clustering -> actual Type I error ===", flush=True)
+    print(
+        "\n=== PART 3: within-replicate clustering -> actual Type I error ===",
+        flush=True,
+    )
     from scipy.stats import norm
+
     crit05 = chi2.isf(ALPHA, df=1)
     critb = chi2.isf(ALPHA_BONF, df=1)
     rows = []
@@ -177,21 +226,25 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
                 while done < n_sims:
                     s = min(chunk, n_sims - done)
                     u_a = rng.standard_normal((s, R_DEFAULT, 1), dtype=np.float32)
-                    u_b = (u_a if variant == "shared"
-                           else rng.standard_normal((s, R_DEFAULT, 1), dtype=np.float32))
+                    u_b = (
+                        u_a
+                        if variant == "shared"
+                        else rng.standard_normal((s, R_DEFAULT, 1), dtype=np.float32)
+                    )
                     ea = rng.standard_normal((s, R_DEFAULT, K_HARM), dtype=np.float32)
                     eb = rng.standard_normal((s, R_DEFAULT, K_HARM), dtype=np.float32)
                     w1, w2 = np.sqrt(icc), np.sqrt(1.0 - icc)
                     ma = (w1 * u_a + w2 * ea) < thr
                     mb = (w1 * u_b + w2 * eb) < thr
-                    if len(phis) < 3:            # empirical binary within-replicate corr
+                    if len(phis) < 3:  # empirical binary within-replicate corr
                         x = ma.astype(np.float64)
                         mu = x.mean()
                         cx = x - mu
                         # mean over k<k' of E[cx_k cx_k'] / var
                         ssum = cx.sum(axis=2)
-                        cross = (ssum ** 2 - (cx ** 2).sum(axis=2)).mean() / (
-                            K_HARM * (K_HARM - 1))
+                        cross = (ssum**2 - (cx**2).sum(axis=2)).mean() / (
+                            K_HARM * (K_HARM - 1)
+                        )
                         phis.append(cross / (mu * (1 - mu)))
                     sa = ma.sum(axis=1)
                     sb = mb.sum(axis=1)
@@ -199,17 +252,25 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
                     r05 += int((st > crit05).sum())
                     rb += int((st > critb).sum())
                     done += s
-                row = dict(p=p, icc=icc, variant=variant,
-                           phi_binary=float(np.mean(phis)),
-                           t1_alpha05=r05 / n_sims, t1_alpha_bonf=rb / n_sims,
-                           infl05=(r05 / n_sims) / ALPHA,
-                           inflb=(rb / n_sims) / ALPHA_BONF, n_sims=n_sims)
+                row = {
+                    "p": p,
+                    "icc": icc,
+                    "variant": variant,
+                    "phi_binary": float(np.mean(phis)),
+                    "t1_alpha05": r05 / n_sims,
+                    "t1_alpha_bonf": rb / n_sims,
+                    "infl05": (r05 / n_sims) / ALPHA,
+                    "inflb": (rb / n_sims) / ALPHA_BONF,
+                    "n_sims": n_sims,
+                }
                 rows.append(row)
-                print(f"  p={p} icc={icc} {variant:11s} phi_bin={row['phi_binary']:.3f} "
-                      f"T1@0.05={row['t1_alpha05']:.4f} ({row['infl05']:.2f}x)  "
-                      f"T1@2.38e-4={row['t1_alpha_bonf']:.6f} ({row['inflb']:.2f}x)",
-                      flush=True)
-    OUT["part3"] = dict(rows=rows)
+                print(
+                    f"  p={p} icc={icc} {variant:11s} phi_bin={row['phi_binary']:.3f} "
+                    f"T1@0.05={row['t1_alpha05']:.4f} ({row['infl05']:.2f}x)  "
+                    f"T1@2.38e-4={row['t1_alpha_bonf']:.6f} ({row['inflb']:.2f}x)",
+                    flush=True,
+                )
+    OUT["part3"] = {"rows": rows}
 
 
 # ============================================================ PART 5: trend vs pairwise
@@ -239,58 +300,83 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
     alpha_trend_studywide = ALPHA / N_REDUCED
     # Sensitivity only: correcting the 28 trend tests among themselves.
     alpha_trend_only = ALPHA / 28
-    alpha_pair = ALPHA_BONF               # pairwise inside the 210 family
+    alpha_pair = ALPHA_BONF  # pairwise inside the 210 family
     rows = []
-    for label, rates in (("monotone 0.60/0.75/0.88", (0.60, 0.75, 0.88)),
-                         ("non-monotone 0.60/0.88/0.75", (0.60, 0.88, 0.75)),
-                         ("monotone-small 0.60/0.66/0.72", (0.60, 0.66, 0.72)),
-                         ("non-monotone-small 0.60/0.72/0.66", (0.60, 0.72, 0.66)),
-                         ("monotone-ceiling 0.99/0.96/0.93", (0.99, 0.96, 0.93)),
-                         ("non-monotone-ceiling 0.99/0.93/0.96", (0.99, 0.93, 0.96))):
-        succ = np.stack([rng.binomial(R_DEFAULT, r, (n_sims, K_HARM)) for r in rates],
-                        axis=1)
+    for label, rates in (
+        ("monotone 0.60/0.75/0.88", (0.60, 0.75, 0.88)),
+        ("non-monotone 0.60/0.88/0.75", (0.60, 0.88, 0.75)),
+        ("monotone-small 0.60/0.66/0.72", (0.60, 0.66, 0.72)),
+        ("non-monotone-small 0.60/0.72/0.66", (0.60, 0.72, 0.66)),
+        ("monotone-ceiling 0.99/0.96/0.93", (0.99, 0.96, 0.93)),
+        ("non-monotone-ceiling 0.99/0.93/0.96", (0.99, 0.93, 0.96)),
+    ):
+        succ = np.stack(
+            [rng.binomial(R_DEFAULT, r, (n_sims, K_HARM)) for r in rates], axis=1
+        )
         tr = trend_stat(succ, R_DEFAULT)
         gc = gcmh_stat(succ, R_DEFAULT)
-        pair_stats = [cmh_stat(succ[:, i, :], succ[:, j, :], R_DEFAULT)
-                      for i, j in ((0, 1), (1, 2), (0, 2))]
-        res = dict(label=label, rates=rates)
+        pair_stats = [
+            cmh_stat(succ[:, i, :], succ[:, j, :], R_DEFAULT)
+            for i, j in ((0, 1), (1, 2), (0, 2))
+        ]
+        res = {"label": label, "rates": rates}
         # study-wide alphas
         res["trend_studywide"] = float((tr > chi2.isf(alpha_trend_studywide, 1)).mean())
         # Same statistic at the narrower, not pre-registered, trend-only
         # alpha, reported beside the headline rather than instead of it.
         res["trend_trend_only_family"] = float(
-            (tr > chi2.isf(alpha_trend_only, 1)).mean())
+            (tr > chi2.isf(alpha_trend_only, 1)).mean()
+        )
         res["gcmh_studywide"] = float((gc > chi2.isf(ALPHA / 7, 2)).mean())
         res["pairwise_any_studywide"] = float(
-            np.any([s > chi2.isf(alpha_pair, 1) for s in pair_stats], axis=0).mean())
+            np.any([s > chi2.isf(alpha_pair, 1) for s in pair_stats], axis=0).mean()
+        )
         # local, uncorrected-family alphas (test choice isolated from correction)
         res["trend_local05"] = float((tr > chi2.isf(ALPHA, 1)).mean())
         res["gcmh_local05"] = float((gc > chi2.isf(ALPHA, 2)).mean())
         res["pairwise_any_local"] = float(
-            np.any([s > chi2.isf(ALPHA / 3, 1) for s in pair_stats], axis=0).mean())
+            np.any([s > chi2.isf(ALPHA / 3, 1) for s in pair_stats], axis=0).mean()
+        )
         rows.append(res)
         print(f"  {label}", flush=True)
-        print(f"    study-wide: trend[a=.05/{N_REDUCED}]="
-              f"{res['trend_studywide']:.4f} "
-              f"gcmh(2df)[a=.05/7]={res['gcmh_studywide']:.4f} "
-              f"any-pairwise[a=.05/{N_PRIMARY}]="
-              f"{res['pairwise_any_studywide']:.4f}", flush=True)
-        print(f"    sensitivity: trend[a=.05/28, trend-only family, "
-              f"not pre-registered]={res['trend_trend_only_family']:.4f}",
-              flush=True)
-        print(f"    local a=.05: trend={res['trend_local05']:.4f} "
-              f"gcmh={res['gcmh_local05']:.4f} any-pairwise={res['pairwise_any_local']:.4f}",
-              flush=True)
-    OUT["part5"] = dict(rows=rows, n_sims=n_sims,
-                        alpha_trend_studywide=alpha_trend_studywide,
-                        alpha_trend_only=alpha_trend_only,
-                        alpha_pairwise=ALPHA_BONF, alpha_gcmh=ALPHA / 7)
+        print(
+            f"    study-wide: trend[a=.05/{N_REDUCED}]="
+            f"{res['trend_studywide']:.4f} "
+            f"gcmh(2df)[a=.05/7]={res['gcmh_studywide']:.4f} "
+            f"any-pairwise[a=.05/{N_PRIMARY}]="
+            f"{res['pairwise_any_studywide']:.4f}",
+            flush=True,
+        )
+        print(
+            f"    sensitivity: trend[a=.05/28, trend-only family, "
+            f"not pre-registered]={res['trend_trend_only_family']:.4f}",
+            flush=True,
+        )
+        print(
+            f"    local a=.05: trend={res['trend_local05']:.4f} "
+            f"gcmh={res['gcmh_local05']:.4f} any-pairwise={res['pairwise_any_local']:.4f}",
+            flush=True,
+        )
+    OUT["part5"] = {
+        "rows": rows,
+        "n_sims": n_sims,
+        "alpha_trend_studywide": alpha_trend_studywide,
+        "alpha_trend_only": alpha_trend_only,
+        "alpha_pairwise": ALPHA_BONF,
+        "alpha_gcmh": ALPHA / 7,
+    }
 
 
 # ================================================================== PART 2: pairing gain
 def _paired_powers(
-    p_a: float, delta: float, rho: float, reps: int, n_sims: int,
-    rng: np.random.Generator, stats: bool = True, icc: float = 0.0,
+    p_a: float,
+    delta: float,
+    rho: float,
+    reps: int,
+    n_sims: int,
+    rng: np.random.Generator,
+    stats: bool = True,
+    icc: float = 0.0,
 ) -> tuple[float, float, float | None, float | None]:
     """Compute unpaired and paired power on identical simulated marks.
 
@@ -343,8 +429,9 @@ def study_design_effect() -> float | None:
     correct, valid, _compliance = paired_analysis.load_marks()
     deffs = []
     for _label, key_a, key_b in power_analysis.build_primary_contrasts():
-        a, b, seed_idx, harm_idx = paired_analysis.aligned(correct, valid, key_a, key_b,
-                                                           drop_invalid=False)
+        a, b, seed_idx, harm_idx = paired_analysis.aligned(
+            correct, valid, key_a, key_b, drop_invalid=False
+        )
         d = paired_analysis.design_effect(a, b, seed_idx, harm_idx)
         if d is not None:
             deffs.append(d)
@@ -352,7 +439,9 @@ def study_design_effect() -> float | None:
 
 
 def part2(
-    rng: np.random.Generator, n_sims: int = 20000, search_sims: int = 8000,
+    rng: np.random.Generator,
+    n_sims: int = 20000,
+    search_sims: int = 8000,
 ) -> None:
     """Measure pairing gains over unpaired testing.
 
@@ -369,11 +458,17 @@ def part2(
     import paired_analysis
 
     measured = study_design_effect()
-    measured_str = (f"{measured:.3f}" if measured is not None
-                    else f"unknown (no results tree at {paired_analysis.RESULTS_DIR})")
+    measured_str = (
+        f"{measured:.3f}"
+        if measured is not None
+        else f"unknown (no results tree at {paired_analysis.RESULTS_DIR})"
+    )
     print("\n=== PART 2: pairing gain (matched items) ===", flush=True)
-    print(f"  study's own measured design effect: {measured_str} -- compare "
-          f"against each icc block's design_effect_simulated below", flush=True)
+    print(
+        f"  study's own measured design effect: {measured_str} -- compare "
+        f"against each icc block's design_effect_simulated below",
+        flush=True,
+    )
     grid_r = list(EQ_R_GRID)
     icc_blocks: dict[str, dict] = {}
     for icc in ICC_GRID:
@@ -385,7 +480,8 @@ def part2(
                     if p_a == 0.70 and rho not in (0.5, 0.7):
                         continue
                     unp, pair, phi, agree = _paired_powers(
-                        p_a, delta, rho, R_DEFAULT, n_sims, rng, icc=icc)
+                        p_a, delta, rho, R_DEFAULT, n_sims, rng, icc=icc
+                    )
                     # smallest R at which the unpaired test matches the paired
                     # power at R_DEFAULT (paired data throughout).
                     eq_r = None
@@ -394,8 +490,16 @@ def part2(
                             # stats=False: only the unpaired power is read
                             # here, so the diagnostics would otherwise be
                             # computed and discarded once per rung.
-                            u2 = _paired_powers(p_a, delta, rho, rr, search_sims,
-                                                rng, stats=False, icc=icc)[0]
+                            u2 = _paired_powers(
+                                p_a,
+                                delta,
+                                rho,
+                                rr,
+                                search_sims,
+                                rng,
+                                stats=False,
+                                icc=icc,
+                            )[0]
                             if u2 >= pair:
                                 eq_r = rr
                                 break
@@ -404,27 +508,42 @@ def part2(
                         # eq_searched flag below, rather than overload eq_R's
                         # meaning between "matched by search" and "unsearched".
                         eq_r = R_DEFAULT
-                    rows.append(dict(p_a=p_a, delta=delta, rho=rho,
-                                     power_unpaired=unp, power_paired=pair,
-                                     eq_R=eq_r, eq_searched=pair > unp + 0.005,
-                                     cap=EQ_R_GRID[-1], phi_binary=phi, agreement=agree,
-                                     eq_ratio=(None if eq_r is None
-                                               else eq_r / R_DEFAULT),
-                                     icc=icc))
-                    print(f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
-                          f"phi_bin={phi:.3f} agree={agree:.3f} "
-                          f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}",
-                          flush=True)
+                    rows.append(
+                        {
+                            "p_a": p_a,
+                            "delta": delta,
+                            "rho": rho,
+                            "power_unpaired": unp,
+                            "power_paired": pair,
+                            "eq_R": eq_r,
+                            "eq_searched": pair > unp + 0.005,
+                            "cap": EQ_R_GRID[-1],
+                            "phi_binary": phi,
+                            "agreement": agree,
+                            "eq_ratio": None if eq_r is None else eq_r / R_DEFAULT,
+                            "icc": icc,
+                        }
+                    )
+                    print(
+                        f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
+                        f"phi_bin={phi:.3f} agree={agree:.3f} "
+                        f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}",
+                        flush=True,
+                    )
         # null calibration of both tests under matched data
         nulls = {}
         for rho in (0.0, 0.5, 0.9):
             # stats=False as above; `[:2]` already shows the diagnostics are
             # unread, and this call uses the largest n_sims here.
-            u, p = _paired_powers(0.90, 0.0, rho, R_DEFAULT, 60000, rng,
-                                  stats=False, icc=icc)[:2]
-            nulls[rho] = dict(unpaired_t1=u, mcnemar_t1=p)
-            print(f"  icc={icc} NULL rho={rho}: unpaired T1={u:.6f} "
-                  f"mcnemar T1={p:.6f}", flush=True)
+            u, p = _paired_powers(
+                0.90, 0.0, rho, R_DEFAULT, 60000, rng, stats=False, icc=icc
+            )[:2]
+            nulls[rho] = {"unpaired_t1": u, "mcnemar_t1": p}
+            print(
+                f"  icc={icc} NULL rho={rho}: unpaired T1={u:.6f} "
+                f"mcnemar T1={p:.6f}",
+                flush=True,
+            )
 
         # This block's own design_effect: same null config as the
         # calibration row above (p_a=p_b=0.90, rho=0.5), median over the
@@ -433,26 +552,43 @@ def part2(
         ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, R_DEFAULT, rng, icc=icc)
         seed_idx = np.repeat(np.arange(R_DEFAULT), K_HARM)
         harm_idx = np.tile(np.arange(K_HARM), R_DEFAULT)
-        deffs = [paired_analysis.design_effect(ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx)
-                 for i in range(n_sims)]
+        deffs = [
+            paired_analysis.design_effect(
+                ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx
+            )
+            for i in range(n_sims)
+        ]
         measurable = [d for d in deffs if d is not None]
         if measurable:
             deff_sim = float(np.median(measurable))
-            print(f"  icc={icc} design_effect_simulated: {deff_sim:.3f} "
-                  f"(median of {len(measurable)}/{n_sims} measurable)", flush=True)
+            print(
+                f"  icc={icc} design_effect_simulated: {deff_sim:.3f} "
+                f"(median of {len(measurable)}/{n_sims} measurable)",
+                flush=True,
+            )
         else:
             # No placeholder number: a genuinely unmeasurable block says so.
             deff_sim = None
-            print(f"  icc={icc} design_effect_simulated: no measurable ratio "
-                  f"in {n_sims} simulations", flush=True)
+            print(
+                f"  icc={icc} design_effect_simulated: no measurable ratio "
+                f"in {n_sims} simulations",
+                flush=True,
+            )
 
-        icc_blocks[str(icc)] = dict(rows=rows, nulls=nulls,
-                                    design_effect_simulated=deff_sim)
+        icc_blocks[str(icc)] = {
+            "rows": rows,
+            "nulls": nulls,
+            "design_effect_simulated": deff_sim,
+        }
 
     # icc keys are strings: JSON has no float keys, so the in-memory shape
     # already matches the on-disk shape.
-    OUT["part2"] = dict(n_sims=n_sims, alpha=ALPHA_BONF, grid_r=grid_r,
-                        icc=icc_blocks)
+    OUT["part2"] = {
+        "n_sims": n_sims,
+        "alpha": ALPHA_BONF,
+        "grid_r": grid_r,
+        "icc": icc_blocks,
+    }
 
 
 def build_rate_matrix() -> np.ndarray:
@@ -557,27 +693,34 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
             f"PART 4 built {m_full} contrasts but N_PRIMARY = {N_PRIMARY}; "
             "the simulated Bonferroni alpha would be wrong."
         )
-    true_diff = np.array([abs(rates[c[0], c[1], c[2]] - rates[c[3], c[4], c[5]])
-                          for c in contrasts])
+    true_diff = np.array(
+        [abs(rates[c[0], c[1], c[2]] - rates[c[3], c[4], c[5]]) for c in contrasts]
+    )
     is_null = true_diff == 0.0
     n_true = int((~is_null).sum())
-    ladder_rates = np.array([[rates[f, r, i] for r in range(3)]
-                             for f in range(7) for i in range(4)])
+    ladder_rates = np.array(
+        [[rates[f, r, i] for r in range(3)] for f in range(7) for i in range(4)]
+    )
     ladder_nonflat = ~np.all(ladder_rates == ladder_rates[:, :1], axis=1)
-    print(f"  config: {n_true} true effects / {int(is_null.sum())} true nulls; "
-          f"non-flat ladders = {int(ladder_nonflat.sum())}/28", flush=True)
+    print(
+        f"  config: {n_true} true effects / {int(is_null.sum())} true nulls; "
+        f"non-flat ladders = {int(ladder_nonflat.sum())}/28",
+        flush=True,
+    )
     print(f"  true-effect deltas: {np.sort(true_diff[~is_null])}", flush=True)
 
     succ = np.empty((n_sims, 7, 3, 4, K_HARM), dtype=np.int32)
     for f in range(7):
         for r in range(3):
             for i in range(4):
-                succ[:, f, r, i, :] = rng.binomial(R_DEFAULT, rates[f, r, i],
-                                                   (n_sims, K_HARM))
+                succ[:, f, r, i, :] = rng.binomial(
+                    R_DEFAULT, rates[f, r, i], (n_sims, K_HARM)
+                )
     pv = np.empty((n_sims, m_full))
     for t, c in enumerate(contrasts):
-        pv[:, t] = cmh_p(succ[:, c[0], c[1], c[2], :], succ[:, c[3], c[4], c[5], :],
-                         R_DEFAULT)
+        pv[:, t] = cmh_p(
+            succ[:, c[0], c[1], c[2], :], succ[:, c[3], c[4], c[5], :], R_DEFAULT
+        )
     trend_p = np.empty((n_sims, 28))
     t = 0
     for f in range(7):
@@ -595,7 +738,9 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
         )
 
     def summarize(
-        name: str, rejmap: dict[str, np.ndarray], nullmask: np.ndarray,
+        name: str,
+        rejmap: dict[str, np.ndarray],
+        nullmask: np.ndarray,
         ladder_flag_fn: Callable[[np.ndarray], np.ndarray],
     ) -> dict[str, dict]:
         res = {}
@@ -603,15 +748,20 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
             v = (rej & nullmask).sum(axis=1)
             s = (rej & ~nullmask).sum(axis=1)
             tot = rej.sum(axis=1)
-            res[proc] = dict(
-                true_rej=float(s.mean()), false_rej=float(v.mean()),
-                fwer=float((v > 0).mean()),
-                fdr=float(np.where(tot > 0, v / np.maximum(tot, 1), 0.0).mean()),
-                ladders_flagged=float(ladder_flag_fn(rej).mean()),
-                power_per_true=float(s.mean() / max((~nullmask).sum(), 1)))
-            print(f"  [{name}] {proc:12s} trueRej={res[proc]['true_rej']:.2f} "
-                  f"FWER={res[proc]['fwer']:.4f} FDR={res[proc]['fdr']:.4f} "
-                  f"ladders={res[proc]['ladders_flagged']:.2f}", flush=True)
+            res[proc] = {
+                "true_rej": float(s.mean()),
+                "false_rej": float(v.mean()),
+                "fwer": float((v > 0).mean()),
+                "fdr": float(np.where(tot > 0, v / np.maximum(tot, 1), 0.0).mean()),
+                "ladders_flagged": float(ladder_flag_fn(rej).mean()),
+                "power_per_true": float(s.mean() / max((~nullmask).sum(), 1)),
+            }
+            print(
+                f"  [{name}] {proc:12s} trueRej={res[proc]['true_rej']:.2f} "
+                f"FWER={res[proc]['fwer']:.4f} FDR={res[proc]['fdr']:.4f} "
+                f"ladders={res[proc]['ladders_flagged']:.2f}",
+                flush=True,
+            )
         return res
 
     lad_pair_ladder = np.array(ladder_of_pair)
@@ -632,13 +782,22 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     # Fixed size isolates test choice from correction size.
     fixed_alpha = summarize(
         "test-swap only (alpha=0.05/210)",
-        {"Bonferroni@210": pv_red < ALPHA / N_PRIMARY}, null_red, flag_red)
-    OUT["part4"] = dict(n_sims=n_sims, n_true=n_true, n_null=int(is_null.sum()),
-                        n_true_reduced=int((~null_red).sum()),
-                        nonflat_ladders=int(ladder_nonflat.sum()),
-                        true_deltas=sorted(set(np.round(true_diff[~is_null], 4).tolist())),
-                        full=full, reduced=red2, test_swap_fixed_alpha=fixed_alpha,
-                        rates=rates.tolist())
+        {"Bonferroni@210": pv_red < ALPHA / N_PRIMARY},
+        null_red,
+        flag_red,
+    )
+    OUT["part4"] = {
+        "n_sims": n_sims,
+        "n_true": n_true,
+        "n_null": int(is_null.sum()),
+        "n_true_reduced": int((~null_red).sum()),
+        "nonflat_ladders": int(ladder_nonflat.sum()),
+        "true_deltas": sorted(set(np.round(true_diff[~is_null], 4).tolist())),
+        "full": full,
+        "reduced": red2,
+        "test_swap_fixed_alpha": fixed_alpha,
+        "rates": rates.tolist(),
+    }
 
 
 def main() -> None:
@@ -647,11 +806,16 @@ def main() -> None:
     Part-number seeds keep reordering from changing draws.
     """
     t0 = time.time()
-    part1(np.random.default_rng(SEED + 1)); dump("part1")
-    part3(np.random.default_rng(SEED + 3)); dump("part3")
-    part5(np.random.default_rng(SEED + 5)); dump("part5")
-    part2(np.random.default_rng(SEED + 2)); dump("part2")
-    part4(np.random.default_rng(SEED + 4)); dump("part4")
+    part1(np.random.default_rng(SEED + 1))
+    dump("part1")
+    part3(np.random.default_rng(SEED + 3))
+    dump("part3")
+    part5(np.random.default_rng(SEED + 5))
+    dump("part5")
+    part2(np.random.default_rng(SEED + 2))
+    dump("part2")
+    part4(np.random.default_rng(SEED + 4))
+    dump("part4")
     print(f"\nTOTAL {time.time() - t0:.1f}s", flush=True)
 
 

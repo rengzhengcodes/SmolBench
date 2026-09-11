@@ -12,13 +12,13 @@ from pathlib import Path
 # Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import power_analysis  # noqa: E402  (path shim above must precede the import)
-import paired_analysis  # noqa: E402
-import significance_report  # noqa: E402
 import extens_vs_noise  # noqa: E402
 
 # Keep this module-level import patchable in tests.
 import multiplicity_sim  # noqa: E402
+import paired_analysis  # noqa: E402
+import power_analysis  # noqa: E402  (path shim above must precede the import)
+import significance_report  # noqa: E402
 
 #: Modules permit direct calls and banner names.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)

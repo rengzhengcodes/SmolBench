@@ -45,7 +45,9 @@ _DEFAULT_REGIONS: str = ",".join(
 )
 EC2_REGIONS: Tuple[str, ...] = tuple(
     dict.fromkeys(
-        r.strip() for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",") if r.strip()
+        r.strip()
+        for r in os.getenv("EC2_REGIONS", _DEFAULT_REGIONS).split(",")
+        if r.strip()
     )
 )
 # Cache weights on instance-store NVMe to avoid gp3's 1000 MB/s ceiling. Root
@@ -56,13 +58,18 @@ EC2_ROOT_VOLUME_THROUGHPUT: int = int(os.getenv("EC2_ROOT_VOLUME_THROUGHPUT", "5
 EC2_ROOT_VOLUME_IOPS: int = int(os.getenv("EC2_ROOT_VOLUME_IOPS", "3000"))
 # Digest-pinned on purpose: the :nightly tag is mutable. Bump this digest
 # deliberately; never fall back to a moving tag.
+# A test regexes this getenv shape; it must stay on one line.
+# fmt: off
 EC2_VLLM_IMAGE: str = os.getenv("EC2_VLLM_IMAGE", "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7")
+# fmt: on
 # This AMI has NVIDIA, Docker, and the toolkit, avoiding boot installs.
 EC2_AMI_SSM_PARAM: str = os.getenv(
     "EC2_AMI_SSM_PARAM",
     "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id",
 )
-EC2_SECURITY_GROUP_NAME: str = os.getenv("EC2_SECURITY_GROUP_NAME", "smolbench-inference")
+EC2_SECURITY_GROUP_NAME: str = os.getenv(
+    "EC2_SECURITY_GROUP_NAME", "smolbench-inference"
+)
 # Fixed ports require coordinated security-group, payload, and vLLM changes.
 EC2_VLLM_PORT: int = 8000
 EC2_AGENT_PORT: int = 9000
@@ -116,7 +123,9 @@ EC2_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("EC2_REQUEST_TIMEOUT_SECONDS", 
 # hanging. Failing connects fast trips the connection-failure cap within
 # minutes and raises the actionable "endpoint unreachable" error, while a
 # genuinely slow generation still gets the full read budget.
-EC2_CONNECT_TIMEOUT_SECONDS: float = float(os.getenv("EC2_CONNECT_TIMEOUT_SECONDS", "10"))
+EC2_CONNECT_TIMEOUT_SECONDS: float = float(
+    os.getenv("EC2_CONNECT_TIMEOUT_SECONDS", "10")
+)
 EC2_RETRY_BACKOFF_SECONDS: int = int(os.getenv("EC2_RETRY_BACKOFF_SECONDS", "60"))
 # Consecutive connection failures tolerated before concluding the endpoint is
 # gone (spot interruption or IP drift) rather than transiently overloaded.
@@ -182,117 +191,334 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
     # Smoke-test entry: exercises the full lifecycle on a cheap single-GPU
     # spot instance (g6.2xlarge / g5.2xlarge) for well under a dollar. 32768
     # is the checkpoint's native window.
-    "qwen2.5-1.5b":        {"hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct", "tp": 1, "max_model_len": 32768,
-                            "vllm_args": ["--revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
-                                          "--tokenizer-revision", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"]},
+    "qwen2.5-1.5b": {
+        "hf_model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+        "tp": 1,
+        "max_model_len": 32768,
+        "vllm_args": [
+            "--revision",
+            "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+            "--tokenizer-revision",
+            "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        ],
+    },
     # -- Qwen3.5 (Alibaba, CN): 27B dense / 122B-A10B / 397B-A17B (official FP8) --
-    "qwen3.5-27b":       {"hf_model_id": "Qwen/Qwen3.5-27B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
-                                        "--revision", "fc05daec18b0a78c049392ed2e771dde82bdf654",
-                                        "--tokenizer-revision", "fc05daec18b0a78c049392ed2e771dde82bdf654"]},
-    "qwen3.5-122b-a10b": {"hf_model_id": "Qwen/Qwen3.5-122B-A10B", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
-                                        "--revision", "dc4d348443bc740c68e2d77492492c11606384d5",
-                                        "--tokenizer-revision", "dc4d348443bc740c68e2d77492492c11606384d5"]},
-    "qwen3.5-397b-a17b": {"hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "qwen3", "--language-model-only",
-                                        "--revision", "ea5b4f81096f3901c91dea97f81324302495781d",
-                                        "--tokenizer-revision", "ea5b4f81096f3901c91dea97f81324302495781d"]},
+    "qwen3.5-27b": {
+        "hf_model_id": "Qwen/Qwen3.5-27B",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "qwen3",
+            "--language-model-only",
+            "--revision",
+            "fc05daec18b0a78c049392ed2e771dde82bdf654",
+            "--tokenizer-revision",
+            "fc05daec18b0a78c049392ed2e771dde82bdf654",
+        ],
+    },
+    "qwen3.5-122b-a10b": {
+        "hf_model_id": "Qwen/Qwen3.5-122B-A10B",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "qwen3",
+            "--language-model-only",
+            "--revision",
+            "dc4d348443bc740c68e2d77492492c11606384d5",
+            "--tokenizer-revision",
+            "dc4d348443bc740c68e2d77492492c11606384d5",
+        ],
+    },
+    "qwen3.5-397b-a17b": {
+        "hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "qwen3",
+            "--language-model-only",
+            "--revision",
+            "ea5b4f81096f3901c91dea97f81324302495781d",
+            "--tokenizer-revision",
+            "ea5b4f81096f3901c91dea97f81324302495781d",
+        ],
+    },
     # -- Nemotron 3 (NVIDIA, US): Nano-4B / Nano-30B-A3B / Super-120B-A12B, all BF16 --
-    "nemotron-3-nano-4b":         {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", "tp": 1, "max_model_len": 131072,
-                                   "vllm_args": ["--revision", "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
-                                                 "--tokenizer-revision", "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"]},
-    "nemotron-3-nano-30b-a3b":    {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "tp": 4, "max_model_len": 131072,
-                                   "vllm_args": ["--revision", "2d59de1cbd51c0adf384eb906b766d1aee0e0517",
-                                                 "--tokenizer-revision", "2d59de1cbd51c0adf384eb906b766d1aee0e0517"]},
-    "nemotron-3-super-120b-a12b": {"hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", "tp": 8, "max_model_len": 131072,
-                                   "vllm_args": ["--revision", "d51eab0d1f979ebc26b546e634a04f450d99158e",
-                                                 "--tokenizer-revision", "d51eab0d1f979ebc26b546e634a04f450d99158e"]},
+    "nemotron-3-nano-4b": {
+        "hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        "tp": 1,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--revision",
+            "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+            "--tokenizer-revision",
+            "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+        ],
+    },
+    "nemotron-3-nano-30b-a3b": {
+        "hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--revision",
+            "2d59de1cbd51c0adf384eb906b766d1aee0e0517",
+            "--tokenizer-revision",
+            "2d59de1cbd51c0adf384eb906b766d1aee0e0517",
+        ],
+    },
+    "nemotron-3-super-120b-a12b": {
+        "hf_model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--revision",
+            "d51eab0d1f979ebc26b546e634a04f450d99158e",
+            "--tokenizer-revision",
+            "d51eab0d1f979ebc26b546e634a04f450d99158e",
+        ],
+    },
     # -- Gemma 4 (Google, US): E2B / 12B / 31B instruction-tuned --
-    "gemma-4-e2b": {"hf_model_id": "google/gemma-4-E2B-it", "tp": 1, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
-                                  "--revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
-                                  "--tokenizer-revision", "3e22461f65e89153144f8adb70e3b8c2cc9845a7"]},
+    "gemma-4-e2b": {
+        "hf_model_id": "google/gemma-4-E2B-it",
+        "tp": 1,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "gemma4",
+            "--language-model-only",
+            "--revision",
+            "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+            "--tokenizer-revision",
+            "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+        ],
+    },
     # tp=4: tier A's g6e.12xlarge capacity fallback lands this lane on 4x
     # L40S in practice, and a 12B model with ~95k-token thinking budgets on
     # ONE L40S hit the 3600s read timeout on long arms. 16 attention heads
     # and 8 KV heads shard cleanly across 4; tp=4 does require that 4-GPU
     # box, which the fallback list provides.
-    "gemma-4-12b": {"hf_model_id": "google/gemma-4-12B-it", "tp": 4, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
-                                  "--revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
-                                  "--tokenizer-revision", "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"]},
-    "gemma-4-31b": {"hf_model_id": "google/gemma-4-31B-it", "tp": 4, "max_model_len": 131072,
-                    "vllm_args": ["--reasoning-parser", "gemma4", "--language-model-only",
-                                  "--revision", "842da3794eaa0b77d5f08bae87a17459d91ff475",
-                                  "--tokenizer-revision", "842da3794eaa0b77d5f08bae87a17459d91ff475"]},
+    "gemma-4-12b": {
+        "hf_model_id": "google/gemma-4-12B-it",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "gemma4",
+            "--language-model-only",
+            "--revision",
+            "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+            "--tokenizer-revision",
+            "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+        ],
+    },
+    "gemma-4-31b": {
+        "hf_model_id": "google/gemma-4-31B-it",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "gemma4",
+            "--language-model-only",
+            "--revision",
+            "842da3794eaa0b77d5f08bae87a17459d91ff475",
+            "--tokenizer-revision",
+            "842da3794eaa0b77d5f08bae87a17459d91ff475",
+        ],
+    },
     # -- GLM-4.x (Zhipu/Z.ai, CN): 4.7-Flash / 4.5-Air / 4.7 (cross-generation, flagged) --
-    "glm-4.7-flash": {"hf_model_id": "zai-org/GLM-4.7-Flash", "tp": 4, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm47",
-                                    "--revision", "7dd20894a642a0aa287e9827cb1a1f7f91386b67",
-                                    "--tokenizer-revision", "7dd20894a642a0aa287e9827cb1a1f7f91386b67"]},
-    "glm-4.5-air":   {"hf_model_id": "zai-org/GLM-4.5-Air", "tp": 8, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm45",
-                                    "--revision", "a24ceef6ce4f3536971efe9b778bdaa1bab18daa",
-                                    "--tokenizer-revision", "a24ceef6ce4f3536971efe9b778bdaa1bab18daa"]},
-    "glm-4.7":       {"hf_model_id": "zai-org/GLM-4.7", "tp": 8, "max_model_len": 131072,
-                      "vllm_args": ["--reasoning-parser", "glm47",
-                                    "--revision", "602d01efcdd332c5238ca4bcede555defbe83eb7",
-                                    "--tokenizer-revision", "602d01efcdd332c5238ca4bcede555defbe83eb7"]},
+    "glm-4.7-flash": {
+        "hf_model_id": "zai-org/GLM-4.7-Flash",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "glm47",
+            "--revision",
+            "7dd20894a642a0aa287e9827cb1a1f7f91386b67",
+            "--tokenizer-revision",
+            "7dd20894a642a0aa287e9827cb1a1f7f91386b67",
+        ],
+    },
+    "glm-4.5-air": {
+        "hf_model_id": "zai-org/GLM-4.5-Air",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "glm45",
+            "--revision",
+            "a24ceef6ce4f3536971efe9b778bdaa1bab18daa",
+            "--tokenizer-revision",
+            "a24ceef6ce4f3536971efe9b778bdaa1bab18daa",
+        ],
+    },
+    "glm-4.7": {
+        "hf_model_id": "zai-org/GLM-4.7",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "glm47",
+            "--revision",
+            "602d01efcdd332c5238ca4bcede555defbe83eb7",
+            "--tokenizer-revision",
+            "602d01efcdd332c5238ca4bcede555defbe83eb7",
+        ],
+    },
     # -- Ministral-3 Reasoning 2512 (Mistral, FR): 3B / 8B / 14B --
-    "ministral-3-3b":  {"hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512", "tp": 1, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
-                                      "--revision", "4a36357c811bf511a7b625d132e12f22408aac91",
-                                      "--tokenizer-revision", "4a36357c811bf511a7b625d132e12f22408aac91"],
-                        "system_prompt": MINISTRAL_THINK_SYSTEM},
-    "ministral-3-8b":  {"hf_model_id": "mistralai/Ministral-3-8B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
-                                      "--revision", "81eaece1948f3875421d9a45bc55487d10e2d894",
-                                      "--tokenizer-revision", "81eaece1948f3875421d9a45bc55487d10e2d894"],
-                        "system_prompt": MINISTRAL_THINK_SYSTEM},
-    "ministral-3-14b": {"hf_model_id": "mistralai/Ministral-3-14B-Reasoning-2512", "tp": 4, "max_model_len": 131072,
-                        "vllm_args": ["--reasoning-parser", "mistral", "--language-model-only",
-                                      "--revision", "51f9210f3cd20f3452a80d5819d15dc61cc50630",
-                                      "--tokenizer-revision", "51f9210f3cd20f3452a80d5819d15dc61cc50630"],
-                        "system_prompt": MINISTRAL_THINK_SYSTEM},
+    "ministral-3-3b": {
+        "hf_model_id": "mistralai/Ministral-3-3B-Reasoning-2512",
+        "tp": 1,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "mistral",
+            "--language-model-only",
+            "--revision",
+            "4a36357c811bf511a7b625d132e12f22408aac91",
+            "--tokenizer-revision",
+            "4a36357c811bf511a7b625d132e12f22408aac91",
+        ],
+        "system_prompt": MINISTRAL_THINK_SYSTEM,
+    },
+    "ministral-3-8b": {
+        "hf_model_id": "mistralai/Ministral-3-8B-Reasoning-2512",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "mistral",
+            "--language-model-only",
+            "--revision",
+            "81eaece1948f3875421d9a45bc55487d10e2d894",
+            "--tokenizer-revision",
+            "81eaece1948f3875421d9a45bc55487d10e2d894",
+        ],
+        "system_prompt": MINISTRAL_THINK_SYSTEM,
+    },
+    "ministral-3-14b": {
+        "hf_model_id": "mistralai/Ministral-3-14B-Reasoning-2512",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "mistral",
+            "--language-model-only",
+            "--revision",
+            "51f9210f3cd20f3452a80d5819d15dc61cc50630",
+            "--tokenizer-revision",
+            "51f9210f3cd20f3452a80d5819d15dc61cc50630",
+        ],
+        "system_prompt": MINISTRAL_THINK_SYSTEM,
+    },
     # -- EXAONE (LG AI Research, KR): 4.0-32B / 4.5-33B / K-EXAONE-236B-A23B (cross-gen, flagged) --
-    "exaone-4.0-32b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.0-32B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--revision", "a1d54d1c148c30881ed27e035b650da489b51b92",
-                                        "--tokenizer-revision", "a1d54d1c148c30881ed27e035b650da489b51b92"]},
-    "exaone-4.5-33b":    {"hf_model_id": "LGAI-EXAONE/EXAONE-4.5-33B", "tp": 4, "max_model_len": 131072,
-                          "vllm_args": ["--language-model-only",
-                                        "--revision", "570aa4b15a4f45ba1133072b45f50198f6e3b4fd",
-                                        "--tokenizer-revision", "570aa4b15a4f45ba1133072b45f50198f6e3b4fd"]},
-    "k-exaone-236b-a23b": {"hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B", "tp": 8, "max_model_len": 131072,
-                           "vllm_args": ["--gpu-memory-utilization", "0.92",
-                                         "--revision", "61e6d578eb102b578e5704e2916ac841df9eca0a",
-                                         "--tokenizer-revision", "61e6d578eb102b578e5704e2916ac841df9eca0a"]},
+    "exaone-4.0-32b": {
+        "hf_model_id": "LGAI-EXAONE/EXAONE-4.0-32B",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--revision",
+            "a1d54d1c148c30881ed27e035b650da489b51b92",
+            "--tokenizer-revision",
+            "a1d54d1c148c30881ed27e035b650da489b51b92",
+        ],
+    },
+    "exaone-4.5-33b": {
+        "hf_model_id": "LGAI-EXAONE/EXAONE-4.5-33B",
+        "tp": 4,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--language-model-only",
+            "--revision",
+            "570aa4b15a4f45ba1133072b45f50198f6e3b4fd",
+            "--tokenizer-revision",
+            "570aa4b15a4f45ba1133072b45f50198f6e3b4fd",
+        ],
+    },
+    "k-exaone-236b-a23b": {
+        "hf_model_id": "LGAI-EXAONE/K-EXAONE-236B-A23B",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--gpu-memory-utilization",
+            "0.92",
+            "--revision",
+            "61e6d578eb102b578e5704e2916ac841df9eca0a",
+            "--tokenizer-revision",
+            "61e6d578eb102b578e5704e2916ac841df9eca0a",
+        ],
+    },
     # -- DeepSeek (CN): V4-Flash / V3.1 / V4-Pro (cross-gen, flagged; V4 = inline template) --
     # SM90 hazard: on p5/p5e/p5en this spec MUST carry the Marlin W4A16 MXFP4
     # pin, so do NOT serve this marlin-less arg set there -- it is SM100/B200
     # only (FLASHMLA_SPARSE_DSV4 accepts major in [9,10]; fp8_ds_mla KV).
     # Memory: Flash weights are 160 GB. --disable-custom-all-reduce stays.
-    "deepseek-v4-flash": {"hf_model_id": "deepseek-ai/DeepSeek-V4-Flash", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
-                                        "--tokenizer-mode", "deepseek_v4",
-                                        "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--disable-custom-all-reduce",
-                                        "--revision", "60d8d70770c6776ff598c94bb586a859a38244f1",
-                                        "--tokenizer-revision", "60d8d70770c6776ff598c94bb586a859a38244f1"]},
-    "deepseek-v3.1":     {"hf_model_id": "deepseek-ai/DeepSeek-V3.1", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--revision", "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db",
-                                        "--tokenizer-revision", "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db"]},
+    "deepseek-v4-flash": {
+        "hf_model_id": "deepseek-ai/DeepSeek-V4-Flash",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "deepseek_v4",
+            "--chat-template",
+            DSV4_CHAT_TEMPLATE,
+            "--tokenizer-mode",
+            "deepseek_v4",
+            "--attention-backend",
+            "FLASHMLA_SPARSE_DSV4",
+            "--kv-cache-dtype",
+            "fp8_ds_mla",
+            "--block-size",
+            "256",
+            "--disable-custom-all-reduce",
+            "--revision",
+            "60d8d70770c6776ff598c94bb586a859a38244f1",
+            "--tokenizer-revision",
+            "60d8d70770c6776ff598c94bb586a859a38244f1",
+        ],
+    },
+    "deepseek-v3.1": {
+        "hf_model_id": "deepseek-ai/DeepSeek-V3.1",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--revision",
+            "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db",
+            "--tokenizer-revision",
+            "c0781d039fb7a1ba2abc4add0bdc293e92d2b8db",
+        ],
+    },
     # Pro targets p6-b200 (SM100) only. Native MXFP4 expert path (no Marlin
     # pin); gmu 0.93 for the 865 GB checkpoint on 1128 GB of VRAM.
     # Do NOT serve this marlin-less spec on p5/p5e/p5en -- SM90 needs the pin.
-    "deepseek-v4-pro":   {"hf_model_id": "deepseek-ai/DeepSeek-V4-Pro", "tp": 8, "max_model_len": 131072,
-                          "vllm_args": ["--reasoning-parser", "deepseek_v4", "--chat-template", DSV4_CHAT_TEMPLATE,
-                                        "--tokenizer-mode", "deepseek_v4",
-                                        "--attention-backend", "FLASHMLA_SPARSE_DSV4", "--kv-cache-dtype", "fp8_ds_mla",
-                                        "--block-size", "256", "--disable-custom-all-reduce",
-                                        "--gpu-memory-utilization", "0.93",
-                                        "--revision", "b5968e9190ef611bbf34a7229255be88a0e937c1",
-                                        "--tokenizer-revision", "b5968e9190ef611bbf34a7229255be88a0e937c1"]},
+    "deepseek-v4-pro": {
+        "hf_model_id": "deepseek-ai/DeepSeek-V4-Pro",
+        "tp": 8,
+        "max_model_len": 131072,
+        "vllm_args": [
+            "--reasoning-parser",
+            "deepseek_v4",
+            "--chat-template",
+            DSV4_CHAT_TEMPLATE,
+            "--tokenizer-mode",
+            "deepseek_v4",
+            "--attention-backend",
+            "FLASHMLA_SPARSE_DSV4",
+            "--kv-cache-dtype",
+            "fp8_ds_mla",
+            "--block-size",
+            "256",
+            "--disable-custom-all-reduce",
+            "--gpu-memory-utilization",
+            "0.93",
+            "--revision",
+            "b5968e9190ef611bbf34a7229255be88a0e937c1",
+            "--tokenizer-revision",
+            "b5968e9190ef611bbf34a7229255be88a0e937c1",
+        ],
+    },
 }
 
 #: vLLM args certified deterministic within one process. Results generated
@@ -301,14 +527,20 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
 #: after re-certifying with a byte-agreement probe.
 #: Prefix caching stays off because it is a source of nondeterminism.
 DETERMINISM_ARGS: List[str] = [
-    "--no-enable-prefix-caching", "--max-num-seqs", "1",
-    "--enforce-eager", "--seed", "0",
+    "--no-enable-prefix-caching",
+    "--max-num-seqs",
+    "1",
+    "--enforce-eager",
+    "--seed",
+    "0",
 ]
 
 for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     _args = list(_spec.get("vllm_args") or [])
     assert "--enable-prefix-caching" not in _args, _spec_key
-    assert not ({a for a in DETERMINISM_ARGS if a.startswith("--")} & set(_args)), _spec_key
+    assert not (
+        {a for a in DETERMINISM_ARGS if a.startswith("--")} & set(_args)
+    ), _spec_key
     # Make the KV budget a function of the spec, not of free VRAM at
     # profiling time (which varies with whatever else the box was doing).
     # 0.92 equals vLLM's default AT THE PINNED BUILD
@@ -352,21 +584,38 @@ MODEL_ATTENTION_HEADS = {
 #: GPU count per instance type this provider hunts. For an unknown type,
 #: `derive_tp` falls back to the spec's static ``tp`` instead of guessing.
 _INSTANCE_GPU_COUNTS = {
-    "g6e.xlarge": 1, "g6e.2xlarge": 1, "g6e.4xlarge": 1, "g6e.8xlarge": 1,
-    "g6e.16xlarge": 1, "g6e.12xlarge": 4, "g6e.24xlarge": 4, "g6e.48xlarge": 8,
+    "g6e.xlarge": 1,
+    "g6e.2xlarge": 1,
+    "g6e.4xlarge": 1,
+    "g6e.8xlarge": 1,
+    "g6e.16xlarge": 1,
+    "g6e.12xlarge": 4,
+    "g6e.24xlarge": 4,
+    "g6e.48xlarge": 8,
     # g7 = RTX PRO 4500 (32GB), g7e = RTX PRO 6000 (96GB); both SM120,
     # PCIe-only. Counts verified via describe-instance-types -- the 12xlarge
     # sizes carry TWO GPUs, unlike g6e's four. Map a family fully or not at
     # all (see derive_tp's fallback warning for what a half-mapped family
     # does to a lane).
-    "g7.2xlarge": 1, "g7.4xlarge": 1, "g7.8xlarge": 1,
-    "g7.12xlarge": 2, "g7.24xlarge": 4, "g7.48xlarge": 8,
-    "g7e.2xlarge": 1, "g7e.4xlarge": 1, "g7e.8xlarge": 1,
-    "g7e.12xlarge": 2, "g7e.24xlarge": 4, "g7e.48xlarge": 8,
+    "g7.2xlarge": 1,
+    "g7.4xlarge": 1,
+    "g7.8xlarge": 1,
+    "g7.12xlarge": 2,
+    "g7.24xlarge": 4,
+    "g7.48xlarge": 8,
+    "g7e.2xlarge": 1,
+    "g7e.4xlarge": 1,
+    "g7e.8xlarge": 1,
+    "g7e.12xlarge": 2,
+    "g7e.24xlarge": 4,
+    "g7e.48xlarge": 8,
     "p4d.24xlarge": 8,
     "p5.4xlarge": 1,
-    "p5.48xlarge": 8, "p5e.48xlarge": 8, "p5en.48xlarge": 8,
-    "p6-b200.48xlarge": 8, "p6-b300.48xlarge": 8,
+    "p5.48xlarge": 8,
+    "p5e.48xlarge": 8,
+    "p5en.48xlarge": 8,
+    "p6-b200.48xlarge": 8,
+    "p6-b300.48xlarge": 8,
 }
 
 
@@ -417,9 +666,15 @@ def derive_tp(model: str, instance_type: str, spec: Dict[str, Any]) -> int:
 #: descriptive: ``server_config`` uses it so a result file names its silicon
 #: without the reader needing this module's type tables.
 _INSTANCE_GPU_NAMES = {
-    "g6e": "L40S 48GB", "g7": "RTX PRO 4500 32GB", "g7e": "RTX PRO 6000 96GB",
-    "p4d": "A100 40GB", "p5": "H100 80GB", "p5e": "H200 141GB",
-    "p5en": "H200 141GB", "p6-b200": "B200 180GB", "p6-b300": "B300 288GB",
+    "g6e": "L40S 48GB",
+    "g7": "RTX PRO 4500 32GB",
+    "g7e": "RTX PRO 6000 96GB",
+    "p4d": "A100 40GB",
+    "p5": "H100 80GB",
+    "p5e": "H200 141GB",
+    "p5en": "H200 141GB",
+    "p6-b200": "B200 180GB",
+    "p6-b300": "B300 288GB",
 }
 
 
@@ -469,7 +724,9 @@ def _assert_required_gpu(state: Dict[str, Any], model: str) -> None:
             "cannot be checked. Add it to _INSTANCE_GPU_COUNTS/_NAMES or drop "
             "the pin -- refusing to serve unverified hardware."
         )
-    if want_name.strip() not in got_name or (want_count and got_count != int(want_count)):
+    if want_name.strip() not in got_name or (
+        want_count and got_count != int(want_count)
+    ):
         raise RuntimeError(
             f"hardware pin violated for lane {model!r}: EC2_REQUIRE_GPU="
             f"{EC2_REQUIRE_GPU!r} but {itype} carries {got_count}x {got_name}.\n"
@@ -522,7 +779,8 @@ def _fetch_vllm_cache_config(ip: str, vllm_api_key: str) -> Optional[List[str]]:
         if not r.ok:
             return None
         lines = [
-            line for line in r.text.splitlines()
+            line
+            for line in r.text.splitlines()
             if "cache_config_info" in line and not line.startswith("#")
         ]
         return lines or None
@@ -546,16 +804,22 @@ def _fetch_agent_fingerprint(
     """
     try:
         status = _agent(
-            state, "GET", "/status",
-            timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S, connect_retries=0,
+            state,
+            "GET",
+            "/status",
+            timeout=_SERVER_CONFIG_PROBE_TIMEOUT_S,
+            connect_retries=0,
         )
     except Exception:  # noqa: BLE001
         return None, None
     backend_lines: Optional[List[str]] = None
     try:
         tail = status.get("log_tail") or ""
-        hits = [ln.strip() for ln in tail.splitlines()
-                if "attention backend" in ln.lower() or "attn_backend" in ln.lower()]
+        hits = [
+            ln.strip()
+            for ln in tail.splitlines()
+            if "attention backend" in ln.lower() or "attn_backend" in ln.lower()
+        ]
         backend_lines = hits or None
     except Exception:  # noqa: BLE001
         backend_lines = None
@@ -599,9 +863,12 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
         ip = state.get("public_ip")
         vllm_key = state.get("vllm_api_key")
         vllm_version = _fetch_vllm_version(ip, vllm_key) if ip and vllm_key else None
-        vllm_cache_config = _fetch_vllm_cache_config(ip, vllm_key) if ip and vllm_key else None
+        vllm_cache_config = (
+            _fetch_vllm_cache_config(ip, vllm_key) if ip and vllm_key else None
+        )
         agent_fp, attention_backend = (
-            _fetch_agent_fingerprint(state) if ip else (None, None))
+            _fetch_agent_fingerprint(state) if ip else (None, None)
+        )
         vllm_image_digest = None
         if agent_fp:
             digests = agent_fp.get("image_repo_digests")
@@ -645,7 +912,9 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
             "stream": stream,
         }
     except Exception:  # noqa: BLE001 -- see Notes: provenance never crashes a lane
-        logging.warning("server_config: could not snapshot the serving config", exc_info=True)
+        logging.warning(
+            "server_config: could not snapshot the serving config", exc_info=True
+        )
         return None
 
 
@@ -692,7 +961,7 @@ def _state_path() -> Path:
 def _load_state() -> Optional[Dict[str, Any]]:
     """Return the saved instance state, or None when absent/corrupt."""
     try:
-        return json.loads(_state_path().read_text())
+        return json.loads(_state_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -994,11 +1263,15 @@ def _offers_instance_type(region: str, instance_type: str) -> bool:
 def _default_vpc_subnets(region: str) -> Tuple[Optional[str], List[Tuple[str, str]]]:
     """Return (default vpc id, [(subnet_id, az), ...]) for the region."""
     ec2 = _ec2_client(region)
-    vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"]
+    vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])[
+        "Vpcs"
+    ]
     if not vpcs:
         return None, []
     vpc_id = vpcs[0]["VpcId"]
-    subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
+    subnets = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])[
+        "Subnets"
+    ]
     return vpc_id, sorted((s["SubnetId"], s["AvailabilityZone"]) for s in subnets)
 
 
@@ -1016,7 +1289,9 @@ def _authorize_ingress(region: str, group_id: str, ip: str) -> None:
                         "IpProtocol": "tcp",
                         "FromPort": port,
                         "ToPort": port,
-                        "IpRanges": [{"CidrIp": f"{ip}/32", "Description": "smolbench caller"}],
+                        "IpRanges": [
+                            {"CidrIp": f"{ip}/32", "Description": "smolbench caller"}
+                        ],
                     }
                 ],
             )
@@ -1077,7 +1352,9 @@ def _ensure_bucket(bucket: str, region: str) -> None:
             # proves the bucket is ours, and sts:GetCallerIdentity needs no
             # policy, so the check works for the most restricted principal.
             if code == "403":
-                account = _aws.fresh_client("sts", region).get_caller_identity()["Account"]
+                account = _aws.fresh_client("sts", region).get_caller_identity()[
+                    "Account"
+                ]
                 if bucket.endswith(account):
                     logging.info(
                         f"_ensure_bucket: HEAD s3://{bucket} -> 403 under scoped "
@@ -1111,7 +1388,9 @@ def _ensure_instance_profile(bucket: str) -> str:
     -------
     str
     """
-    return _aws.ensure_instance_profile(EC2_INSTANCE_ROLE_NAME, bucket, _IAM_PROPAGATION_SLEEP_S)
+    return _aws.ensure_instance_profile(
+        EC2_INSTANCE_ROLE_NAME, bucket, _IAM_PROPAGATION_SLEEP_S
+    )
 
 
 def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -1189,10 +1468,19 @@ def _recover_state_from_instance(
     env: Dict[str, str] = {}
     for line in user_data.splitlines():
         key, sep, value = line.partition("=")
-        if sep and key in ("CONTROL_TOKEN", "VLLM_API_KEY", "IDLE_TIMEOUT_MIN", "S3_CACHE_URI"):
+        if sep and key in (
+            "CONTROL_TOKEN",
+            "VLLM_API_KEY",
+            "IDLE_TIMEOUT_MIN",
+            "S3_CACHE_URI",
+        ):
             env.setdefault(key, value)
     security_groups = instance.get("SecurityGroups") or []
-    if not env.get("CONTROL_TOKEN") or not env.get("VLLM_API_KEY") or not security_groups:
+    if (
+        not env.get("CONTROL_TOKEN")
+        or not env.get("VLLM_API_KEY")
+        or not security_groups
+    ):
         return None
     launch_time = instance.get("LaunchTime")
     return {
@@ -1210,7 +1498,9 @@ def _recover_state_from_instance(
         # recovered in-block instance would be misread as outside the
         # capacity block and terminated on the next provision.
         "capacity_reservation_id": instance.get("CapacityReservationId"),
-        "launched_at": launch_time.strftime("%Y-%m-%dT%H:%M:%SZ") if launch_time else "?",
+        "launched_at": (
+            launch_time.strftime("%Y-%m-%dT%H:%M:%SZ") if launch_time else "?"
+        ),
     }
 
 
@@ -1233,9 +1523,9 @@ def _describe_instance(region: str, instance_id: str) -> Optional[Dict[str, Any]
     from botocore.exceptions import ClientError
 
     try:
-        reservations = _ec2_client(region).describe_instances(InstanceIds=[instance_id])[
-            "Reservations"
-        ]
+        reservations = _ec2_client(region).describe_instances(
+            InstanceIds=[instance_id]
+        )["Reservations"]
     except ClientError as err:
         if _error_code(err) == "InvalidInstanceID.NotFound":
             return None
@@ -1298,7 +1588,9 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
             and "InstanceInitiatedShutdownBehavior" in kwargs
         ):
             retry_kwargs = {
-                k: v for k, v in kwargs.items() if k != "InstanceInitiatedShutdownBehavior"
+                k: v
+                for k, v in kwargs.items()
+                if k != "InstanceInitiatedShutdownBehavior"
             }
             response = ec2.run_instances(**retry_kwargs)
         else:
@@ -1306,7 +1598,9 @@ def _try_launch(region: str, kwargs: Dict[str, Any]) -> str:
     return response["Instances"][0]["InstanceId"]
 
 
-def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIMEOUT_S) -> str:
+def _wait_public_ip(
+    region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIMEOUT_S
+) -> str:
     """Poll DescribeInstances (via ``_aws.poll_until``) for a public IPv4.
 
     Parameters
@@ -1350,12 +1644,18 @@ def _wait_public_ip(region: str, instance_id: str, timeout_s: int = _WAIT_IP_TIM
     def on_timeout() -> TimeoutError:
         return TimeoutError(f"instance {instance_id} got no public IP in {timeout_s}s")
 
-    return _aws.poll_until(check, timeout_s=timeout_s, interval_s=_WAIT_IP_POLL_S, on_timeout=on_timeout)
+    return _aws.poll_until(
+        check, timeout_s=timeout_s, interval_s=_WAIT_IP_POLL_S, on_timeout=on_timeout
+    )
 
 
 def _agent(
-    state: Dict[str, Any], method: str, path: str, payload: Optional[Dict[str, Any]] = None,
-    timeout: int = 120, connect_retries: int = 40,
+    state: Dict[str, Any],
+    method: str,
+    path: str,
+    payload: Optional[Dict[str, Any]] = None,
+    timeout: int = 120,
+    connect_retries: int = 40,
 ) -> Dict[str, Any]:
     """Make one authenticated control-agent call; raise with the body on failure.
 
@@ -1386,11 +1686,15 @@ def _agent(
                 raise
             time.sleep(15)
     if not response.ok:
-        raise RuntimeError(f"agent {method} {path} -> {response.status_code}: {response.text[:2000]}")
+        raise RuntimeError(
+            f"agent {method} {path} -> {response.status_code}: {response.text[:2000]}"
+        )
     return response.json()
 
 
-def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_MIN) -> None:
+def _wait_agent(
+    state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_MIN
+) -> None:
     """Wait for the control agent to answer after boot or reattach.
 
     Polls ``GET /status`` every ``_AGENT_POLL_S`` seconds; every
@@ -1420,7 +1724,9 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
         except (requests.exceptions.RequestException, RuntimeError):
             pass
         polls += 1
-        if polls % _AGENT_PROGRESS_EVERY_N_POLLS == 0:  # every minute, make sure the box still exists
+        if (
+            polls % _AGENT_PROGRESS_EVERY_N_POLLS == 0
+        ):  # every minute, make sure the box still exists
             try:
                 inst_state = _instance_state(state["region"], state["instance_id"])
                 if inst_state not in ("pending", "running"):
@@ -1446,7 +1752,10 @@ def _wait_agent(state: Dict[str, Any], timeout_min: int = EC2_PROVISION_TIMEOUT_
         )
 
     _aws.poll_until(
-        check, timeout_s=timeout_min * 60, interval_s=_AGENT_POLL_S, on_timeout=on_timeout
+        check,
+        timeout_s=timeout_min * 60,
+        interval_s=_AGENT_POLL_S,
+        on_timeout=on_timeout,
     )
 
 
@@ -1557,7 +1866,9 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     )
 
 
-def _spot_price_map(region: str, instance_types: List[str]) -> Dict[Tuple[str, str], float]:
+def _spot_price_map(
+    region: str, instance_types: List[str]
+) -> Dict[Tuple[str, str], float]:
     """Return ``{(instance_type, az): usd_per_hour}`` for `region`, ``{}`` on failure.
 
     The newest observation wins (``describe_spot_price_history`` returns rows
@@ -1585,7 +1896,9 @@ def _spot_price_map(region: str, instance_types: List[str]) -> Dict[Tuple[str, s
             )
         return prices
     except Exception as exc:  # noqa: BLE001 -- pricing is advisory only
-        logging.info(f"_spot_price_map: {region} lookup failed ({exc}); hunting price-blind")
+        logging.info(
+            f"_spot_price_map: {region} lookup failed ({exc}); hunting price-blind"
+        )
         return {}
 
 
@@ -1774,7 +2087,9 @@ def _launch_fresh(
         )
     )
 
-    from botocore.exceptions import ClientError  # lazy: keep the inference path boto3-free
+    from botocore.exceptions import (
+        ClientError,  # lazy: keep the inference path boto3-free
+    )
 
     # A purchased Capacity Block short-circuits the Spot hunt entirely: it
     # fixes region, AZ and instance type. Read at call time, not at import,
@@ -1801,7 +2116,9 @@ def _launch_fresh(
         vpc_id, subnets = _default_vpc_subnets(cb_region)
         subnet_id = next((s for s, az in subnets or [] if az == cb_az), None)
         if vpc_id is None or subnet_id is None:
-            raise RuntimeError(f"no default-VPC subnet in {cb_az} for capacity block {cb_id}")
+            raise RuntimeError(
+                f"no default-VPC subnet in {cb_az} for capacity block {cb_id}"
+            )
         ami, root_device = _resolve_ami(cb_region)
         group_id = _ensure_security_group(cb_region, vpc_id, my_ip)
         kwargs = _run_instances_kwargs(
@@ -1906,7 +2223,9 @@ def _launch_fresh(
             region_prices = spot_prices.get(region, {})
             subnets_by_price = sorted(
                 info["subnets"],
-                key=lambda pair: region_prices.get((instance_type, pair[1]), float("inf")),
+                key=lambda pair, _rp=region_prices, _it=instance_type: _rp.get(
+                    (_it, pair[1]), float("inf")
+                ),
             )
             for subnet_id, az in subnets_by_price:
                 kwargs = _run_instances_kwargs(
@@ -1922,14 +2241,18 @@ def _launch_fresh(
                     max_price=type_caps.get(instance_type),
                 )
                 try:
-                    logging.info(f"provision_spot_instance: trying {instance_type} in {az} ...")
+                    logging.info(
+                        f"provision_spot_instance: trying {instance_type} in {az} ..."
+                    )
                     instance_id = _try_launch(region, kwargs)
                 except ClientError as err:
                     code = _error_code(err)
                     attempts.append(f"{instance_type} @ {az}: {code}")
                     if code == "MaxSpotInstanceCountExceeded":
                         # Per-region spot quota: no AZ in this region can help.
-                        logging.info(f"{region}: spot quota exhausted for {instance_type}; skipping region")
+                        logging.info(
+                            f"{region}: spot quota exhausted for {instance_type}; skipping region"
+                        )
                         break
                     if code in _CAPACITY_ERROR_CODES:
                         continue
@@ -2101,7 +2424,10 @@ def _wait_model_ready(
         )
 
     _aws.poll_until(
-        check, timeout_s=timeout_min * 60, interval_s=_MODEL_READY_POLL_S, on_timeout=on_timeout
+        check,
+        timeout_s=timeout_min * 60,
+        interval_s=_MODEL_READY_POLL_S,
+        on_timeout=on_timeout,
     )
 
 
@@ -2166,9 +2492,9 @@ def serve_model(
             # must not block ~10 min (40 retries x 15s) on an unreachable box.
             already_serving = (
                 bool(
-                    _agent(
-                        state, "GET", "/status", timeout=15, connect_retries=0
-                    ).get("healthy")
+                    _agent(state, "GET", "/status", timeout=15, connect_retries=0).get(
+                        "healthy"
+                    )
                 )
                 and list_models() == [model]
                 and state.get("serving") == serve_payload
@@ -2229,7 +2555,9 @@ def serve_model(
                 "/sync-up",
                 {"subdir": "models--" + spec["hf_model_id"].replace("/", "--")},
             )
-            logging.info(f"serve_model: background S3 cache upload kicked off for {model!r}")
+            logging.info(
+                f"serve_model: background S3 cache upload kicked off for {model!r}"
+            )
         except Exception as exc:  # noqa: BLE001
             logging.info(f"serve_model: S3 cache upload skipped: {exc}")
     try:
@@ -2309,7 +2637,9 @@ def shutdown_instance(wait: bool = True) -> None:
         from botocore.exceptions import WaiterError
 
         try:
-            _ec2_client(region).get_waiter("instance_terminated").wait(InstanceIds=[instance_id])
+            _ec2_client(region).get_waiter("instance_terminated").wait(
+                InstanceIds=[instance_id]
+            )
             logging.info(f"shutdown_instance: {instance_id} terminated.")
         except WaiterError:
             # Termination is already issued (see the `wait` parameter doc);

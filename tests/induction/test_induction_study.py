@@ -6,13 +6,12 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from conftest import StubTokenizer, import_run_study
 
 from smolbench.evals import study_config
 from smolbench.evals.replicates import ReplicateHarness
 from smolbench.evals.results_store import experiment_name
 from smolbench.induction.experiment import InductionExperiment
-
-from conftest import StubTokenizer, import_run_study
 from tests._paths import NOTEBOOKS
 
 STUDY_KEYS = sorted(study_config.roster_keys())
@@ -61,15 +60,13 @@ def test_roster(run_study: ModuleType) -> None:
 
 def test_cot_args_is_validated_against_the_config_roster(run_study: ModuleType) -> None:
     """COT_ARGS covers the roster so omissions cannot reach a billing box."""
-    from smolbench.evals import study_config
-
     assert tuple(run_study.COT_ARGS) == study_config.roster_keys()
 
 
-def test_the_standalone_tag_comes_from_the_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_standalone_tag_comes_from_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Standalone tags come from configuration."""
-    from smolbench.evals import study_config
-
     monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
     _module, exc, env_after = import_run_study(
         "standalone_tag_probe", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
@@ -82,13 +79,16 @@ def test_the_standalone_tag_comes_from_the_config(monkeypatch: pytest.MonkeyPatc
 
 def test_cot_args_table(run_study: ModuleType) -> None:
     """Each model has its required CoT toggle."""
+
     def toggle(key: str) -> dict[str, dict[str, bool]]:
         if key in MINISTRAL:
             return {}
         name = "thinking" if key in DEEPSEEK else "enable_thinking"
         return {"chat_template_kwargs": {name: True}}
 
-    assert run_study.COT_ARGS == {key: toggle(key) for key in study_config.roster_keys()}
+    assert run_study.COT_ARGS == {
+        key: toggle(key) for key in study_config.roster_keys()
+    }
 
 
 def test_template_is_byte_identical_to_periodic_moe(run_study: ModuleType) -> None:
@@ -118,14 +118,18 @@ def test_experiment_constants(run_study: ModuleType) -> None:
 BUDGET_MODEL = "gemma-4-e2b"
 
 
-def test_completion_budget(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_completion_budget(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Quizzes cover every arm and reserve completion budget."""
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     seeds = range(0, 2)
     quizzes = {seed: run_study.make_quizzes(seed, BUDGET_MODEL) for seed in seeds}
     assert tuple(quizzes[0]) == run_study.INFO_TYPES
     # One question per production label.
-    assert {info: len(q) for info, q in quizzes[0].items()} == dict.fromkeys(run_study.INFO_TYPES, 9)
+    assert {info: len(q) for info, q in quizzes[0].items()} == dict.fromkeys(
+        run_study.INFO_TYPES, 9
+    )
 
     tok = StubTokenizer()
     worst = max(
@@ -147,12 +151,15 @@ def test_completion_budget_exits_below_the_viability_floor(
 
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(
-        run_study, "rendered_queries",
-        lambda seed, model: [RenderedQuery(
-            prompts={"intens": "word " * 200_000},
-            token_counts={"intens": 200_000},
-            answer=1,
-        )],
+        run_study,
+        "rendered_queries",
+        lambda seed, model: [
+            RenderedQuery(
+                prompts={"intens": "word " * 200_000},
+                token_counts={"intens": 200_000},
+                answer=1,
+            )
+        ],
     )
     assert run_study.MIN_VIABLE_BUDGET == 48_000
     with pytest.raises(SystemExit):
@@ -201,8 +208,12 @@ def test_completion_budget_consumes_generations_counts(
     budget = run_study.completion_budget(BUDGET_MODEL, seeds)
     assert tokenizer.calls == generation_calls
 
-    worst = max(count for queries in rendered.values()
-                for query in queries for count in query.token_counts.values())
+    worst = max(
+        count
+        for queries in rendered.values()
+        for query in queries
+        for count in query.token_counts.values()
+    )
     assert budget == run_study.CONTEXT_LIMIT - worst - run_study.TEMPLATE_RESERVE
     # The maximum covers every arm.
     assert set(rendered[probes[0]][0].token_counts) == set(run_study.INFO_TYPES)
@@ -224,7 +235,9 @@ def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(
     )
 
 
-def test_selected_models(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_selected_models(
+    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """INDUCTION_MODELS defaults to the roster and rejects unknown keys."""
     monkeypatch.delenv("INDUCTION_MODELS", raising=False)
     assert sorted(run_study.selected_models()) == STUDY_KEYS
@@ -283,13 +296,13 @@ def test_main_passes_the_derived_request_timeout(
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
     # Patch classes because frozen instances reject setattr.
-    monkeypatch.setattr(ReplicateHarness, "has_outstanding",
-                        lambda self, model: True)
+    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: True)
     monkeypatch.setattr(InductionExperiment, "provision", lambda self: {})
     monkeypatch.setattr(InductionExperiment, "summarize", lambda self, model: None)
     seen = {}
-    monkeypatch.setattr(InductionExperiment, "run",
-                        lambda self, model, **kw: seen.update(kw))
+    monkeypatch.setattr(
+        InductionExperiment, "run", lambda self, model, **kw: seen.update(kw)
+    )
 
     run_study.main([])
 
@@ -307,8 +320,7 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
     monkeypatch.setattr(run_study, "for_model", lambda model: StubTokenizer())
     monkeypatch.setattr(run_study, "completion_budget", lambda model, seeds: 96_000)
     # Frozen instances reject setattr.
-    monkeypatch.setattr(ReplicateHarness, "has_outstanding",
-                        lambda self, model: False)
+    monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: False)
 
     def explode(*a: Any, **k: Any) -> None:
         raise AssertionError("must not provision or run with no outstanding work")
@@ -323,8 +335,9 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
 
 def test_unsharded_runs_set_the_study_tag() -> None:
     """Standalone runs use an explicit tag to isolate recovery."""
-    module, exc, env = import_run_study("induction_run_study_untagged",
-                                        {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""})
+    _module, exc, env = import_run_study(
+        "induction_run_study_untagged", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
+    )
     assert exc is None, exc
     assert env["EC2_EXPERIMENT_TAG"] == "induction-scaling"
 

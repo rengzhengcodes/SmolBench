@@ -15,7 +15,6 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from smolbench.evals import Quiz, study_config
 from smolbench.evals.replicates import ReplicateHarness
 
-
 # Canonical definition lives in smolbench.evals.results_store.
 from smolbench.evals.results_store import repo_root
 
@@ -52,7 +51,7 @@ class Experiment:
     def __post_init__(self) -> None:
         if self.shard is not None:
             index, count = self.shard
-            if count < 1 or not (0 <= index < count):
+            if count < 1 or not 0 <= index < count:
                 raise ValueError(
                     f"shard {self.shard!r}: need count >= 1 and 0 <= index < count."
                 )
@@ -230,8 +229,10 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
 
     fleet_prefix = study_config.load_study_config().fleet.tag_prefix
     # Remove exactly one trailing dash.
-    fleet_prefix_bare = fleet_prefix[:-1] if fleet_prefix.endswith("-") else fleet_prefix
-    if base == fleet_prefix or base == fleet_prefix_bare:
+    fleet_prefix_bare = (
+        fleet_prefix[:-1] if fleet_prefix.endswith("-") else fleet_prefix
+    )
+    if base in (fleet_prefix, fleet_prefix_bare):
         raise ValueError(
             f"EC2_EXPERIMENT_TAG={tag!r} is the BARE shared fleet prefix "
             f"({fleet_prefix!r}), which names every lane in the fleet at "

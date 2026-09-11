@@ -7,7 +7,16 @@ import string
 from dataclasses import dataclass
 from math import gcd, lcm
 from types import MappingProxyType
-from typing import Callable, Collection, Dict, Iterable, Mapping, Optional, Tuple, TypeAlias
+from typing import (
+    Callable,
+    Collection,
+    Dict,
+    Iterable,
+    Mapping,
+    Optional,
+    Tuple,
+    TypeAlias,
+)
 
 import numpy as np
 
@@ -78,7 +87,7 @@ class PeriodicConfig:
                 raise ValueError(f"Periods must be positive, got {periods}.")
             if self.expect_seq_len is None:
                 for i, a in enumerate(periods):
-                    for b in periods[i + 1:]:
+                    for b in periods[i + 1 :]:
                         if gcd(a, b) != 1:
                             raise ValueError(
                                 f"Periods must be pairwise coprime; gcd({a}, {b}) = {gcd(a, b)}. "
@@ -124,9 +133,7 @@ class PeriodicConfig:
             raise ValueError(f"Labels must be distinct, got {tuple(self.labels)}.")
         for lbl in self.labels:
             if self.sep in lbl:
-                raise ValueError(
-                    f"Label '{lbl}' contains the separator '{self.sep}'."
-                )
+                raise ValueError(f"Label '{lbl}' contains the separator '{self.sep}'.")
 
 
 # Lowercase labels avoid visual confusion with positions and must contain no
@@ -165,9 +172,7 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     }
     seq_len = lcm(*periods)
     pos_to_compound: PosToCompound = {
-        pos: config.sep.join(
-            period_to_label[k] for k in periods if pos % k == 0
-        )
+        pos: config.sep.join(period_to_label[k] for k in periods if pos % k == 0)
         for pos in range(1, seq_len + 1)
     }
     return period_to_label, pos_to_compound
@@ -209,21 +214,27 @@ class Condition:
 
 
 # Immutable shared conditions prevent cross-caller mutation.
-CONDITIONS: Mapping[str, Condition] = MappingProxyType({
-    "intens": Condition(context=lambda c: c.intensional),
-    "extens": Condition(context=lambda c: c.extensional),
-    # Matches extens length to isolate prompt length.
-    "noise_intens": Condition(context=lambda c: c.intensional, match_tokens_to="extens"),
-    # Omits the range because it can reveal the period-1 answer.
-    "zero": Condition(context=lambda c: "", omit_range=True),
-})
+CONDITIONS: Mapping[str, Condition] = MappingProxyType(
+    {
+        "intens": Condition(context=lambda c: c.intensional),
+        "extens": Condition(context=lambda c: c.extensional),
+        # Matches extens length to isolate prompt length.
+        "noise_intens": Condition(
+            context=lambda c: c.intensional, match_tokens_to="extens"
+        ),
+        # Omits the range because it can reveal the period-1 answer.
+        "zero": Condition(context=lambda c: "", omit_range=True),
+    }
+)
 
 
 # Values that range-free prompts must not reveal.
 RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
 
 
-def _resolve_arm_template(name: str, condition: Condition, prompter: Prompter) -> string.Template:
+def _resolve_arm_template(
+    name: str, condition: Condition, prompter: Prompter
+) -> string.Template:
     """Return the template `name`'s condition renders from.
 
     ``omit_range`` requires its range-free template to prevent answer leakage.
@@ -340,7 +351,9 @@ def get_periodic_prompts(
     padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
     unit: str | None = choose_whitespace_unit(tokenizer) if padded else None
 
-    for query, answer in prompter.query_gen(period_to_label, pos_to_compound, config.seed):
+    for query, answer in prompter.query_gen(
+        period_to_label, pos_to_compound, config.seed
+    ):
         prompts: Dict[str, str] = {}
         token_counts: Dict[str, int] = {}
 
@@ -398,7 +411,9 @@ def _get_periodic_quizzes(
     Dict[str, Quiz]
     """
     return quizzes_from_prompts(
-        get_periodic_prompts(config, prompter, tokenizer=tokenizer, conditions=conditions),
+        get_periodic_prompts(
+            config, prompter, tokenizer=tokenizer, conditions=conditions
+        ),
         qna_cls,
         conditions,
     )

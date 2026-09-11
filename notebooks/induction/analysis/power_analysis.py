@@ -13,12 +13,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from scipy.stats import binom, chi2
-
-from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
-from smolbench.evals.study_config import families as _study_families
-from smolbench.evals.study_config import roster_keys, tag_for
-
 from _power_common import (
     ALPHA,
     POWER_TARGETS,
@@ -26,6 +20,11 @@ from _power_common import (
     fmt_r,
     results_dir,
 )
+from scipy.stats import binom, chi2
+
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
+from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import roster_keys, tag_for
 
 # Derive tags from the committed configuration.
 MODELS = tuple(tag_for(key) for key in roster_keys())
@@ -56,7 +55,9 @@ if _writer_results.resolve() != RESULTS_DIR.resolve():
 
 # Replicates are the sampling unit; more harmonics change the task.
 N_SIMS = 10_000  # Monte Carlo SE of a power estimate <= 0.005.
-MAX_REPLICATES = 200  # Search ceiling only: still-unpowered contrasts are censored, not sized.
+MAX_REPLICATES = (
+    200  # Search ceiling only: still-unpowered contrasts are censored, not sized.
+)
 SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
 
 N_PRIMARY = 210  # 84 ladder (7x4x3) + 126 info (21x6).
@@ -129,9 +130,7 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     return p[()] if p.ndim == 0 else p
 
 
-def cmh_stat(
-    succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray
-) -> np.ndarray:
+def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.ndarray:
     """Compute the continuity-corrected 2 x 2 x K CMH statistic.
 
     Stratifies by harmonic; generalized CMH is distinct. Conditions require equal
@@ -453,7 +452,6 @@ def omnibus_interaction_power(
     float
     """
     import statsmodels.api as sm
-    from scipy.stats import chi2 as chi2_dist
 
     # Isolate diagnostic draws from sizing draws.
     rng = np.random.default_rng(SEED + 1)
@@ -478,7 +476,7 @@ def omnibus_interaction_power(
 
     x_null, x_full = design(False), design(True)
     df_extra = x_full.shape[1] - x_null.shape[1]
-    crit = chi2_dist.isf(ALPHA, df=df_extra)
+    crit = chi2.isf(ALPHA, df=df_extra)
     cell_rates = np.array([rates[(m, i)][k] for m, i, k in cells])
 
     rejections = 0
@@ -529,7 +527,11 @@ def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, s
 
 # Both sizing tables use this shared result shape.
 _SizingResult = tuple[
-    str, tuple[str, str], tuple[str, str], dict[float, int | None], dict[float, int | None]
+    str,
+    tuple[str, str],
+    tuple[str, str],
+    dict[float, int | None],
+    dict[float, int | None],
 ]
 
 
@@ -580,9 +582,12 @@ def _print_sizing_rows(
     outcomes : dict[tuple[str, str], np.ndarray]
     label_w : int
     """
+
+    def fmt(r: int | None) -> str:
+        return fmt_r(r, MAX_REPLICATES)
+
     for name, key_a, key_b, needed, needed_pooled in results:
         r80, r90 = needed[0.80], needed[0.90]
-        fmt = lambda r: fmt_r(r, MAX_REPLICATES)
         extra = "n/a" if r80 is None else f"{(r80 - 1) * N_HARMONICS}q"
         obs = f"{outcomes[key_a].mean():.2f} vs {outcomes[key_b].mean():.2f}"
         print(
@@ -613,8 +618,7 @@ def check_design_invariants() -> None:
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
     if MODELS != expected_models:
         raise RuntimeError(
-            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs "
-            f"{expected_models!r}"
+            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs " f"{expected_models!r}"
         )
 
     n_primary = len(build_primary_contrasts())
@@ -639,7 +643,7 @@ check_design_invariants()
 
 
 def observed_accuracy(
-    outcomes: dict[tuple[str, str], np.ndarray]
+    outcomes: dict[tuple[str, str], np.ndarray],
 ) -> list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]:
     """Compute observed pilot accuracy by family, model, and information type.
 
@@ -666,7 +670,7 @@ def observed_accuracy(
 
 
 def render_observed_accuracy(
-    data: list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+    data: list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]],
 ) -> None:
     """Print the observed accuracy table `observed_accuracy` returns."""
     print(
@@ -683,18 +687,18 @@ def render_observed_accuracy(
 
 def design_banner() -> dict:
     """Gather design constants for the report banner."""
-    return dict(
-        n_families=N_FAMILIES,
-        alpha_omnibus=ALPHA_OMNIBUS,
-        n_primary=N_PRIMARY,
-        alpha_primary=ALPHA_PRIMARY,
-        n_secondary=N_SECONDARY,
-        q_secondary=Q_SECONDARY,
-        alpha_secondary=ALPHA_SECONDARY,
-        n_sims=N_SIMS,
-        seed=SEED,
-        shrinkage=SHRINKAGE,
-    )
+    return {
+        "n_families": N_FAMILIES,
+        "alpha_omnibus": ALPHA_OMNIBUS,
+        "n_primary": N_PRIMARY,
+        "alpha_primary": ALPHA_PRIMARY,
+        "n_secondary": N_SECONDARY,
+        "q_secondary": Q_SECONDARY,
+        "alpha_secondary": ALPHA_SECONDARY,
+        "n_sims": N_SIMS,
+        "seed": SEED,
+        "shrinkage": SHRINKAGE,
+    }
 
 
 def render_design_banner(data: dict) -> None:
@@ -760,10 +764,13 @@ def primary_contrasts_table(
     n_censored = len(results) - len(feasible)
     label_w = max(len(name) for name, *_ in results)
     n_ladder = N_FAMILIES * len(INFOS) * len(list(combinations(range(3), 2)))  # 84
-    return dict(
-        results=results, r_star=r_star, n_censored=n_censored, label_w=label_w,
-        n_ladder=n_ladder,
-    )
+    return {
+        "results": results,
+        "r_star": r_star,
+        "n_censored": n_censored,
+        "label_w": label_w,
+        "n_ladder": n_ladder,
+    }
 
 
 def render_primary_contrasts_table(
@@ -775,10 +782,10 @@ def render_primary_contrasts_table(
     print(header)
     print("-" * len(header))
     print("-- ladder contrasts (within family, across rungs) --")
-    _print_sizing_rows(data["results"][:data["n_ladder"]], outcomes, data["label_w"])
+    _print_sizing_rows(data["results"][: data["n_ladder"]], outcomes, data["label_w"])
     print()
     print("-- info-arm contrasts (within model, across info types) --")
-    _print_sizing_rows(data["results"][data["n_ladder"]:], outcomes, data["label_w"])
+    _print_sizing_rows(data["results"][data["n_ladder"] :], outcomes, data["label_w"])
     print()
 
 
@@ -840,7 +847,7 @@ def secondary_contrasts_table(
     contrasts = build_secondary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_SECONDARY)
     label_w = max(len(name) for name, *_ in results)
-    return dict(results=results, label_w=label_w)
+    return {"results": results, "label_w": label_w}
 
 
 def render_secondary_contrasts_table(
@@ -869,12 +876,12 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
     -------
     dict
     """
-    return dict(
-        r_star=r_star,
-        n_censored=n_censored,
-        extra_runs=r_star - 1,
-        extra_questions=(r_star - 1) * N_HARMONICS,
-    )
+    return {
+        "r_star": r_star,
+        "n_censored": n_censored,
+        "extra_runs": r_star - 1,
+        "extra_questions": (r_star - 1) * N_HARMONICS,
+    }
 
 
 def render_recommended_replicates(data: dict) -> None:
@@ -941,8 +948,13 @@ def equivalence_checks(
     deltas = (0.10, 0.15, 0.20)
     if not near_ties:
         # Avoid division by zero.
-        return dict(fisher=fisher, near_ties=near_ties, deltas=deltas, alpha_eq=None,
-                    table=[])
+        return {
+            "fisher": fisher,
+            "near_ties": near_ties,
+            "deltas": deltas,
+            "alpha_eq": None,
+            "table": [],
+        }
 
     # Correct the planned equivalence family.
     alpha_eq = ALPHA / len(near_ties)
@@ -956,8 +968,13 @@ def equivalence_checks(
             )
             cells.append(r_eq)
         table.append((name, cells))
-    return dict(fisher=fisher, near_ties=near_ties, deltas=deltas, alpha_eq=alpha_eq,
-                table=table)
+    return {
+        "fisher": fisher,
+        "near_ties": near_ties,
+        "deltas": deltas,
+        "alpha_eq": alpha_eq,
+        "table": table,
+    }
 
 
 def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
@@ -1046,7 +1063,8 @@ def main() -> None:
 
     render_equivalence_checks(
         equivalence_checks(primary["results"], rates, r_star),
-        primary["label_w"], r_star,
+        primary["label_w"],
+        r_star,
     )  # 7
 
     render_interaction_diagnostic(interaction_diagnostic(rates, r_star), r_star)  # 8

@@ -3,13 +3,14 @@
 Offline stub-tokenizer hashes catch generation, prompt, and padding drift.
 """
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import hashlib
 import json
 import string
 from types import ModuleType
 
 import pytest
-
 from conftest import StubTokenizer, import_run_study
 
 from smolbench.evals import Quiz
@@ -27,8 +28,12 @@ from tests._paths import FIXTURES
 GOLDEN = json.loads((FIXTURES / "golden_quizzes.json").read_text())
 
 # Covers every generator placeholder.
-PERIODIC_TMPL = string.Template("CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?")
-PERIODIC_TOF_TMPL = string.Template("CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False.")
+PERIODIC_TMPL = string.Template(
+    "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
+)
+PERIODIC_TOF_TMPL = string.Template(
+    "CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False."
+)
 
 
 def quiz_hash(quiz: Quiz) -> str:
@@ -59,12 +64,16 @@ def test_periodic_golden(seed: int) -> None:
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     numeric = PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen)
     tof = PeriodicPrompter(PERIODIC_TOF_TMPL, tof_membership_query_gen)
-    assert_matches(f"periodic_numeric_{seed}",
-                   get_periodic_numeric_quiz(cfg, numeric, tokenizer=TOKENIZER,
-                                             conditions=POSITIVE_ARMS))
-    assert_matches(f"periodic_tof_{seed}",
-                   get_periodic_quiz(cfg, tof, tokenizer=TOKENIZER,
-                                     conditions=POSITIVE_ARMS))
+    assert_matches(
+        f"periodic_numeric_{seed}",
+        get_periodic_numeric_quiz(
+            cfg, numeric, tokenizer=TOKENIZER, conditions=POSITIVE_ARMS
+        ),
+    )
+    assert_matches(
+        f"periodic_tof_{seed}",
+        get_periodic_quiz(cfg, tof, tokenizer=TOKENIZER, conditions=POSITIVE_ARMS),
+    )
 
 
 #: Production arm order.
@@ -97,14 +106,18 @@ def stub_tokenizer(run_study: ModuleType, monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.parametrize("seed", (0, 1))
-def test_production_golden(run_study: ModuleType, stub_tokenizer: None, seed: int) -> None:
+def test_production_golden(
+    run_study: ModuleType, stub_tokenizer: None, seed: int
+) -> None:
     """Pin production quiz bytes for both seeds and all arms."""
     assert run_study.BASE_SEED == 0
     assert run_study.INFO_TYPES == PRODUCTION_ARMS
     assert production_hashes(run_study, seed) == GOLDEN[f"production_seed_{seed}"]
 
 
-def test_the_production_pins_are_seed_sensitive(run_study: ModuleType, stub_tokenizer: None) -> None:
+def test_the_production_pins_are_seed_sensitive(
+    run_study: ModuleType, stub_tokenizer: None
+) -> None:
     """Distinct seeds must produce distinct pins."""
     zero, one = production_hashes(run_study, 0), production_hashes(run_study, 1)
     for arm in PRODUCTION_ARMS:

@@ -34,7 +34,7 @@ class Tokenizer(Protocol):
         -------
         int
         """
-        ...
+        raise NotImplementedError
 
 
 class HFTokenizer:
@@ -191,7 +191,11 @@ def for_model(model: str) -> Tokenizer:
 
 # Mixed whitespace avoids BPE run merges; candidates are verified empirically.
 WHITESPACE_UNITS: Tuple[str, ...] = (
-    " \t", " \n\t", "\t ", " \n", "\t\n ",
+    " \t",
+    " \n\t",
+    "\t ",
+    " \n",
+    "\t\n ",
     # Last to preserve earlier selections and byte-identical noise prompts.
     "\r",
     "\x0b",

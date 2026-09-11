@@ -1,5 +1,7 @@
 """Pin consumers to the committed study configuration."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -20,8 +22,12 @@ BUCKET = "smolbench-results-414266451290"
 @pytest.fixture(autouse=True)
 def _no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The config must not depend on a developer shell's exported variables."""
-    for var in ("SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION",
-                "EC2_REGIONS", "AWS_REGION"):
+    for var in (
+        "SMOLBENCH_RESULTS_S3",
+        "SMOLBENCH_RESULTS_S3_REGION",
+        "EC2_REGIONS",
+        "AWS_REGION",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -82,9 +88,7 @@ def test_the_config_reads_no_environment(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_ec2_default_regions_are_built_from_the_config() -> None:
     """Build default EC2 regions from config with ``AWS_REGION`` first."""
     regions = sc.load_study_config().fleet.regions
-    assert ec2._DEFAULT_REGIONS == ",".join(
-        dict.fromkeys((ec2.AWS_REGION, *regions))
-    )
+    assert ec2._DEFAULT_REGIONS == ",".join(dict.fromkeys((ec2.AWS_REGION, *regions)))
     for region in regions:
         assert region in ec2.EC2_REGIONS
 
@@ -148,7 +152,9 @@ def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     ],
 )
 def test_a_malformed_config_raises_naming_the_defect(
-    tmp_path: Path, mutation: Callable[[str], str], expected: str,
+    tmp_path: Path,
+    mutation: Callable[[str], str],
+    expected: str,
 ) -> None:
     """Name malformed configuration entries."""
     with pytest.raises(ValueError) as exc:
@@ -158,6 +164,7 @@ def test_a_malformed_config_raises_naming_the_defect(
 
 # results_store consumers.
 
+
 def test_the_default_results_uri_is_rendered_from_the_config() -> None:
     """Render the configured canonical URI."""
     from smolbench.evals.results_store import default_results_uri
@@ -166,7 +173,8 @@ def test_the_default_results_uri_is_rendered_from_the_config() -> None:
 
 
 def test_sync_down_names_the_default_uri_when_the_env_is_unset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Name the required URI when sync is unconfigured."""
     from smolbench.evals.results_store import default_results_uri, sync_down

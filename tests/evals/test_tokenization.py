@@ -1,14 +1,16 @@
 """Test `smolbench.evals.tokenization`: alias -> HF repo resolution and the vLLM cross-check."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from conftest import StubServer
 
 from smolbench.evals import tokenization
 from smolbench.evals.providers import ec2
-from conftest import StubServer
 
 
 @pytest.fixture(autouse=True)
@@ -32,10 +34,18 @@ def record_repo(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return seen
 
 
-def test_for_model_resolution(record_repo: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_for_model_resolution(
+    record_repo: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """hf_model_id resolves, tokenizer_hf_id overrides it, unknown aliases raise, and it caches."""
-    override = {"hf_model_id": "someone/FP8", "tokenizer_hf_id": "someone/Override", "tp": 8}
-    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "plain-model", {"hf_model_id": "someone/Base"})
+    override = {
+        "hf_model_id": "someone/FP8",
+        "tokenizer_hf_id": "someone/Override",
+        "tp": 8,
+    }
+    monkeypatch.setitem(
+        ec2.EC2_DEPLOY_SPECS, "plain-model", {"hf_model_id": "someone/Base"}
+    )
     monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "weights-only-model", override)
     assert tokenization.for_model("plain-model") == "tokenizer<someone/Base>"
     assert tokenization.for_model("weights-only-model") == "tokenizer<someone/Override>"
@@ -69,7 +79,8 @@ def test_hf_tokenizer_wraps_an_existing_tokenizer_object() -> None:
 
 
 def test_from_repo_disables_truncation_and_padding(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A `truncation` stanza in tokenizer.json must not cap `count`."""
     calls: list = []
@@ -81,7 +92,9 @@ def test_from_repo_disables_truncation_and_padding(
         def no_padding(self) -> None:
             calls.append("no_padding")
 
+    # pylint: disable-next=unnecessary-lambda-assignment
     mod = lambda **kw: type("M", (), kw)  # noqa: E731
+
     download = mod(hf_hub_download=staticmethod(lambda **kw: str(tmp_path / "t.json")))
     loader = mod(Tokenizer=mod(from_file=staticmethod(lambda p: FakeTokenizer())))
     monkeypatch.setitem(sys.modules, "huggingface_hub", download)
@@ -111,10 +124,14 @@ def test_vllm_tokenizer_calls_the_server_root_endpoint(stub_server: StubServer) 
 # The token-matched noise pad: public API of this module, not of induction
 # ---------------------------------------------------------------------------
 
+
 def test_the_pad_search_is_public_here() -> None:
     """`tokenization` owns the pad primitives."""
-    for name in ("WHITESPACE_UNITS", "choose_whitespace_unit",
-                 "token_matched_noise_prompt"):
+    for name in (
+        "WHITESPACE_UNITS",
+        "choose_whitespace_unit",
+        "token_matched_noise_prompt",
+    ):
         assert hasattr(tokenization, name), name
     assert isinstance(tokenization.WHITESPACE_UNITS, tuple)
     assert tokenization.WHITESPACE_UNITS[0] == " \t"
@@ -122,6 +139,7 @@ def test_the_pad_search_is_public_here() -> None:
 
 def test_a_merging_tokenizer_has_no_qualifying_unit() -> None:
     """No whitespace unit survives the probes when every run merges to 1 token."""
+
     class Merging:
         """A tokenizer that merges every whitespace run, so no unit qualifies."""
 

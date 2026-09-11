@@ -132,7 +132,7 @@ def random_unique_strings(
             f"{base}**{length} exceeds the int64 sample space rng.choice "
             f"supports; reduce length (or count, which drives it)."
         )
-    indices: np.ndarray = rng.choice(base ** length, size=n, replace=False)
+    indices: np.ndarray = rng.choice(base**length, size=n, replace=False)
     digits: np.ndarray = np.empty((n, length), dtype=np.int64)
     for idx in range(length - 1, -1, -1):
         indices, digits[:, idx] = np.divmod(indices, base)
@@ -173,7 +173,9 @@ def random_labels(
         int(np.ceil(np.emath.logn(len(charset), count))) * LABEL_LENGTH_SAFETY_FACTOR,
     )
     return tuple(
-        random_unique_strings(count, length, np.random.default_rng(seed), charset=charset)
+        random_unique_strings(
+            count, length, np.random.default_rng(seed), charset=charset
+        )
     )
 
 

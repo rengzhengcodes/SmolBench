@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
 
-from smolbench.evals import Marks, Quiz
-from smolbench.evals import provider
-from smolbench.evals import results_store
-from smolbench.evals.results_store import ReplicateAddress, ResultsStore, resolve_store, utcnow
+from smolbench.evals import Marks, Quiz, provider, results_store
+from smolbench.evals.results_store import (
+    ReplicateAddress,
+    ResultsStore,
+    resolve_store,
+    utcnow,
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +43,9 @@ class ReplicateHarness:
         """Return the cached store for consistent environment resolution."""
         return resolve_store(self.results_dir, self.prefix)
 
-    def _address(self, model: Optional[str], tag: str, info: str, seed: int) -> ReplicateAddress:
+    def _address(
+        self, model: Optional[str], tag: str, info: str, seed: int
+    ) -> ReplicateAddress:
         """Build one replicate address.
 
         ``model=None`` permits tag-only reads.
@@ -122,7 +127,9 @@ class ReplicateHarness:
                 # Retire first so stale forced runs are never readable.
                 reason = f"force_seeds: re-collecting seed={seed}"
                 for info in outstanding:
-                    self.store.supersede_all(self._address(model, tag, info, seed), reason)
+                    self.store.supersede_all(
+                        self._address(model, tag, info, seed), reason
+                    )
             # Timestamp collection start, not serialization completion.
             run_ts = utcnow()
             quizzes = self.make_quizzes(seed, model)
@@ -133,12 +140,14 @@ class ReplicateHarness:
                 n: int = len(quizzes[info])
                 marks = Marks(
                     model=model,
-                    marks=tuple(pooled.marks[start:start + n]),
+                    marks=tuple(pooled.marks[start : start + n]),
                     # Copy so later caller mutations cannot alter stored provenance.
                     server_config=dict(server_config) if server_config else None,
                 )
                 start += n
-                self.store.dump_marks(marks, self._address(model, tag, info, seed), run_ts)
+                self.store.dump_marks(
+                    marks, self._address(model, tag, info, seed), run_ts
+                )
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
                     f"{marks.correct}/{len(marks.marks)} correct"
@@ -207,4 +216,6 @@ class ReplicateHarness:
 
         Raises RuntimeError for a non-S3 store and ValueError for an escaping path.
         """
-        return results_store.sync_down(self.results_dir, self.archetype_tags, self.prefix)
+        return results_store.sync_down(
+            self.results_dir, self.archetype_tags, self.prefix
+        )

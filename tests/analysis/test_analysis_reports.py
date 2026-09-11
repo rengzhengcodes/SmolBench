@@ -3,8 +3,8 @@
 Synthetic trees keep reported claims conditional on their supporting data.
 """
 
-import io
 import contextlib
+import io
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -13,6 +13,8 @@ from types import ModuleType
 import pytest
 
 # Pytest discovers imported fixtures from module globals.
+# Fixture names register pytest fixtures.
+# pylint: disable=unused-import
 from tests.analysis._trees import (  # noqa: F401
     DEEP_DEPTH,
     SHALLOW_DEPTH,
@@ -59,8 +61,7 @@ def _collapse_profile(
         return 0.10, 0.0, "empty", seeds
     if model == SKEW_MODEL and info == "intens":
         # Non-compliance is outside noise's seed coverage.
-        return 0.90, (lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0), \
-            "empty", seeds
+        return 0.90, (lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0), "empty", seeds
     if model == SKEW_MODEL and info == "noise_intens":
         return 0.90, 0.50, "empty", range(_SKEW_SPLIT)
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
@@ -87,8 +88,13 @@ def collapse_tree(
 ) -> Path:
     """16 seeds, with the four engineered anomalies this module's constants name."""
     root = tmp_path_factory.mktemp("collapse")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _collapse_profile,
-               copies={(TIED_MODEL, "noise_intens"): (TIED_MODEL, "extens")})
+    build_tree(
+        root,
+        power_analysis.MODELS,
+        power_analysis.INFOS,
+        _collapse_profile,
+        copies={(TIED_MODEL, "noise_intens"): (TIED_MODEL, "extens")},
+    )
     return root
 
 
@@ -119,6 +125,7 @@ def report(
 # the control-failure message is hard-coded and there is no depth guard
 # ===========================================================================
 
+
 def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
     report: Callable[[Path], str], shallow_tree: Path
 ) -> None:
@@ -134,7 +141,8 @@ def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
 
 
 def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
-        report: Callable[[Path], str], collapse_tree: Path) -> None:
+    report: Callable[[Path], str], collapse_tree: Path
+) -> None:
     """Exactly one of the two failing controls is a collapsed noise arm; the other is compliant and must not be exonerated."""
     out = report(collapse_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
@@ -167,8 +175,11 @@ def test_replicate_depth_gate_uses_the_shallowest_lane(
     root = tmp_path_factory.mktemp("mixed_depth")
 
     def profile(model: str, info: str) -> tuple[float, float, str, range]:
-        seeds = range(paired_analysis.EXPECTED_R) if (model, info) == deep_cell \
+        seeds = (
+            range(paired_analysis.EXPECTED_R)
+            if (model, info) == deep_cell
             else range(SHALLOW_DEPTH)
+        )
         return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
     build_tree(root, power_analysis.MODELS, power_analysis.INFOS, profile)
@@ -181,6 +192,7 @@ def test_replicate_depth_gate_uses_the_shallowest_lane(
 # ===========================================================================
 # the padding table subtracted rates over different seed sets
 # ===========================================================================
+
 
 def _padding_table(out: str) -> "dict[str, str]":
     """Parse the PADDING EFFECT table into ``{lane: row text}``."""
@@ -237,6 +249,7 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
 # three narrative conclusions printed regardless of their own counts
 # ===========================================================================
 
+
 def test_the_ladder_claim_is_conditional_on_its_own_count(
     report: Callable[[Path], str], shallow_tree: Path, collapse_tree: Path
 ) -> None:
@@ -258,7 +271,7 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     assert match, collapse
     n_lad, n_lost = int(match.group(1)), int(match.group(2))
     assert n_lost > 0, "fixture no longer produces any Holm losses"
-    tail = collapse[match.start():match.start() + 600]
+    tail = collapse[match.start() : match.start() + 600]
     if n_lad:
         assert "bites the family-scaling story" in tail, tail
     else:
@@ -302,6 +315,7 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
 # the direction label had no tie branch
 # ===========================================================================
 
+
 def test_exact_ties_are_labelled_tied_not_extens_higher(
     repoint: Callable[[Path], None], extens_vs_noise: ModuleType, collapse_tree: Path
 ) -> None:
@@ -329,7 +343,10 @@ def test_collapsed_lane_buckets_as_collapse(
     # the per-bucket detail rows further down, which take their mechanism from
     # the bucket heading above them.
     table = out.split("mechanism / non-compliance", 1)[1].split("\nH210 =", 1)[0]
-    rows = {ln.split()[0]: ln for ln in table.splitlines()
-            if ln[:1].isalpha() and len(ln.split()) > 3}
+    rows = {
+        ln.split()[0]: ln
+        for ln in table.splitlines()
+        if ln[:1].isalpha() and len(ln.split()) > 3
+    }
     assert COLLAPSE_MODEL in rows, table[:2500]
     assert "COLLAPSE" in rows[COLLAPSE_MODEL], rows[COLLAPSE_MODEL]

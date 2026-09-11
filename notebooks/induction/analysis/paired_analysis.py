@@ -12,12 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from scipy.stats import chi2
-from statsmodels.stats.multitest import multipletests
-
-from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
-
-from power_analysis import (  # noqa: E402  (path shim must precede the import)
+from power_analysis import (  # noqa: E402  (path shim must precede the import); Descriptive only: inference uses seed-level sign-flips.
     ALPHA,
     INFOS,
     MODELS,
@@ -28,9 +23,12 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     build_primary_contrasts,
     build_secondary_contrasts,
     cmh_stat,
-    # Descriptive only: inference uses seed-level sign-flips.
     mcnemar_exact_p,
 )
+from scipy.stats import chi2
+from statsmodels.stats.multitest import multipletests
+
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 #: Absolute depth detects uniform shortfalls that raise the sign-flip floor.
 EXPECTED_R = 30
@@ -88,7 +86,11 @@ def load_marks() -> tuple[dict, dict, dict]:
 
 
 def aligned(
-    correct: dict, valid: dict, key_a: tuple[str, str], key_b: tuple[str, str], drop_invalid: bool
+    correct: dict,
+    valid: dict,
+    key_a: tuple[str, str],
+    key_b: tuple[str, str],
+    drop_invalid: bool,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build item-matched vectors for one contrast.
 
@@ -110,7 +112,7 @@ def aligned(
             f"No common seeds between {key_a} and {key_b}; one lane has no "
             "usable replicates -- re-run sync_down()."
         )
-    a = np.array([correct[key_a][s] for s in seeds])          # (n_seeds, 9)
+    a = np.array([correct[key_a][s] for s in seeds])  # (n_seeds, 9)
     b = np.array([correct[key_b][s] for s in seeds])
     keep = np.ones_like(a, dtype=bool)
     if drop_invalid:
@@ -296,7 +298,11 @@ def main() -> None:
         )
 
     for drop_invalid in (False, True):
-        tag = "DROP-INVALID pairs" if drop_invalid else "null == incorrect (pre-registered)"
+        tag = (
+            "DROP-INVALID pairs"
+            if drop_invalid
+            else "null == incorrect (pre-registered)"
+        )
         print(f"\n{'=' * 78}\nPRIMARY family, {tag}\n{'=' * 78}")
         rows = []
         for label, key_a, key_b in contrasts:
@@ -310,13 +316,19 @@ def main() -> None:
                 signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
             )
             rows.append(
-                dict(
-                    label=label, n=a.size, acc_a=a.mean(), acc_b=b.mean(),
-                    disc=(nb + nc) / max(a.size, 1), b=nb, c=nc,
-                    p_paired=p_paired, p_unpaired=p_unpaired,
-                    p_cluster=p_cluster,
-                    de=design_effect(a, b, sidx, hidx),
-                )
+                {
+                    "label": label,
+                    "n": a.size,
+                    "acc_a": a.mean(),
+                    "acc_b": b.mean(),
+                    "disc": (nb + nc) / max(a.size, 1),
+                    "b": nb,
+                    "c": nc,
+                    "p_paired": p_paired,
+                    "p_unpaired": p_unpaired,
+                    "p_cluster": p_cluster,
+                    "de": design_effect(a, b, sidx, hidx),
+                }
             )
 
         p_pair = np.array([r["p_paired"] for r in rows])

@@ -2,10 +2,10 @@
 
 import os
 import re
-from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypeAlias, Sequence, Optional
+from typing import Optional, Sequence, TypeAlias
 
 Answer: TypeAlias = bool | int | str
 
@@ -168,7 +168,7 @@ class Marks:
         path : Path
         """
         tmp = f"{path}.tmp"
-        with open(tmp, "w") as file:
+        with open(tmp, "w", encoding="utf-8") as file:
             file.write(self.dumps())
         os.replace(tmp, path)
 
@@ -190,6 +190,6 @@ class Marks:
     @classmethod
     def load(cls, path: Path) -> "Marks":
         """Load YAML from `path`."""
-        with open(path) as file:
+        with open(path, encoding="utf-8") as file:
             text = file.read()
         return cls.loads(text)

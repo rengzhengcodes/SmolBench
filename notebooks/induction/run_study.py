@@ -40,9 +40,11 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
         return None
     try:
         index, count = (int(part) for part in raw.split("/", 1))
-    except ValueError:
-        raise SystemExit(f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3")
-    if count < 1 or not (0 <= index < count):
+    except ValueError as exc:
+        raise SystemExit(
+            f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3"
+        ) from exc
+    if count < 1 or not 0 <= index < count:
         raise SystemExit(f"{var}={raw!r}: need count >= 1 and 0 <= index < count")
     return index, count
 
@@ -68,10 +70,10 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
         return frozenset(full_range)
     try:
         lo, hi = (int(part) for part in raw.split("-", 1))
-    except ValueError:
+    except ValueError as exc:
         raise SystemExit(
             f"INDUCTION_FORCE_RERUN={raw!r}: expected '1' or 'a-b' (e.g. '0-11')"
-        )
+        ) from exc
     if lo > hi or lo < full_range.start or hi >= full_range.stop:
         raise SystemExit(
             f"INDUCTION_FORCE_RERUN={raw!r}: subrange must lie inside "
@@ -83,7 +85,11 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 SHARD = _parse_shard("INDUCTION_SHARD")
 
 # Use the canonical roster to prevent duplicate-map drift.
-from smolbench.evals.study_config import load_study_config, roster_keys, tag_for  # noqa: E402
+from smolbench.evals.study_config import (  # noqa: E402
+    load_study_config,
+    roster_keys,
+    tag_for,
+)
 
 MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
@@ -99,8 +105,8 @@ if SHARD is not None:
     _chosen = set(_requested)
     _lane_models = [model for model in MODELS if model in _chosen]
     _lane_models += [key for key in dict.fromkeys(_requested) if key not in MODELS]
-    _LANE = ("-" + "-".join(_lane_models) if _lane_models else "") + "-s{}of{}".format(
-        *SHARD
+    _LANE = ("-" + "-".join(_lane_models) if _lane_models else "") + (
+        f"-s{SHARD[0]}of{SHARD[1]}"
     )
 
 # Preserve a fleet-provided tag.
@@ -119,10 +125,14 @@ except ValueError as exc:
 
 _DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
 
-from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.evals import Numeric  # noqa: E402
+from smolbench.evals.providers import ec2  # noqa: E402
 from smolbench.evals.tokenization import for_model  # noqa: E402
-from smolbench.induction._common import Prompter, RenderedQuery, quizzes_from_prompts  # noqa: E402
+from smolbench.induction._common import (  # noqa: E402
+    Prompter,
+    RenderedQuery,
+    quizzes_from_prompts,
+)
 from smolbench.induction.experiment import InductionExperiment  # noqa: E402
 from smolbench.induction.periodic import (  # noqa: E402
     CONDITIONS,
@@ -217,9 +227,8 @@ RANGE_CLAUSE: str = " 1 through $seq_len"
 
 if RANGE_CLAUSE not in template.template:
     # ``replace`` would otherwise silently retain the range.
-    raise RuntimeError(
-        f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template."
-    )
+    raise RuntimeError(f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template.")
+
 
 def _zero_template(base: string.Template) -> string.Template:
     """Derive the zero condition's range-free question from `base`.
@@ -272,7 +281,9 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
         template, numeric_count_query_gen, range_free_template=_zero_template(template)
     )
     return list(
-        get_periodic_prompts(cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS)
+        get_periodic_prompts(
+            cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS
+        )
     )
 
 
@@ -326,7 +337,7 @@ def completion_budget(model: str, seeds: range) -> int:
     worst = 0
     for seed in probe_seeds(seeds):
         for query in rendered_queries(seed, model):
-            worst = max(worst, max(query.token_counts.values()))
+            worst = max(worst, *query.token_counts.values())
     budget = CONTEXT_LIMIT - worst - TEMPLATE_RESERVE
     if budget < MIN_VIABLE_BUDGET:
         raise SystemExit(
@@ -451,8 +462,10 @@ def main(argv: "list[str] | None" = None) -> None:
         )
         EXPERIMENT.summarize(model)
     # The fleet may reuse this instance for deduction.
-    print(f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
-          flush=True)
+    print(
+        f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

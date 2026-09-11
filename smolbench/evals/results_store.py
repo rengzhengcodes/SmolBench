@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 import smolbench
-from smolbench.evals import Marks
-from smolbench.evals import _aws
+from smolbench.evals import Marks, _aws
 from smolbench.evals.study_config import load_study_config
 
 # Retire immutable S3 runs with sibling markers.
@@ -50,7 +49,7 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
-    rest = uri[len("s3://"):].rstrip("/")
+    rest = uri[len("s3://") :].rstrip("/")
     segments = rest.split("/")
     for i, seg in enumerate(segments):
         kind = "bucket name" if i == 0 else "prefix segment"
@@ -156,7 +155,9 @@ class ResultsStore(abc.ABC):
         """
 
     @abc.abstractmethod
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
         No existence check; a caller wanting resume-skip calls ``exists`` first.
@@ -269,7 +270,9 @@ class LocalResultsStore(ResultsStore):
         """
         return self._path(addr).exists()
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Persist marks in the local layout; ``run_ts`` is unused.
 
         Parameters
@@ -311,7 +314,7 @@ class LocalResultsStore(ResultsStore):
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
         for path in dirpath.glob("rep_*.yaml"):
-            seed_str = path.stem[len("rep_"):]
+            seed_str = path.stem[len("rep_") :]
             try:
                 seeds.add(int(seed_str))
             except ValueError:
@@ -379,7 +382,7 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     if not seed_part.startswith("seed=") or not filename.endswith(".yaml"):
         return None
     try:
-        seed = int(seed_part[len("seed="):])
+        seed = int(seed_part[len("seed=") :])
     except ValueError:
         return None
     stem = filename[: -len(".yaml")]
@@ -457,7 +460,9 @@ class S3ResultsStore(ResultsStore):
         )
         return bool(resp.get("Contents"))
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Write marks under a timestamped S3 key.
 
         A ``None`` model is refused because immutable logs cannot correct a bad key.
@@ -476,8 +481,14 @@ class S3ResultsStore(ResultsStore):
                 "model=None is a READ-only address shape (see "
                 "ReplicateAddress.model) and the S3 log is keyed by model."
             )
-        key = self._info_prefix(addr.model, addr.seed, addr.info) + format_run_ts(run_ts) + ".yaml"
-        self._client().put_object(Bucket=self.bucket, Key=key, Body=marks.dumps().encode())
+        key = (
+            self._info_prefix(addr.model, addr.seed, addr.info)
+            + format_run_ts(run_ts)
+            + ".yaml"
+        )
+        self._client().put_object(
+            Bucket=self.bucket, Key=key, Body=marks.dumps().encode()
+        )
 
     def _list_run_partition(self, addr: ReplicateAddress) -> "tuple[list[str], int]":
         """List run stamps and supersession markers in one traversal.
@@ -496,7 +507,7 @@ class S3ResultsStore(ResultsStore):
         run_stamps: list[str] = []
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
-                rest = obj["Key"][len(prefix):]
+                rest = obj["Key"][len(prefix) :]
                 if rest.endswith(S3_SUPERSEDED_SUFFIX):
                     marker_stamps.add(rest[: -len(S3_SUPERSEDED_SUFFIX)])
                 elif rest.endswith(".yaml"):
@@ -538,9 +549,7 @@ class S3ResultsStore(ResultsStore):
                     f"-- {marker_count} logged run(s) there were superseded "
                     "and never replaced"
                 )
-            raise FileNotFoundError(
-                f"no logged run under s3://{self.bucket}/{prefix}"
-            )
+            raise FileNotFoundError(f"no logged run under s3://{self.bucket}/{prefix}")
         earliest_key = prefix + survivors[0] + ".yaml"
         obj = self._client().get_object(Bucket=self.bucket, Key=earliest_key)
         return Marks.loads(obj["Body"].read().decode())
@@ -565,8 +574,14 @@ class S3ResultsStore(ResultsStore):
                 "is a READ-only address shape (see ReplicateAddress.model); "
                 "nothing is ever logged there to supersede."
             )
-        key = self._info_prefix(addr.model, addr.seed, addr.info) + run_ts + S3_SUPERSEDED_SUFFIX
-        body = json.dumps({"superseded_at": utcnow().isoformat(), "reason": reason}).encode()
+        key = (
+            self._info_prefix(addr.model, addr.seed, addr.info)
+            + run_ts
+            + S3_SUPERSEDED_SUFFIX
+        )
+        body = json.dumps(
+            {"superseded_at": utcnow().isoformat(), "reason": reason}
+        ).encode()
         self._client().put_object(Bucket=self.bucket, Key=key, Body=body)
         return key
 
@@ -612,7 +627,7 @@ class S3ResultsStore(ResultsStore):
         marker_stamps: dict[int, set[str]] = {}
         for page in paginator.paginate(Bucket=self.bucket, Prefix=list_prefix):
             for obj in page.get("Contents", []):
-                rel = obj["Key"][len(list_prefix):]
+                rel = obj["Key"][len(list_prefix) :]
                 stamps = run_stamps
                 if rel.endswith(S3_SUPERSEDED_SUFFIX):
                     rel = rel[: -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
@@ -624,7 +639,9 @@ class S3ResultsStore(ResultsStore):
                 if entry_info == info:
                     stamps.setdefault(seed, set()).add(run_ts)
         return sorted(
-            seed for seed, runs in run_stamps.items() if runs - marker_stamps.get(seed, set())
+            seed
+            for seed, runs in run_stamps.items()
+            if runs - marker_stamps.get(seed, set())
         )
 
     def describe(self) -> str:
@@ -768,7 +785,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 if key.endswith(S3_SUPERSEDED_SUFFIX):
-                    rel = key[len(list_prefix): -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
+                    rel = key[len(list_prefix) : -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
                     parsed = _parse_log_entry(rel)
                     if parsed is None:
                         continue
@@ -777,7 +794,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                     continue
                 if key.endswith("/"):
                     continue
-                parsed = _parse_log_entry(key[len(list_prefix):])
+                parsed = _parse_log_entry(key[len(list_prefix) :])
                 if parsed is None:
                     continue
                 seed, info, run_ts = parsed
@@ -803,7 +820,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 and etag_md5 is not None
                 # Cache check, not security; FIPS permits this flag.
                 and etag_md5
-                == hashlib.md5(local_path.read_bytes(), usedforsecurity=False).hexdigest()
+                == hashlib.md5(
+                    local_path.read_bytes(), usedforsecurity=False
+                ).hexdigest()
             ):
                 skipped += 1
                 continue
@@ -822,7 +841,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     return downloaded
 
 
-def main(argv: "Sequence[str] | None" = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run the S3-to-local sync CLI.
 
     Repeated ``--tag MODEL=TAG`` values split at the first ``"="``; later model entries replace

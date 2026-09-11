@@ -66,9 +66,7 @@ def _require(mapping: dict, name: str, within: str = "") -> Any:
     key = name.strip("[]")
     if key not in mapping:
         label = name if name.startswith("[") else repr(name)
-        raise ValueError(
-            f"study_config.toml{within} is missing the required {label}"
-        )
+        raise ValueError(f"study_config.toml{within} is missing the required {label}")
     return mapping[key]
 
 

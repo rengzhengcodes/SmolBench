@@ -1,5 +1,7 @@
 """Test ``InductionExperiment`` offline: no AWS, no network."""
 
+# pylint: disable=missing-function-docstring,missing-class-docstring
+
 import contextlib
 import os
 import subprocess
@@ -29,8 +31,11 @@ def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
 def exp() -> InductionExperiment:
     """Build a small state-free periodic experiment."""
     return InductionExperiment(
-        notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes, n_replicates=3, info_types=("intens", "extens"),
+        notebook_dir="periodic",
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        n_replicates=3,
+        info_types=("intens", "extens"),
     )
 
 
@@ -50,8 +55,13 @@ def test_config_and_harness_passthrough(exp: InductionExperiment) -> None:
     assert harness.force_seeds is None
 
     custom = InductionExperiment(
-        notebook_dir="divisor", archetype_tags={"m": "decode"}, make_quizzes=make_quizzes,
-        n_replicates=4, base_seed=100, prefix="one_hop_", force_seeds=frozenset({100}),
+        notebook_dir="divisor",
+        archetype_tags={"m": "decode"},
+        make_quizzes=make_quizzes,
+        n_replicates=4,
+        base_seed=100,
+        prefix="one_hop_",
+        force_seeds=frozenset({100}),
     )
     assert custom.results_dir == repo_root() / "notebooks" / "divisor" / "results"
     assert custom.seeds == (100, 101, 102, 103)
@@ -64,7 +74,9 @@ def test_apply_env(monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment) ->
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     monkeypatch.delenv("EC2_STATE_FILE", raising=False)
     namespaced = InductionExperiment(
-        notebook_dir="divisor", archetype_tags={}, make_quizzes=make_quizzes,
+        notebook_dir="divisor",
+        archetype_tags={},
+        make_quizzes=make_quizzes,
         state_file=".ec2_state_divisor.json",
     )
     namespaced._apply_env()
@@ -80,8 +92,9 @@ NO_KWARGS = {"extra_args": None, "max_parallel": None, "request_timeout": None}
 SOME_KWARGS = {"extra_args": {"max_completion_tokens": 64}, "max_parallel": 8}
 
 
-@pytest.mark.parametrize("kwargs, expected",
-                         [({}, NO_KWARGS), (SOME_KWARGS, {**NO_KWARGS, **SOME_KWARGS})])
+@pytest.mark.parametrize(
+    "kwargs, expected", [({}, NO_KWARGS), (SOME_KWARGS, {**NO_KWARGS, **SOME_KWARGS})]
+)
 def test_run_serves_then_runs_replicates_then_exits(
     monkeypatch: pytest.MonkeyPatch,
     exp: InductionExperiment,
@@ -110,7 +123,11 @@ def test_run_serves_then_runs_replicates_then_exits(
 
     exp.run("stub-model", **kwargs)
 
-    assert events == [("enter", "stub-model"), ("run", "stub-model"), ("exit", "stub-model")]
+    assert events == [
+        ("enter", "stub-model"),
+        ("run", "stub-model"),
+        ("exit", "stub-model"),
+    ]
     assert isinstance(captured.pop("server_config"), dict)
     assert captured == expected
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
@@ -121,13 +138,17 @@ def test_run_skips_serving_when_nothing_is_outstanding(
 ) -> None:
     """Do not serve when no replicates remain."""
     served = []
-    monkeypatch.setattr(ec2, "serve_model",
-                        lambda m: served.append(m) or contextlib.nullcontext(m))
+    monkeypatch.setattr(
+        ec2, "serve_model", lambda m: served.append(m) or contextlib.nullcontext(m)
+    )
     monkeypatch.setattr(ReplicateHarness, "has_outstanding", lambda self, model: False)
-    monkeypatch.setattr(ReplicateHarness, "run_replicates",
-                        lambda *a, **k: pytest.fail("must not run with no work"))
+    monkeypatch.setattr(
+        ReplicateHarness,
+        "run_replicates",
+        lambda *a, **k: pytest.fail("must not run with no work"),
+    )
     exp.run("stub-model")
-    assert served == []
+    assert not served
 
 
 def test_provision_applies_env_prints_summary_and_returns_state(
@@ -138,8 +159,10 @@ def test_provision_applies_env_prints_summary_and_returns_state(
     """Return provisioning state and print its summary."""
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     fixed_state = {
-        "instance_id": "i-0123456789abcdef0", "instance_type": "p5.48xlarge",
-        "availability_zone": "us-east-1a", "public_ip": "203.0.113.5",
+        "instance_id": "i-0123456789abcdef0",
+        "instance_type": "p5.48xlarge",
+        "availability_zone": "us-east-1a",
+        "public_ip": "203.0.113.5",
     }
     monkeypatch.setattr(ec2, "provision_spot_instance", lambda: fixed_state)
 
@@ -147,8 +170,10 @@ def test_provision_applies_env_prints_summary_and_returns_state(
 
     assert returned is fixed_state
     assert os.environ["INFERENCE_PROVIDER"] == "ec2"
-    assert "instance i-0123456789abcdef0 (p5.48xlarge) in us-east-1a at 203.0.113.5" \
+    assert (
+        "instance i-0123456789abcdef0 (p5.48xlarge) in us-east-1a at 203.0.113.5"
         in capsys.readouterr().out
+    )
 
 
 def test_offline_delegates(exp: InductionExperiment) -> None:
@@ -168,10 +193,13 @@ def test_offline_delegates(exp: InductionExperiment) -> None:
     assert recorded == [("summarize", "stub-model"), ("cot_chain_lengths", "cot")]
 
 
-@pytest.mark.parametrize("method, ec2_fn, returns", [
-    ("agent_status", "agent_status", {"healthy": True}),
-    ("teardown", "shutdown_instance", None),
-])
+@pytest.mark.parametrize(
+    "method, ec2_fn, returns",
+    [
+        ("agent_status", "agent_status", {"healthy": True}),
+        ("teardown", "shutdown_instance", None),
+    ],
+)
 def test_ec2_delegates(
     monkeypatch: pytest.MonkeyPatch,
     exp: InductionExperiment,
@@ -191,32 +219,43 @@ def test_ec2_delegates(
 def test_importing_experiment_does_not_import_ec2() -> None:
     """Keep facade imports free of ``ec2``."""
     result = subprocess.run(
-        [sys.executable, "-c",
-         "import sys, smolbench.induction.experiment; "
-         "sys.exit(1 if 'smolbench.evals.providers.ec2' in sys.modules else 0)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys, smolbench.induction.experiment; "
+            "sys.exit(1 if 'smolbench.evals.providers.ec2' in sys.modules else 0)",
+        ],
         cwd=str(repo_root()),
+        check=False,
     )
     assert result.returncode == 0
 
 
 def _sharded(count: int, index: int, n_replicates: int = 30) -> InductionExperiment:
     return InductionExperiment(
-        notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes, n_replicates=n_replicates, shard=(index, count),
+        notebook_dir="periodic",
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+        n_replicates=n_replicates,
+        shard=(index, count),
     )
 
 
 def test_shard_partition() -> None:
     """Partition seeds exactly and evenly across shards."""
     unsharded = InductionExperiment(
-        notebook_dir="periodic", archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes).seeds
+        notebook_dir="periodic",
+        archetype_tags={"stub-model": "decode"},
+        make_quizzes=make_quizzes,
+    ).seeds
     # Default seeds begin at 1776.
     assert unsharded == tuple(range(1776, 1806))
     for count in (1, 2, 3, 4, 7, 30):
         shards = [_sharded(count, i).seeds for i in range(count)]
         collected = [s for shard in shards for s in shard]
-        assert sorted(collected) == sorted(unsharded), f"count={count} is not a partition"
+        assert sorted(collected) == sorted(
+            unsharded
+        ), f"count={count} is not a partition"
         assert len(collected) == len(set(collected)), f"count={count} has overlap"
         sizes = [len(shard) for shard in shards]
         assert max(sizes) - min(sizes) <= 1, f"count={count} sizes {sizes}"
@@ -237,8 +276,8 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(
 ) -> None:
     """Exercise real replication and local storage with a stubbed provider."""
     from smolbench.evals import Mark, Marks
-    from smolbench.evals.quiz import COMPLIANT
     from smolbench.evals import replicates as replicates_mod
+    from smolbench.evals.quiz import COMPLIANT
     from smolbench.evals.results_store import LocalResultsStore
 
     calls: list[tuple[int, str]] = []
@@ -253,12 +292,19 @@ def test_run_replicates_calls_make_quizzes_with_seed_and_model(
     harness.__dict__["store"] = LocalResultsStore(tmp_path)
     object.__setattr__(harness, "make_quizzes", recording_make)
 
-    def fake_evaluate(quiz: tuple[Numeric, ...], model: str, seed: int, **kwargs: Any) -> Any:
+    def fake_evaluate(
+        quiz: tuple[Numeric, ...], model: str, seed: int, **kwargs: Any
+    ) -> Any:
         return Marks(
             model=model,
             marks=tuple(
-                Mark(query=q.prompt, answer=q.answer, response="1", score=1,
-                     compliance=COMPLIANT)
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response="1",
+                    score=1,
+                    compliance=COMPLIANT,
+                )
                 for q in quiz
             ),
         )
@@ -284,6 +330,15 @@ def test_the_induction_experiment_is_a_thin_subclass_of_the_neutral_one() -> Non
 
     assert issubclass(InductionExperiment, Experiment)
     # Only cot_chain_lengths supplies the induction tag default.
-    for name in ("provision", "run", "summarize", "agent_status", "teardown",
-                 "_apply_env", "harness", "seeds", "results_dir"):
+    for name in (
+        "provision",
+        "run",
+        "summarize",
+        "agent_status",
+        "teardown",
+        "_apply_env",
+        "harness",
+        "seeds",
+        "results_dir",
+    ):
         assert name not in vars(InductionExperiment), name

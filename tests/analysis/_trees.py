@@ -31,15 +31,22 @@ DEEP_DEPTH = 16
 N_HARMONICS = 9
 
 
-def _marks_for(rate: float, noncompliance: float, mode: str, rng: np.random.Generator) -> Marks:
+def _marks_for(
+    rate: float, noncompliance: float, mode: str, rng: np.random.Generator
+) -> Marks:
     """Build one replicate with independent score and compliance axes."""
     scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
     bad = rng.random(N_HARMONICS) < noncompliance
     return Marks(
         model="stub-model",
         marks=tuple(
-            Mark(query=f"q{i}", answer=i, response=str(i), score=int(s),
-                 compliance=(mode if b else COMPLIANT))
+            Mark(
+                query=f"q{i}",
+                answer=i,
+                response=str(i),
+                score=int(s),
+                compliance=(mode if b else COMPLIANT),
+            )
             for i, (s, b) in enumerate(zip(scores, bad))
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),
@@ -50,15 +57,20 @@ def build_tree(
     root: Path,
     models: Sequence[str],
     infos: Sequence[str],
-    profile: Callable[[str, str], tuple[float, float | Callable[[int], float], str, Sequence[int]]],
+    profile: Callable[
+        [str, str], tuple[float, float | Callable[[int], float], str, Sequence[int]]
+    ],
     copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> None:
     """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root`."""
     for model in models:
         for info in infos:
             rate, noncompliance, mode, seeds = profile(model, info)
-            rate_of = noncompliance if callable(noncompliance) else (
-                lambda _seed, _v=noncompliance: _v)
+            rate_of = (
+                noncompliance
+                if callable(noncompliance)
+                else (lambda _seed, _v=noncompliance: _v)
+            )
             cdir = root / f"{model}_{info}"
             cdir.mkdir(parents=True, exist_ok=True)
             for seed in seeds:
@@ -131,8 +143,12 @@ def repoint(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
     """
 
     def _repoint(root: Path) -> None:
-        for name in ("power_analysis", "paired_analysis", "significance_report",
-                     "extens_vs_noise"):
+        for name in (
+            "power_analysis",
+            "paired_analysis",
+            "significance_report",
+            "extens_vs_noise",
+        ):
             module = sys.modules.get(name)
             if module is not None and hasattr(module, "RESULTS_DIR"):
                 monkeypatch.setattr(module, "RESULTS_DIR", root)
