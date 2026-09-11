@@ -1,6 +1,7 @@
 """Test the neutral experiment lifecycle and tag guard."""
 
 import dataclasses
+import os
 from typing import Any
 
 import pytest
@@ -80,6 +81,34 @@ def test_a_shard_requires_an_explicit_state_file() -> None:
     """Refuse shards without a state file to prevent cross-shard reattachment."""
     with pytest.raises(ValueError, match="state_file"):
         build(shard=(0, 2))
+
+
+def test_experiment_tag_is_exported_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin that each experiment exports its own tag before every live call."""
+    fleet = study_config.load_study_config().fleet
+    first = build(experiment_tag=f"{fleet.tag_prefix}a")
+    second = build(experiment_tag=f"{fleet.tag_prefix}b")
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)
+
+    def fake_agent_status() -> dict[str, str]:
+        """Return the environment so the test can inspect exported settings."""
+        return dict(os.environ)
+
+    monkeypatch.setattr(
+        "smolbench.evals.providers.ec2.agent_status",
+        fake_agent_status,
+    )
+    assert first.agent_status()["EC2_EXPERIMENT_TAG"] == first.experiment_tag
+    assert second.agent_status()["EC2_EXPERIMENT_TAG"] == second.experiment_tag
+    os.environ.pop("EC2_EXPERIMENT_TAG", None)
+
+
+def test_an_unsafe_experiment_tag_is_refused_at_construction() -> None:
+    """Pin that unsafe experiment-owned tags fail before any lifecycle call."""
+    with pytest.raises(ValueError, match="EC2_EXPERIMENT_TAG"):
+        build(experiment_tag="")
 
 
 @pytest.mark.parametrize("state_file", ["", "  "])

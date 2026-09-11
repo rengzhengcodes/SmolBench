@@ -2,10 +2,10 @@
 
 One box swaps models because multi-GPU SageMaker quotas are often zero. State
 and an experiment tag allow reattachment; watchdog, lifetime halt, and Spot
-shutdown termination prevent abandoned instances. Provisioning ``EC2_*``
-settings are import-time; endpoint, state, reservation, and token settings
-are call-time. Ports 8000 and 9000 admit only the caller's /32 and require a
-per-experiment token.
+shutdown termination prevent abandoned instances. Most provisioning
+``EC2_*`` settings are import-time; ``EC2_EXPERIMENT_TAG`` is read at call
+time, as are endpoint, state, reservation, and token settings. Ports 8000
+and 9000 admit only the caller's /32 and require a per-experiment token.
 """
 
 import contextlib
@@ -73,8 +73,20 @@ EC2_SECURITY_GROUP_NAME: str = os.getenv(
 # Fixed ports require coordinated security-group, payload, and vLLM changes.
 EC2_VLLM_PORT: int = 8000
 EC2_AGENT_PORT: int = 9000
-# Import-time tag identifies the instance for reattach and termination.
-EC2_EXPERIMENT_TAG: str = os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
+
+
+def experiment_tag() -> str:
+    """Return the ``EC2_EXPERIMENT_TAG`` naming this process's instance, read at call time.
+
+    Returns
+    -------
+    str
+        Tag used for reattach, recovery and termination; defaults to
+        ``periodic-induction``.
+    """
+    return os.getenv("EC2_EXPERIMENT_TAG", "periodic-induction")
+
+
 # State holds secrets; its override is read at call time.
 _DEFAULT_STATE_FILE: Path = repo_root() / ".ec2_state.json"
 EC2_IDLE_TIMEOUT_MIN: int = int(os.getenv("EC2_IDLE_TIMEOUT_MIN", "30"))
@@ -1439,7 +1451,7 @@ def _find_tagged_instance() -> Optional[Tuple[str, Dict[str, Any]]]:
     for region in EC2_REGIONS:
         reservations = _ec2_client(region).describe_instances(
             Filters=[
-                {"Name": "tag:smolbench:experiment", "Values": [EC2_EXPERIMENT_TAG]},
+                {"Name": "tag:smolbench:experiment", "Values": [experiment_tag()]},
                 {"Name": "instance-state-name", "Values": ["pending", "running"]},
             ]
         )["Reservations"]
@@ -1922,7 +1934,7 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
     """Run ``provision_spot_instance`` branch 2: recover a live tagged instance.
 
     Runs only after branch 1 finds nothing, covering a lost state file: an
-    instance tagged ``smolbench:experiment=EC2_EXPERIMENT_TAG`` carries its own
+    instance tagged ``smolbench:experiment=experiment_tag()`` carries its own
     secrets in its user-data (see ``_recover_state_from_instance``), so state
     is rebuilt from the instance rather than stranding a $30-45/h box. Same
     side effects as ``_reattach_existing_instance``.
@@ -1956,7 +1968,7 @@ def _recover_tagged_instance(my_ip: str) -> Optional[Dict[str, Any]]:
         f"Found live instance {instance['InstanceId']} (Name={name}, "
         f"{instance.get('InstanceType', '?')} @ {region}, launched "
         f"{instance.get('LaunchTime', '?')}) tagged "
-        f"smolbench:experiment={EC2_EXPERIMENT_TAG}, but no local state file, and its "
+        f"smolbench:experiment={experiment_tag()}, but no local state file, and its "
         "user-data could not be parsed for the control token, so it cannot be "
         "reused. If it is someone else's run (or a test) wait for it to "
         "finish/self-terminate; otherwise run shutdown_instance() to terminate it, "
@@ -2097,8 +2109,8 @@ def _run_instances_kwargs(
             {
                 "ResourceType": "instance",
                 "Tags": [
-                    {"Key": "smolbench:experiment", "Value": EC2_EXPERIMENT_TAG},
-                    {"Key": "Name", "Value": f"smolbench-{EC2_EXPERIMENT_TAG}"},
+                    {"Key": "smolbench:experiment", "Value": experiment_tag()},
+                    {"Key": "Name", "Value": f"smolbench-{experiment_tag()}"},
                 ],
             }
         ],
