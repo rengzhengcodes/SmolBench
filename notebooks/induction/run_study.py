@@ -28,12 +28,17 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     Parameters
     ----------
     var : str
+        Environment variable name to parse.
+
     Returns
     -------
     tuple[int, int] | None
+        Shard index and process count, or ``None`` when unset or empty.
+
     Raises
     ------
     SystemExit
+        On an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
@@ -55,13 +60,19 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
     Parameters
     ----------
     raw : str
+        Raw ``INDUCTION_FORCE_RERUN`` value.
     full_range : range
+        Full range of valid seeds.
+
     Returns
     -------
     frozenset[int] | None
+        Seeds to re-collect, or ``None`` when reruns are disabled.
+
     Raises
     ------
     SystemExit
+        On an unparseable value or an out-of-range subrange, never a silent no-op.
     """
     raw = raw.strip()
     if not raw:
@@ -148,12 +159,17 @@ def derive_context_limit(lengths: "dict[str, int]") -> int:
     Parameters
     ----------
     lengths : dict[str, int]
+        Mapping of model keys to served context-window lengths.
+
     Returns
     -------
     int
+        The shared context-window length.
+
     Raises
     ------
     SystemExit
+        If `lengths` is empty or holds more than one distinct value.
     """
     if not lengths:
         raise SystemExit("derive_context_limit: empty {model: context_length} mapping")
@@ -238,9 +254,12 @@ def _zero_template(base: string.Template) -> string.Template:
     Parameters
     ----------
     base : string.Template
+        Template whose range clause is removed.
+
     Returns
     -------
     string.Template
+        The range-free question template.
     """
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
@@ -271,10 +290,14 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     Parameters
     ----------
     seed : int
+        Replicate seed.
     model : str
+        Needed because ``noise_intens`` is padded under this model's tokenizer.
+
     Returns
     -------
     list[RenderedQuery]
+        Queries for all four ``CONDITIONS`` arms of the replicate.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(
@@ -293,10 +316,14 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     Parameters
     ----------
     seed : int
+        Replicate seed.
     model : str
+        Model for query rendering.
+
     Returns
     -------
     dict[str, tuple]
+        Four quizzes keyed by ``INFO_TYPES`` in that order.
     """
     return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
@@ -309,9 +336,12 @@ def probe_seeds(seeds: range) -> "list[int]":
     Parameters
     ----------
     seeds : range
+        Non-empty range from which evenly spaced seeds are selected.
+
     Returns
     -------
     list[int]
+        Evenly spaced seeds in ascending order without duplicates.
     """
     return sorted(
         {seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)] for i in range(PROBE_SEEDS)}
@@ -326,13 +356,19 @@ def completion_budget(model: str, seeds: range) -> int:
     Parameters
     ----------
     model : str
+        Model whose completion budget is derived.
     seeds : range
+        Seed range from which prompt-length probes are selected.
+
     Returns
     -------
     int
+        One number per model.
+
     Raises
     ------
     SystemExit
+        Below ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
     """
     worst = 0
     for seed in probe_seeds(seeds):
@@ -360,9 +396,12 @@ def request_timeout_seconds(budget: int) -> int:
     Parameters
     ----------
     budget : int
+        Completion-token budget for the request.
+
     Returns
     -------
     int
+        Per-request read timeout in seconds.
     """
     return max(REQUEST_TIMEOUT_FLOOR_SECONDS, ceil(budget / MIN_DECODE_TOK_S))
 
@@ -416,6 +455,7 @@ def main(argv: "list[str] | None" = None) -> None:
     Parameters
     ----------
     argv : list[str] | None, optional
+        A parameter so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."

@@ -63,10 +63,14 @@ def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, s
     Parameters
     ----------
     query : Dict[str, str]
+        Query substitutions to merge.
     positive_info : str
+        Arm-specific positive-information context.
+
     Returns
     -------
     Dict[str, str]
+        A fresh dict, so callers may mutate it further.
     """
     return query | {"positive_info": positive_info}
 
@@ -81,11 +85,16 @@ def context_renderer(
     Parameters
     ----------
     prompter : Prompter
+        Prompter supplying the default template.
     query : Dict[str, str]
+        Query substitutions for each rendering.
     template : Optional[string.Template], optional
+        Template to render.
+
     Returns
     -------
     Callable[[str], str]
+        Function mapping context to a rendered prompt.
     """
     resolved: string.Template = template if template is not None else prompter.template
 
@@ -108,15 +117,23 @@ def random_unique_strings(
     Parameters
     ----------
     n : int
+        Number of unique strings to generate.
     length : int
+        Length of each generated string.
     rng : np.random.Generator
+        Random generator supplying samples.
     charset : Collection[str]
+        Characters from which to build strings.
+
     Returns
     -------
     OrderedSet[str]
+        Generated unique strings in draw order.
+
     Raises
     ------
     ValueError
+        If ``length`` is too small a space for ``n`` unique strings.
     """
     charset = tuple(charset)
     base: int = len(charset)
@@ -159,12 +176,18 @@ def random_labels(
     Parameters
     ----------
     count : int
+        Number of labels to generate.
     seed : int
+        Seed for the random generator.
     charset : Collection[str]
+        Characters from which to build labels.
     min_length : int, optional
+        Minimum label length.
+
     Returns
     -------
     Tuple[str, ...]
+        Generated labels.
     """
     # A one-label configuration must not generate an empty label.
     length: int = max(
@@ -191,11 +214,16 @@ def quizzes_from_prompts(
     Parameters
     ----------
     prompts : Iterable[RenderedQuery]
+        Rendered prompts to group by condition.
     qna_cls : type[QnA]
+        Question-and-answer class for each rendered prompt.
     conditions : Iterable[str]
+        Condition names expected in every rendered query.
+
     Returns
     -------
     Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     condition_names = tuple(conditions)
     quizzes: Dict[str, list] = {name: [] for name in condition_names}
