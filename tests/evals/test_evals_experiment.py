@@ -1,7 +1,5 @@
 """Test the neutral experiment lifecycle and tag guard."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import dataclasses
 from typing import Any
 
@@ -12,10 +10,12 @@ from smolbench.evals.experiment import Experiment, validate_experiment_tag
 
 
 def make_quizzes(seed: int, model: str) -> dict[str, tuple[Numeric, ...]]:
+    """Build one deterministic quiz for the requested seed and model."""
     return {"a": (Numeric(prompt=f"a/{seed}/{model}", answer=1),)}
 
 
 def build(**kwargs: Any) -> Experiment:
+    """Build an experiment with test defaults and overrides."""
     base = {
         "notebook_dir": "somewhere",
         "archetype_tags": {"stub-model": "decode"},

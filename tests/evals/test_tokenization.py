@@ -1,7 +1,5 @@
 """Test `smolbench.evals.tokenization`: alias -> HF repo resolution and the vLLM cross-check."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,6 +8,7 @@ import pytest
 
 from smolbench.evals import tokenization
 from smolbench.evals.providers import ec2
+from smolbench.evals.tokenization import Tokenizer
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +25,7 @@ def record_repo(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str | None]]
     seen: list[tuple[str, str | None]] = []
 
     def fake_from_repo(repo_id: str, revision: str | None = None) -> str:
+        """Record tokenizer repository calls."""
         seen.append((repo_id, revision))
         return f"tokenizer<{repo_id}>"
 
@@ -81,10 +81,15 @@ def test_hf_tokenizer_wraps_an_existing_tokenizer_object() -> None:
     calls: list = []
 
     class FakeEncoding:
+        """Represent an encoded token sequence."""
+
         ids = (1, 2, 3)
 
     class FakeTokenizer:
+        """Provide a minimal tokenizers API double."""
+
         def encode(self, text: str, add_special_tokens: bool = True) -> FakeEncoding:
+            """Return the encoded token IDs."""
             calls.append((text, add_special_tokens))
             return FakeEncoding()
 
@@ -103,16 +108,22 @@ def test_from_repo_disables_truncation_and_padding(
     download_calls: list[dict] = []
 
     class FakeTokenizer:
+        """Provide tokenizer loading behavior."""
+
         def no_truncation(self) -> None:
+            """Disable truncation on the fake tokenizer."""
             calls.append("no_truncation")
 
         def no_padding(self) -> None:
+            """Disable padding on the fake tokenizer."""
             calls.append("no_padding")
 
-    # pylint: disable-next=unnecessary-lambda-assignment
-    mod = lambda **kw: type("M", (), kw)  # noqa: E731
+    def mod(**kw: object) -> type:
+        """Build a module-like object from keyword attributes."""
+        return type("M", (), kw)
 
     def fake_download(**kwargs: object) -> str:
+        """Record tokenizer download arguments."""
         download_calls.append(kwargs)
         return str(tmp_path / "t.json")
 
@@ -152,12 +163,13 @@ def test_the_pad_search_is_public_here() -> None:
 def test_a_merging_tokenizer_has_no_qualifying_unit() -> None:
     """No whitespace unit survives the probes when every run merges to 1 token."""
 
-    class Merging:
+    class Merging(Tokenizer):
         """A tokenizer that merges every whitespace run, so no unit qualifies."""
 
         name = "merging"
 
         def count(self, text: str) -> int:
+            """Return one token for the merged text."""
             return 1
 
     with pytest.raises(ValueError):

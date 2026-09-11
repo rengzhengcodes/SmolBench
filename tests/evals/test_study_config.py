@@ -1,7 +1,5 @@
 """Pin consumers to the committed study configuration."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -123,6 +121,7 @@ b = "b_tag"
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
+    """Write a TOML config fixture."""
     path = tmp_path / "study_config.toml"
     path.write_text(text)
     return path

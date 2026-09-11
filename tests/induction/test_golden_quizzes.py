@@ -3,8 +3,6 @@
 Offline stub-tokenizer hashes catch generation, prompt, and padding drift.
 """
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import hashlib
 import json
 import string
@@ -37,6 +35,7 @@ PERIODIC_TOF_TMPL = string.Template(
 
 
 def quiz_hash(quiz: Quiz) -> str:
+    """Hash quiz prompts, answers, and concrete types."""
     h = hashlib.sha256()
     for q in quiz:
         h.update(q.prompt.encode())
@@ -46,6 +45,7 @@ def quiz_hash(quiz: Quiz) -> str:
 
 
 def assert_matches(key: str, quizzes: dict) -> None:
+    """Assert generated quizzes match the pinned golden hash."""
     got = {arm: quiz_hash(quiz) for arm, quiz in quizzes.items()}
     assert got == GOLDEN[key], f"generation drifted from golden {key}"
 

@@ -1,7 +1,5 @@
 """Test answer extraction and violation labels."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 from typing import Any
 
 import pytest
@@ -127,6 +125,7 @@ def test_tof_agrees_with_strict_parser(text: str) -> None:
 
 @pytest.mark.parametrize("text", ["2520", "-7", "0"])
 def test_numeric_agrees_with_strict_parser(text: str) -> None:
+    """Confirm numeric parsing agrees with strict parsing."""
     assert parse_numeric(text).value == Numeric.condition(text)
 
 
@@ -206,6 +205,7 @@ def test_grade_survives_a_parser_exception() -> None:
     import smolbench.evals.parsing as parsing_mod
 
     def exploding_parse(question: Any, text: str) -> Any:
+        """Raise an error from the parser."""
         raise RuntimeError("simulated parser bug")
 
     saved = parsing_mod.parse_for
