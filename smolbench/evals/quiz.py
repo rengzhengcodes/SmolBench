@@ -48,9 +48,12 @@ class ToF(QnA):
         Parameters
         ----------
         ans : str
+            Raw model response.
+
         Returns
         -------
         bool
+            parsed true/false answer.
         """
         # `isalpha` retains Unicode letters without a maintained charset.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])
@@ -80,9 +83,12 @@ class Numeric(QnA):
         Parameters
         ----------
         ans : str
+            Raw model response.
+
         Returns
         -------
         int
+            First integer in the response.
         """
         m = re.search(r"-?\d+", ans)
         if m is None:
@@ -166,6 +172,7 @@ class Marks:
         Parameters
         ----------
         path : Path
+            Destination path for the YAML document.
         """
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as file:
