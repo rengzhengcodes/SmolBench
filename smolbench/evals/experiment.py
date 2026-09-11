@@ -70,6 +70,8 @@ class Experiment:
     force_seeds: Optional[frozenset[int]] = None
 
     def __post_init__(self) -> None:
+        # Snapshot: the frozen field must not alias a caller-mutable mapping.
+        object.__setattr__(self, "archetype_tags", dict(self.archetype_tags))
         if self.state_file is not None and not self.state_file.strip():
             raise ValueError(
                 "state_file must name a file; an empty value resolves to the "

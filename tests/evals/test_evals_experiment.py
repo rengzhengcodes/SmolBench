@@ -108,3 +108,11 @@ def test_sync_down_delegates_to_the_harness(
 
     monkeypatch.setattr(type(exp.harness), "sync_down", fake_sync)
     assert exp.sync_down() == 7
+
+
+def test_archetype_tags_are_snapshotted() -> None:
+    """Pin that result addressing cannot change through a caller's mapping."""
+    tags = {"stub-model": "decode"}
+    exp = build(archetype_tags=tags)
+    tags["stub-model"] = "changed"
+    assert exp.archetype_tags == {"stub-model": "decode"}
