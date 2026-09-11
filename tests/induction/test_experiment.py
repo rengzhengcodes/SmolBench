@@ -1,7 +1,5 @@
 """Test ``InductionExperiment`` offline: no AWS, no network."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import contextlib
 import os
 import subprocess
@@ -182,6 +180,7 @@ def test_offline_delegates(exp: InductionExperiment) -> None:
 
     class _Recorder:
         def summarize(self, model: str) -> None:
+            """Record the model summarized by the harness."""
             recorded.append(("summarize", model))
 
     exp.__dict__["harness"] = _Recorder()

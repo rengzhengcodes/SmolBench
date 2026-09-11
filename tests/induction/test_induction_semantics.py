@@ -3,8 +3,6 @@
 Recomputed answers catch wrong but self-consistent generation.
 """
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import re
 import string
 from math import lcm, prod
@@ -184,6 +182,7 @@ NUM_TMPL_RANGE_FREE = string.Template(
 
 
 def numeric_prompter(**kwargs: Any) -> Prompter:
+    """Build a numeric prompter with the supplied template options."""
     return Prompter(NUM_TMPL, numeric_count_query_gen, **kwargs)
 
 
