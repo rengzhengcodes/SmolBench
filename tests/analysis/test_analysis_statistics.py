@@ -460,3 +460,27 @@ def test_each_icc_block_reports_the_design_effect_it_produces(
     assert all(isinstance(d, float) for d in deffs), deffs
     assert 0.8 < deffs[0] < 1.3, deffs
     assert deffs[0] < deffs[1] < deffs[2], deffs
+
+
+def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic(
+    paired_analysis: ModuleType,
+) -> None:
+    """Alignment reports original harmonic positions, not retained-item offsets."""
+    n = paired_analysis.N_HARMONICS
+    seeds = (0, 1, 2)
+    # Each seed loses a different harmonic, so retained offsets diverge from positions.
+    invalid = {0: 0, 1: n // 2, 2: n - 1}
+    key_a, key_b = ("m", "intens"), ("m", "extens")
+    correct = {k: {s: np.ones(n, dtype=bool) for s in seeds} for k in (key_a, key_b)}
+    valid = {}
+    for k in (key_a, key_b):
+        valid[k] = {s: np.ones(n, dtype=bool) for s in seeds}
+    for s, pos in invalid.items():
+        valid[key_a][s][pos] = False
+
+    _a, _b, sidx, hidx = paired_analysis.aligned(correct, valid, key_a, key_b, True)
+
+    for i, s in enumerate(seeds):
+        expected = [h for h in range(n) if h != invalid[s]]
+        assert list(hidx[sidx == i]) == expected, (s, hidx[sidx == i])
+    assert list(np.unique(hidx)) == list(range(n))

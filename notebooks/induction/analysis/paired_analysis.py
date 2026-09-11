@@ -111,7 +111,7 @@ def load_marks() -> tuple[dict, dict, dict]:
 
 def aligned(
     correct: dict, valid: dict, key_a: tuple[str, str], key_b: tuple[str, str], drop_invalid: bool
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build item-matched vectors for one contrast.
 
     Parameters
@@ -129,8 +129,8 @@ def aligned(
 
     Returns
     -------
-    tuple[np.ndarray, np.ndarray, np.ndarray]
-        Matched marks and replicate indices.
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Matched marks, replicate indices and harmonic indices.
     """
     seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
     if not seeds:
@@ -148,7 +148,10 @@ def aligned(
             [valid[key_b][s] for s in seeds]
         )
     seed_idx = np.repeat(np.arange(len(seeds)), N_HARMONICS).reshape(a.shape)
-    return a[keep], b[keep], seed_idx[keep]
+    # Carry the harmonic through the mask: dropping invalid pairs makes a survivor's position
+    # unrecoverable from the retained count alone.
+    harm_idx = np.tile(np.arange(N_HARMONICS), (len(seeds), 1))
+    return a[keep], b[keep], seed_idx[keep], harm_idx[keep]
 
 
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
@@ -205,7 +208,7 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
     return tail / 2 ** len(diffs)
 
 
-def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
+def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     """Compute continuity-corrected CMH p-value by harmonic stratum.
 
     Parameters
@@ -214,22 +217,20 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float:
         First-arm marks.
     b : np.ndarray
         Second-arm marks.
-    seed_idx : np.ndarray
-        Replicate indices.
+    harm_idx : np.ndarray
+        Harmonic indices, which are the strata.
 
     Returns
     -------
     float
         P-value; 1.0 with no contributing stratum.
     """
-    # Invalid drops can shift harmonic offsets but preserve pairing.
-    order = np.concatenate([np.arange((seed_idx == s).sum()) for s in np.unique(seed_idx)])
-    strata = np.unique(order)
+    strata = np.unique(harm_idx)
     if strata.size == 0:
         return 1.0
-    counts = np.array([(order == k).sum() for k in strata])
-    succ_a = np.array([a[order == k].sum() for k in strata])
-    succ_b = np.array([b[order == k].sum() for k in strata])
+    counts = np.array([(harm_idx == k).sum() for k in strata])
+    succ_a = np.array([a[harm_idx == k].sum() for k in strata])
+    succ_b = np.array([b[harm_idx == k].sum() for k in strata])
     return float(chi2.sf(cmh_stat(succ_a, succ_b, counts), df=1))
 
 
@@ -281,7 +282,9 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     return np.asarray(reject, dtype=bool)
 
 
-def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float | None:
+def design_effect(
+    a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray, harm_idx: np.ndarray
+) -> float | None:
     """Return observed over independence-assumed variance.
 
     ``None`` represents every unmeasurable case, preventing NaNs from passing filters.
@@ -294,6 +297,8 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
         Second-arm marks.
     seed_idx : np.ndarray
         Replicate indices.
+    harm_idx : np.ndarray
+        Harmonic indices, which are the strata.
 
     Returns
     -------
@@ -304,10 +309,9 @@ def design_effect(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> float |
     seeds = np.unique(seed_idx)
     if seeds.size < 3:
         return None
-    order = np.concatenate([np.arange((seed_idx == s).sum()) for s in seeds])
     per_seed_total = np.array([d[seed_idx == s].sum() for s in seeds])
     observed = per_seed_total.var(ddof=1)
-    assumed = float(np.sum([d[order == k].var(ddof=1) for k in np.unique(order)]))
+    assumed = float(np.sum([d[harm_idx == k].var(ddof=1) for k in np.unique(harm_idx)]))
     if not np.isfinite(assumed) or assumed <= 0:
         return None
     return float(observed / assumed)
@@ -355,11 +359,11 @@ def main() -> None:
         print(f"\n{'=' * 78}\nPRIMARY family, {tag}\n{'=' * 78}")
         rows = []
         for label, key_a, key_b in contrasts:
-            a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid)
+            a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid)
             nb = int((a & ~b).sum())
             nc = int((~a & b).sum())
             p_paired = mcnemar_exact_p(nb, nc)
-            p_unpaired = cmh_unpaired_p(a, b, sidx)
+            p_unpaired = cmh_unpaired_p(a, b, hidx)
             # Dropping invalid pairs changes the per-seed statistic.
             p_cluster = (
                 signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
@@ -370,7 +374,7 @@ def main() -> None:
                     disc=(nb + nc) / max(a.size, 1), b=nb, c=nc,
                     p_paired=p_paired, p_unpaired=p_unpaired,
                     p_cluster=p_cluster,
-                    de=design_effect(a, b, sidx),
+                    de=design_effect(a, b, sidx, hidx),
                 )
             )
 
@@ -461,9 +465,9 @@ def main() -> None:
     sec = build_secondary_contrasts()
     p_pair_s, p_unp_s = [], []
     for _label, key_a, key_b in sec:
-        a, b, sidx = aligned(correct, valid, key_a, key_b, False)
+        a, b, _sidx, hidx = aligned(correct, valid, key_a, key_b, False)
         p_pair_s.append(mcnemar_exact_p(int((a & ~b).sum()), int((~a & b).sum())))
-        p_unp_s.append(cmh_unpaired_p(a, b, sidx))
+        p_unp_s.append(cmh_unpaired_p(a, b, hidx))
     p_pair_s, p_unp_s = np.array(p_pair_s), np.array(p_unp_s)
 
     print(

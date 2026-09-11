@@ -206,7 +206,10 @@ class ResultsStore(abc.ABC):
 
     @abc.abstractmethod
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
-        """List every seed with at least one stored/logged replicate.
+        """List every seed with at least one surviving stored/logged replicate.
+
+        Superseded-only seeds are omitted so a listing is always loadable; ``exists`` is the
+        marker-blind resume check.
 
         Parameters
         ----------
@@ -671,9 +674,11 @@ class S3ResultsStore(ResultsStore):
         return len(survivors)
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
-        """List S3 seeds for an info value; ``None`` model yields ``[]``.
+        """List S3 seeds whose runs survive; ``None`` model yields ``[]``.
 
-        Marker-blind listings retain retired runs for resume checks.
+        Superseded-only seeds are omitted because every reader of this listing loads the seed
+        next, and ``load_marks`` has nothing to serve there. Resume checks stay marker-blind
+        through ``exists``.
 
         Parameters
         ----------
@@ -694,16 +699,25 @@ class S3ResultsStore(ResultsStore):
         client = self._client()
         paginator = client.get_paginator("list_objects_v2")
         list_prefix = f"{self.log_prefix}/{model}/"
-        seeds: set[int] = set()
+        # Select after traversal so every marker shares the listing snapshot.
+        run_stamps: dict[int, set[str]] = {}
+        marker_stamps: dict[int, set[str]] = {}
         for page in paginator.paginate(Bucket=self.bucket, Prefix=list_prefix):
             for obj in page.get("Contents", []):
-                parsed = _parse_log_entry(obj["Key"][len(list_prefix):])
+                rel = obj["Key"][len(list_prefix):]
+                stamps = run_stamps
+                if rel.endswith(S3_SUPERSEDED_SUFFIX):
+                    rel = rel[: -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
+                    stamps = marker_stamps
+                parsed = _parse_log_entry(rel)
                 if parsed is None:
                     continue
-                seed, entry_info, _run_ts = parsed
+                seed, entry_info, run_ts = parsed
                 if entry_info == info:
-                    seeds.add(seed)
-        return sorted(seeds)
+                    stamps.setdefault(seed, set()).add(run_ts)
+        return sorted(
+            seed for seed, runs in run_stamps.items() if runs - marker_stamps.get(seed, set())
+        )
 
     def describe(self) -> str:
         """See ``ResultsStore.describe``."""

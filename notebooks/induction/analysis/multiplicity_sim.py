@@ -372,9 +372,9 @@ def study_design_effect() -> float | None:
     correct, valid, _compliance = paired_analysis.load_marks()
     deffs = []
     for _label, key_a, key_b in power_analysis.build_primary_contrasts():
-        a, b, seed_idx = paired_analysis.aligned(correct, valid, key_a, key_b,
-                                                  drop_invalid=False)
-        d = paired_analysis.design_effect(a, b, seed_idx)
+        a, b, seed_idx, harm_idx = paired_analysis.aligned(correct, valid, key_a, key_b,
+                                                           drop_invalid=False)
+        d = paired_analysis.design_effect(a, b, seed_idx, harm_idx)
         if d is not None:
             deffs.append(d)
     return float(np.median(deffs)) if deffs else None
@@ -464,7 +464,8 @@ def part2(
         # reports over real contrasts.
         ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, R_DEFAULT, rng, icc=icc)
         seed_idx = np.repeat(np.arange(R_DEFAULT), K_HARM)
-        deffs = [paired_analysis.design_effect(ma[i].ravel(), mb[i].ravel(), seed_idx)
+        harm_idx = np.tile(np.arange(K_HARM), R_DEFAULT)
+        deffs = [paired_analysis.design_effect(ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx)
                  for i in range(n_sims)]
         measurable = [d for d in deffs if d is not None]
         if measurable:

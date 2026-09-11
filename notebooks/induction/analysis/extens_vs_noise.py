@@ -81,7 +81,7 @@ def main() -> None:
     # Keep the full family: the displayed subset is selected after measurement.
     full = []
     for label, key_a, key_b in build_primary_contrasts():
-        a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
+        a, b, sidx, _hidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
         nb, ncd = int((a & ~b).sum()), int((~a & b).sum())
         full.append(dict(
             label=label, key_a=key_a, key_b=key_b,
@@ -102,13 +102,13 @@ def main() -> None:
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
         # This descriptive column needs the aligned arrays.
-        a, b, sidx = aligned(correct, valid, ka, kb, drop_invalid=False)
+        a, b, _sidx, hidx = aligned(correct, valid, ka, kb, drop_invalid=False)
         rows.append(dict(
             model=model, acc_e=fr["acc_a"], acc_n=fr["acc_b"], n=fr["n"],
             b=fr["b"], c=fr["c"], n_seeds=fr["n_seeds"], disc=fr["disc"],
             p_cluster=fr["p_cluster"],
             p_item=fr["p_item"],
-            p_unp=cmh_unpaired_p(a, b, sidx),
+            p_unp=cmh_unpaired_p(a, b, hidx),
             holm210=bool(holm_full[i_full]),
             holm210_item=bool(holm_full_item[i_full]),
             nc_e=nc(ka), nc_n=nc(kb),

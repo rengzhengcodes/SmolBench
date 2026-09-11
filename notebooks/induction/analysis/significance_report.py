@@ -203,7 +203,7 @@ def main() -> None:
 
     rows = []
     for label, key_a, key_b in contrasts:
-        a, b, sidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
+        a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
         nb, nc = int((a & ~b).sum()), int((~a & b).sum())
         rows.append(dict(
             label=label, key_a=key_a, key_b=key_b,
@@ -214,7 +214,7 @@ def main() -> None:
             n_seeds=int(np.unique(sidx).size),
             p_cluster=signflip_exact_p(seed_diffs(a, b, sidx)),
             p_item=mcnemar_exact_p(nb, nc),
-            p_unpaired=cmh_unpaired_p(a, b, sidx),
+            p_unpaired=cmh_unpaired_p(a, b, hidx),
             kind=classify(key_a, key_b),
             kind_is_ladder="ladder" in label,
         ))

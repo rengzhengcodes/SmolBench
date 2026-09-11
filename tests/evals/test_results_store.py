@@ -411,12 +411,18 @@ def test_a_marker_is_not_itself_a_run(fake_s3: FakeS3Client) -> None:
     assert store.list_runs(addr()) == []
     # Presence probes stay marker-blind for resume skipping.
     assert store.exists(addr())
-    assert store.list_seeds("stub-model", "decode", "intens") == [1776]
+    # Analytical listings drop the seed: nothing there is loadable.
+    assert store.list_seeds("stub-model", "decode", "intens") == []
     # Empty reads name the affected prefix.
     with pytest.raises(FileNotFoundError) as exc:
         store.load_marks(addr())
     assert "periodic_moe/stub-model/seed=1776/intens--" in str(exc.value)
     assert "superseded" in str(exc.value)
+    # A replacement run restores the seed; a wholly-retired sibling stays out.
+    store.dump_marks(sample_marks(), addr(), TS2)
+    store.dump_marks(sample_marks(), addr(seed=1777), TS1)
+    store.supersede(addr(seed=1777), format_run_ts(TS1), SUPERSEDED_REASON)
+    assert store.list_seeds("stub-model", "decode", "intens") == [1776]
 
 
 def test_supersede_all_retires_every_surviving_run(fake_s3: FakeS3Client) -> None:
