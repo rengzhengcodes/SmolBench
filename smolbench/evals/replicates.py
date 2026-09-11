@@ -53,12 +53,18 @@ class ReplicateHarness:
         Parameters
         ----------
         model : Optional[str]
+            Model name, or None for a tag-only read.
         tag : str
+            Archetype tag in the store address.
         info : str
+            Information type in the store address.
         seed : int
+            Replicate seed in the store address.
+
         Returns
         -------
         ReplicateAddress
+            the store address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
@@ -70,9 +76,12 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
+            Model whose replicate addresses are checked.
+
         Returns
         -------
         bool
+            whether any replicate still needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -99,10 +108,15 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
+            Model whose outstanding replicates are collected.
         extra_args : Optional[dict], optional
+            Extra arguments forwarded to ``evaluate()``.
         max_parallel : Optional[int], optional
+            Maximum parallel requests forwarded to ``evaluate()``.
         request_timeout : Optional[int], optional
+            Per-request read timeout forwarded to ``evaluate()``.
         server_config : Optional[Mapping], optional
+            Server configuration persisted with each replicate.
         """
         tag: str = self.archetype_tags[model]
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
@@ -171,6 +185,7 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
+            Model whose stored replicates are summarized.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:

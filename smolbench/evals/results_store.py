@@ -40,12 +40,17 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Parameters
     ----------
     uri : str
+        S3 URI to parse.
+
     Returns
     -------
     tuple[str, str]
+        Bucket and base prefix.
+
     Raises
     ------
     ValueError
+        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
@@ -90,9 +95,12 @@ def format_run_ts(when: datetime) -> str:
     Parameters
     ----------
     when : datetime
+        UTC datetime to format.
+
     Returns
     -------
     str
+        Formatted UTC timestamp.
     """
     return when.strftime("%Y%m%dT%H%M%S.%fZ")
 
@@ -106,10 +114,14 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     Parameters
     ----------
     results_dir : Path
+        Results directory under ``repo_root()``.
     prefix : str, optional
+        Optional prefix folded into the experiment directory name.
+
     Returns
     -------
     str
+        Experiment segment for an S3 log key.
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -149,9 +161,12 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to check.
+
         Returns
         -------
         bool
+            whether a replicate result is already stored.
         """
 
     @abc.abstractmethod
@@ -165,8 +180,11 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         marks : Marks
+            replicate result to persist.
         addr : ReplicateAddress
+            destination replicate address.
         run_ts : datetime
+        Collection timestamp recorded for this replicate run.
         """
 
     @abc.abstractmethod
@@ -176,12 +194,17 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to load.
+
         Returns
         -------
         Marks
+            the single local file, or on S3 the earliest logged run.
+
         Raises
         ------
         FileNotFoundError
+            when nothing is stored/logged for `addr` (S3 names the missing prefix).
         """
 
     @abc.abstractmethod
@@ -194,11 +217,16 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         model : Optional[str]
+            the S3 key dimension; None yields [].
         tag : str
+            the local key dimension.
         info : str
+            condition information dimension.
+
         Returns
         -------
         list[int]
+            a sorted, distinct list (a seed re-collected many times counts once).
         """
 
     @abc.abstractmethod
@@ -210,10 +238,14 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
+            address whose surviving runs are retired.
         reason : str
+            freeform operator-facing text naming why the retirement happened.
+
         Returns
         -------
         int
+            how many runs were retired.
         """
 
     @abc.abstractmethod
@@ -242,9 +274,12 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to check.
+
         Returns
         -------
         bool
+            whether the local result file exists.
         """
         return self._path(addr).exists()
 
@@ -256,8 +291,11 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
+            replicate result to persist.
         addr : ReplicateAddress
+            destination replicate address.
         run_ts : datetime
+            collection timestamp ignored by the local store.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,9 +307,12 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to load.
+
         Returns
         -------
         Marks
+            deserialized local result.
         """
         return Marks.load(self._path(addr))
 
@@ -283,11 +324,16 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
+            ignored by the local store.
         tag : str
+            local key dimension.
         info : str
+            condition information dimension.
+
         Returns
         -------
         list[int]
+            sorted seed values from local replicate filenames.
         """
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
@@ -308,10 +354,14 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            Address of the stored run to retire.
         reason : str
+            logged only, at INFO level.
+
         Returns
         -------
         Optional[Path]
+            Renamed file's new path.
         """
         path = self._path(addr)
         if not path.exists():
@@ -329,10 +379,14 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            address whose local run is retired.
         reason : str
+            operator-facing retirement reason.
+
         Returns
         -------
         int
+            number of retired local runs.
         """
         return 1 if self.supersede(addr, reason) is not None else 0
 
@@ -349,9 +403,12 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     Parameters
     ----------
     rel : str
+        Key remainder with its leading log prefix removed.
+
     Returns
     -------
     Optional[tuple[int, str, str]]
+        Parsed seed, info, and run timestamp, or None.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -425,9 +482,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to check.
+
         Returns
         -------
         bool
+            whether any logged run exists.
         """
         if addr.model is None:
             return False
@@ -448,8 +508,11 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
+            replicate result to persist.
         addr : ReplicateAddress
+            destination replicate address.
         run_ts : datetime
+            timestamp embedded in the logged key.
         """
         if addr.model is None:
             # model=None is the READ-only tag-lookup shape; the append-only
@@ -474,9 +537,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            Replicate address whose run partition is listed.
+
         Returns
         -------
         tuple[list[str], int]
+            ``(survivor_run_ts, marker_count)``: survivors sorted ascending.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -499,9 +565,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address whose surviving runs are listed.
+
         Returns
         -------
         list[str]
+            surviving run timestamps in ascending order.
         """
         survivors, _marker_count = self._list_run_partition(addr)
         return survivors
@@ -514,9 +583,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            replicate address to load.
+
         Returns
         -------
         Marks
+            deserialized earliest surviving logged result.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         survivors, marker_count = self._list_run_partition(addr)
@@ -540,11 +612,16 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            Address of the logged run to retire.
         run_ts : str
+            the fixed-width stamp exactly as it appears in the run's key, not a `datetime`.
         reason : str
+            freeform operator-facing text stored in the marker body.
+
         Returns
         -------
         str
+            Key of the written supersession marker.
         """
         if addr.model is None:
             raise ValueError(
@@ -569,10 +646,14 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
+            address whose surviving runs are retired.
         reason : str
+            operator-facing retirement reason.
+
         Returns
         -------
         int
+            number of retired logged runs.
         """
         survivors = self.list_runs(addr)
         for run_ts in survivors:
@@ -589,11 +670,16 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
+            S3 model key dimension; None returns an empty list.
         tag : str
+            Unused on this backend.
         info : str
+            condition information dimension.
+
         Returns
         -------
         list[int]
+            sorted seed values with logged entries for `info`.
         """
         if model is None:
             return []
@@ -637,10 +723,14 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
+        Need not exist -- resolved non-strictly.
     prefix : str, optional
+        Becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
+
     Returns
     -------
     ResultsStore
+        Local or S3 results store for the experiment.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -680,9 +770,12 @@ def _etag_md5(etag: Optional[str]) -> Optional[str]:
     Parameters
     ----------
     etag : Optional[str]
+        S3 ETag value.
+
     Returns
     -------
     Optional[str]
+        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5.
     """
     if not etag:
         return None
@@ -698,14 +791,21 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     Parameters
     ----------
     resolved_dir : Path
+        Resolved local results directory.
     rel : str
+        Destination path relative to `resolved_dir`.
     key : str
+        S3 key being downloaded.
+
     Returns
     -------
     Path
+        Validated destination path.
+
     Raises
     ------
     ValueError
+        Naming `key` when the destination equals or lies outside `resolved_dir`.
     """
     candidate = (resolved_dir / rel).resolve()
     if candidate == resolved_dir or not candidate.is_relative_to(resolved_dir):
@@ -727,11 +827,16 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     Parameters
     ----------
     results_dir : Path
+        Local directory receiving downloaded logs.
     tags : Mapping[str, str]
+        ``{model: tag}`` (an experiment's `archetype_tags`).
     prefix : str, optional
+        Forwarded to :func:`experiment_name`, and used in each local directory name.
+
     Returns
     -------
     int
+        Count of objects actually downloaded, excluding those skipped as identical.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):
@@ -835,9 +940,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None, optional
+        Command-line arguments passed to the parser.
+
     Returns
     -------
     int
+        CLI status code.
     """
     import argparse
 

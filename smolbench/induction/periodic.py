@@ -147,9 +147,12 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration specifying the harmonic periods.
+
     Returns
     -------
     Tuple[int, ...]
+        Harmonic periods in ascending order.
     """
     if config.periods is None:
         return tuple(range(1, config.n + 1))
@@ -162,9 +165,12 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration supplying the periods, labels, and separator.
+
     Returns
     -------
     Tuple[PeriodToLabel, PosToCompound]
+        Period-to-label and position-to-compound mappings.
     """
     periods = _periods_of(config)
     period_to_label: PeriodToLabel = {
@@ -242,14 +248,21 @@ def _resolve_arm_template(
     Parameters
     ----------
     name : str
+        Name of the information condition.
     condition : Condition
+        Information condition being rendered.
     prompter : Prompter
+        Prompt templates and query generator.
+
     Returns
     -------
     string.Template
+        Template selected for the condition.
+
     Raises
     ------
     ValueError
+        If `condition` is ``omit_range=True`` and ``prompter.range_free_template``...
     """
     if not condition.omit_range:
         return prompter.template
@@ -278,9 +291,13 @@ def _verify_no_range_leak(
     Parameters
     ----------
     name : str
+        Name of the information condition.
     query : Dict[str, str]
+        Query substitutions whose range values must remain hidden.
     template : string.Template
+        Template whose placeholders must not expose range values.
     rendered : str
+        Rendered prompt to inspect.
     """
     identifiers = template.get_identifiers()
     for key in RANGE_KEYS:
@@ -312,15 +329,23 @@ def get_periodic_prompts(
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration for the periodic sequence.
     prompter : Prompter
+        Prompt templates and query generator.
     tokenizer : Tokenizer
+        Must be the model under test's own.
     conditions : Mapping[str, Condition], optional
+        Information conditions to render.
+
     Yields
     ------
     RenderedQuery
+        One rendered query containing prompts and token counts for every condition.
+
     Raises
     ------
     ValueError
+        Before rendering, if a condition's token target cannot be satisfied.
     """
     # Validate before rendering to avoid partial output.
     for name, condition in conditions.items():
@@ -402,13 +427,20 @@ def _get_periodic_quizzes(
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration for the periodic sequence.
     prompter : Prompter
+        Prompt templates and query generator.
     tokenizer : Tokenizer
+        Tokenizer used to count rendered prompt tokens.
     conditions : Mapping[str, Condition]
+        Information conditions to render.
     qna_cls : type[QnA]
+        Question type used to wrap each rendered prompt.
+
     Returns
     -------
     Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
         get_periodic_prompts(
@@ -431,12 +463,18 @@ def get_periodic_quiz(
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration for the periodic prompt sequence.
     prompter : Prompter
+        Prompter that generates the periodic prompts.
     tokenizer : Tokenizer
+        Tokenizer for rendering prompts.
     conditions : Mapping[str, Condition], optional
+        Named experimental conditions.
+
     Returns
     -------
     Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, ToF)
 
@@ -453,12 +491,18 @@ def get_periodic_numeric_quiz(
     Parameters
     ----------
     config : PeriodicConfig
+        Configuration for the periodic prompt sequence.
     prompter : Prompter
+        Prompter that generates the periodic prompts.
     tokenizer : Tokenizer
+        Tokenizer for rendering prompts.
     conditions : Mapping[str, Condition], optional
+        Named experimental conditions.
+
     Returns
     -------
     Dict[str, Quiz]
+        Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, Numeric)
 
@@ -477,11 +521,16 @@ def tof_membership_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
+        Mapping from each period to its label.
     pos_to_compound : PosToCompound
+        Mapping from positions to generated compounds.
     seed : int
+        Random seed for sampling queries.
+
     Yields
     ------
     Tuple[Dict[str, str], bool]
+        Sampled position-label substitutions paired with their Boolean answers.
     """
     rng = np.random.default_rng(seed)
 
@@ -519,11 +568,16 @@ def numeric_count_query_gen(
     Parameters
     ----------
     period_to_label : PeriodToLabel
+        Mapping from each period to its label.
     pos_to_compound : PosToCompound
+        Mapping from positions to generated compounds.
     seed : int
+        Seed accepted by the shared query-generator protocol.
+
     Yields
     ------
     Tuple[Dict[str, str], int]
+        Label and sequence-length substitutions paired with their counts.
     """
     seq_len = max(pos_to_compound.keys())
     for period, label in sorted(period_to_label.items()):
