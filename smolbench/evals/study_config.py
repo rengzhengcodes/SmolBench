@@ -107,6 +107,13 @@ def _parse_study_config(data: dict) -> StudyConfig:
 
     all_members = [key for rungs in families.values() for key in rungs]
 
+    dupes = sorted({key for key in all_members if all_members.count(key) > 1})
+    if dupes:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists {dupes} in more than one "
+            "family; families must partition the roster"
+        )
+
     for key in all_members:
         if key not in tags:
             raise ValueError(

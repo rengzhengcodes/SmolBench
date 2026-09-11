@@ -21,12 +21,12 @@ def _clear_for_model_cache() -> Iterator[None]:
 
 
 @pytest.fixture
-def record_repo(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def record_repo(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str | None]]:
     """Captures the repo id `for_model` resolves, without downloading it."""
-    seen: list = []
+    seen: list[tuple[str, str | None]] = []
 
-    def fake_from_repo(repo_id: str) -> str:
-        seen.append(repo_id)
+    def fake_from_repo(repo_id: str, revision: str | None = None) -> str:
+        seen.append((repo_id, revision))
         return f"tokenizer<{repo_id}>"
 
     monkeypatch.setattr(tokenization.HFTokenizer, "from_repo", fake_from_repo)
@@ -41,21 +41,38 @@ def test_for_model_resolution(
         "hf_model_id": "someone/FP8",
         "tokenizer_hf_id": "someone/Override",
         "tp": 8,
+        "vllm_args": ["--tokenizer-revision", "ignored"],
     }
     monkeypatch.setitem(
-        ec2.EC2_DEPLOY_SPECS, "plain-model", {"hf_model_id": "someone/Base"}
+        ec2.EC2_DEPLOY_SPECS,
+        "plain-model",
+        {"hf_model_id": "Org/M", "vllm_args": ["--tokenizer-revision", "abc"]},
+    )
+    monkeypatch.setitem(
+        ec2.EC2_DEPLOY_SPECS,
+        "no-revision-model",
+        {"hf_model_id": "someone/Base"},
     )
     monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "weights-only-model", override)
-    assert tokenization.for_model("plain-model") == "tokenizer<someone/Base>"
+    assert tokenization.for_model("plain-model") == "tokenizer<Org/M>"
     assert tokenization.for_model("weights-only-model") == "tokenizer<someone/Override>"
-    assert record_repo == ["someone/Base", "someone/Override"]
+    assert tokenization.for_model("no-revision-model") == "tokenizer<someone/Base>"
+    assert record_repo == [
+        ("Org/M", "abc"),
+        ("someone/Override", None),
+        ("someone/Base", None),
+    ]
     with pytest.raises(KeyError):
         tokenization.for_model("model-that-does-not-exist")
-    assert record_repo == ["someone/Base", "someone/Override"]
+    assert record_repo == [
+        ("Org/M", "abc"),
+        ("someone/Override", None),
+        ("someone/Base", None),
+    ]
 
     record_repo.clear()
-    tokenization.for_model("plain-model")
-    tokenization.for_model("plain-model")
+    tokenization.for_model("no-revision-model")
+    tokenization.for_model("no-revision-model")
     assert record_repo == []
 
 
@@ -83,6 +100,7 @@ def test_from_repo_disables_truncation_and_padding(
 ) -> None:
     """A `truncation` stanza in tokenizer.json must not cap `count`."""
     calls: list = []
+    download_calls: list[dict] = []
 
     class FakeTokenizer:
         def no_truncation(self) -> None:
@@ -94,13 +112,24 @@ def test_from_repo_disables_truncation_and_padding(
     # pylint: disable-next=unnecessary-lambda-assignment
     mod = lambda **kw: type("M", (), kw)  # noqa: E731
 
-    download = mod(hf_hub_download=staticmethod(lambda **kw: str(tmp_path / "t.json")))
+    def fake_download(**kwargs: object) -> str:
+        download_calls.append(kwargs)
+        return str(tmp_path / "t.json")
+
+    download = mod(hf_hub_download=staticmethod(fake_download))
     loader = mod(Tokenizer=mod(from_file=staticmethod(lambda p: FakeTokenizer())))
     monkeypatch.setitem(sys.modules, "huggingface_hub", download)
     monkeypatch.setitem(sys.modules, "tokenizers", loader)
-    tokenizer = tokenization.HFTokenizer.from_repo("fake/repo")
+    tokenizer = tokenization.HFTokenizer.from_repo("fake/repo", revision="abc")
     assert calls == ["no_truncation", "no_padding"]
     assert tokenizer.name == "fake/repo"
+    assert download_calls == [
+        {
+            "repo_id": "fake/repo",
+            "filename": "tokenizer.json",
+            "revision": "abc",
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------
