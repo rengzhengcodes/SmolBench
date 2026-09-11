@@ -102,6 +102,7 @@ def test_experiment_tag_is_exported_per_call(
     )
     assert first.agent_status()["EC2_EXPERIMENT_TAG"] == first.experiment_tag
     assert second.agent_status()["EC2_EXPERIMENT_TAG"] == second.experiment_tag
+    os.environ.pop("EC2_EXPERIMENT_TAG", None)
 
 
 def test_an_unsafe_experiment_tag_is_refused_at_construction() -> None:
