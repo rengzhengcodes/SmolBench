@@ -232,6 +232,7 @@ def _sharded(count: int, index: int, n_replicates: int = 30) -> InductionExperim
         archetype_tags={"stub-model": "decode"},
         make_quizzes=make_quizzes,
         n_replicates=n_replicates,
+        state_file="s.json",
         shard=(index, count),
     )
 
