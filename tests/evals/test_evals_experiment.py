@@ -94,3 +94,25 @@ def test_bad_shard_bounds_are_refused(shard: tuple[int, int]) -> None:
     """Refuse shard indices outside a positive shard-count range."""
     with pytest.raises(ValueError, match="shard"):
         build(shard=shard, state_file="s.json")
+
+
+def test_sync_down_delegates_to_the_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin that sync_down delegates to the harness without invoking EC2."""
+    exp = build()
+
+    def fake_sync(self: Any) -> int:
+        """Return a fixed sync count for the delegation test."""
+        return 7
+
+    monkeypatch.setattr(type(exp.harness), "sync_down", fake_sync)
+    assert exp.sync_down() == 7
+
+
+def test_archetype_tags_are_snapshotted() -> None:
+    """Pin that result addressing cannot change through a caller's mapping."""
+    tags = {"stub-model": "decode"}
+    exp = build(archetype_tags=tags)
+    tags["stub-model"] = "changed"
+    assert exp.archetype_tags == {"stub-model": "decode"}
