@@ -184,7 +184,7 @@ class ResultsStore(abc.ABC):
         addr : ReplicateAddress
             destination replicate address.
         run_ts : datetime
-        Collection timestamp recorded for this replicate run.
+            Collection timestamp recorded for this replicate run.
         """
 
     @abc.abstractmethod
