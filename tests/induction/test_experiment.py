@@ -68,7 +68,7 @@ def test_config_and_harness_passthrough(exp: InductionExperiment) -> None:
 
 
 def test_apply_env(monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment) -> None:
-    """Set the provider and manage ``EC2_STATE_FILE``."""
+    """Set the provider and derive ``EC2_STATE_FILE`` from the experiment."""
     monkeypatch.delenv("INFERENCE_PROVIDER", raising=False)
     monkeypatch.delenv("EC2_STATE_FILE", raising=False)
     namespaced = InductionExperiment(
@@ -83,7 +83,9 @@ def test_apply_env(monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment) ->
 
     monkeypatch.setenv("EC2_STATE_FILE", "/tmp/some_other_experiments_state.json")
     exp._apply_env()
-    assert "EC2_STATE_FILE" not in os.environ
+    assert os.environ["EC2_STATE_FILE"] == str(
+        repo_root() / ".ec2_state_induction-scaling.json"
+    )
 
 
 NO_KWARGS = {"extra_args": None, "max_parallel": None, "request_timeout": None}
