@@ -1,0 +1,235 @@
+"""Study-neutral replicated evaluation and EC2 lifecycle facade.
+
+Replicates use ``base_seed + r`` and shard by stride, so shards partition seeds.
+Import ``ec2`` only after ``_apply_env()``: its ``EC2_*`` settings are read at import time.
+Live EC2 methods are billed; summaries may read S3 but do not invoke inference.
+"""
+
+import functools
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+
+from smolbench.evals import Quiz, study_config
+from smolbench.evals.replicates import ReplicateHarness
+
+# Canonical definition lives in smolbench.evals.results_store.
+from smolbench.evals.results_store import repo_root
+
+
+@dataclass(frozen=True)
+class Experiment:
+    """Configure a replicated evaluation and EC2 lifecycle.
+
+    Frozen configuration prevents mid-run changes.
+    """
+
+    #: Locates results at ``repo_root()/notebooks/<notebook_dir>/results``.
+    notebook_dir: str
+    #: Model name to result-directory archetype tag.
+    archetype_tags: Mapping[str, str]
+    #: Lazy ``(seed, model)`` quiz factory.
+    make_quizzes: Callable[[int, str], Dict[str, Quiz]]
+    # No default: information arms are study-specific.
+    #: Information types in serialization order.
+    info_types: Tuple[str, ...]
+    #: Number of replicate seeds.
+    n_replicates: int = 30
+    #: First replicate seed.
+    base_seed: int = 1776
+    #: Result-directory namespace prefix.
+    prefix: str = ""
+    #: Repo-root state-file basename; separate concurrent lifecycles require separate files.
+    state_file: Optional[str] = None
+    #: Disjoint ``(index, count)`` seed stride; concurrent shards need distinct state files and tags.
+    shard: Optional[Tuple[int, int]] = None
+    #: Seeds to re-collect despite resume skipping.
+    force_seeds: Optional[frozenset] = None
+
+    def __post_init__(self) -> None:
+        if self.shard is not None:
+            index, count = self.shard
+            if count < 1 or not 0 <= index < count:
+                raise ValueError(
+                    f"shard {self.shard!r}: need count >= 1 and 0 <= index < count."
+                )
+
+    @property
+    def seeds(self) -> Tuple[int, ...]:
+        """Return this process's replicate seeds.
+
+        Striding balances shard sizes.
+        """
+        every = tuple(self.base_seed + r for r in range(self.n_replicates))
+        if self.shard is None:
+            return every
+        index, count = self.shard
+        return tuple(s for r, s in enumerate(every) if r % count == index)
+
+    @property
+    def results_dir(self) -> Path:
+        """Return ``repo_root()/notebooks/<notebook_dir>/results``, never cwd-relative."""
+        return repo_root() / "notebooks" / self.notebook_dir / "results"
+
+    @functools.cached_property
+    def harness(self) -> ReplicateHarness:
+        """Return the cached :class:`ReplicateHarness`.
+
+        ``cached_property`` writes ``__dict__`` despite dataclass freezing.
+        """
+        return ReplicateHarness(
+            results_dir=self.results_dir,
+            archetype_tags=self.archetype_tags,
+            make_quizzes=self.make_quizzes,
+            seeds=self.seeds,
+            info_types=self.info_types,
+            prefix=self.prefix,
+            force_seeds=self.force_seeds,
+        )
+
+    def _apply_env(self) -> None:
+        """Set EC2's call-time environment.
+
+        Clear ``EC2_STATE_FILE`` when unset to avoid inheriting another experiment's state.
+        """
+        os.environ["INFERENCE_PROVIDER"] = "ec2"
+        if self.state_file is not None:
+            os.environ["EC2_STATE_FILE"] = str(repo_root() / self.state_file)
+        else:
+            os.environ.pop("EC2_STATE_FILE", None)
+
+    def provision(self) -> Dict[str, Any]:
+        """Provision or reattach to this experiment's EC2 spot instance.
+
+        This is a billed AWS call.
+        """
+        self._apply_env()
+        # Read EC2 environment after ``_apply_env()``.
+        from smolbench.evals.providers import ec2
+
+        state = ec2.provision_spot_instance()
+        # The billed-instance receipt must ignore logging configuration.
+        print(
+            f"instance {state['instance_id']} ({state['instance_type']}) "
+            f"in {state['availability_zone']} at {state['public_ip']}"
+        )
+        return state
+
+    def run(
+        self,
+        model: str,
+        *,
+        extra_args: Optional[dict] = None,
+        max_parallel: Optional[int] = None,
+        request_timeout: Optional[int] = None,
+    ) -> None:
+        """Serve ``model`` and run outstanding replicates.
+
+        Resuming is safe because serving and collection are idempotent.
+
+        Parameters
+        ----------
+        model : str
+        extra_args : Optional[dict], optional
+        max_parallel : Optional[int], optional
+        request_timeout : int, optional
+        """
+        self._apply_env()
+        # Read EC2 environment after ``_apply_env()``.
+        from smolbench.evals.providers import ec2
+
+        # Avoid a billed model load when resume has nothing outstanding.
+        if not self.harness.has_outstanding(model):
+            logging.info(
+                f"run: {model!r} has no outstanding replicates; skipping serve"
+            )
+            return
+
+        # ``run_replicates`` omits ``None`` evaluation arguments.
+        with ec2.serve_model(model):
+            self.harness.run_replicates(
+                model,
+                extra_args=extra_args,
+                max_parallel=max_parallel,
+                request_timeout=request_timeout,
+                # Capture the server actually serving these stored marks.
+                server_config=ec2.server_config(model),
+            )
+
+    def summarize(self, model: str) -> None:
+        """Print per-information-type totals for ``model``.
+
+        Reads may use S3 but do not invoke EC2 or inference.
+
+        Parameters
+        ----------
+        model : str
+        Raises
+        ------
+        KeyError
+        """
+        self.harness.summarize(model)
+
+    def agent_status(self) -> Dict[str, Any]:
+        """Return the provisioned instance's control-agent status.
+
+        This billed AWS call diagnoses lifecycle problems without serving.
+        """
+        self._apply_env()
+        # Read EC2 environment after ``_apply_env()``.
+        from smolbench.evals.providers import ec2
+
+        return ec2.agent_status()
+
+    def teardown(self) -> None:
+        """Terminate this experiment's EC2 spot instance and clear its state.
+
+        Do not call under an external lifecycle supervisor: it owns the
+        instance and may have lanes queued.
+        """
+        self._apply_env()
+        # Read EC2 environment after ``_apply_env()``.
+        from smolbench.evals.providers import ec2
+
+        ec2.shutdown_instance()
+
+
+def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
+    """Raise for an unsafe experiment lifecycle tag.
+
+    Reject empty and bare fleet-prefix tags because recovery and teardown operate by tag.
+
+    Parameters
+    ----------
+    tag : str
+    lane : str, optional
+    """
+    # Validate the study identity rather than its lane suffix.
+    base = tag
+    if lane and tag.endswith(lane):
+        base = tag[: -len(lane)]
+
+    if not tag.strip() or not base.strip():
+        raise ValueError(
+            f"EC2_EXPERIMENT_TAG={tag!r} is empty or whitespace-only, so it "
+            "names no experiment. ec2's tag-based recovery and teardown both "
+            "key off this string; export a real tag."
+        )
+
+    fleet_prefix = study_config.load_study_config().fleet.tag_prefix
+    # Remove exactly one trailing dash.
+    fleet_prefix_bare = (
+        fleet_prefix[:-1] if fleet_prefix.endswith("-") else fleet_prefix
+    )
+    if base in (fleet_prefix, fleet_prefix_bare):
+        raise ValueError(
+            f"EC2_EXPERIMENT_TAG={tag!r} is the BARE shared fleet prefix "
+            f"({fleet_prefix!r}), which names every lane in the fleet at "
+            "once, not one driver's instance. ec2's tag-based recovery would "
+            "reattach `provision()` to any live box in the fleet, and fleet "
+            "teardown terminates BY TAG -- running under the bare prefix "
+            "would take the whole fleet down instead of one box. Export a "
+            "tag that includes a spec key or study identity beyond the prefix."
+        )
