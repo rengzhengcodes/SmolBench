@@ -256,6 +256,23 @@ class Experiment:
         """
         self.harness.summarize(model)
 
+    def sync_down(self) -> int:
+        """Materialize the S3 results log into the local results tree.
+
+        Reads S3 only; no EC2 or inference calls.
+
+        Returns
+        -------
+        int
+            Number of result files written locally.
+
+        Raises
+        ------
+        RuntimeError
+            If the store is not S3-backed.
+        """
+        return self.harness.sync_down()
+
     def agent_status(self) -> Dict[str, Any]:
         """Return the provisioned instance's control-agent status.
 
