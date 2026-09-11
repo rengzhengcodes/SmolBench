@@ -50,14 +50,22 @@ def test_run_instances_kwargs_matches_pinned_shape(monkeypatch):
             "VolumeSize": 300, "VolumeType": "gp3", "DeleteOnTermination": True,
             "Throughput": ec2.EC2_ROOT_VOLUME_THROUGHPUT, "Iops": ec2.EC2_ROOT_VOLUME_IOPS}}],
         "TagSpecifications": [{"ResourceType": "instance", "Tags": [
-            {"Key": "smolbench:experiment", "Value": ec2.EC2_EXPERIMENT_TAG},
-            {"Key": "Name", "Value": f"smolbench-{ec2.EC2_EXPERIMENT_TAG}"}]}],
+            {"Key": "smolbench:experiment", "Value": ec2.experiment_tag()},
+            {"Key": "Name", "Value": f"smolbench-{ec2.experiment_tag()}"}]}],
         "UserData": b"#!/bin/bash\necho hi\n",
     }
     # No MarketType="on-demand" exists: absence is how the API expresses it.
     spot = _base_kwargs(max_price="12.34")
     monkeypatch.setattr(ec2, "EC2_MARKET", "on-demand")
     assert {k: v for k, v in spot.items() if k != _IMO} == _base_kwargs(max_price="12.34")
+
+
+def test_experiment_tag_reads_environment_at_call_time(monkeypatch):
+    """Pin that experiment_tag reflects environment changes without reimporting."""
+    monkeypatch.setenv("EC2_EXPERIMENT_TAG", "first-tag")
+    assert ec2.experiment_tag() == "first-tag"
+    monkeypatch.setenv("EC2_EXPERIMENT_TAG", "second-tag")
+    assert ec2.experiment_tag() == "second-tag"
 
 
 @pytest.mark.parametrize(

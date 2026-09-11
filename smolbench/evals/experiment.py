@@ -2,8 +2,11 @@
 
 Replicates use ``base_seed + r`` and shard by stride, so shards partition seeds.
 ``ec2`` (and boto3) is imported lazily so configuration-only uses
-(``summarize``, tests) never pay for it; ``EC2_EXPERIMENT_TAG`` is read at
-``ec2`` import time and must be exported by the driver beforehand.
+(``summarize``, tests) never pay for it; the experiment-owned
+``EC2_EXPERIMENT_TAG`` is exported before each live call and read at call
+time. Remaining import-time ``EC2_*`` provisioning knobs (instance types,
+regions, timeouts, and similar settings) stay process-global, as tracked in
+issue #19.
 Live EC2 methods are billed; summaries may read S3 but do not invoke inference.
 """
 
@@ -44,9 +47,13 @@ class Experiment:
         Result-directory namespace prefix.
     state_file : str, optional
         Repo-relative EC2 state-file name for this lifecycle.
+    experiment_tag : str, optional
+        Value exported as ``EC2_EXPERIMENT_TAG`` before every live call;
+        ``None`` leaves the driver's exported tag in place. Distinct per
+        concurrent shard.
     shard : Tuple[int, int], optional
         ``(index, count)`` stride for disjoint shard seed subsets; concurrent
-        shards also need a distinct ``EC2_EXPERIMENT_TAG`` or tag-based
+        shards also need distinct ``experiment_tag`` values or tag-based
         recovery reattaches them to one instance.
     force_seeds : frozenset[int], optional
         Seeds to collect despite resume skipping them.
@@ -54,8 +61,9 @@ class Experiment:
     Raises
     ------
     ValueError
-        If ``state_file`` is blank, shard bounds are invalid, or a shard has no
-        explicit state file.
+        If ``state_file`` is blank, ``experiment_tag`` is unsafe (see
+        ``validate_experiment_tag``), shard bounds are invalid, or a shard has
+        no explicit state file.
     """
 
     notebook_dir: str
@@ -66,6 +74,7 @@ class Experiment:
     base_seed: int = 1776
     prefix: str = ""
     state_file: Optional[str] = None
+    experiment_tag: Optional[str] = None
     shard: Optional[Tuple[int, int]] = None
     force_seeds: Optional[frozenset[int]] = None
 
@@ -77,13 +86,15 @@ class Experiment:
                 "state_file must name a file; an empty value resolves to the "
                 "repo root and ec2 cannot persist state there."
             )
+        if self.experiment_tag is not None:
+            validate_experiment_tag(self.experiment_tag, None)
         if self.shard is not None:
             if self.state_file is None:
                 raise ValueError(
                     f"shard {self.shard!r} requires an explicit state_file: "
                     "shards sharing ec2's default state file would reattach to "
                     "each other's instance. Shards also need distinct "
-                    "EC2_EXPERIMENT_TAG values."
+                    "experiment_tag values."
                 )
             index, count = self.shard
             if count < 1 or not 0 <= index < count:
@@ -143,24 +154,29 @@ class Experiment:
     def _apply_env(self) -> None:
         """Set EC2's environment from the experiment configuration.
 
-        EC2 is configured through ``INFERENCE_PROVIDER`` and ``EC2_STATE_FILE``
-        environment knobs rather than method arguments. Pop
-        ``EC2_STATE_FILE`` when unset to avoid inheriting another experiment's
-        state.
+        EC2 is configured through ``INFERENCE_PROVIDER``, ``EC2_STATE_FILE``,
+        and ``EC2_EXPERIMENT_TAG`` environment knobs rather than method
+        arguments, so each experiment exports its call-time settings before
+        invoking EC2. Pop ``EC2_STATE_FILE`` when unset to avoid inheriting
+        another experiment's state; leave the driver's tag in place when this
+        experiment does not own one.
         """
         os.environ["INFERENCE_PROVIDER"] = "ec2"
         if self.state_file is not None:
             os.environ["EC2_STATE_FILE"] = str(repo_root() / self.state_file)
         else:
             os.environ.pop("EC2_STATE_FILE", None)
+        if self.experiment_tag is not None:
+            os.environ["EC2_EXPERIMENT_TAG"] = self.experiment_tag
 
     def _ec2(self) -> ModuleType:
         """Apply the call-time environment, then import ``ec2`` lazily.
 
         ``ec2`` pulls in boto3, so it is imported only by live methods.
         ``EC2_STATE_FILE`` and ``INFERENCE_PROVIDER`` are read at call time;
-        ``EC2_EXPERIMENT_TAG`` is read when ``ec2`` is imported (knob
-        consolidation tracked in issue #19).
+        ``EC2_EXPERIMENT_TAG`` is exported by the owning experiment and read
+        at call time too. Remaining import-time ``EC2_*`` provisioning knobs
+        are process-global; consolidation is tracked in issue #19.
 
         Returns
         -------

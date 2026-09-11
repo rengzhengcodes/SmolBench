@@ -1,10 +1,10 @@
 """Run a staged live smoke test of the smolbench EC2 provider.
 
 Invoke as ``ec2_lifecycle_smoke.py <step>``. The provisioning code reads its
-configuration at IMPORT time, so EC2_EXPERIMENT_TAG, EC2_INSTANCE_TYPES,
-EC2_REGIONS, EC2_ROOT_VOLUME_GB and EC2_IDLE_TIMEOUT_MIN must all be set in
-the environment before the script starts; EC2_STATE_FILE is read at call time,
-but every step shares one, so set it up front too.
+most provisioning configuration at IMPORT time, so EC2_INSTANCE_TYPES,
+EC2_REGIONS, EC2_ROOT_VOLUME_GB and EC2_IDLE_TIMEOUT_MIN must be set in the
+environment before the script starts; EC2_EXPERIMENT_TAG and EC2_STATE_FILE
+are read at call time, but every step shares one, so set them up front too.
 """
 import json
 import os
@@ -19,12 +19,15 @@ T0 = time.time()
 
 
 def log(msg: str) -> None:
+    """Print a timestamped smoke-test message."""
     print(f"[{time.time() - T0:7.1f}s] {msg}", flush=True)
 
 
-from smolbench.evals.providers import ec2  # noqa: E402  (the shell already set env vars)
+from smolbench.evals.providers import (  # noqa: E402  (the shell already set env vars)
+    ec2,
+)
 
-log(f"tag={ec2.EC2_EXPERIMENT_TAG} types={ec2.EC2_INSTANCE_TYPES} "
+log(f"tag={ec2.experiment_tag()} types={ec2.EC2_INSTANCE_TYPES} "
     f"regions={ec2.EC2_REGIONS} state_file={ec2._state_path()}")
 
 if STEP == "provision":
@@ -33,8 +36,7 @@ if STEP == "provision":
         f"region={state['region']} ip={state['public_ip']}")
 elif STEP == "serve_eval":
     os.environ["INFERENCE_PROVIDER"] = "ec2"
-    from smolbench.evals import provider
-    from smolbench.evals import ToF
+    from smolbench.evals import ToF, provider
     quiz = (
         ToF(prompt="Is 7 a prime number? Answer True or False only.", answer=True),
         ToF(prompt="Is 8 a prime number? Answer True or False only.", answer=False),
@@ -56,7 +58,7 @@ elif STEP == "reattach":
     assert dt < 60, f"reattach took {dt:.1f}s -- state-file branch not hit?"
 elif STEP == "recover":
     sf = ec2._state_path()
-    saved = json.loads(sf.read_text())
+    saved = json.loads(sf.read_text(encoding="utf-8"))
     sf.unlink()
     log(f"state file {sf} deleted; re-provisioning (tag-recovery branch)")
     state = ec2.provision_spot_instance()
