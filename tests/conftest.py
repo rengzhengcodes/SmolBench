@@ -1,7 +1,5 @@
 """Shared offline OpenAI-stub, tokenizer, and optional S3 fixtures."""
 
-# pylint: disable=missing-function-docstring,missing-class-docstring
-
 import hashlib
 import importlib.util
 import json
@@ -17,6 +15,7 @@ from typing import Any, Iterator
 
 import pytest
 
+from smolbench.evals.tokenization import Tokenizer
 from tests._paths import NOTEBOOKS
 
 
@@ -65,6 +64,7 @@ class _StubHandler(BaseHTTPRequestHandler):
     """Replay scripted responses and record requests."""
 
     def _reply(self, obj: Any, code: int = 200) -> None:
+        """Write a JSON response body."""
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -80,6 +80,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def frame(chunk: Any) -> None:
+            """Write one server-sent event frame."""
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
 
         for key in ("reasoning_content", "reasoning"):
@@ -104,6 +105,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"data: [DONE]\n\n")
 
     def do_POST(self) -> None:
+        """Handle a stub chat-completion POST request."""
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = json.loads(self.rfile.read(length) or b"{}")
         # Keep headers for authentication and routing checks.
@@ -117,6 +119,7 @@ class _StubHandler(BaseHTTPRequestHandler):
             self._reply(response)
 
     def do_GET(self) -> None:
+        """Handle a stub metadata GET request."""
         self.server.requests.append(
             {"path": self.path, "body": None, "headers": dict(self.headers)}
         )
@@ -128,26 +131,31 @@ class _StubHandler(BaseHTTPRequestHandler):
             self._reply({"data": [{"id": "stub-model"}]})
 
     def log_message(self, *args: Any) -> None:
-        pass  # keep pytest output clean
+        """Suppress request logging in test servers."""
+        return None
 
 
 class StubServer(ThreadingHTTPServer):
     """OpenAI-compatible response stub."""
 
     def __init__(self):
+        """Initialize the scripted response server."""
         super().__init__(("127.0.0.1", 0), _StubHandler)
         self.requests: list = []
         self._responses: list = []
         self.default_response = chat_completion("42")
 
     def queue_response(self, obj: Any) -> None:
+        """Queue a response for the next request."""
         self._responses.append(obj)
 
     def next_response(self) -> Any:
+        """Return the queued response or the default."""
         return self._responses.pop(0) if self._responses else self.default_response
 
     @property
     def base_url(self) -> str:
+        """Return the server's OpenAI-compatible base URL."""
         return f"http://127.0.0.1:{self.server_address[1]}/v1"
 
 
@@ -177,7 +185,7 @@ def chat_completion(
 _CHUNK_RE = re.compile(r"\s+|\S+")
 
 
-class StubTokenizer:
+class StubTokenizer(Tokenizer):
     """Tokenizer whose whitespace runs merge for padding tests."""
 
     name = "stub"
@@ -196,12 +204,13 @@ class StubTokenizer:
         return total
 
 
-class TruncatingTokenizer:
+class TruncatingTokenizer(Tokenizer):
     """Tokenizer with a hard cap for saturation tests."""
 
     name = "truncating-512"
 
     def __init__(self, cap: int = 512):
+        """Initialize the capped tokenizer."""
         self.cap = cap
         self._inner = StubTokenizer()
 
@@ -210,7 +219,7 @@ class TruncatingTokenizer:
         return min(self._inner.count(text), self.cap)
 
 
-class MergeEverythingTokenizer:
+class MergeEverythingTokenizer(Tokenizer):
     """Tokenizer with fully merged whitespace for rejection tests."""
 
     name = "merge-everything"
@@ -225,6 +234,7 @@ class MergeEverythingTokenizer:
 
 @pytest.fixture
 def stub_server() -> Iterator[StubServer]:
+    """Start and stop the shared stub server."""
     server = StubServer()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -238,6 +248,7 @@ def _clear_provider_context_length_caches() -> Iterator[None]:
     """Clear provider context-length caches around each test."""
 
     def _clear() -> None:
+        """Clear cached provider context lengths."""
         try:
             from smolbench.evals.providers import openrouter
 
@@ -268,6 +279,7 @@ class S3Archive:
     """
 
     def __init__(self, uri: str, region: str | None) -> None:
+        """Initialize the archive client."""
         from smolbench.evals import _aws
         from smolbench.evals.results_store import parse_s3_uri
 
@@ -275,6 +287,7 @@ class S3Archive:
         self._client = _aws.fresh_client("s3", region)
 
     def _key(self, rel: str) -> str:
+        """Return the archive key for a relative path."""
         rel = posixpath.normpath(rel)
         return f"{self.prefix}/{rel}" if self.prefix else rel
 
@@ -290,6 +303,7 @@ class S3Archive:
         return out
 
     def exists(self, rel: str) -> bool:
+        """Report whether an archive object exists."""
         try:
             self._client.head_object(Bucket=self.bucket, Key=self._key(rel))
             return True
@@ -306,12 +320,15 @@ class S3Archive:
             raise FileNotFoundError(self._key(rel)) from exc
 
     def read(self, rel: str) -> bytes:
+        """Read archive bytes for a relative path."""
         return self.open(rel).read()
 
     def text(self, rel: str) -> str:
+        """Read archive text for a relative path."""
         return self.read(rel).decode("utf-8", errors="replace")
 
     def sha256(self, rel: str) -> str:
+        """Return the archive object's SHA-256 digest."""
         h = hashlib.sha256()
         for chunk in self.open(rel).iter_chunks(1 << 20):
             h.update(chunk)
