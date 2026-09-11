@@ -336,7 +336,7 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
     Raises
     ------
     ValueError
-        If ``tag`` is unsafe (charset, emptiness, bare prefix).
+        If ``tag`` is unsafe (charset, length, emptiness, bare prefix).
     """
     # Validate the study identity rather than its lane suffix.
     base = tag
@@ -348,10 +348,11 @@ def validate_experiment_tag(tag: str, lane: Optional[str]) -> None:
             f"EC2_EXPERIMENT_TAG={tag!r} is empty; ec2's tag-based recovery "
             "and teardown key off it."
         )
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", tag) or tag in (".", ".."):
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", tag) or tag in (".", ".."):
         raise ValueError(
             f"EC2_EXPERIMENT_TAG={tag!r} may only contain letters, digits, '.', '_' "
-            "and '-'; it names the default EC2 state file."
+            "and '-' and be at most 128 characters; it names the default EC2 "
+            "state file."
         )
 
     fleet_prefix = study_config.load_study_config().fleet.tag_prefix
