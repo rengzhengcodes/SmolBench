@@ -53,7 +53,7 @@ class ToF(QnA):
         Returns
         -------
         bool
-            parsed true/false answer.
+            Parsed true/false answer.
         """
         # `isalpha` retains Unicode letters without a maintained charset.
         cleaned_ans = "".join([char for char in ans if char.isalpha()])

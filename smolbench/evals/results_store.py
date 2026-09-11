@@ -161,12 +161,12 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to check.
+            Replicate address to check.
 
         Returns
         -------
         bool
-            whether a replicate result is already stored.
+            Whether a replicate result is already stored.
         """
 
     @abc.abstractmethod
@@ -180,9 +180,9 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         marks : Marks
-            replicate result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            destination replicate address.
+            Destination replicate address.
         run_ts : datetime
             Collection timestamp recorded for this replicate run.
         """
@@ -194,17 +194,17 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to load.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            the single local file, or on S3 the earliest logged run.
+            The single local file, or on S3 the earliest logged run.
 
         Raises
         ------
         FileNotFoundError
-            when nothing is stored/logged for `addr` (S3 names the missing prefix).
+            When nothing is stored/logged for `addr` (S3 names the missing prefix).
         """
 
     @abc.abstractmethod
@@ -217,16 +217,16 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         model : Optional[str]
-            the S3 key dimension; None yields [].
+            The S3 key dimension; None yields [].
         tag : str
-            the local key dimension.
+            The local key dimension.
         info : str
-            condition information dimension.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            a sorted, distinct list (a seed re-collected many times counts once).
+            A sorted, distinct list (a seed re-collected many times counts once).
         """
 
     @abc.abstractmethod
@@ -238,14 +238,14 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            address whose surviving runs are retired.
+            Address whose surviving runs are retired.
         reason : str
-            freeform operator-facing text naming why the retirement happened.
+            Freeform operator-facing text naming why the retirement happened.
 
         Returns
         -------
         int
-            how many runs were retired.
+            How many runs were retired.
         """
 
     @abc.abstractmethod
@@ -274,12 +274,12 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to check.
+            Replicate address to check.
 
         Returns
         -------
         bool
-            whether the local result file exists.
+            Whether the local result file exists.
         """
         return self._path(addr).exists()
 
@@ -291,11 +291,11 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
-            replicate result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            destination replicate address.
+            Destination replicate address.
         run_ts : datetime
-            collection timestamp ignored by the local store.
+            Collection timestamp ignored by the local store.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -307,12 +307,12 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to load.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            deserialized local result.
+            Deserialized local result.
         """
         return Marks.load(self._path(addr))
 
@@ -324,16 +324,16 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
-            ignored by the local store.
+            Ignored by the local store.
         tag : str
-            local key dimension.
+            Local key dimension.
         info : str
-            condition information dimension.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            sorted seed values from local replicate filenames.
+            Sorted seed values from local replicate filenames.
         """
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
@@ -356,7 +356,7 @@ class LocalResultsStore(ResultsStore):
         addr : ReplicateAddress
             Address of the stored run to retire.
         reason : str
-            logged only, at INFO level.
+            Logged only, at INFO level.
 
         Returns
         -------
@@ -379,14 +379,14 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            address whose local run is retired.
+            Address whose local run is retired.
         reason : str
-            operator-facing retirement reason.
+            Operator-facing retirement reason.
 
         Returns
         -------
         int
-            number of retired local runs.
+            Number of retired local runs.
         """
         return 1 if self.supersede(addr, reason) is not None else 0
 
@@ -482,7 +482,7 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to check.
+            Replicate address to check.
 
         Returns
         -------
@@ -508,11 +508,11 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
-            replicate result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            destination replicate address.
+            Destination replicate address.
         run_ts : datetime
-            timestamp embedded in the logged key.
+            Timestamp embedded in the logged key.
         """
         if addr.model is None:
             # model=None is the READ-only tag-lookup shape; the append-only
@@ -565,12 +565,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address whose surviving runs are listed.
+            Replicate address whose surviving runs are listed.
 
         Returns
         -------
         list[str]
-            surviving run timestamps in ascending order.
+            Surviving run timestamps in ascending order.
         """
         survivors, _marker_count = self._list_run_partition(addr)
         return survivors
@@ -583,12 +583,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            replicate address to load.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            deserialized earliest surviving logged result.
+            Deserialized earliest surviving logged result.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         survivors, marker_count = self._list_run_partition(addr)
@@ -614,9 +614,9 @@ class S3ResultsStore(ResultsStore):
         addr : ReplicateAddress
             Address of the logged run to retire.
         run_ts : str
-            the fixed-width stamp exactly as it appears in the run's key, not a `datetime`.
+            The fixed-width stamp exactly as it appears in the run's key, not a `datetime`.
         reason : str
-            freeform operator-facing text stored in the marker body.
+            Freeform operator-facing text stored in the marker body.
 
         Returns
         -------
@@ -646,9 +646,9 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            address whose surviving runs are retired.
+            Address whose surviving runs are retired.
         reason : str
-            operator-facing retirement reason.
+            Operator-facing retirement reason.
 
         Returns
         -------
@@ -674,12 +674,12 @@ class S3ResultsStore(ResultsStore):
         tag : str
             Unused on this backend.
         info : str
-            condition information dimension.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            sorted seed values with logged entries for `info`.
+            Sorted seed values with logged entries for `info`.
         """
         if model is None:
             return []
