@@ -28,16 +28,25 @@ def metadata_get(url: str, api_key: str, *, check_status: bool) -> Any:
     Parameters
     ----------
     url : str
+        Metadata endpoint URL.
     api_key : str
+        Bearer token for the request.
     check_status : bool
+        True raises before parsing (``list_models``: AWS, EC2).
+
     Returns
     -------
     Any
+        Parsed JSON response body.
+
     Raises
     ------
     requests.exceptions.HTTPError
+        4xx/5xx, when ``check_status`` is True.
     requests.exceptions.RequestException
+        Connection-level failure, either way.
     requests.exceptions.JSONDecodeError
+        Non-JSON body, even on a 2xx.
     """
     response = requests.get(
         url=url,
@@ -57,9 +66,12 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
     Parameters
     ----------
     err : requests.exceptions.RequestException
+        Request failure to classify.
+
     Returns
     -------
     bool
+        Whether the request should be retried.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -77,12 +89,17 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Parameters
     ----------
     response : requests.Response
+        An open ``requests.post(..., stream=True)`` response.
+
     Returns
     -------
     dict
+        Parsed stream containing choices and token usage.
+
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
+        A malformed SSE chunk.
     """
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
@@ -172,12 +189,18 @@ def grade(
     Parameters
     ----------
     quiz : Quiz
+        Questions whose responses are graded.
     responses : List[Tuple[str, Optional[str]]]
+        Content and reasoning responses in quiz order.
     model : str
+        Model whose response parser is selected.
     log_invalid : bool
+        Log unparseable responses at INFO.
+
     Returns
     -------
     Marks
+        Marks for the quiz responses.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -238,8 +261,11 @@ def _render_progress(done: int, total: int, model: str) -> None:
     Parameters
     ----------
     done : int
+        Number of completed prompts.
     total : int
+        Total prompts being evaluated.
     model : str
+        Model name shown in the bar.
     """
     filled: int = 30 if total == 0 else int(30 * done / total)
     filled_bar: str = "#" * filled + "-" * (30 - filled)
@@ -313,9 +339,12 @@ class ChatClient:
         Parameters
         ----------
         suffix : str
+            Suffix appended to ``env_prefix`` to form the environment-variable name.
+
         Returns
         -------
         bool
+            The parsed flag value.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()
@@ -349,20 +378,33 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
+            User prompt to send.
         model : str
+            Model to query.
         seed : int
+            Decoding seed, sent with every request.
         system : str, optional
+            Extra system message.
         context_length : int, optional
+        Token budget used to warn when responses approach the limit.
         extra_args : dict, optional
+            Merged into the request body (e.g.
         request_timeout : int, optional
+            Per-request read timeout in seconds, overriding ``read_timeout_s``.
         max_retries : int, optional
+            Cap on retryable failures (HTTP 429/5xx or connection-level).
+
         Returns
         -------
         ChatResult
+            Full chat-completion result.
+
         Raises
         ------
         requests.exceptions.RequestException
+            A non-retryable HTTP error (4xx other than 429).
         RuntimeError
+            ``max_connection_failures`` consecutive connection-level failures tripped first.
         """
         sys_prompt = self.system_prompt(model)
         messages: List[Dict[str, str]] = []
@@ -533,16 +575,26 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
+            User prompt sent to the model.
         model : str
+            Model to query.
         seed : int
+            Decoding seed.
         context_length : int, optional
+            Token-budget guard passed to ``complete()``.
         extra_args : Optional[Dict[str, Any]], optional
+            Extra request-body arguments passed to ``complete()``.
         request_timeout : Optional[int], optional
+            Per-request read timeout passed to ``complete()``.
         system : Optional[str], optional
+            Extra system message passed to ``complete()``.
         max_retries : Optional[int], optional
+            Retry cap passed to ``complete()``.
+
         Returns
         -------
         Tuple[str, Optional[str]]
+            content and reasoning.
         """
         result = self.complete(
             prompt,
@@ -566,11 +618,16 @@ class ChatClient:
         Parameters
         ----------
         index : int
+            Question's quiz position.
         *args : Any
+            Positional arguments forwarded to ``query()``.
         **kwargs : Any
+            Keyword arguments forwarded to ``query()``.
+
         Returns
         -------
         Tuple[int, Tuple[str, Optional[str]]]
+            the quiz position and ``query()`` result.
         """
         return index, self.query(*args, **kwargs)
 
@@ -589,15 +646,24 @@ class ChatClient:
         Parameters
         ----------
         quiz : Quiz
+            Questions to evaluate.
         model : str
+            Model to query and grade.
         seed : int
+            Shared decoding seed.
         extra_args : dict, optional
+            Forwarded to every ``query``, as is ``request_timeout``.
         max_parallel : int, optional
+            Thread fan-out; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS`` (8).
         request_timeout : Optional[int], optional
+            Per-request timeout forwarded to ``query``.
         show_progress : bool
+            Print a live "N/total prompted" bar (default True).
+
         Returns
         -------
         Marks
+            Marks for every quiz question.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)
