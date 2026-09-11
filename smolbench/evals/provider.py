@@ -2,7 +2,7 @@
 Dispatch to the active inference provider, based on INFERENCE_PROVIDER.
 
 Set INFERENCE_PROVIDER in keys.env to one of the keys below (default
-"openrouter"), then import query/complete/evaluate/get_model_context_length
+"ec2"), then import query/complete/evaluate/get_model_context_length
 from here. "aws" is Bedrock unless AWS_INFERENCE_BASE_URL targets a SageMaker
 endpoint; "ec2" is a self-provisioned vLLM spot instance whose endpoint is
 resolved at call time from the state file written by
@@ -22,8 +22,6 @@ from typing import Optional
 
 #: Provider name -> module implementing query/complete/evaluate/get_model_context_length.
 _PROVIDER_MODULES: dict[str, str] = {
-    "openrouter": "smolbench.evals.providers.openrouter",
-    "primeintellect": "smolbench.evals.providers.primeintellect",
     "aws": "smolbench.evals.providers.aws",
     "bedrock": "smolbench.evals.providers.aws",
     "sagemaker": "smolbench.evals.providers.aws",
@@ -38,7 +36,7 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
     ----------
     name : str, optional
         Explicit provider name, bypassing the environment entirely; None (the
-        default) dispatches from ``INFERENCE_PROVIDER`` ("openrouter" unset).
+        default) dispatches from ``INFERENCE_PROVIDER`` ("ec2" unset).
 
     Raises
     ------
@@ -48,14 +46,15 @@ def provider_module(name: Optional[str] = None) -> ModuleType:
         URL, so it would otherwise silently hit Bedrock. (ec2 needs no such
         guard: it raises at call time when it finds no provisioned instance.)
     """
-    resolved = (name if name is not None else os.getenv("INFERENCE_PROVIDER", "openrouter")).lower()
+    resolved = (
+        name if name is not None else os.getenv("INFERENCE_PROVIDER", "ec2")
+    ).lower()
     if resolved not in _PROVIDER_MODULES:
         # Says INFERENCE_PROVIDER for env dispatch, which tests match on.
         label = "INFERENCE_PROVIDER" if name is None else "provider"
         raise ValueError(
             f"Unknown {label}={resolved!r}. "
-            "Valid options: 'openrouter', 'primeintellect', 'aws'/'bedrock', "
-            "'sagemaker', 'ec2'."
+            "Valid options: 'aws'/'bedrock', 'sagemaker', 'ec2'."
         )
     if resolved == "sagemaker" and not os.getenv("AWS_INFERENCE_BASE_URL"):
         raise ValueError(

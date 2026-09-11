@@ -123,12 +123,7 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.server.requests.append(
             {"path": self.path, "body": None, "headers": dict(self.headers)}
         )
-        if self.path.endswith("/endpoints"):
-            self._reply({"data": {"endpoints": [{"context_length": 100000}]}})
-        elif "/models/" in self.path:
-            self._reply({"context_length": 100000})
-        else:
-            self._reply({"data": [{"id": "stub-model"}]})
+        self._reply({"data": [{"id": "stub-model"}]})
 
     def log_message(self, *args: Any) -> None:
         """Suppress request logging in test servers."""
@@ -241,30 +236,6 @@ def stub_server() -> Iterator[StubServer]:
     yield server
     server.shutdown()
     thread.join(timeout=5)
-
-
-@pytest.fixture(autouse=True)
-def _clear_provider_context_length_caches() -> Iterator[None]:
-    """Clear provider context-length caches around each test."""
-
-    def _clear() -> None:
-        """Clear cached provider context lengths."""
-        try:
-            from smolbench.evals.providers import openrouter
-
-            openrouter.get_model_context_length.cache_clear()
-        except ImportError:
-            pass
-        try:
-            from smolbench.evals.providers import primeintellect
-
-            primeintellect.get_model_context_length.cache_clear()
-        except ImportError:
-            pass
-
-    _clear()
-    yield
-    _clear()
 
 
 class S3Archive:
