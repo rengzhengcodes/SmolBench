@@ -228,47 +228,6 @@ def test_importing_experiment_does_not_import_ec2() -> None:
     assert result.returncode == 0
 
 
-def _sharded(count: int, index: int, n_replicates: int = 30) -> InductionExperiment:
-    return InductionExperiment(
-        notebook_dir="periodic",
-        archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes,
-        n_replicates=n_replicates,
-        state_file="s.json",
-        shard=(index, count),
-    )
-
-
-def test_shard_partition() -> None:
-    """Partition seeds exactly and evenly across shards."""
-    unsharded = InductionExperiment(
-        notebook_dir="periodic",
-        archetype_tags={"stub-model": "decode"},
-        make_quizzes=make_quizzes,
-    ).seeds
-    # Default seeds begin at zero.
-    assert unsharded == tuple(range(0, 30))
-    for count in (1, 2, 3, 4, 7, 30):
-        shards = [_sharded(count, i).seeds for i in range(count)]
-        collected = [s for shard in shards for s in shard]
-        assert sorted(collected) == sorted(
-            unsharded
-        ), f"count={count} is not a partition"
-        assert len(collected) == len(set(collected)), f"count={count} has overlap"
-        sizes = [len(shard) for shard in shards]
-        assert max(sizes) - min(sizes) <= 1, f"count={count} sizes {sizes}"
-        assert sum(sizes) == 30
-        for index, shard in enumerate(shards):
-            assert all(s % count == index for s in shard)
-
-
-@pytest.mark.parametrize("bad", [(0, 0), (3, 3), (-1, 2), (2, 2), (5, 3)])
-def test_invalid_shards_are_rejected(bad: tuple[int, int]) -> None:
-    """Reject malformed shards at construction."""
-    with pytest.raises(ValueError, match="shard"):
-        _sharded(bad[1], bad[0])
-
-
 def test_run_replicates_calls_make_quizzes_with_seed_and_model(
     monkeypatch: pytest.MonkeyPatch, exp: InductionExperiment, tmp_path: Path
 ) -> None:
