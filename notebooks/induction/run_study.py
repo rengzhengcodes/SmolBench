@@ -415,6 +415,7 @@ EXPERIMENT = InductionExperiment(
     n_replicates=N_REPLICATES,
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
+    experiment_tag=_RESOLVED_TAG,
     shard=SHARD,
     # Sharding limits forced reruns to owned seeds.
     force_seeds=_parse_force_seeds(
