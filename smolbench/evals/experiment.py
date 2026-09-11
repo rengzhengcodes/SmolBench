@@ -1,7 +1,9 @@
 """Study-neutral replicated evaluation and EC2 lifecycle facade.
 
 Replicates use ``base_seed + r`` and shard by stride, so shards partition seeds.
-Import ``ec2`` only after ``_apply_env()``: its ``EC2_*`` settings are read at import time.
+``ec2`` (and boto3) is imported lazily so configuration-only uses
+(``summarize``, tests) never pay for it; ``EC2_EXPERIMENT_TAG`` is read at
+``ec2`` import time and must be exported by the driver beforehand.
 Live EC2 methods are billed; summaries may read S3 but do not invoke inference.
 """
 
@@ -43,7 +45,9 @@ class Experiment:
     state_file : str, optional
         Repo-relative EC2 state-file name for this lifecycle.
     shard : Tuple[int, int], optional
-        ``(index, count)`` stride for disjoint shard seed subsets.
+        ``(index, count)`` stride for disjoint shard seed subsets; concurrent
+        shards also need a distinct ``EC2_EXPERIMENT_TAG`` or tag-based
+        recovery reattaches them to one instance.
     force_seeds : frozenset[int], optional
         Seeds to collect despite resume skipping them.
 
@@ -70,7 +74,8 @@ class Experiment:
                 raise ValueError(
                     f"shard {self.shard!r} requires an explicit state_file: "
                     "shards sharing ec2's default state file would reattach to "
-                    "each other's instance."
+                    "each other's instance. Shards also need distinct "
+                    "EC2_EXPERIMENT_TAG values."
                 )
             index, count = self.shard
             if count < 1 or not 0 <= index < count:
@@ -142,10 +147,12 @@ class Experiment:
             os.environ.pop("EC2_STATE_FILE", None)
 
     def _ec2(self) -> ModuleType:
-        """Apply the call-time environment, then import ``ec2``.
+        """Apply the call-time environment, then import ``ec2`` lazily.
 
-        ``ec2`` reads its ``EC2_*`` settings at import time (consolidation
-        tracked in issue #19), so the environment must be set first.
+        ``ec2`` pulls in boto3, so it is imported only by live methods.
+        ``EC2_STATE_FILE`` and ``INFERENCE_PROVIDER`` are read at call time;
+        ``EC2_EXPERIMENT_TAG`` is read when ``ec2`` is imported (knob
+        consolidation tracked in issue #19).
 
         Returns
         -------
@@ -166,8 +173,10 @@ class Experiment:
         Returns
         -------
         Dict[str, Any]
-            EC2 instance state: ``instance_id``, ``instance_type``,
-            ``availability_zone``, and ``public_ip``.
+            EC2 instance state as persisted to ``EC2_STATE_FILE``:
+            ``instance_id``, ``region``, ``availability_zone``,
+            ``instance_type``, ``public_ip``, ``security_group_id``, and the
+            secrets ``control_token`` / ``vllm_api_key`` — do not log the dict.
         """
         ec2 = self._ec2()
         state = ec2.provision_spot_instance()
