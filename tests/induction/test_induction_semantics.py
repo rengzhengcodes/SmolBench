@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from conftest import StubTokenizer
+from tests.induction._periodic import POSITIVE_ARMS
 
 from smolbench.induction._common import Prompter
 from smolbench.induction.periodic import (
@@ -21,9 +22,6 @@ from smolbench.induction.periodic import (
     numeric_count_query_gen,
     tof_membership_query_gen,
 )
-
-#: Excludes ``zero``, which requires an unavailable range-free template.
-POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 NUM_TMPL = string.Template(
     "$positive_info\nHow many of positions 1..$seq_len include '$label'?"

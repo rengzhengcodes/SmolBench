@@ -32,7 +32,7 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
 
-def _parse_shard(var: str) -> "tuple[int, int] | None":
+def _parse_shard(var: str) -> tuple[int, int] | None:
     """Parse environment variable `var` as ``"index/count"``; ``None`` if unset/empty.
 
     Parameters
@@ -64,7 +64,7 @@ def _parse_shard(var: str) -> "tuple[int, int] | None":
     return index, count
 
 
-def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
+def _parse_force_seeds(raw: str, full_range: range) -> frozenset[int] | None:
     """Parse ``INDUCTION_FORCE_RERUN`` into the set of seeds to re-collect.
 
     Parameters
@@ -106,27 +106,30 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 SHARD = _parse_shard("INDUCTION_SHARD")
 
 # ec2 freezes EC2_* constants at import, so imports follow load_dotenv.
-from smolbench.evals import Numeric  # noqa: E402
-from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
-from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.evals.study_config import (  # noqa: E402
+# pylint: disable=wrong-import-position
+from smolbench.evals import Numeric
+from smolbench.evals.experiment import validate_experiment_tag
+from smolbench.evals.providers import ec2
+from smolbench.evals.study_config import (
     load_study_config,
     roster_keys,
     tag_for,
 )
-from smolbench.evals.tokenization import for_model  # noqa: E402
-from smolbench.induction._common import (  # noqa: E402
+from smolbench.evals.tokenization import for_model
+from smolbench.induction._common import (
     Prompter,
     RenderedQuery,
     quizzes_from_prompts,
 )
-from smolbench.induction.experiment import InductionExperiment  # noqa: E402
-from smolbench.induction.periodic import (  # noqa: E402
+from smolbench.induction.experiment import InductionExperiment
+from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
     get_periodic_prompts,
     numeric_count_query_gen,
 )
+
+# pylint: enable=wrong-import-position
 
 # Use the canonical roster to prevent duplicate-map drift.
 MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
@@ -156,7 +159,7 @@ except ValueError as exc:
     raise SystemExit(str(exc)) from exc
 
 
-def derive_context_limit(lengths: "dict[str, int]") -> int:
+def derive_context_limit(lengths: dict[str, int]) -> int:
     """Return the single context window that every model in `lengths` shares.
 
     Parameters
@@ -285,7 +288,7 @@ COT_ARGS: dict[str, dict] = {
 }
 
 
-def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
+def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
     """Render one replicate's queries, all four ``CONDITIONS`` arms of each.
 
     The quiz is fixed so the model is the independent variable.
@@ -313,7 +316,7 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     )
 
 
-def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
+def make_quizzes(seed: int, model: str) -> dict[str, tuple]:
     """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
 
     Parameters
@@ -331,7 +334,7 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
 
-def probe_seeds(seeds: range) -> "list[int]":
+def probe_seeds(seeds: range) -> list[int]:
     """Return the ``PROBE_SEEDS`` evenly spaced seeds to probe, sorted and deduplicated.
 
     Includes both endpoints; ``PROBE_SEEDS`` must be at least 2.
@@ -428,7 +431,7 @@ EXPERIMENT = InductionExperiment(
 )
 
 
-def selected_models() -> "tuple[str, ...]":
+def selected_models() -> tuple[str, ...]:
     """Return the spec keys to run: ``INDUCTION_MODELS``, or all of ``MODELS``.
 
     Canonical order keeps lane selection deterministic; invalid selections fail.
@@ -451,7 +454,7 @@ def selected_models() -> "tuple[str, ...]":
     return tuple(m for m in MODELS if m in chosen)
 
 
-def main(argv: "list[str] | None" = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     """Warm tokenizers, derive budgets, provision, run, and summarize: the entry point.
 
     Provisions only when selected models have outstanding replicates.

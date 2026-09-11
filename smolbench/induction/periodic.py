@@ -10,11 +10,8 @@ from types import MappingProxyType
 from typing import (
     Callable,
     Collection,
-    Dict,
     Iterable,
     Mapping,
-    Optional,
-    Tuple,
     TypeAlias,
 )
 
@@ -53,8 +50,8 @@ __all__ = [
 Label: TypeAlias = str
 Period: TypeAlias = int
 CompoundLabel: TypeAlias = str
-PeriodToLabel: TypeAlias = Dict[Period, Label]
-PosToCompound: TypeAlias = Dict[int, CompoundLabel]
+PeriodToLabel: TypeAlias = dict[Period, Label]
+PosToCompound: TypeAlias = dict[int, CompoundLabel]
 
 
 @dataclass(frozen=True)
@@ -68,7 +65,7 @@ class PeriodicConfig:
     # Must not occur in a label.
     sep: str = "|"
     # Explicit periods prevent default lcm jumps beyond context windows.
-    periods: Tuple[int, ...] | None = None
+    periods: tuple[int, ...] | None = None
     # Pins explicit-period sequence length; otherwise periods must be coprime.
     expect_seq_len: int | None = None
 
@@ -141,7 +138,7 @@ class PeriodicConfig:
 _LABEL_CHARSET: str = string.ascii_lowercase
 
 
-def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
+def _periods_of(config: PeriodicConfig) -> tuple[int, ...]:
     """Return the harmonic periods this config asks for, in ascending order.
 
     Parameters
@@ -151,7 +148,7 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
 
     Returns
     -------
-    Tuple[int, ...]
+    tuple[int, ...]
         Harmonic periods in ascending order.
     """
     if config.periods is None:
@@ -159,7 +156,7 @@ def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
     return tuple(sorted(config.periods))
 
 
-def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
+def generate_sequence(config: PeriodicConfig) -> tuple[PeriodToLabel, PosToCompound]:
     """Generate the period-to-label and position-to-compound mappings.
 
     Parameters
@@ -169,7 +166,7 @@ def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompo
 
     Returns
     -------
-    Tuple[PeriodToLabel, PosToCompound]
+    tuple[PeriodToLabel, PosToCompound]
         Period-to-label and position-to-compound mappings.
     """
     periods = _periods_of(config)
@@ -215,7 +212,7 @@ class Condition:
     """Specify an arm's context, padding target, and range handling."""
 
     context: Callable[[Contexts], str]
-    match_tokens_to: Optional[str] = None
+    match_tokens_to: str | None = None
     omit_range: bool = False
 
 
@@ -235,7 +232,7 @@ CONDITIONS: Mapping[str, Condition] = MappingProxyType(
 
 
 # Values that range-free prompts must not reveal.
-RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
+RANGE_KEYS: tuple[str, ...] = ("seq_len",)
 
 
 def _resolve_arm_template(
@@ -281,7 +278,7 @@ _MIN_SEARCHABLE_RANGE_VALUE_LEN: int = 2
 
 
 def _verify_no_range_leak(
-    name: str, query: Dict[str, str], template: string.Template, rendered: str
+    name: str, query: dict[str, str], template: string.Template, rendered: str
 ) -> None:
     """Raise if `template` or `rendered` reveals any of ``RANGE_KEYS``'s values.
 
@@ -292,7 +289,7 @@ def _verify_no_range_leak(
     ----------
     name : str
         Name of the information condition.
-    query : Dict[str, str]
+    query : dict[str, str]
         Query substitutions whose range values must remain hidden.
     template : string.Template
         Template whose placeholders must not expose range values.
@@ -347,7 +344,6 @@ def get_periodic_prompts(
     ValueError
         Before rendering, if a condition's token target cannot be satisfied.
     """
-    # Validate before rendering to avoid partial output.
     for name, condition in conditions.items():
         target = condition.match_tokens_to
         if target is None:
@@ -379,8 +375,8 @@ def get_periodic_prompts(
     for query, answer in prompter.query_gen(
         period_to_label, pos_to_compound, config.seed
     ):
-        prompts: Dict[str, str] = {}
-        token_counts: Dict[str, int] = {}
+        prompts: dict[str, str] = {}
+        token_counts: dict[str, int] = {}
 
         for name, condition in unpadded:
             template = _resolve_arm_template(name, condition, prompter)
@@ -421,7 +417,7 @@ def _get_periodic_quizzes(
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition],
     qna_cls: type[QnA],
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap periodic prompts in the requested question type.
 
     Parameters
@@ -439,7 +435,7 @@ def _get_periodic_quizzes(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
@@ -457,7 +453,7 @@ def get_periodic_quiz(
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes, keyed by condition name.
 
     Parameters
@@ -473,7 +469,7 @@ def get_periodic_quiz(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, ToF)
@@ -485,7 +481,7 @@ def get_periodic_numeric_quiz(
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes, keyed by condition name.
 
     Parameters
@@ -501,7 +497,7 @@ def get_periodic_numeric_quiz(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, Numeric)
@@ -515,7 +511,7 @@ def tof_membership_query_gen(
     period_to_label: PeriodToLabel,
     pos_to_compound: PosToCompound,
     seed: int,
-) -> Iterable[Tuple[Dict[str, str], bool]]:
+) -> Iterable[tuple[dict[str, str], bool]]:
     """Yield True/False queries of the form "Does label appear at position pos?"
 
     Parameters
@@ -529,7 +525,7 @@ def tof_membership_query_gen(
 
     Yields
     ------
-    Tuple[Dict[str, str], bool]
+    tuple[dict[str, str], bool]
         Sampled position-label substitutions paired with their Boolean answers.
     """
     rng = np.random.default_rng(seed)
@@ -560,7 +556,7 @@ def numeric_count_query_gen(
     period_to_label: PeriodToLabel,
     pos_to_compound: PosToCompound,
     seed: int,
-) -> Iterable[Tuple[Dict[str, str], int]]:
+) -> Iterable[tuple[dict[str, str], int]]:
     """Yield count queries of the form "How many positions 1..seq_len contain label?"
 
     Ignores ``seed`` to share the query-generator protocol; config labels remain seeded.
@@ -576,7 +572,7 @@ def numeric_count_query_gen(
 
     Yields
     ------
-    Tuple[Dict[str, str], int]
+    tuple[dict[str, str], int]
         Label and sequence-length substitutions paired with their counts.
     """
     seq_len = max(pos_to_compound.keys())

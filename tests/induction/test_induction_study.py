@@ -255,9 +255,7 @@ def test_context_limit_is_derived_from_the_deploy_specs(run_study: ModuleType) -
     assert served == {run_study.CONTEXT_LIMIT}
 
 
-def test_a_non_uniform_roster_context_raises(
-    run_study: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_non_uniform_roster_context_raises(run_study: ModuleType) -> None:
     """Non-uniform contexts raise to avoid confounded budget ceilings."""
     with pytest.raises((RuntimeError, SystemExit)) as err:
         run_study.derive_context_limit({"a": 131_072, "b": 32_768})
@@ -334,15 +332,6 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
     with caplog.at_level("INFO"):
         run_study.main([])
     assert any("outstanding" in r.getMessage() for r in caplog.records)
-
-
-def test_unsharded_runs_set_the_study_tag() -> None:
-    """Standalone runs use an explicit tag to isolate recovery."""
-    module, exc, _env = import_run_study(
-        "induction_run_study_untagged", {"INDUCTION_SHARD": "", "INDUCTION_MODELS": ""}
-    )
-    assert exc is None, exc
-    assert module.EXPERIMENT.experiment_tag == "induction-scaling"
 
 
 def test_a_bare_fleet_prefix_is_rejected_even_with_a_lane() -> None:

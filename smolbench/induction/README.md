@@ -38,5 +38,5 @@ Each seed drives quiz and decoding randomness. Recreate prompts with
 
 ### Offline vs. billed methods
 
-`summarize()` and `.cot_chain_lengths()` read stored marks. Provisioning,
-running, status, and teardown use billed EC2 instances.
+`summarize()` reads stored marks. Provisioning, running, status, and teardown
+use billed EC2 instances.

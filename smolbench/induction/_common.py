@@ -10,11 +10,8 @@ from typing import (
     Any,
     Callable,
     Collection,
-    Dict,
     Iterable,
     Mapping,
-    Optional,
-    Tuple,
 )
 
 import numpy as np
@@ -35,9 +32,9 @@ class Prompter:
     #: Prompt template.
     template: string.Template
     #: Query generator yielding substitutions and answers.
-    query_gen: Callable[..., Iterable[Tuple[Dict[str, str], Any]]]
+    query_gen: Callable[..., Iterable[tuple[dict[str, str], Any]]]
     #: Position-range-free template; required by range-omitting conditions.
-    range_free_template: Optional[string.Template] = None
+    range_free_template: string.Template | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,30 +52,30 @@ class RenderedQuery:
     answer: Answer
 
 
-def build_substitution(query: Dict[str, str], positive_info: str) -> Dict[str, str]:
+def build_substitution(query: dict[str, str], positive_info: str) -> dict[str, str]:
     """Merge query substitutions with arm ``positive_info``.
 
     ``positive_info`` wins collisions so arms cannot collapse into one.
 
     Parameters
     ----------
-    query : Dict[str, str]
+    query : dict[str, str]
         Query substitutions to merge.
     positive_info : str
         Arm-specific positive-information context.
 
     Returns
     -------
-    Dict[str, str]
+    dict[str, str]
         A fresh dict, so callers may mutate it further.
     """
     return query | {"positive_info": positive_info}
 
 
 def context_renderer(
-    prompter: "Prompter",
-    query: Dict[str, str],
-    template: Optional[string.Template] = None,
+    prompter: Prompter,
+    query: dict[str, str],
+    template: string.Template | None = None,
 ) -> Callable[[str], str]:
     """Build a deterministic ``context -> prompt`` renderer.
 
@@ -86,9 +83,9 @@ def context_renderer(
     ----------
     prompter : Prompter
         Prompter supplying the default template.
-    query : Dict[str, str]
+    query : dict[str, str]
         Query substitutions for each rendering.
-    template : Optional[string.Template], optional
+    template : string.Template | None, optional
         Template to render.
 
     Returns
@@ -168,7 +165,7 @@ def random_labels(
     seed: int,
     charset: Collection[str],
     min_length: int = 0,
-) -> Tuple[str, ...]:
+) -> tuple[str, ...]:
     """Generate deterministic unique labels for a benchmark configuration.
 
     Label length includes safety headroom above the unique-label minimum.
@@ -186,7 +183,7 @@ def random_labels(
 
     Returns
     -------
-    Tuple[str, ...]
+    tuple[str, ...]
         Generated labels.
     """
     # A one-label configuration must not generate an empty label.
@@ -206,7 +203,7 @@ def quizzes_from_prompts(
     prompts: Iterable[RenderedQuery],
     qna_cls: type[QnA],
     conditions: Iterable[str],
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap rendered queries into one ``Quiz`` per condition.
 
     Raise early for missing conditions.
@@ -222,11 +219,11 @@ def quizzes_from_prompts(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     condition_names = tuple(conditions)
-    quizzes: Dict[str, list] = {name: [] for name in condition_names}
+    quizzes: dict[str, list] = {name: [] for name in condition_names}
     for rendered in prompts:
         for name in condition_names:
             if name not in rendered.prompts:

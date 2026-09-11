@@ -177,7 +177,7 @@ def test_provision_applies_env_prints_summary_and_returns_state(
 
 
 def test_offline_delegates(exp: InductionExperiment) -> None:
-    """Delegate summaries and default CoT tag to ``cot``."""
+    """Delegate ``summarize`` to the harness."""
     recorded = []
 
     class _Recorder:

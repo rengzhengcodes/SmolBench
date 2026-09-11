@@ -10,11 +10,11 @@ from types import ModuleType
 
 import pytest
 from conftest import StubTokenizer, import_run_study
+from tests.induction._periodic import PERIODIC_TMPL, POSITIVE_ARMS
 
 from smolbench.evals import Quiz
 from smolbench.induction._common import Prompter as PeriodicPrompter
 from smolbench.induction.periodic import (
-    CONDITIONS,
     PeriodicConfig,
     get_periodic_numeric_quiz,
     get_periodic_quiz,
@@ -25,10 +25,6 @@ from tests._paths import FIXTURES
 
 GOLDEN = json.loads((FIXTURES / "golden_quizzes.json").read_text())
 
-# Covers every generator placeholder.
-PERIODIC_TMPL = string.Template(
-    "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
-)
 PERIODIC_TOF_TMPL = string.Template(
     "CTX:\n$positive_info\nQ: Does position $pos include '$label'? True/False."
 )
@@ -48,10 +44,6 @@ def assert_matches(key: str, quizzes: dict) -> None:
     """Assert generated quizzes match the pinned golden hash."""
     got = {arm: quiz_hash(quiz) for arm, quiz in quizzes.items()}
     assert got == GOLDEN[key], f"generation drifted from golden {key}"
-
-
-#: Excludes ``zero``; production pins cover it with a range-free template.
-POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 
 # Offline tokenizer used to size the noise arm.
@@ -92,7 +84,7 @@ def run_study() -> ModuleType:
     return module
 
 
-def production_hashes(run_study: ModuleType, seed: int) -> "dict[str, str]":
+def production_hashes(run_study: ModuleType, seed: int) -> dict[str, str]:
     """Hash all four production arms for `seed`, under the offline stub tokenizer."""
     quizzes = run_study.make_quizzes(seed, PRODUCTION_MODEL)
     assert tuple(quizzes) == PRODUCTION_ARMS, tuple(quizzes)
@@ -134,7 +126,7 @@ def test_production_arms_that_ignore_the_tokenizer(
 
     try:
         other = TiktokenTokenizer("cl100k_base")
-    except Exception as exc:  # noqa: BLE001 -- ImportError, network, cache miss
+    except Exception as exc:  # ImportError, network, or cache miss
         pytest.skip(f"tiktoken cl100k_base unavailable offline: {exc}")
 
     monkeypatch.setattr(run_study, "for_model", lambda model: TOKENIZER)
