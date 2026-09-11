@@ -132,7 +132,7 @@ class Experiment:
         Parameters
         ----------
         model : str
-            must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
+            Must be a key of both ``archetype_tags`` and ``ec2.EC2_DEPLOY_SPECS``.
         extra_args : Optional[dict], optional
             Arguments forwarded to ``run_replicates``.
         max_parallel : Optional[int], optional
