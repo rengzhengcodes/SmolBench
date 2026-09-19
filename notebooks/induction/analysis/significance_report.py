@@ -395,6 +395,7 @@ def main() -> None:
             }
         )
 
+    pad_lanes = {r["model"] for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"])}
     # Numerator and denominator share one basis: matched-arm rows on common seeds.
     noise_over = [r for r in pad_rows if r["rate_n"] >= COLLAPSE_THRESHOLD]
     print(
@@ -442,9 +443,9 @@ def main() -> None:
             f"{row['model']:13s} {row['rate_i']:8.1%} {row['rate_n']:8.1%} "
             f"{delta:+8.1%} {empty:12.1%} {row['n_common']:4d}  {verdict}"
         )
-    n_pad = sum(1 for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"]))
+    n_pad_lanes = len(pad_lanes)
     print(
-        f"\n=> The pad itself pushes {n_pad} of {len(pad_rows)} lanes over the "
+        f"\n=> The pad itself pushes {n_pad_lanes} of {len(pad_rows)} lanes over the "
         f"{COLLAPSE_THRESHOLD:.0%} criterion. This is a\n   RESULT: "
         f"whitespace padding to a matched token count is not inert, it "
         f"destroys\n   the output contract in a substantial minority of "
@@ -530,19 +531,34 @@ def main() -> None:
                 f"(item {r['p_item']:.2e}){tag(r)}"
             )
     n_flag = sum(1 for r in sel if tag(r))
+    n_pad = sum(
+        1
+        for r in sel
+        if {r["key_a"][1], r["key_b"][1]} == {"extens", "noise_intens"}
+        and r["key_a"][0] in pad_lanes
+    )
     # TWO-MECHANISM needs findings touching a collapsed cell; the branches separate that case.
     print(
         f"\n  [COLLAPSE] {n_flag} of {len(sel)} findings touch a cell at or "
         f"above {COLLAPSE_THRESHOLD:.0%}\n      non-compliance.",
         end="",
     )
-    if n_flag:
+    if n_pad:
         print(
-            " Read together with the census above: the "
+            f" {n_pad} of them are extens-vs-noise findings on a lane the pad "
+            "itself pushed over the criterion. Read together with the census "
+            "above: the "
             "extens-vs-noise\n      story is TWO-MECHANISM -- an information "
             "/ label-density effect where the noise\n      arm stays "
             "well-formed, and a padding-robustness collapse (mechanically\n  "
             "    extens-higher) where it does not."
+        )
+    elif n_flag:
+        print(
+            " None of them is an extens-vs-noise finding on a lane the pad "
+            "itself pushed over the criterion, so the annotation names a "
+            "format caveat on those contrasts and this report offers no "
+            "evidence for a second, padding-robustness mechanism."
         )
     elif sel:
         print(
@@ -563,14 +579,41 @@ def main() -> None:
     # ---- zero-arm controls -------------------------------------------------
     floor = [i for i, r in enumerate(rows) if r["kind"] == "arm-vs-floor"]
     zz = [i for i, r in enumerate(rows) if r["kind"] == "zero-vs-zero"]
+    passing, reversed_ = [], []
     fails = [rows[i] for i in floor if not hp[i]]
+    for i in floor:
+        r = rows[i]
+        info_acc, zero_acc = (
+            (r["acc_b"], r["acc_a"])
+            if r["key_a"][1] == "zero"
+            else (r["acc_a"], r["acc_b"])
+        )
+        if hp[i]:
+            (passing if info_acc > zero_acc else reversed_).append(r)
     print(f"\n{'=' * 78}\nZERO-ARM CONTROLS\n{'=' * 78}")
     print(
         f"{len(floor)} arm-vs-floor positive controls (an informative arm "
-        f"against the chance\nbaseline): {sum(hp[i] for i in floor)} "
-        f"significant. A failure here is not a broken pipeline -- it is an "
-        "arm\nthat scores no better than an empty context."
+        f"against the chance\nbaseline): {len(passing)} significant with the "
+        f"informative arm AHEAD, {len(reversed_)} significant\nbut REVERSED "
+        f"(informative arm below the empty-context floor), {len(fails)} not "
+        "rejected.\nThe test is two-sided: a non-rejection is not a broken "
+        "pipeline and not a tie -- it is an\narm not shown to beat an empty "
+        "context at this depth."
     )
+    for r in sorted(
+        reversed_,
+        key=lambda r: -(r["acc_b"] if r["key_a"][1] == "zero" else r["acc_a"]),
+    ):
+        info_acc, zero_acc = (
+            (r["acc_b"], r["acc_a"])
+            if r["key_a"][1] == "zero"
+            else (r["acc_a"], r["acc_b"])
+        )
+        note = tag(r)
+        print(
+            f"  REVERSED {r['label']:52s} {info_acc:.3f} vs floor "
+            f"{zero_acc:.3f}   p={r['p_cluster']:.2e}{note}"
+        )
     for r in sorted(fails, key=lambda r: -r["acc_a"]):
         note = tag(r)
         print(
@@ -594,12 +637,7 @@ def main() -> None:
             # The informative arm is identified by its info label, not position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
             # Explicit None test: an unmeasured arm cannot support the padding explanation.
-            info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
-            if (
-                info_key[1] == "noise_intens"
-                and info_rate is not None
-                and info_rate >= COLLAPSE_THRESHOLD
-            ):
+            if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
                 qualifying.append(r)
             else:
                 unexplained.append(r)
@@ -617,10 +655,13 @@ def main() -> None:
             print(
                 f"\n  {len(unexplained)} of {len(fails)} failures are NOT "
                 f"explained by padding: the informative arm\n  is either not a "
-                f"noise arm, or is a noise arm measured BELOW the "
-                f"{COLLAPSE_THRESHOLD:.0%} criterion,\n  or was never measured "
-                f"at all. Each is an arm that scores no better than an\n  empty "
-                f"context while the census has no collapse to blame it on:"
+                f"noise arm, or a noise arm whose lane the pad did NOT carry "
+                f"over the "
+                f"{COLLAPSE_THRESHOLD:.0%} criterion (its unpadded `intens` arm "
+                f"was already at or above it, or its noise arm is below it, or "
+                f"a rate was never measured). Each is an arm not shown to beat "
+                f"an\n  empty context while the census has no padding collapse "
+                f"to blame it on:"
             )
             for r in sorted(unexplained, key=lambda r: -r["acc_a"]):
                 print(f"    {r['label']}")
@@ -647,11 +688,11 @@ def main() -> None:
     print(f"\n{'=' * 78}\nNOT significant: {len(ns)} of {tot} findings")
     if ceiling:
         print(
-            f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)} -- "
-            f"these are ties by\n  construction, not underpowered: "
-            f"{n_zero_disc} of them have ZERO discordant items, where\n  no "
-            f"replicate count can separate them (see the +/-0.20 equivalence "
-            f"decision)."
+            f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)}. "
+            f"{n_zero_disc} of them have ZERO discordant items:\n  exact ties "
+            f"that no replicate count can separate (see the +/-0.20 "
+            f"equivalence decision);\n  the other {len(ceiling) - n_zero_disc} "
+            f"have discordant items and are UNRESOLVED at this depth, not ties."
         )
     else:
         # States the standing alternative rather than printing a "0 -- these are ties" line.

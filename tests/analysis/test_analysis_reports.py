@@ -34,6 +34,10 @@ WEAK_MODEL = "min3_3b"
 SKEW_MODEL = "exaone_32b"
 #: Byte copy creates an exact tie.
 TIED_MODEL = "nemo3_30b"
+#: Model whose informative arm is deliberately below its empty-context floor.
+REVERSED_MODEL = "ds_flash"
+#: Model whose collapse annotation is not caused by padding.
+CAVEAT_MODEL = "ds_flash"
 
 _SKEW_SPLIT = 10
 
@@ -93,6 +97,27 @@ def _clean_profile(model: str, info: str) -> tuple[float, float, str, range]:
     return (0.10 if info == "zero" else 0.99), 0.0, "empty", seeds
 
 
+def _reversed_profile(model: str, info: str) -> tuple[float, float, str, range]:
+    seeds = range(DEEP_DEPTH)
+    if model == REVERSED_MODEL and info == "intens":
+        return 0.10, 0.0, "empty", seeds
+    if model == REVERSED_MODEL and info == "zero":
+        return 0.90, 0.0, "empty", seeds
+    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
+
+
+def _ceiling_profile(model: str, info: str) -> tuple[float, float, str, range]:
+    seeds = range(DEEP_DEPTH)
+    return (0.10 if info == "zero" else 0.97), 0.0, "empty", seeds
+
+
+def _caveat_profile(model: str, info: str) -> tuple[float, float, str, range]:
+    seeds = range(DEEP_DEPTH)
+    if model == CAVEAT_MODEL and info == "intens":
+        return 0.50, 0.50, "empty", seeds
+    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
+
+
 @pytest.fixture(scope="session")
 def shallow_tree(
     tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
@@ -125,7 +150,50 @@ def clean_tree(
 ) -> Path:
     """16 seeds, every informative arm at 0.99 and compliant: all ties, no collapse."""
     root = tmp_path_factory.mktemp("clean")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _clean_profile)
+    source = (power_analysis.MODELS[0], "intens")
+    copies = {
+        (model, info): source
+        for model in power_analysis.MODELS
+        for info in power_analysis.INFOS
+        if info != "zero" and (model, info) != source
+    }
+    build_tree(
+        root,
+        power_analysis.MODELS,
+        power_analysis.INFOS,
+        _clean_profile,
+        copies=copies,
+    )
+    return root
+
+
+@pytest.fixture(scope="session")
+def reversed_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """Build a tree with one significant informative arm below its floor."""
+    root = tmp_path_factory.mktemp("reversed")
+    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _reversed_profile)
+    return root
+
+
+@pytest.fixture(scope="session")
+def ceiling_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """Build a tree with ceiling pairs that include discordances."""
+    root = tmp_path_factory.mktemp("ceiling")
+    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _ceiling_profile)
+    return root
+
+
+@pytest.fixture(scope="session")
+def caveat_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """Build a tree with collapse findings but no padding crossing."""
+    root = tmp_path_factory.mktemp("caveat")
+    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _caveat_profile)
     return root
 
 
@@ -183,6 +251,31 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
     # ... and the compliant, non-noise failure is named below it.
     assert WEAK_MODEL in unexplained
     assert WEAK_MODEL not in explained.rsplit("These ", 1)[-1]
+
+
+def test_reversed_controls_are_not_counted_as_passing(
+    report: Callable[[Path], str], reversed_tree: Path
+) -> None:
+    """A significant control below its floor is reported as reversed, not ahead."""
+    out = report(reversed_tree)
+    controls = out.split("ZERO-ARM CONTROLS", 1)[1]
+    reversed_lines = [
+        line for line in controls.splitlines() if line.startswith("  REVERSED")
+    ]
+    assert any(
+        f"[{REVERSED_MODEL}] intens vs zero" in line for line in reversed_lines
+    ), reversed_lines
+    match = re.search(
+        r"(\d+) arm-vs-floor positive controls.*?: (\d+) significant with the "
+        r"informative arm AHEAD, (\d+) significant\nbut REVERSED .*?, "
+        r"(\d+) not rejected\.",
+        controls,
+        re.DOTALL,
+    )
+    assert match, controls
+    total, passing, reversed_count, fails = map(int, match.groups())
+    assert passing == total - reversed_count - fails
+    assert "scores no better" not in controls
 
 
 def test_replicate_depth_gate_uses_the_shallowest_lane(
@@ -359,6 +452,20 @@ def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
     assert "TWO-MECHANISM" in report(collapse_tree)
 
 
+def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
+    report: Callable[[Path], str], caveat_tree: Path
+) -> None:
+    """A collapse annotation without a pad crossing cannot support two mechanisms."""
+    out = report(caveat_tree)
+    match = re.search(
+        r"\[COLLAPSE\] (\d+) of (\d+) findings touch a cell at or above",
+        out,
+    )
+    assert match and int(match.group(1)) > 0, out
+    assert "TWO-MECHANISM" not in out
+    assert "no evidence for a second" in out
+
+
 def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     report: Callable[[Path], str], collapse_tree: Path, clean_tree: Path
 ) -> None:
@@ -374,6 +481,33 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     tail = clean.split("CEILING pairs", 1)[1]
     # A measured count of zero-discordant ceiling pairs, not the word "many".
     assert re.search(r"\d+ .{0,40}zero discordant", tail, re.IGNORECASE), tail[:600]
+
+
+def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
+    report: Callable[[Path], str], ceiling_tree: Path, clean_tree: Path
+) -> None:
+    """Ceiling non-rejections distinguish exact ties from unresolved pairs."""
+    out = report(ceiling_tree)
+    line = next(ln for ln in out.splitlines() if "CEILING pairs" in ln)
+    match = re.search(
+        r"CEILING pairs .*: (\d+)\. (\d+) of them have ZERO discordant items",
+        line,
+    )
+    assert match, line
+    ceiling_count, zero_count = map(int, match.groups())
+    assert ceiling_count > 0
+    assert "UNRESOLVED" in out
+    assert "ties by construction" not in out
+    assert zero_count < ceiling_count
+
+    clean = report(clean_tree)
+    clean_line = next(ln for ln in clean.splitlines() if "CEILING pairs" in ln)
+    clean_match = re.search(
+        r"CEILING pairs .*: (\d+)\. (\d+) of them have ZERO discordant items",
+        clean_line,
+    )
+    assert clean_match, clean_line
+    assert clean_match.group(1) == clean_match.group(2)
 
 
 # ===========================================================================
