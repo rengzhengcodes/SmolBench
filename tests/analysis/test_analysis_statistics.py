@@ -341,7 +341,7 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
         multiplicity_sim.dump("second")
 
     assert json.loads(target.read_text()) == {"first": 1}
-    assert not target.with_suffix(".json.tmp").exists()
+    assert [p.name for p in tmp_path.iterdir()] == [target.name]
 
 
 def test_contrast_row_handles_empty_drop_invalid_pairs(

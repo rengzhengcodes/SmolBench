@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -89,13 +90,15 @@ def dump(tag: str) -> None:
         Checkpoint label written to the log.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = OUT_PATH.with_suffix(".json.tmp")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=OUT_PATH.name + ".", suffix=".tmp", dir=OUT_PATH.parent
+    )
     try:
-        with open(tmp_path, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(OUT, fh, indent=2, default=float)
-        os.replace(tmp_path, OUT_PATH)
+        os.replace(tmp_name, OUT_PATH)
     except BaseException:
-        tmp_path.unlink(missing_ok=True)
+        Path(tmp_name).unlink(missing_ok=True)
         raise
     print(f"[checkpoint written after {tag}]", flush=True)
 
