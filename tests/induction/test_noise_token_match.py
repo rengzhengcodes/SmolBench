@@ -1,9 +1,10 @@
 """Test whitespace-padded, token-matched induction noise prompts."""
 
-import string
+import difflib
 
 import pytest
 from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
+from tests.induction._periodic import PERIODIC_TMPL, POSITIVE_ARMS
 
 from smolbench.evals.tokenization import (
     WHITESPACE_UNITS,
@@ -14,19 +15,12 @@ from smolbench.evals.tokenization import (
 from smolbench.induction._common import Prompter as PeriodicPrompter
 from smolbench.induction._common import context_renderer
 from smolbench.induction.periodic import (
-    CONDITIONS,
     PeriodicConfig,
     get_periodic_numeric_quiz,
     numeric_count_query_gen,
 )
 
-PERIODIC_TMPL = string.Template(
-    "CTX:\n$positive_info\nQ: How many of positions 1..$seq_len include '$label'?"
-)
 CONTEXT = "Every 3 positions write gerbil.\n"
-
-#: Exclude range-free zero arm: these fixtures use a ranged template.
-POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 
 def tiktoken_tokenizer(encoding_name: str) -> TiktokenTokenizer:
@@ -34,20 +28,17 @@ def tiktoken_tokenizer(encoding_name: str) -> TiktokenTokenizer:
 
     try:
         return TiktokenTokenizer(encoding_name)
-    except Exception as exc:  # noqa: BLE001 -- ImportError, network, cache miss
+    except Exception as exc:  # ImportError, network, or cache miss
         pytest.skip(f"tiktoken {encoding_name} unavailable offline: {exc}")
         raise
 
 
 def _render() -> str:
-    return context_renderer(
-        PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-        {"seq_len": "60", "label": "gerbil"},
-    )
+    return context_renderer(PERIODIC_TMPL, {"seq_len": "60", "label": "gerbil"})
 
 
 @pytest.fixture(params=["stub", "cl100k_base", "o200k_base"])
-def tokenizer(request: pytest.FixtureRequest) -> "StubTokenizer | TiktokenTokenizer":
+def tokenizer(request: pytest.FixtureRequest) -> StubTokenizer | TiktokenTokenizer:
     """Provide tokenizers for matching tests."""
     if request.param == "stub":
         return StubTokenizer()
@@ -55,7 +46,7 @@ def tokenizer(request: pytest.FixtureRequest) -> "StubTokenizer | TiktokenTokeni
 
 
 def test_noise_prompt_matches_extens_token_count(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+    tokenizer: StubTokenizer | TiktokenTokenizer,
 ) -> None:
     """Match each noise prompt to extens token count."""
     quizzes = get_periodic_numeric_quiz(
@@ -75,7 +66,7 @@ def test_noise_prompt_matches_extens_token_count(
 
 
 def test_pad_adds_only_whitespace(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+    tokenizer: StubTokenizer | TiktokenTokenizer,
 ) -> None:
     """Permit only whitespace differences from intens prompts."""
     quizzes = get_periodic_numeric_quiz(
@@ -87,8 +78,21 @@ def test_pad_adds_only_whitespace(
     intens, noise = quizzes["intens"], quizzes["noise_intens"]
     assert len(intens) == len(noise) > 0
     for intens_q, noise_q in zip(intens, noise):
-        assert "".join(noise_q.prompt.split()) == "".join(intens_q.prompt.split())
-        assert len(noise_q.prompt) > len(intens_q.prompt)
+        # Strip-and-compare alone would pass if whitespace were moved rather
+        # than added, so also require the intens prompt to survive verbatim
+        # once the inserted pad is removed: the diff must be one whitespace run.
+        diff = [
+            op
+            for op in difflib.SequenceMatcher(
+                None, intens_q.prompt, noise_q.prompt, autojunk=False
+            ).get_opcodes()
+            if op[0] != "equal"
+        ]
+        assert len(diff) == 1
+        tag, i1, i2, j1, j2 = diff[0]
+        assert tag == "insert" and i1 == i2
+        assert noise_q.prompt[j1:j2].isspace()
+        assert noise_q.prompt[:j1] + noise_q.prompt[j2:] == intens_q.prompt
 
 
 def test_other_arms_are_independent_of_the_tokenizer() -> None:
@@ -111,7 +115,7 @@ def test_other_arms_are_independent_of_the_tokenizer() -> None:
 
 
 def test_choose_whitespace_unit_picks_a_linear_atom(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+    tokenizer: StubTokenizer | TiktokenTokenizer,
 ) -> None:
     """Choose a whitespace unit with near-linear token cost."""
     unit = choose_whitespace_unit(tokenizer)
@@ -137,7 +141,7 @@ def test_choose_whitespace_unit_rejects_bad_tokenizers(
 
 @pytest.mark.parametrize("target", (40, 137, 4097))
 def test_token_matched_noise_prompt_hits_arbitrary_targets(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+    tokenizer: StubTokenizer | TiktokenTokenizer,
     target: int,
 ) -> None:
     """Hit reachable token targets exactly."""
@@ -145,24 +149,37 @@ def test_token_matched_noise_prompt_hits_arbitrary_targets(
     assert tokenizer.count(prompt) == target
 
 
-def test_unmatched_targets_raise(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+def test_a_target_below_the_unpadded_prompt_raises(
+    tokenizer: StubTokenizer | TiktokenTokenizer,
 ) -> None:
-    """Reject unreachable token targets."""
+    """Padding only appends, so a target the unpadded prompt already exceeds is unreachable."""
     render = _render()
-    with pytest.raises(ValueError) as over_long:
+    base = tokenizer.count(render(CONTEXT))
+    assert base > 1
+    with pytest.raises(ValueError, match="already") as over_long:
         token_matched_noise_prompt(render, CONTEXT, 1, tokenizer)
-    # Name counts to distinguish length from search failures.
-    assert "1" in str(over_long.value)
-    with pytest.raises(ValueError):
-        token_matched_noise_prompt(
-            render, CONTEXT, 5_000, MergeEverythingTokenizer(), unit=" \t"
-        )
+    # The message names both counts so length failures read differently
+    # from search failures.
+    assert str(base) in str(over_long.value)
+
+
+def test_a_target_the_pad_unit_cannot_step_to_raises() -> None:
+    """A unit whose token cost is not fine-grained enough exhausts the search.
+
+    ``MergeEverythingTokenizer`` counts any whitespace run as one token, so
+    every pad length yields the same count: the target is above the unpadded
+    prompt, but no repetition count can reach it.
+    """
+    render = _render()
+    tokenizer = MergeEverythingTokenizer()
+    assert tokenizer.count(render(CONTEXT)) < 5_000
+    with pytest.raises(ValueError, match="could not pad"):
+        token_matched_noise_prompt(render, CONTEXT, 5_000, tokenizer, unit=" \t")
 
 
 @pytest.mark.parametrize("n", (1, 2))
 def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(
-    tokenizer: "StubTokenizer | TiktokenTokenizer",
+    tokenizer: StubTokenizer | TiktokenTokenizer,
     n: int,
 ) -> None:
     """Reject tiny configs: extens listings cannot pad their noise controls."""

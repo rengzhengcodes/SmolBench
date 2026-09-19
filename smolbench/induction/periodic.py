@@ -10,11 +10,9 @@ from types import MappingProxyType
 from typing import (
     Callable,
     Collection,
-    Dict,
     Iterable,
     Mapping,
     Optional,
-    Tuple,
     TypeAlias,
 )
 
@@ -41,7 +39,6 @@ __all__ = [
     "Condition",
     "CONDITIONS",
     "RANGE_KEYS",
-    "generate_sequence",
     "get_periodic_prompts",
     "get_periodic_quiz",
     "get_periodic_numeric_quiz",
@@ -50,11 +47,17 @@ __all__ = [
 ]
 
 
+# Domain vocabulary for the two mappings a sequence is made of. A ``Label`` is
+# one rule's word ("fizz"); a ``Period`` is how often that rule fires; a
+# ``CompoundLabel`` is the ``sep``-joined labels of every rule firing at one
+# position ("fizz|buzz" at position 6 for periods 2 and 3).
 Label: TypeAlias = str
 Period: TypeAlias = int
 CompoundLabel: TypeAlias = str
-PeriodToLabel: TypeAlias = Dict[Period, Label]
-PosToCompound: TypeAlias = Dict[int, CompoundLabel]
+#: The intensional view: each rule's period to its label.
+PeriodToLabel: TypeAlias = dict[Period, Label]
+#: The extensional view: each 1-based position to its compound label.
+PosToCompound: TypeAlias = dict[int, CompoundLabel]
 
 
 @dataclass(frozen=True)
@@ -68,9 +71,9 @@ class PeriodicConfig:
     # Must not occur in a label.
     sep: str = "|"
     # Explicit periods prevent default lcm jumps beyond context windows.
-    periods: Tuple[int, ...] | None = None
+    periods: Optional[tuple[int, ...]] = None
     # Pins explicit-period sequence length; otherwise periods must be coprime.
-    expect_seq_len: int | None = None
+    expect_seq_len: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.n < 1:
@@ -95,10 +98,15 @@ class PeriodicConfig:
                                 "set on purpose (the divisor pathway)."
                             )
             else:
+                # The divisor pathway varies extensional information density:
+                # the full period is always lcm(periods), so adding
+                # non-coprime periods that divide it grows the intensional
+                # rule list while the extensional listing stays the same
+                # length, closing the density gap between the two arms.
+                # Exact equality is required; a factorisation-based
+                # "close enough" backsolve is issue #63.
                 actual = lcm(*periods)
                 if actual != self.expect_seq_len:
-                    # This pathway exists to hold the extensional listing's
-                    # size fixed.
                     raise ValueError(
                         f"lcm(periods) is {actual}, not the declared expect_seq_len "
                         f"{self.expect_seq_len}."
@@ -134,54 +142,48 @@ class PeriodicConfig:
         for lbl in self.labels:
             if self.sep in lbl:
                 raise ValueError(f"Label '{lbl}' contains the separator '{self.sep}'.")
+            if any(ch.isdigit() for ch in lbl):
+                # Precondition of ``_verify_no_range_leak``: the rendered
+                # range-free prompt is scanned for the sequence length's
+                # digits, so no substitution may carry digits of its own.
+                raise ValueError(f"Label '{lbl}' contains a digit.")
+
+    @property
+    def ascending_periods(self) -> tuple[int, ...]:
+        """Return the harmonic periods this config asks for, in ascending order.
+
+        Returns
+        -------
+        tuple[int, ...]
+            Harmonic periods in ascending order.
+        """
+        if self.periods is None:
+            return tuple(range(1, self.n + 1))
+        return tuple(sorted(self.periods))
+
+    def generate_sequence(self) -> tuple[PeriodToLabel, PosToCompound]:
+        """Generate the period-to-label and position-to-compound mappings.
+
+        Returns
+        -------
+        tuple[PeriodToLabel, PosToCompound]
+            Period-to-label and position-to-compound mappings.
+        """
+        periods = self.ascending_periods
+        period_to_label: PeriodToLabel = {
+            k: self.labels[i] for i, k in enumerate(periods)
+        }
+        seq_len = lcm(*periods)
+        pos_to_compound: PosToCompound = {
+            pos: self.sep.join(period_to_label[k] for k in periods if pos % k == 0)
+            for pos in range(1, seq_len + 1)
+        }
+        return period_to_label, pos_to_compound
 
 
 # Lowercase labels avoid visual confusion with positions and must contain no
 # separator character (enforced in PeriodicConfig.__post_init__).
 _LABEL_CHARSET: str = string.ascii_lowercase
-
-
-def _periods_of(config: PeriodicConfig) -> Tuple[int, ...]:
-    """Return the harmonic periods this config asks for, in ascending order.
-
-    Parameters
-    ----------
-    config : PeriodicConfig
-        Configuration specifying the harmonic periods.
-
-    Returns
-    -------
-    Tuple[int, ...]
-        Harmonic periods in ascending order.
-    """
-    if config.periods is None:
-        return tuple(range(1, config.n + 1))
-    return tuple(sorted(config.periods))
-
-
-def generate_sequence(config: PeriodicConfig) -> Tuple[PeriodToLabel, PosToCompound]:
-    """Generate the period-to-label and position-to-compound mappings.
-
-    Parameters
-    ----------
-    config : PeriodicConfig
-        Configuration supplying the periods, labels, and separator.
-
-    Returns
-    -------
-    Tuple[PeriodToLabel, PosToCompound]
-        Period-to-label and position-to-compound mappings.
-    """
-    periods = _periods_of(config)
-    period_to_label: PeriodToLabel = {
-        k: config.labels[i] for i, k in enumerate(periods)
-    }
-    seq_len = lcm(*periods)
-    pos_to_compound: PosToCompound = {
-        pos: config.sep.join(period_to_label[k] for k in periods if pos % k == 0)
-        for pos in range(1, seq_len + 1)
-    }
-    return period_to_label, pos_to_compound
 
 
 def _render_intensional(period_to_label: PeriodToLabel) -> str:
@@ -228,14 +230,16 @@ CONDITIONS: Mapping[str, Condition] = MappingProxyType(
         "noise_intens": Condition(
             context=lambda c: c.intensional, match_tokens_to="extens"
         ),
-        # Omits the range because it can reveal the period-1 answer.
+        # Omits the range because it can reveal the period-1 answer. The range
+        # placeholders are ``RANGE_KEYS`` below; the range-free wording lives
+        # in ``Prompter.range_free_template``.
         "zero": Condition(context=lambda c: "", omit_range=True),
     }
 )
 
 
 # Values that range-free prompts must not reveal.
-RANGE_KEYS: Tuple[str, ...] = ("seq_len",)
+RANGE_KEYS: tuple[str, ...] = ("seq_len",)
 
 
 def _resolve_arm_template(
@@ -274,25 +278,36 @@ def _resolve_arm_template(
     return prompter.range_free_template
 
 
-# Shortest range value a rendered prompt can be searched for. Below it the decimal is a
-# substring of ordinary position-numbering prose ("counted from 1"), so only the structural
-# placeholder check speaks.
+# ``_verify_no_range_leak`` also searches the rendered prompt for the literal
+# range value (e.g. "2520"). A one-digit value such as "1" occurs in ordinary
+# wording ("Positions are counted starting from 1"), so it would be a false
+# positive; values shorter than this are checked only via placeholders.
 _MIN_SEARCHABLE_RANGE_VALUE_LEN: int = 2
 
 
 def _verify_no_range_leak(
-    name: str, query: Dict[str, str], template: string.Template, rendered: str
+    name: str, query: dict[str, str], template: string.Template, rendered: str
 ) -> None:
     """Raise if `template` or `rendered` reveals any of ``RANGE_KEYS``'s values.
 
-    A range placeholder is rejected structurally; the rendered text is searched only for
-    values too long to collide with unrelated digits.
+    ``range_free_template`` is caller-supplied, so ``omit_range`` alone does not
+    guarantee the range is gone: the template may still substitute ``$seq_len``
+    or spell the range out literally, and for the numeric count task ``seq_len``
+    is the period-1 answer. A range placeholder is rejected structurally; the
+    rendered text is searched only for values too long to collide with
+    unrelated digits.
+
+    Precondition: no non-range substitution contains a digit. Labels satisfy
+    this by construction (``_LABEL_CHARSET`` is alphabetic and
+    ``PeriodicConfig`` rejects caller labels with digits), so the only digits
+    in a rendered range-free prompt come from the template's own wording or
+    from a leaked range value.
 
     Parameters
     ----------
     name : str
         Name of the information condition.
-    query : Dict[str, str]
+    query : dict[str, str]
         Query substitutions whose range values must remain hidden.
     template : string.Template
         Template whose placeholders must not expose range values.
@@ -347,7 +362,6 @@ def get_periodic_prompts(
     ValueError
         Before rendering, if a condition's token target cannot be satisfied.
     """
-    # Validate before rendering to avoid partial output.
     for name, condition in conditions.items():
         target = condition.match_tokens_to
         if target is None:
@@ -365,7 +379,7 @@ def get_periodic_prompts(
                 "itself padded."
             )
 
-    period_to_label, pos_to_compound = generate_sequence(config)
+    period_to_label, pos_to_compound = config.generate_sequence()
 
     contexts = Contexts(
         intensional=_render_intensional(period_to_label),
@@ -374,13 +388,13 @@ def get_periodic_prompts(
 
     unpadded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is None]
     padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
-    unit: str | None = choose_whitespace_unit(tokenizer) if padded else None
+    unit: Optional[str] = choose_whitespace_unit(tokenizer) if padded else None
 
     for query, answer in prompter.query_gen(
         period_to_label, pos_to_compound, config.seed
     ):
-        prompts: Dict[str, str] = {}
-        token_counts: Dict[str, int] = {}
+        prompts: dict[str, str] = {}
+        token_counts: dict[str, int] = {}
 
         for name, condition in unpadded:
             template = _resolve_arm_template(name, condition, prompter)
@@ -396,7 +410,7 @@ def get_periodic_prompts(
             template = _resolve_arm_template(name, condition, prompter)
             target_count = token_counts[condition.match_tokens_to]
             rendered = token_matched_noise_prompt(
-                context_renderer(prompter, query, template=template),
+                context_renderer(template, query),
                 condition.context(contexts),
                 target_count,
                 tokenizer,
@@ -421,7 +435,7 @@ def _get_periodic_quizzes(
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition],
     qna_cls: type[QnA],
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap periodic prompts in the requested question type.
 
     Parameters
@@ -439,7 +453,7 @@ def _get_periodic_quizzes(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return quizzes_from_prompts(
@@ -457,7 +471,7 @@ def get_periodic_quiz(
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap :func:`get_periodic_prompts` as ``ToF`` quizzes, keyed by condition name.
 
     Parameters
@@ -473,7 +487,7 @@ def get_periodic_quiz(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, ToF)
@@ -485,7 +499,7 @@ def get_periodic_numeric_quiz(
     *,
     tokenizer: Tokenizer,
     conditions: Mapping[str, Condition] = CONDITIONS,
-) -> Dict[str, Quiz]:
+) -> dict[str, Quiz]:
     """Wrap :func:`get_periodic_prompts` as ``Numeric`` quizzes, keyed by condition name.
 
     Parameters
@@ -501,7 +515,7 @@ def get_periodic_numeric_quiz(
 
     Returns
     -------
-    Dict[str, Quiz]
+    dict[str, Quiz]
         Quizzes keyed by condition name.
     """
     return _get_periodic_quizzes(config, prompter, tokenizer, conditions, Numeric)
@@ -515,7 +529,7 @@ def tof_membership_query_gen(
     period_to_label: PeriodToLabel,
     pos_to_compound: PosToCompound,
     seed: int,
-) -> Iterable[Tuple[Dict[str, str], bool]]:
+) -> Iterable[tuple[dict[str, str], bool]]:
     """Yield True/False queries of the form "Does label appear at position pos?"
 
     Parameters
@@ -529,7 +543,7 @@ def tof_membership_query_gen(
 
     Yields
     ------
-    Tuple[Dict[str, str], bool]
+    tuple[dict[str, str], bool]
         Sampled position-label substitutions paired with their Boolean answers.
     """
     rng = np.random.default_rng(seed)
@@ -560,7 +574,7 @@ def numeric_count_query_gen(
     period_to_label: PeriodToLabel,
     pos_to_compound: PosToCompound,
     seed: int,
-) -> Iterable[Tuple[Dict[str, str], int]]:
+) -> Iterable[tuple[dict[str, str], int]]:
     """Yield count queries of the form "How many positions 1..seq_len contain label?"
 
     Ignores ``seed`` to share the query-generator protocol; config labels remain seeded.
@@ -576,7 +590,7 @@ def numeric_count_query_gen(
 
     Yields
     ------
-    Tuple[Dict[str, str], int]
+    tuple[dict[str, str], int]
         Label and sequence-length substitutions paired with their counts.
     """
     seq_len = max(pos_to_compound.keys())

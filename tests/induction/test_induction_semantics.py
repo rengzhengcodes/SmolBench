@@ -10,20 +10,17 @@ from typing import Any
 
 import pytest
 from conftest import StubTokenizer
+from tests.induction._periodic import POSITIVE_ARMS
 
 from smolbench.induction._common import Prompter
 from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
-    generate_sequence,
     get_periodic_numeric_quiz,
     get_periodic_quiz,
     numeric_count_query_gen,
     tof_membership_query_gen,
 )
-
-#: Excludes ``zero``, which requires an unavailable range-free template.
-POSITIVE_ARMS = {name: c for name, c in CONDITIONS.items() if not c.omit_range}
 
 NUM_TMPL = string.Template(
     "$positive_info\nHow many of positions 1..$seq_len include '$label'?"
@@ -35,7 +32,7 @@ TOF_TMPL = string.Template(
 
 def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
     """Check numeric answers against divisible-position tallies."""
-    period_to_label, pos_to_compound = generate_sequence(cfg)
+    period_to_label, pos_to_compound = cfg.generate_sequence()
     label_to_period = {label: period for period, label in period_to_label.items()}
     quizzes = get_periodic_numeric_quiz(
         cfg,
@@ -59,7 +56,7 @@ def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
 def test_periodic_tof_answers_match_divisibility_rule() -> None:
     """ToF answers must equal ``pos % period == 0``, identically across all three arms."""
     cfg = PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=7)
-    period_to_label, _ = generate_sequence(cfg)
+    period_to_label, _ = cfg.generate_sequence()
     label_to_period = {label: period for period, label in period_to_label.items()}
 
     quizzes = get_periodic_quiz(
@@ -104,8 +101,11 @@ def test_coprime_periods_make_sequence_length_the_product() -> None:
     assert lcm(*periods) == prod(periods)
     assert max(pos_to_compound) == prod(periods)
 
+    # Label assignment follows the sorted periods, not the order the caller
+    # wrote them in: the same periods shuffled must map to the same labels.
     shuffled = PeriodicConfig(n=6, labels=labels, seed=13, periods=(13, 1, 7, 2, 11, 3))
-    assert generate_sequence(shuffled)[0] == period_to_label
+    assert shuffled.ascending_periods == periods
+    assert shuffled.generate_sequence()[0] == period_to_label
 
 
 def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
@@ -143,9 +143,18 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
 @pytest.mark.parametrize(
     "kwargs, match",
     [
+        # "Pairwise coprime" = every pair of periods has gcd 1, so the
+        # sequence length lcm(periods) is exactly their product. Without
+        # expect_seq_len that is the only case PeriodicConfig accepts, because
+        # a shared factor silently shrinks the sequence: here gcd(2, 4) = 2, so
+        # lcm(1, 2, 4, 5) = 20, not the product 40, and the caller's mental
+        # model of the sequence length would be wrong.
         ({"n": 4, "labels": 4, "periods": (1, 2, 4, 5)}, "pairwise coprime"),
         ({"n": 4, "labels": 4, "periods": (1, 2, 3)}, "must equal n"),
         ({"n": 4, "labels": 4, "periods": (1, 3, 3, 5)}, "distinct"),
+        # Digits in a label would collide with _verify_no_range_leak's scan
+        # for the sequence length ("x12" in a length-12 zero prompt).
+        ({"n": 4, "labels": ("a", "b", "x12", "d")}, "contains a digit"),
         # Extra 11 changes the LCM.
         (
             {
@@ -223,7 +232,7 @@ def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
 def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
     """The zero arm must not leak answers through its range."""
     cfg = PeriodicConfig(n=6, labels=6, seed=5)
-    _p2l, p2c = generate_sequence(cfg)
+    _p2l, p2c = cfg.generate_sequence()
     seq_len = max(p2c)
     quizzes = _quizzes(cfg)
     zero = quizzes["zero"]
@@ -278,7 +287,13 @@ def test_an_omit_range_condition_without_its_template_is_refused() -> None:
     ],
 )
 def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
-    """Token targets must exist and cannot be padded themselves."""
+    """``match_tokens_to`` must name another, unpadded condition.
+
+    A padded arm's length comes from the arm it points at, so the target must
+    exist in the condition mapping and must not itself be padded (otherwise
+    its length would be undefined). Both misconfigurations raise, naming the
+    offending target.
+    """
     from smolbench.induction.periodic import Condition
 
     conditions = dict(CONDITIONS)
