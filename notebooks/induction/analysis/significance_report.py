@@ -293,6 +293,15 @@ def main() -> None:
         f"independent pairs. Exact (2^{mx_s} assignments enumerated by DP), "
         "deterministic,\n  and equal to exact McNemar when every cluster is a "
         "singleton.\n"
+        "  NULL ASSUMPTION: the two arms are exchangeable WITHIN a replicate. "
+        "This holds by\n  construction of the collection, not by a check here: "
+        "`ReplicateHarness.run_replicates`\n  builds every outstanding arm of a "
+        "seed from one `make_quizzes(seed, model)` call and\n  scores them in "
+        "ONE pooled `provider.evaluate(...)` request, so arms share the seed, "
+        "the\n  answer vector, the served model and its server config, and "
+        "differ only in the\n  prompt text. Arms of one seed collected in "
+        "separate runs (a partial re-collect)\n  are the only way to break "
+        "this.\n"
     )
 
     print(
