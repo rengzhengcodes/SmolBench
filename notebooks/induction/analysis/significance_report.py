@@ -470,9 +470,10 @@ def main() -> None:
             f"{key[0]:13s} {key[1]:13s} {cell['rate']:10.1%} {cell['n']:5d}  "
             f"{modes}{star}"
         )
+    n_noise_over_cells = sum(1 for k in over if k[1] == "noise_intens")
     print(
         f"\n{len(over)} of {len(census)} cells are at or above the "
-        f"{COLLAPSE_THRESHOLD:.0%} criterion; {len(noise_over)} of them are "
+        f"{COLLAPSE_THRESHOLD:.0%} criterion; {n_noise_over_cells} of them are "
         f"noise arms.\nThe criterion is applied SYMMETRICALLY to all four arms, "
         f"so non-noise arms appear here beside the noise arms."
     )

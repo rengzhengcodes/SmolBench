@@ -385,6 +385,42 @@ def fisher_check(
     return rejections / N_SIMS
 
 
+def _equivalence_power_curve(
+    common: np.ndarray,
+    delta: float,
+    rng: np.random.Generator,
+    alpha: float,
+    n_sims: int,
+) -> dict[int, float]:
+    """Estimate nested Agresti–Caffo equivalence power at every replicate count."""
+    from scipy.stats import norm
+
+    z = norm.isf(alpha)
+    trials_a = (
+        rng.random((n_sims, MAX_REPLICATES, common.size), dtype=np.float32) < common
+    )
+    trials_b = (
+        rng.random((n_sims, MAX_REPLICATES, common.size), dtype=np.float32) < common
+    )
+    cum_a = np.cumsum(trials_a, axis=1, dtype=np.int16)
+    cum_b = np.cumsum(trials_b, axis=1, dtype=np.int16)
+    curve: dict[int, float] = {}
+    for n_reps in range(1, MAX_REPLICATES + 1):
+        total = n_reps * N_HARMONICS
+        succ_a = cum_a[:, n_reps - 1].astype(np.int64)
+        succ_b = cum_b[:, n_reps - 1].astype(np.int64)
+        adj_a = (succ_a + 1) / (total + 2)
+        adj_b = (succ_b + 1) / (total + 2)
+        diff = adj_a - adj_b
+        se = np.sqrt(
+            adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2)
+        )
+        curve[n_reps] = float(
+            ((diff + z * se < delta) & (diff - z * se > -delta)).mean()
+        )
+    return curve
+
+
 def equivalence_replicates(
     rates_a: np.ndarray,
     rates_b: np.ndarray,
@@ -399,6 +435,8 @@ def equivalence_replicates(
     The interval is Agresti–Caffo: one success and one failure are added to each
     arm, and both the centre and the standard error use those adjusted
     proportions, so a saturated arm never yields a zero-width interval.
+    Power uses common random numbers across nested replicate counts and returns
+    the sustained crossing rather than a noisy first crossing.
 
     Parameters
     ----------
@@ -420,24 +458,15 @@ def equivalence_replicates(
     int | None
         Smallest replicate count reaching the requested power.
     """
-    from scipy.stats import norm
-
     common = (rates_a + rates_b) / 2.0
-    z = norm.isf(alpha)
-    for n_reps in range(1, MAX_REPLICATES + 1):
-        total = n_reps * N_HARMONICS
-        succ_a = rng.binomial(n_reps, common, size=(n_sims, common.size)).sum(axis=1)
-        succ_b = rng.binomial(n_reps, common, size=(n_sims, common.size)).sum(axis=1)
-        adj_a = (succ_a + 1) / (total + 2)
-        adj_b = (succ_b + 1) / (total + 2)
-        diff = adj_a - adj_b
-        se = np.sqrt(
-            adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2)
-        )
-        power = ((diff + z * se < delta) & (diff - z * se > -delta)).mean()
-        if power >= 0.80:
-            return n_reps
-    return None
+    curve = _equivalence_power_curve(common, delta, rng, alpha, n_sims)
+    needed = None
+    ok = True
+    for n_reps in range(MAX_REPLICATES, 0, -1):
+        ok = curve[n_reps] >= 0.80 and ok
+        if ok:
+            needed = n_reps
+    return needed
 
 
 def omnibus_power(

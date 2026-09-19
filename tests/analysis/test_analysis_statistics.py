@@ -391,6 +391,33 @@ def test_sizing_crossing_is_sustained_not_first_hit(
         power_analysis._sizing_scan.cache_clear()
 
 
+def test_equivalence_crossing_is_sustained_not_first_hit(
+    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equivalence sizing rejects a noisy first crossing."""
+
+    def fake_power_curve(
+        _common: np.ndarray,
+        _delta: float,
+        _rng: np.random.Generator,
+        _alpha: float,
+        _n_sims: int,
+    ) -> dict[int, float]:
+        return {
+            n: 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
+            for n in range(1, power_analysis.MAX_REPLICATES + 1)
+        }
+
+    monkeypatch.setattr(power_analysis, "_equivalence_power_curve", fake_power_curve)
+    rates = np.full(power_analysis.N_HARMONICS, 0.5)
+    assert (
+        power_analysis.equivalence_replicates(
+            rates, rates, 0.5, np.random.default_rng(0), n_sims=500
+        )
+        == 8
+    )
+
+
 def test_recommended_replicates_carries_censored_contrasts(
     power_analysis: ModuleType,
 ) -> None:

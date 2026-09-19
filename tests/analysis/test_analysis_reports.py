@@ -146,6 +146,16 @@ def _padding_control_profile(model: str, info: str) -> tuple[float, float, str, 
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
 
+def _shared_seed_noise_profile(
+    model: str, info: str
+) -> tuple[float, float, str, range]:
+    if model == SKEW_MODEL and info == "intens":
+        return 0.90, 0.0, "empty", range(_SKEW_SPLIT)
+    if model == SKEW_MODEL and info == "noise_intens":
+        return 0.90, 0.0, "empty", range(DEEP_DEPTH)
+    return (0.10 if info == "zero" else 0.90), 0.0, "empty", range(DEEP_DEPTH)
+
+
 @pytest.fixture(scope="session")
 def shallow_tree(
     tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
@@ -240,6 +250,21 @@ def padding_control_tree(
         copies={
             (PAD_CONTROL_MODEL, info): source for info in ("intens", "noise_intens")
         },
+    )
+    return root
+
+
+@pytest.fixture(scope="session")
+def shared_seed_noise_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """Build a lane with clean extra noise seeds absent from intens."""
+    root = tmp_path_factory.mktemp("shared-seed-noise")
+    build_tree(
+        root,
+        power_analysis.MODELS,
+        power_analysis.INFOS,
+        _shared_seed_noise_profile,
     )
     return root
 
@@ -508,6 +533,43 @@ def test_padding_intro_numerator_comes_from_the_common_seed_table(
     assert match, section[:1200]
     assert int(match.group(1)) == len(over), (over, section[:1200])
     assert int(match.group(2)) == len(rows)
+
+
+def test_all_cells_noise_count_uses_whole_cell_rates(
+    report: Callable[[Path], str],
+    significance_report: ModuleType,
+    shared_seed_noise_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The all-cells census count must not reuse common-seed padding rates."""
+    monkeypatch.setattr(
+        significance_report,
+        "compliance_census",
+        _skew_census(
+            significance_report,
+            (SKEW_MODEL, "intens"),
+            {range(_SKEW_SPLIT): (0, 9)},
+        ),
+    )
+    monkeypatch.setattr(
+        significance_report,
+        "compliance_census",
+        _skew_census(
+            significance_report,
+            (SKEW_MODEL, "noise_intens"),
+            {range(3): (9, 9)},
+        ),
+    )
+    out = report(shared_seed_noise_tree)
+    cells = re.search(
+        r"(\d+) of (\d+) cells are at or above .*?; (\d+) of them are noise arms",
+        out,
+    )
+    assert cells, out
+    assert int(cells.group(3)) == 0
+    padding = re.search(r"In (\d+) of (\d+) lanes with both arms measured", out)
+    assert padding, out
+    assert int(padding.group(1)) == 1
 
 
 def test_zero_vs_zero_controls_report_the_measured_count_only(
