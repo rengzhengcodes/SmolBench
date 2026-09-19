@@ -306,7 +306,8 @@ def _zero_template(base: string.Template) -> string.Template:
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
 
-# Derived from the roster so omissions cannot reach a billing box.
+# Derived from the roster so omissions cannot reach a billing box. Detecting
+# the toggle from each model's Hugging Face chat template instead is issue #65.
 # Ministral needs no toggle; DeepSeek spells it ``thinking``; the rest take
 # ``enable_thinking`` -- Gemma-4-* and EXAONE default thinking OFF, so their
 # True is load-bearing.

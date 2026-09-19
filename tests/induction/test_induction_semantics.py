@@ -101,7 +101,10 @@ def test_coprime_periods_make_sequence_length_the_product() -> None:
     assert lcm(*periods) == prod(periods)
     assert max(pos_to_compound) == prod(periods)
 
+    # Label assignment follows the sorted periods, not the order the caller
+    # wrote them in: the same periods shuffled must map to the same labels.
     shuffled = PeriodicConfig(n=6, labels=labels, seed=13, periods=(13, 1, 7, 2, 11, 3))
+    assert shuffled.ascending_periods == periods
     assert shuffled.generate_sequence()[0] == period_to_label
 
 
@@ -275,7 +278,13 @@ def test_an_omit_range_condition_without_its_template_is_refused() -> None:
     ],
 )
 def test_a_bad_token_target_is_refused(target: str, match: str) -> None:
-    """Token targets must exist and cannot be padded themselves."""
+    """``match_tokens_to`` must name another, unpadded condition.
+
+    A padded arm's length comes from the arm it points at, so the target must
+    exist in the condition mapping and must not itself be padded (otherwise
+    its length would be undefined). Both misconfigurations raise, naming the
+    offending target.
+    """
     from smolbench.induction.periodic import Condition
 
     conditions = dict(CONDITIONS)

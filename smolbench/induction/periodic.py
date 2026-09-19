@@ -103,6 +103,8 @@ class PeriodicConfig:
                 # non-coprime periods that divide it grows the intensional
                 # rule list while the extensional listing stays the same
                 # length, closing the density gap between the two arms.
+                # Exact equality is required; a factorisation-based
+                # "close enough" backsolve is issue #63.
                 actual = lcm(*periods)
                 if actual != self.expect_seq_len:
                     raise ValueError(
