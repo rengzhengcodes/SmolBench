@@ -636,7 +636,6 @@ def main() -> None:
         for r in fails:
             # The informative arm is identified by its info label, not position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
-            # Explicit None test: an unmeasured arm cannot support the padding explanation.
             if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
                 qualifying.append(r)
             else:
