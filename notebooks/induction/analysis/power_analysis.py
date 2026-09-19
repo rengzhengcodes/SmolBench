@@ -13,7 +13,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import ALPHA, POWER_TARGETS, SEED, fmt_r, results_dir
+from _power_common import (
+    ALPHA,
+    POWER_TARGETS,
+    SEED,
+    fmt_r,
+    results_dir,
+)
 from scipy.stats import binom, chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress

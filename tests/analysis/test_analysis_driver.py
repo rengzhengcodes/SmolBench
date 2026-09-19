@@ -16,8 +16,16 @@ import pytest
 # Fixture names register pytest fixtures.
 # pylint: disable=unused-import
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
-    DEEP_DEPTH, build_tree, extens_vs_noise, load_analysis, multiplicity_sim,
-    paired_analysis, power_analysis, repoint, significance_report)
+    DEEP_DEPTH,
+    build_tree,
+    extens_vs_noise,
+    load_analysis,
+    multiplicity_sim,
+    paired_analysis,
+    power_analysis,
+    repoint,
+    significance_report,
+)
 
 #: Exclude costly, result-free multiplicity_sim unless explicitly requested.
 CHAIN = ("power_analysis", "paired_analysis", "significance_report", "extens_vs_noise")

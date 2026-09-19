@@ -17,13 +17,20 @@ from scipy.stats import binom
 
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
+
 # The fixture names register pytest fixtures.
 # pylint: disable=unused-import
-from tests.analysis._trees import SHALLOW_DEPTH  # noqa: F401
-from tests.analysis._trees import (ANALYSIS_DIR, build_tree, extens_vs_noise,
-                                   multiplicity_sim, paired_analysis,
-                                   power_analysis, repoint,
-                                   significance_report)
+from tests.analysis._trees import (  # noqa: F401
+    ANALYSIS_DIR,
+    SHALLOW_DEPTH,
+    build_tree,
+    extens_vs_noise,
+    multiplicity_sim,
+    paired_analysis,
+    power_analysis,
+    repoint,
+    significance_report,
+)
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 

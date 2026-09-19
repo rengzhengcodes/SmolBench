@@ -22,8 +22,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from _power_common import ALPHA, SEED, results_dir
-from power_analysis import (ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY, cmh_p,
-                            cmh_stat, gcmh_stat, mcnemar_exact_p)
+from power_analysis import (
+    ALPHA_PRIMARY,
+    N_HARMONICS,
+    N_PRIMARY,
+    cmh_p,
+    cmh_stat,
+    gcmh_stat,
+    mcnemar_exact_p,
+)
 from scipy.stats import chi2
 
 K_HARM = N_HARMONICS

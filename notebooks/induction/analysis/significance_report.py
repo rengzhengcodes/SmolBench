@@ -13,10 +13,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (aligned, cmh_unpaired_p, holm,  # noqa: E402
-                             load_marks, mcnemar_exact_p, seed_diffs,
-                             signflip_exact_p)
-from power_analysis import ALPHA, MODELS, build_primary_contrasts  # noqa: E402
+from paired_analysis import (  # noqa: E402
+    aligned,
+    cmh_unpaired_p,
+    holm,
+    load_marks,
+    mcnemar_exact_p,
+    seed_diffs,
+    signflip_exact_p,
+)
+from power_analysis import (  # noqa: E402
+    ALPHA,
+    MODELS,
+    build_primary_contrasts,
+)
 from statsmodels.stats.multitest import multipletests
 
 # Import the label so a rename cannot silently read empty values as zero.

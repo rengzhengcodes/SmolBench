@@ -15,10 +15,16 @@ import pytest
 # Pytest discovers imported fixtures from module globals.
 # Fixture names register pytest fixtures.
 # pylint: disable=unused-import
-from tests.analysis._trees import SHALLOW_DEPTH  # noqa: F401
-from tests.analysis._trees import (DEEP_DEPTH, build_tree, extens_vs_noise,
-                                   paired_analysis, power_analysis, repoint,
-                                   significance_report)
+from tests.analysis._trees import (  # noqa: F401
+    DEEP_DEPTH,
+    SHALLOW_DEPTH,
+    build_tree,
+    extens_vs_noise,
+    paired_analysis,
+    power_analysis,
+    repoint,
+    significance_report,
+)
 
 #: Collapsed noise arm whose failed control is padding-driven.
 COLLAPSE_MODEL = "ds_pro"

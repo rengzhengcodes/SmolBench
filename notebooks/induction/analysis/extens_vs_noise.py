@@ -13,13 +13,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (aligned, build_primary_contrasts,  # noqa: E402
-                             cmh_unpaired_p, holm, load_marks, mcnemar_exact_p,
-                             seed_diffs, signflip_exact_p)
+from paired_analysis import (  # noqa: E402
+    aligned,
+    build_primary_contrasts,
+    cmh_unpaired_p,
+    holm,
+    load_marks,
+    mcnemar_exact_p,
+    seed_diffs,
+    signflip_exact_p,
+)
+
 # Import the owned threshold to avoid a divergent local value.
 from power_analysis import ALPHA, MODELS  # noqa: E402
-from significance_report import (COLLAPSE_THRESHOLD,  # noqa: E402
-                                 common_seed_rate, compliance_census, hochberg)
+from significance_report import (  # noqa: E402
+    COLLAPSE_THRESHOLD,
+    common_seed_rate,
+    compliance_census,
+    hochberg,
+)
 
 MECHANISMS = ("information", "noise COLLAPSED", "extens COLLAPSED", "both COLLAPSED")
 
