@@ -293,15 +293,12 @@ def main() -> None:
         f"independent pairs. Exact (2^{mx_s} assignments enumerated by DP), "
         "deterministic,\n  and equal to exact McNemar when every cluster is a "
         "singleton.\n"
-        "  NULL ASSUMPTION: the two arms are exchangeable WITHIN a replicate. "
-        "This holds by\n  construction of the collection, not by a check here: "
-        "`ReplicateHarness.run_replicates`\n  builds every outstanding arm of a "
-        "seed from one `make_quizzes(seed, model)` call and\n  scores them in "
-        "ONE pooled `provider.evaluate(...)` request, so arms share the seed, "
-        "the\n  answer vector, the served model and its server config, and "
-        "differ only in the\n  prompt text. Arms of one seed collected in "
-        "separate runs (a partial re-collect)\n  are the only way to break "
-        "this.\n"
+        "  NULL ASSUMPTION: arms are exchangeable WITHIN a replicate. The "
+        "collection guarantees\n  this, not a check here: "
+        "`ReplicateHarness.run_replicates` builds a seed's arms from one\n  "
+        "`make_quizzes(seed, model)` call and scores them in one pooled "
+        "`provider.evaluate`\n  request, so arms differ only in prompt text. "
+        "Only a partial re-collect of one seed\n  can break it.\n"
     )
 
     print(
@@ -556,34 +553,30 @@ def main() -> None:
     if n_pad:
         print(
             f" {n_pad} of them are extens-vs-noise findings on a lane the pad "
-            "itself pushed over the criterion. Read together with the census "
-            "above: the "
-            "extens-vs-noise\n      story is TWO-MECHANISM -- an information "
-            "/ label-density effect where the noise\n      arm stays "
-            "well-formed, and a padding-robustness collapse (mechanically\n  "
-            "    extens-higher) where it does not."
+            "itself pushed over the\n      criterion, so the extens-vs-noise "
+            "story is TWO-MECHANISM: an information effect\n      where the "
+            "noise arm stays well-formed, and a padding-robustness collapse "
+            "where\n      it does not."
         )
     elif n_flag:
         print(
-            " None of them is an extens-vs-noise finding on a lane the pad "
-            "itself pushed over the criterion, so the annotation names a "
-            "format caveat on those contrasts and this report offers no "
-            "evidence for a second, padding-robustness mechanism."
+            " None is an extens-vs-noise finding on a lane the pad itself "
+            "pushed over the\n      criterion: the annotation is a format "
+            "caveat, and this report offers\n      no evidence for a second, "
+            "padding-robustness mechanism."
         )
     elif sel:
         print(
-            f" Every one of the {len(sel)} findings rests on two arms\n      "
-            f"BELOW the criterion, so nothing here is mechanically forced by "
-            f"a broken\n      output contract, and this report offers no "
-            f"evidence for a second,\n      padding-robustness mechanism among "
-            f"them."
+            f" All {len(sel)} findings rest on two arms BELOW the criterion, "
+            "so no broken output\n      contract is in play and this report "
+            "offers no evidence for a second,\n      padding-robustness "
+            "mechanism."
         )
     else:
         print(
-            " There are no significant findings at all, so the\n      count "
-            "is zero for want of findings rather than for want of collapses: "
-            "this\n      report is silent on whether a second mechanism "
-            "exists."
+            " No findings are significant, so the count is zero for want of "
+            "findings, not of\n      collapses: this report is silent on a "
+            "second mechanism."
         )
 
     # ---- zero-arm controls -------------------------------------------------
@@ -602,13 +595,12 @@ def main() -> None:
             (passing if info_acc > zero_acc else reversed_).append(r)
     print(f"\n{'=' * 78}\nZERO-ARM CONTROLS\n{'=' * 78}")
     print(
-        f"{len(floor)} arm-vs-floor positive controls (an informative arm "
-        f"against the chance\nbaseline): {len(passing)} significant with the "
+        f"{len(floor)} arm-vs-floor positive controls (informative arm vs the "
+        f"chance baseline): {len(passing)} significant with the "
         f"informative arm AHEAD, {len(reversed_)} significant\nbut REVERSED "
-        f"(informative arm below the empty-context floor), {len(fails)} not "
-        "rejected.\nThe test is two-sided: a non-rejection is not a broken "
-        "pipeline and not a tie -- it is an\narm not shown to beat an empty "
-        "context at this depth."
+        f"(informative arm below the floor), {len(fails)} not rejected.\n"
+        "Two-sided test: a non-rejection is an arm not shown to beat an empty "
+        "context at this\ndepth -- not a broken pipeline and not a tie."
     )
     for r in sorted(
         reversed_,
@@ -633,12 +625,10 @@ def main() -> None:
     if fails and floor_bound:
         # Floor-bound failures are arithmetically forced and carry no information about padding.
         print(
-            f"\n  All {len(fails)} of these failures are forced by the "
-            f"resolution floor (see the\n  INCOMPLETE SYNC banner at the top "
-            f"of this report): at {depth_max} replicate seeds no\n  positive "
-            f"control could have been rejected whatever its effect size. They "
-            f"are\n  evidence about the sync, not about padding and not about "
-            f"the models."
+            f"\n  All {len(fails)} failures are forced by the resolution floor "
+            f"(see INCOMPLETE SYNC above):\n  at {depth_max} seeds no positive "
+            "control could be rejected at any effect size. They are\n  "
+            "evidence about the sync, not about padding or the models."
         )
     elif fails:
         # Partitioned: a fixed exoneration would misdescribe non-qualifying failures.
@@ -657,11 +647,9 @@ def main() -> None:
         if total:
             print(
                 f"\n  These {len(total)} of {len(fails)} failures are the "
-                f"collapse result surfacing in the controls,\n  not a pipeline "
-                f"fault: each is a noise arm the whitespace padding drove to\n"
-                f"  near-total non-compliance, so it cannot outscore an empty "
-                f"prompt. Reported\n  plainly, as part of the "
-                f"padding-robustness finding."
+                "collapse surfacing in the controls, not a\n  pipeline fault: "
+                "each is a noise arm the whitespace padding drove to\n  "
+                "near-total non-compliance, so it cannot outscore an empty prompt."
             )
         if partial:
             rates = [
@@ -679,8 +667,8 @@ def main() -> None:
                 f"\n  {len(partial)} of {len(fails)} failures are noise arms on "
                 f"a lane the pad carried over the {COLLAPSE_THRESHOLD:.0%} "
                 f"criterion, but the arm is still {compliance} "
-                f"compliant on the compared seeds, so the padding crossing is "
-                f"a caveat, not a demonstrated cause of the failed control:"
+                f"compliant on the compared seeds, so the crossing is a "
+                f"caveat, not a demonstrated cause of the failed control:"
             )
             for r in sorted(partial, key=lambda r: -r["acc_a"]):
                 info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
@@ -692,23 +680,21 @@ def main() -> None:
             # Labels listed after the sentence so the section can be split on the claim.
             print(
                 f"\n  {len(unexplained)} of {len(fails)} failures are NOT "
-                f"explained by padding: the informative arm\n  is either not a "
-                f"noise arm, or a noise arm whose lane the pad did NOT carry "
-                f"over the "
-                f"{COLLAPSE_THRESHOLD:.0%} criterion (its unpadded `intens` arm "
-                f"was already at or above it, or its noise arm is below it, or "
-                f"a rate was never measured). Each is an arm not shown to beat "
-                f"an\n  empty context while the census has no padding collapse "
-                f"to blame it on:"
+                "explained by padding: the informative arm is\n  not a noise "
+                "arm, or its lane was not carried over the "
+                f"{COLLAPSE_THRESHOLD:.0%} criterion by the pad\n  (intens "
+                "already over it, noise under it, or a rate unmeasured). Each "
+                "is an arm not\n  shown to beat an empty context with no "
+                "padding collapse to blame:"
             )
             for r in sorted(unexplained, key=lambda r: -r["acc_a"]):
                 print(f"    {r['label']}")
     n_zz_sig = sum(hp[i] for i in zz)
     print(
         f"\n{len(zz)} zero-vs-zero ladder contrasts (one model's empty-context "
-        f"baseline against\n  another's): {n_zz_sig} significant. These compare "
-        f"different models' floors, so a\n  rejection is a real between-model "
-        f"difference at zero information, not an error."
+        f"baseline against\n  another's): {n_zz_sig} significant. A rejection "
+        "is a real between-model difference at zero\n  information, not an "
+        "error."
     )
     for i in sorted(zz, key=lambda i: rows[i]["p_cluster"]):
         if hp[i]:
@@ -727,20 +713,18 @@ def main() -> None:
     if ceiling:
         print(
             f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)}. "
-            f"{n_zero_disc} of them have ZERO discordant items:\n  observed "
-            f"exact ties in this sample; additional replicates can still create "
-            f"discordances (see the +/-0.20 equivalence decision).\n  The other "
-            f"{len(ceiling) - n_zero_disc} have discordant items and are "
-            f"UNRESOLVED at this depth, not ties."
+            f"{n_zero_disc} of them have ZERO discordant items:\n  exact ties "
+            "in this sample, which more replicates could still break (see the "
+            f"+/-0.20\n  equivalence decision). The other {len(ceiling) - n_zero_disc} "
+            "have discordant items and are UNRESOLVED at\n  this depth, not ties."
         )
     else:
         # States the standing alternative rather than printing a "0 -- these are ties" line.
         print(
             f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)} -- "
-            f"so none of these\n  non-rejections is a ceiling effect. Every one "
-            f"has at least one arm below 0.95:\n  they are contrasts the "
-            f"family-corrected test could not separate at this depth,\n  not "
-            f"pairs that agree."
+            "none is a ceiling effect.\n  Every one has an arm below 0.95: "
+            "contrasts the corrected test could not separate at\n  this depth, "
+            "not pairs that agree."
         )
     print(
         f"  The cluster test also has a floor: with {min(seeds)} seeds it "

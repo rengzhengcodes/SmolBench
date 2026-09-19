@@ -94,6 +94,8 @@ PREREGISTERED_KEYS = (
     "deepseek-v3.1",
     "deepseek-v4-pro",
 )
+
+# Pinned by tag, not count, so a same-family checkpoint swap cannot pass.
 PREREGISTERED_MODELS = (
     "qwen35_27b",
     "qwen35_122b",
@@ -316,15 +318,11 @@ _SizingScan = tuple[dict[float, int | None], dict[int, float]]
 def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
     """`replicates_needed`'s memoized core, keyed on hashable rate tuples.
 
-    Common random numbers: each simulated experiment draws one Bernoulli stream of
-    `MAX_REPLICATES` trials per harmonic and arm, and the R-replicate design is its
-    first R trials. Successive R therefore share their noise, so the power curve is
-    a nested-sample estimate rather than independent draws whose sampling error
-    could reorder neighbouring R. A target's R is the sustained crossing: the
-    smallest R from which the estimated power stays at or above the target through
-    `MAX_REPLICATES`, so the maximum over contrasts powers every one of them at
-    that R. A first noisy crossing could dip back below the target at a larger R
-    set by another contrast.
+    Common random numbers: the R-replicate design is the first R trials of one
+    `MAX_REPLICATES`-long Bernoulli stream per harmonic and arm, so successive R
+    share their noise and sampling error cannot reorder neighbouring R. Each
+    target's R is the `_sustained_crossing`, so the maximum over contrasts powers
+    every contrast at that R.
     """
     a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
@@ -341,12 +339,22 @@ def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
         power = float((cmh_stat(succ_a, succ_b, n_reps) > crit).mean())
         curve[n_reps] = power
     for target in POWER_TARGETS:
-        ok = True
-        for n_reps in range(MAX_REPLICATES, 0, -1):
-            ok = curve[n_reps] >= target and ok
-            if ok:
-                needed[target] = n_reps
+        needed[target] = _sustained_crossing(curve, target)
     return needed, curve
+
+
+def _sustained_crossing(curve: dict[int, float], target: float) -> int | None:
+    """Return the smallest R from which `curve` stays at or above `target`.
+
+    A first noisy crossing could dip back below the target at a larger R set by
+    another contrast; the sustained crossing cannot.
+    """
+    needed = None
+    for n_reps in range(MAX_REPLICATES, 0, -1):
+        if curve[n_reps] < target:
+            break
+        needed = n_reps
+    return needed
 
 
 def replicates_needed(
@@ -486,8 +494,8 @@ def equivalence_replicates(
     The interval is Agresti–Caffo: one success and one failure are added to each
     arm, and both the centre and the standard error use those adjusted
     proportions, so a saturated arm never yields a zero-width interval.
-    Power uses common random numbers across nested replicate counts and returns
-    the sustained crossing rather than a noisy first crossing.
+    Power uses common random numbers across nested replicate counts and the
+    `_sustained_crossing` of the 80% target.
 
     Parameters
     ----------
@@ -511,13 +519,7 @@ def equivalence_replicates(
     """
     common = (rates_a + rates_b) / 2.0
     curve = _equivalence_power_curve(common, delta, rng, alpha, n_sims)
-    needed = None
-    ok = True
-    for n_reps in range(MAX_REPLICATES, 0, -1):
-        ok = curve[n_reps] >= 0.80 and ok
-        if ok:
-            needed = n_reps
-    return needed
+    return _sustained_crossing(curve, 0.80)
 
 
 def omnibus_power(
