@@ -6,6 +6,7 @@ Synthetic trees keep reported claims conditional on their supporting data.
 import contextlib
 import io
 import re
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -44,6 +45,27 @@ def _run(fn: Callable[[], None]) -> str:
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         fn()
     return buf.getvalue()
+
+
+def test_collapse_note_uses_the_supplied_rate(significance_report: ModuleType) -> None:
+    """Collapse annotations use the compared-seed rate, not the whole-cell rate."""
+    key = ("model", "noise_intens")
+    census = {key: {"modes": Counter({"empty": 3})}}
+    assert significance_report.collapse_note(key, 0.1, census) == ""
+    assert significance_report.collapse_note(key, 0.3, census).startswith(
+        "model/noise_intens 30.0% non-compliant"
+    )
+
+
+@pytest.mark.parametrize(
+    ("rate_i", "rate_n", "expected"),
+    ((0.30, 0.60, False), (0.10, 0.25, True), (0.10, 0.20, False)),
+)
+def test_pad_crossing(
+    significance_report: ModuleType, rate_i: float, rate_n: float, expected: bool
+) -> None:
+    """Only a threshold crossing is attributed to padding."""
+    assert significance_report.pad_crossing(rate_i, rate_n) is expected
 
 
 def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
@@ -244,6 +266,17 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
     counts = {int(n) for n in re.findall(r"of (\d+) lanes", section)}
     assert counts == {n_rows}, section
 
+    def crosses(line: str) -> bool:
+        parts = line.split()
+        intens, noise = float(parts[1].rstrip("%")), float(parts[2].rstrip("%"))
+        return noise >= 25 > intens
+
+    expected_pad = sum(1 for line in _padding_table(out).values() if crosses(line))
+    match = re.search(r"=> The pad itself pushes (\d+) of (\d+) lanes", out)
+    assert match, out
+    assert int(match.group(1)) == expected_pad
+    assert int(match.group(2)) == n_rows
+
 
 def test_padding_intro_numerator_comes_from_the_common_seed_table(
     report: Callable[[Path], str],
@@ -442,3 +475,50 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
     assert rates and 30 <= rates[0] <= 70, skew_lines
     assert all("extens COLLAPSED" not in ln for ln in skew_lines), skew_lines
     assert any("noise COLLAPSED" in ln for ln in skew_lines), skew_lines
+
+
+def test_collapse_tags_use_the_compared_seeds(
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    significance_report: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collapse tags use only seeds shared by the compared contrast arms."""
+    real_census = significance_report.compliance_census
+
+    def skewed(compliance: dict) -> dict:
+        census = real_census(compliance)
+        key = (SKEW_MODEL, "noise_intens")
+        cell = census[key]
+        for seed in range(_SKEW_SPLIT):
+            cell["per_seed"][seed] = (0, 9)
+        for seed in range(_SKEW_SPLIT, DEEP_DEPTH):
+            cell["per_seed"][seed] = (9, 9)
+        nc = sum(n for n, _t in cell["per_seed"].values())
+        total = sum(t for _n, t in cell["per_seed"].values())
+        cell["rate"] = nc / total
+        assert cell["rate"] >= significance_report.COLLAPSE_THRESHOLD
+        return census
+
+    monkeypatch.setattr(significance_report, "compliance_census", skewed)
+    out = report(collapse_tree)
+    label = "[exaone_32b] noise_intens vs zero"
+    lines = [line for line in out.splitlines() if label in line]
+    assert lines, out[:3000]
+    assert all("[COLLAPSE:" not in line for line in lines), lines
+
+    def crossing(compliance: dict) -> dict:
+        census = real_census(compliance)
+        cell = census[(SKEW_MODEL, "noise_intens")]
+        for seed in range(_SKEW_SPLIT):
+            cell["per_seed"][seed] = (9, 9)
+        nc = sum(n for _seed, (n, _t) in cell["per_seed"].items())
+        total = sum(t for _n, t in cell["per_seed"].values())
+        cell["rate"] = nc / total
+        return census
+
+    monkeypatch.setattr(significance_report, "compliance_census", crossing)
+    out = report(collapse_tree)
+    lines = [line for line in out.splitlines() if label in line]
+    assert lines, out[:3000]
+    assert any("[COLLAPSE:" in line for line in lines), lines

@@ -377,6 +377,28 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(
     assert info.hits == 1 and info.misses == 1, info
 
 
+def test_equivalence_replicates_does_not_accept_saturated_arms_at_r_one(
+    power_analysis: ModuleType,
+) -> None:
+    """Agresti–Coull intervals prevent saturated arms from having zero width."""
+    rates = np.ones(power_analysis.N_HARMONICS)
+    result = power_analysis.equivalence_replicates(
+        rates, rates, 0.05, np.random.default_rng(0), n_sims=500
+    )
+    assert result is None or result > 1
+
+
+def test_equivalence_replicates_finds_generous_margin_quickly(
+    power_analysis: ModuleType,
+) -> None:
+    """A generous equivalence margin remains easy to satisfy."""
+    rates = np.full(power_analysis.N_HARMONICS, 0.5)
+    result = power_analysis.equivalence_replicates(
+        rates, rates, 0.5, np.random.default_rng(0), n_sims=500
+    )
+    assert isinstance(result, int) and result <= 5
+
+
 def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> None:
     """Nested draws make the power curve reproducible and monotone up to MC noise, and the crossing is its first hit."""
     fn = power_analysis.replicates_needed

@@ -116,13 +116,15 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
     return sum(nc for nc, _t in counts) / total
 
 
-def collapse_note(key: tuple[str, str], census: dict) -> str:
+def collapse_note(key: tuple[str, str], rate: float | None, census: dict) -> str:
     """Return a mechanism annotation, or ``""`` below the collapse threshold.
 
     Parameters
     ----------
     key : tuple[str, str]
         Cell key.
+    rate : float | None
+        Non-compliance rate over the compared seeds.
     census : dict
         Compliance census by cell.
 
@@ -132,11 +134,20 @@ def collapse_note(key: tuple[str, str], census: dict) -> str:
         Mechanism annotation, or ``""`` below `COLLAPSE_THRESHOLD`.
     """
     cell = census.get(key)
-    if cell is None or cell["rate"] < COLLAPSE_THRESHOLD:
+    if cell is None or rate is None or rate < COLLAPSE_THRESHOLD:
         return ""
+    # Whole-cell modes remain descriptive; the displayed rate uses compared seeds.
     top = cell["modes"].most_common(1)
     mode = f", mostly {top[0][0]}" if top else ""
-    return f"{key[0]}/{key[1]} {cell['rate']:.1%} non-compliant{mode}"
+    return f"{key[0]}/{key[1]} {rate:.1%} non-compliant{mode}"
+
+
+def pad_crossing(rate_i: float, rate_n: float) -> bool:
+    """True when padding alone carries a lane over ``COLLAPSE_THRESHOLD``.
+
+    The unpadded rate is below the threshold and the padded rate is at or above.
+    """
+    return rate_i < COLLAPSE_THRESHOLD <= rate_n
 
 
 def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
@@ -207,6 +218,7 @@ def main() -> None:
 
     rows = []
     for label, key_a, key_b in contrasts:
+        seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
         a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
         nb, nc = int((a & ~b).sum()), int((~a & b).sum())
         rows.append(
@@ -219,6 +231,13 @@ def main() -> None:
                 "n": a.size,
                 "b": nb,
                 "c": nc,
+                "seeds": seeds,
+                "rate_a": (
+                    common_seed_rate(census[key_a], seeds) if key_a in census else None
+                ),
+                "rate_b": (
+                    common_seed_rate(census[key_b], seeds) if key_b in census else None
+                ),
                 "n_seeds": int(np.unique(sidx).size),
                 "p_cluster": signflip_exact_p(seed_diffs(a, b, sidx)),
                 "p_item": mcnemar_exact_p(nb, nc),
@@ -441,7 +460,7 @@ def main() -> None:
         if row["rate_n"] >= COLLAPSE_THRESHOLD:
             verdict = (
                 "COLLAPSE"
-                if delta >= COLLAPSE_THRESHOLD
+                if pad_crossing(row["rate_i"], row["rate_n"])
                 else "collapsed, but not padding-specific"
             )
         else:
@@ -450,11 +469,7 @@ def main() -> None:
             f"{row['model']:13s} {row['rate_i']:8.1%} {row['rate_n']:8.1%} "
             f"{delta:+8.1%} {empty:12.1%} {row['n_common']:4d}  {verdict}"
         )
-    n_pad = sum(
-        1
-        for r in pad_rows
-        if r["rate_n"] >= COLLAPSE_THRESHOLD and r["delta"] >= COLLAPSE_THRESHOLD
-    )
+    n_pad = sum(1 for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"]))
     print(
         f"\n=> The pad itself pushes {n_pad} of {len(pad_rows)} lanes over the "
         f"{COLLAPSE_THRESHOLD:.0%} criterion. This is a\n   RESULT: "
@@ -501,8 +516,8 @@ def main() -> None:
         hits = [
             h
             for h in (
-                collapse_note(r["key_a"], census),
-                collapse_note(r["key_b"], census),
+                collapse_note(r["key_a"], r["rate_a"], census),
+                collapse_note(r["key_b"], r["rate_b"], census),
             )
             if h
         ]
@@ -617,13 +632,13 @@ def main() -> None:
             # guarantee which side the baseline lands on, so the informative
             # arm is identified by its own info label rather than position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
-            cell = census.get(info_key)
             # An unmeasured arm cannot support the padding explanation, so an
             # explicit None test rather than a `.get(...)["rate"]` chain.
+            info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
             if (
                 info_key[1] == "noise_intens"
-                and cell is not None
-                and cell["rate"] >= COLLAPSE_THRESHOLD
+                and info_rate is not None
+                and info_rate >= COLLAPSE_THRESHOLD
             ):
                 qualifying.append(r)
             else:
