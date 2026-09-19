@@ -421,9 +421,9 @@ def equivalence_replicates(
     """Find the smallest R for 80% TOST equivalence power.
 
     Simulate both arms at their mean because this tests a true tie.
-    The interval is Agresti–Caffo: both the centre and the standard error use
-    the pseudo-count-adjusted proportions, so a saturated arm never yields a
-    zero-width interval.
+    The interval is Agresti–Caffo: one success and one failure are added to each
+    arm, and both the centre and the standard error use those adjusted
+    proportions, so a saturated arm never yields a zero-width interval.
 
     Parameters
     ----------
@@ -453,12 +453,11 @@ def equivalence_replicates(
         total = n_reps * N_HARMONICS
         succ_a = rng.binomial(n_reps, common, size=(n_sims, common.size)).sum(axis=1)
         succ_b = rng.binomial(n_reps, common, size=(n_sims, common.size)).sum(axis=1)
-        z2 = z * z
-        adj_a = (succ_a + z2 / 2) / (total + z2)
-        adj_b = (succ_b + z2 / 2) / (total + z2)
+        adj_a = (succ_a + 1) / (total + 2)
+        adj_b = (succ_b + 1) / (total + 2)
         diff = adj_a - adj_b
         se = np.sqrt(
-            adj_a * (1 - adj_a) / (total + z2) + adj_b * (1 - adj_b) / (total + z2)
+            adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2)
         )
         power = ((diff + z * se < delta) & (diff - z * se > -delta)).mean()
         if power >= 0.80:
