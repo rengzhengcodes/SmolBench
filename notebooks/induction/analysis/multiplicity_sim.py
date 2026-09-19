@@ -80,9 +80,10 @@ OUT_PATH = results_dir(__file__, up=1) / "multiplicity_sim_results.json"
 
 
 def dump(tag: str) -> None:
-    """Write `OUT` to the checkpoint JSON.
+    """Atomically write `OUT` to the checkpoint JSON via a sibling temp file.
 
-    Create the directory only when checkpointing so imports do not write.
+    A failed write leaves the previous checkpoint intact; the directory is
+    created here, not at import.
 
     Parameters
     ----------

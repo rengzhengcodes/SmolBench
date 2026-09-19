@@ -501,17 +501,17 @@ def main() -> None:
     # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()
     sec_rows = [contrast_row(correct, valid, ka, kb) for _label, ka, kb in sec]
-    p_pair_s = np.array([r["p_item"] for r in sec_rows])
-    p_unp_s = np.array([r["p_unpaired"] for r in sec_rows])
-    p_cl_s = np.array([r["p_cluster"] for r in sec_rows])
+    n_disc = {
+        k: bh(np.array([r[k] for r in sec_rows])).sum()
+        for k in ("p_cluster", "p_unpaired", "p_item")
+    }
 
     print(
         f"\n{'=' * 78}\nSECONDARY family ({len(sec)} cross-family size-matched "
-        f"contrasts, intens only), Benjamini-Hochberg q=0.05 on seed sign-flip p-values\n"
-        f"{'=' * 78}\n"
-        f"  seed sign-flip : {bh(p_cl_s).sum():3d} discoveries   <== inferential\n"
-        f"  unpaired CMH (descriptive)   : {bh(p_unp_s).sum():3d} discoveries\n"
-        f"  paired McNemar (descriptive) : {bh(p_pair_s).sum():3d} discoveries"
+        f"contrasts, intens only), Benjamini-Hochberg q=0.05\n{'=' * 78}\n"
+        f"  seed sign-flip (inferential) : {n_disc['p_cluster']:3d} discoveries\n"
+        f"  unpaired CMH (descriptive)   : {n_disc['p_unpaired']:3d} discoveries\n"
+        f"  paired McNemar (descriptive) : {n_disc['p_item']:3d} discoveries"
     )
 
 
