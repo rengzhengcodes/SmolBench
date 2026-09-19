@@ -17,8 +17,7 @@ from scipy.stats import binom
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
 
-# The fixture names register pytest fixtures.
-# pylint: disable=unused-import
+# pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401
     ANALYSIS_DIR,
     SHALLOW_DEPTH,
@@ -100,26 +99,11 @@ def test_design_invariants_survive_python_dash_o() -> None:
         f"sys.path.insert(0, {str(NOTEBOOKS_DIR)!r});"
         "import power_analysis as pa;"
         "assert False, 'asserts are live -- this subprocess is not under -O';"
-    )
-    ok = subprocess.run(
-        [sys.executable, "-O", "-c", code],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-        check=False,
-    )
-    assert ok.returncode == 0, ok.stderr
-
-    broken = (
-        "import sys;"
-        f"sys.path.insert(0, {str(ANALYSIS_DIR)!r});"
-        f"sys.path.insert(0, {str(NOTEBOOKS_DIR)!r});"
-        "import power_analysis as pa;"
         "pa.N_PRIMARY = pa.N_PRIMARY - 1;"
         "pa.check_design_invariants()"
     )
     result = subprocess.run(
-        [sys.executable, "-O", "-c", broken],
+        [sys.executable, "-O", "-c", code],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
@@ -209,6 +193,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     repoint: Callable[[Path], None],
     extens_vs_noise: ModuleType,
+    paired_analysis: ModuleType,
     power_analysis: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
     monkeypatch: pytest.MonkeyPatch,
@@ -217,9 +202,9 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     root, _cell = small_tree
     repoint(root)
     calls = []
-    real = extens_vs_noise.signflip_exact_p
+    real = paired_analysis.signflip_exact_p
     monkeypatch.setattr(
-        extens_vs_noise,
+        paired_analysis,
         "signflip_exact_p",
         lambda diffs: calls.append(1) or real(diffs),
     )

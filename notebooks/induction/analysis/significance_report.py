@@ -15,13 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from paired_analysis import (  # noqa: E402
     _reject,
-    aligned,
-    cmh_unpaired_p,
+    contrast_row,
     holm,
     load_marks,
-    mcnemar_exact_p,
-    seed_diffs,
-    signflip_exact_p,
 )
 from power_analysis import (  # noqa: E402
     ALPHA,
@@ -215,30 +211,21 @@ def main() -> None:
 
     rows = []
     for label, key_a, key_b in contrasts:
-        seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
-        a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
-        nb, nc = int((a & ~b).sum()), int((~a & b).sum())
+        row = contrast_row(correct, valid, key_a, key_b)
         rows.append(
             {
                 "label": label,
-                "key_a": key_a,
-                "key_b": key_b,
-                "acc_a": a.mean(),
-                "acc_b": b.mean(),
-                "n": a.size,
-                "b": nb,
-                "c": nc,
-                "seeds": seeds,
+                **row,
                 "rate_a": (
-                    common_seed_rate(census[key_a], seeds) if key_a in census else None
+                    common_seed_rate(census[key_a], row["seeds"])
+                    if key_a in census
+                    else None
                 ),
                 "rate_b": (
-                    common_seed_rate(census[key_b], seeds) if key_b in census else None
+                    common_seed_rate(census[key_b], row["seeds"])
+                    if key_b in census
+                    else None
                 ),
-                "n_seeds": int(np.unique(sidx).size),
-                "p_cluster": signflip_exact_p(seed_diffs(a, b, sidx)),
-                "p_item": mcnemar_exact_p(nb, nc),
-                "p_unpaired": cmh_unpaired_p(a, b, hidx),
                 "kind": classify(key_a, key_b),
                 "kind_is_ladder": "ladder" in label,
             }

@@ -297,6 +297,53 @@ def design_effect(
     return float(observed / assumed)
 
 
+def contrast_row(
+    correct: dict,
+    valid: dict,
+    key_a: tuple[str, str],
+    key_b: tuple[str, str],
+    drop_invalid: bool = False,
+) -> dict:
+    """Compute every paired statistic the reports share for one contrast.
+
+    Parameters
+    ----------
+    correct, valid : dict
+        Per-cell mark views from `load_marks`.
+    key_a, key_b : tuple[str, str]
+        The two ``(model, info)`` cells being compared.
+    drop_invalid : bool, optional
+        Forwarded to `aligned`. Dropping pairs changes the per-seed statistic,
+        so ``p_cluster`` is ``None`` in that mode.
+
+    Returns
+    -------
+    dict
+        ``key_a``, ``key_b``, ``n``, ``acc_a``, ``acc_b``, ``b``, ``c``, ``disc``,
+        ``seeds`` (sorted common seeds), ``n_seeds``, ``p_item`` (exact McNemar),
+        ``p_unpaired`` (harmonic-stratified CMH), ``p_cluster`` (seed sign-flip)
+        and ``de`` (`design_effect`).
+    """
+    a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid)
+    nb, nc = int((a & ~b).sum()), int((~a & b).sum())
+    return {
+        "key_a": key_a,
+        "key_b": key_b,
+        "n": a.size,
+        "acc_a": a.mean(),
+        "acc_b": b.mean(),
+        "b": nb,
+        "c": nc,
+        "disc": (nb + nc) / max(a.size, 1),
+        "seeds": sorted(set(correct[key_a]) & set(correct[key_b])),
+        "n_seeds": int(np.unique(sidx).size),
+        "p_item": mcnemar_exact_p(nb, nc),
+        "p_unpaired": cmh_unpaired_p(a, b, hidx),
+        "p_cluster": None if drop_invalid else signflip_exact_p(seed_diffs(a, b, sidx)),
+        "de": design_effect(a, b, sidx, hidx),
+    }
+
+
 def main() -> None:
     """Run the paired re-analysis report."""
     print("Loading marks ...", flush=True)
@@ -341,32 +388,14 @@ def main() -> None:
         print(f"\n{'=' * 78}\nPRIMARY family, {tag}\n{'=' * 78}")
         rows = []
         for label, key_a, key_b in contrasts:
-            a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid)
-            nb = int((a & ~b).sum())
-            nc = int((~a & b).sum())
-            p_paired = mcnemar_exact_p(nb, nc)
-            p_unpaired = cmh_unpaired_p(a, b, hidx)
-            # Dropping invalid pairs changes the per-seed statistic.
-            p_cluster = (
-                signflip_exact_p(seed_diffs(a, b, sidx)) if not drop_invalid else None
-            )
             rows.append(
                 {
                     "label": label,
-                    "n": a.size,
-                    "acc_a": a.mean(),
-                    "acc_b": b.mean(),
-                    "disc": (nb + nc) / max(a.size, 1),
-                    "b": nb,
-                    "c": nc,
-                    "p_paired": p_paired,
-                    "p_unpaired": p_unpaired,
-                    "p_cluster": p_cluster,
-                    "de": design_effect(a, b, sidx, hidx),
+                    **contrast_row(correct, valid, key_a, key_b, drop_invalid),
                 }
             )
 
-        p_pair = np.array([r["p_paired"] for r in rows])
+        p_pair = np.array([r["p_item"] for r in rows])
         p_unp = np.array([r["p_unpaired"] for r in rows])
         rej_pair, rej_unp = holm(p_pair), holm(p_unp)
         bonf_pair, bonf_unp = p_pair <= ALPHA / N_PRIMARY, p_unp <= ALPHA / N_PRIMARY
@@ -398,16 +427,16 @@ def main() -> None:
             f"  => pairing changes status on {len(gained) + len(lost)} contrasts "
             f"(+{len(gained)} gained, -{len(lost)} lost)"
         )
-        for r in sorted(gained, key=lambda r: r["p_paired"])[:20]:
+        for r in sorted(gained, key=lambda r: r["p_item"])[:20]:
             print(
                 f"    GAINED {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}  "
-                f"disc={r['disc']:.3f}  p_pair={r['p_paired']:.2e}  "
+                f"disc={r['disc']:.3f}  p_pair={r['p_item']:.2e}  "
                 f"p_unpair={r['p_unpaired']:.2e}"
             )
         for r in sorted(lost, key=lambda r: r["p_unpaired"])[:20]:
             print(
                 f"    LOST   {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}  "
-                f"disc={r['disc']:.3f}  p_pair={r['p_paired']:.2e}  "
+                f"disc={r['disc']:.3f}  p_pair={r['p_item']:.2e}  "
                 f"p_unpair={r['p_unpaired']:.2e}"
             )
 
@@ -425,14 +454,14 @@ def main() -> None:
                     continue
                 model = r["label"].split("]")[0].strip("[")
                 flag = ""
-                if r["p_paired"] <= ALPHA / N_PRIMARY:
+                if r["p_item"] <= ALPHA / N_PRIMARY:
                     flag = "  <== SEPARATES (Bonferroni)"
-                elif r["p_paired"] <= ALPHA:
+                elif r["p_item"] <= ALPHA:
                     flag = "  <== p<0.05 uncorrected"
                 print(
                     f"  {model:14s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
                     f"{r['disc']:7.3f} {r['b']:4d}/{r['c']:<4d} "
-                    f"{r['p_paired']:10.2e} {r['p_unpaired']:11.2e}{flag}"
+                    f"{r['p_item']:10.2e} {r['p_unpaired']:11.2e}{flag}"
                 )
 
             # --- clustering sign ---
@@ -451,12 +480,9 @@ def main() -> None:
 
     # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()
-    p_pair_s, p_unp_s = [], []
-    for _label, key_a, key_b in sec:
-        a, b, _sidx, hidx = aligned(correct, valid, key_a, key_b, False)
-        p_pair_s.append(mcnemar_exact_p(int((a & ~b).sum()), int((~a & b).sum())))
-        p_unp_s.append(cmh_unpaired_p(a, b, hidx))
-    p_pair_s, p_unp_s = np.array(p_pair_s), np.array(p_unp_s)
+    sec_rows = [contrast_row(correct, valid, ka, kb) for _label, ka, kb in sec]
+    p_pair_s = np.array([r["p_item"] for r in sec_rows])
+    p_unp_s = np.array([r["p_unpaired"] for r in sec_rows])
 
     print(
         f"\n{'=' * 78}\nSECONDARY family ({len(sec)} cross-family size-matched "

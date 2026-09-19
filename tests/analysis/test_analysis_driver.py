@@ -11,8 +11,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-# Fixture names register pytest fixtures.
-# pylint: disable=unused-import
+# pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
     DEEP_DEPTH,
     build_tree,

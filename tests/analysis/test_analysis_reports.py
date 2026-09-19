@@ -14,8 +14,7 @@ from types import ModuleType
 import pytest
 
 # Pytest discovers imported fixtures from module globals.
-# Fixture names register pytest fixtures.
-# pylint: disable=unused-import
+# pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401
     DEEP_DEPTH,
     SHALLOW_DEPTH,

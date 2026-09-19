@@ -258,43 +258,6 @@ def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarra
     return stat > chi2.isf(alpha, df=2)
 
 
-def simulated_power(
-    rates_a: np.ndarray,
-    rates_b: np.ndarray,
-    n_reps: int,
-    rng: np.random.Generator,
-    alpha: float = ALPHA_PRIMARY,
-    n_sims: int = N_SIMS,
-) -> float:
-    """Estimate harmonic-stratified CMH power.
-
-    Callers pass tier-specific ``alpha`` because defaults differ by tier.
-
-    Parameters
-    ----------
-    rates_a : np.ndarray
-        Assumed true per-harmonic rates for the first condition.
-    rates_b : np.ndarray
-        Assumed true per-harmonic rates for the second condition.
-    n_reps : int
-        Replicates per harmonic.
-    rng : np.random.Generator
-        Random-number generator for simulations.
-    alpha : float, optional
-        Per-test significance threshold.
-    n_sims : int, optional
-        Number of simulated experiments.
-
-    Returns
-    -------
-    float
-        Estimated CMH rejection fraction.
-    """
-    succ_a = rng.binomial(n_reps, rates_a, size=(n_sims, rates_a.size))
-    succ_b = rng.binomial(n_reps, rates_b, size=(n_sims, rates_b.size))
-    return (cmh_stat(succ_a, succ_b, n_reps) > chi2.isf(alpha, df=1)).mean()
-
-
 _SizingScan = tuple[dict[float, int | None], dict[int, float]]
 
 

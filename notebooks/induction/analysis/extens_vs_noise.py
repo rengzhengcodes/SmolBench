@@ -14,14 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from paired_analysis import (  # noqa: E402
-    aligned,
     build_primary_contrasts,
-    cmh_unpaired_p,
+    contrast_row,
     holm,
     load_marks,
-    mcnemar_exact_p,
-    seed_diffs,
-    signflip_exact_p,
 )
 
 # Import the owned threshold to avoid a divergent local value.
@@ -92,26 +88,10 @@ def main() -> None:
         return rate
 
     # Keep the full family: the displayed subset is selected after measurement.
-    full = []
-    for label, key_a, key_b in build_primary_contrasts():
-        a, b, sidx, _hidx = aligned(correct, valid, key_a, key_b, drop_invalid=False)
-        nb, ncd = int((a & ~b).sum()), int((~a & b).sum())
-        full.append(
-            {
-                "label": label,
-                "key_a": key_a,
-                "key_b": key_b,
-                "p_cluster": signflip_exact_p(seed_diffs(a, b, sidx)),
-                "p_item": mcnemar_exact_p(nb, ncd),
-                "acc_a": a.mean(),
-                "acc_b": b.mean(),
-                "n": a.size,
-                "b": nb,
-                "c": ncd,
-                "n_seeds": int(np.unique(sidx).size),
-                "disc": (nb + ncd) / max(a.size, 1),
-            }
-        )
+    full = [
+        {"label": label, **contrast_row(correct, valid, key_a, key_b)}
+        for label, key_a, key_b in build_primary_contrasts()
+    ]
     holm_full = holm(np.array([r["p_cluster"] for r in full]), ALPHA)
     holm_full_item = holm(np.array([r["p_item"] for r in full]), ALPHA)
     full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
@@ -122,10 +102,7 @@ def main() -> None:
         # Contrast order matches the table's extens/noise columns.
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        # This descriptive column needs the aligned arrays.
-        a, b, _sidx, hidx = aligned(correct, valid, ka, kb, drop_invalid=False)
-        seeds = sorted(set(correct[ka]) & set(correct[kb]))
-        nc_e, nc_n = nc(ka, seeds), nc(kb, seeds)
+        nc_e, nc_n = nc(ka, fr["seeds"]), nc(kb, fr["seeds"])
         rows.append(
             {
                 "model": model,
@@ -138,7 +115,7 @@ def main() -> None:
                 "disc": fr["disc"],
                 "p_cluster": fr["p_cluster"],
                 "p_item": fr["p_item"],
-                "p_unp": cmh_unpaired_p(a, b, hidx),
+                "p_unp": fr["p_unpaired"],
                 "holm210": bool(holm_full[i_full]),
                 "holm210_item": bool(holm_full_item[i_full]),
                 "nc_e": nc_e,
