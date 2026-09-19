@@ -3,6 +3,8 @@
 import contextlib
 import inspect
 import io
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -14,16 +16,8 @@ import pytest
 # Fixture names register pytest fixtures.
 # pylint: disable=unused-import
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
-    DEEP_DEPTH,
-    build_tree,
-    extens_vs_noise,
-    load_analysis,
-    multiplicity_sim,
-    paired_analysis,
-    power_analysis,
-    repoint,
-    significance_report,
-)
+    DEEP_DEPTH, build_tree, extens_vs_noise, load_analysis, multiplicity_sim,
+    paired_analysis, power_analysis, repoint, significance_report)
 
 #: Exclude costly, result-free multiplicity_sim unless explicitly requested.
 CHAIN = ("power_analysis", "paired_analysis", "significance_report", "extens_vs_noise")
@@ -68,11 +62,29 @@ def recorded(
 
         return _main
 
-    import sys
-
     for name in CHAIN + ("multiplicity_sim",):
         monkeypatch.setattr(sys.modules[name], "main", recorder(name))
     return calls
+
+
+def test_the_driver_does_not_import_the_simulation_eagerly(
+    run_all: ModuleType,
+) -> None:
+    """`multiplicity_sim` is loaded inside the `--with-sim` branch, never at module import."""
+    assert not hasattr(run_all, "multiplicity_sim")
+    assert run_all.SIM_MODULE == "multiplicity_sim"
+    assert all(m.__name__ != "multiplicity_sim" for m in run_all.CHAIN)
+    # A subprocess import of the driver alone must not pull the simulation in.
+    code = (
+        "import sys, importlib.util;"
+        f"spec = importlib.util.spec_from_file_location('run_all', {str(run_all.__file__)!r});"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
+        "print('multiplicity_sim' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert out.stdout.strip() == "False", out.stdout
 
 
 def test_the_driver_runs_the_chain_in_order(
@@ -101,8 +113,6 @@ def test_the_driver_really_runs_the_chain_in_one_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run the chain against a synthetic tree."""
-    import sys
-
     repoint(driver_tree)
     monkeypatch.setattr(sys.modules["power_analysis"], "main", lambda *a, **k: None)
     buf = io.StringIO()
@@ -192,11 +202,24 @@ def test_apply_corrections_matches_statsmodels(multiplicity_sim: ModuleType) -> 
             assert list(mask) == list(expected), (name, row.tolist())
 
 
-def test_apply_corrections_rejects_strictly_below_the_bonferroni_bar(
+def test_apply_corrections_share_one_inclusive_boundary(
     multiplicity_sim: ModuleType,
 ) -> None:
-    """A p-value exactly at ``ALPHA / m`` is not rejected, so ties never inflate rejections."""
+    """Every procedure rejects a p-value sitting exactly on its threshold (``<=``)."""
     alpha = multiplicity_sim.ALPHA
-    pv = np.array([[alpha / 4, alpha / 4 - 1e-12, 0.5, 0.9]])
-    mask = multiplicity_sim.apply_corrections(pv)["Bonferroni"][0]
-    assert list(mask) == [False, True, False, False]
+    m = 4
+    # Row 1: p exactly at the Bonferroni bar, then exactly at Holm's second step.
+    # Row 2: all p exactly at the BH ranks i * alpha / m.
+    pv = np.array(
+        [
+            [alpha / m, alpha / (m - 1), 0.5, 0.9],
+            [alpha * 1 / m, alpha * 2 / m, alpha * 3 / m, alpha * 4 / m],
+        ]
+    )
+    got = multiplicity_sim.apply_corrections(pv)
+    assert list(got["Bonferroni"][0]) == [True, False, False, False]
+    assert list(got["Holm"][0]) == [True, True, False, False]
+    assert list(got["Hochberg"][0]) == [True, True, False, False]
+    assert list(got["BH(q=0.05)"][1]) == [True, True, True, True]
+    assert list(got["Hochberg"][1]) == [True, True, True, True]
+    assert list(got["Bonferroni"][1]) == [True, False, False, False]

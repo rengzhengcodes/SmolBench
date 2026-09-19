@@ -15,16 +15,10 @@ import pytest
 # Pytest discovers imported fixtures from module globals.
 # Fixture names register pytest fixtures.
 # pylint: disable=unused-import
-from tests.analysis._trees import (  # noqa: F401
-    DEEP_DEPTH,
-    SHALLOW_DEPTH,
-    build_tree,
-    extens_vs_noise,
-    paired_analysis,
-    power_analysis,
-    repoint,
-    significance_report,
-)
+from tests.analysis._trees import SHALLOW_DEPTH  # noqa: F401
+from tests.analysis._trees import (DEEP_DEPTH, build_tree, extens_vs_noise,
+                                   paired_analysis, power_analysis, repoint,
+                                   significance_report)
 
 #: Collapsed noise arm whose failed control is padding-driven.
 COLLAPSE_MODEL = "ds_pro"
@@ -245,6 +239,44 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
     assert counts == {n_rows}, section
 
 
+def test_padding_intro_numerator_comes_from_the_common_seed_table(
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    significance_report: ModuleType,
+) -> None:
+    """`In X of Y lanes` counts table rows whose common-seed noise rate crosses the criterion."""
+    out = report(collapse_tree)
+    rows = _padding_table(out)
+    over = [
+        lane
+        for lane, line in rows.items()
+        if float(line.split()[2].rstrip("%")) / 100
+        >= significance_report.COLLAPSE_THRESHOLD
+    ]
+    section = out.split("COLLAPSE CENSUS", 1)[1]
+    match = re.search(r"In (\d+) of (\d+) lanes with both arms measured", section)
+    assert match, section[:1200]
+    assert int(match.group(1)) == len(over), (over, section[:1200])
+    assert int(match.group(2)) == len(rows)
+
+
+def test_zero_vs_zero_controls_report_the_measured_count_only(
+    report: Callable[[Path], str], collapse_tree: Path, shallow_tree: Path
+) -> None:
+    """The report neither asserts nor assumes a zero rejection count for cross-model floors."""
+    for tree in (collapse_tree, shallow_tree):
+        out = report(tree)
+        assert "by construction" not in out, out
+        match = re.search(
+            r"(\d+) zero-vs-zero ladder contrasts.*?: (\d+) significant", out, re.S
+        )
+        assert match, out
+        n_zz, n_sig = int(match.group(1)), int(match.group(2))
+        assert n_zz > 0
+        tail = out[match.end() :].split("=" * 78, 1)[0]
+        assert len(re.findall(r"^  SIG    ", tail, re.M)) == n_sig, tail
+
+
 # ===========================================================================
 # three narrative conclusions printed regardless of their own counts
 # ===========================================================================
@@ -336,7 +368,7 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
 def test_collapsed_lane_buckets_as_collapse(
     repoint: Callable[[Path], None], extens_vs_noise: ModuleType, collapse_tree: Path
 ) -> None:
-    """A lane whose noise arm is broken must carry the `COLLAPSE` mechanism, so its forced direction is never read as information."""
+    """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
     repoint(collapse_tree)
     out = _run(extens_vs_noise.main)
     # The per-model table only: its rows carry the `mechanism` column, unlike
@@ -349,4 +381,58 @@ def test_collapsed_lane_buckets_as_collapse(
         if ln[:1].isalpha() and len(ln.split()) > 3
     }
     assert COLLAPSE_MODEL in rows, table[:2500]
-    assert "COLLAPSE" in rows[COLLAPSE_MODEL], rows[COLLAPSE_MODEL]
+    assert "noise COLLAPSED" in rows[COLLAPSE_MODEL], rows[COLLAPSE_MODEL]
+    # Annotation only: nothing in the report claims the direction is forced.
+    assert "forced" not in out.lower(), out
+
+
+def test_mechanism_annotates_collapse_without_asserting_direction(
+    extens_vs_noise: ModuleType,
+) -> None:
+    """Every collapse pattern gets its own label and none encodes a direction."""
+    thr = extens_vs_noise.COLLAPSE_THRESHOLD
+    assert extens_vs_noise.mechanism(0.0, 0.0) == "information"
+    assert extens_vs_noise.mechanism(0.0, thr) == "noise COLLAPSED"
+    assert extens_vs_noise.mechanism(thr, 0.0) == "extens COLLAPSED"
+    assert extens_vs_noise.mechanism(thr, thr) == "both COLLAPSED"
+    assert set(extens_vs_noise.MECHANISMS) == {
+        extens_vs_noise.mechanism(e, n) for e in (0.0, thr) for n in (0.0, thr)
+    }
+    # Direction comes from accuracies alone.
+    assert extens_vs_noise.direction(0.2, 0.8) == "noise HIGHER"
+
+
+def test_extens_vs_noise_rates_use_the_aligned_seed_population(
+    repoint: Callable[[Path], None],
+    extens_vs_noise: ModuleType,
+    collapse_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-compliance outside the seeds the noise arm covers must not colour the contrast."""
+    repoint(collapse_tree)
+    real_census = extens_vs_noise.compliance_census
+
+    def skewed(compliance: dict) -> dict:
+        census = real_census(compliance)
+        cell = census[(SKEW_MODEL, "extens")]
+        # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
+        for seed in range(_SKEW_SPLIT, DEEP_DEPTH):
+            cell["per_seed"][seed] = (9, 9)
+        nc = sum(n for n, _t in cell["per_seed"].values())
+        tot = sum(t for _n, t in cell["per_seed"].values())
+        cell["rate"] = nc / tot
+        assert cell["rate"] >= extens_vs_noise.COLLAPSE_THRESHOLD
+        return census
+
+    monkeypatch.setattr(extens_vs_noise, "compliance_census", skewed)
+    out = _run(extens_vs_noise.main)
+    skew_lines = [ln for ln in out.splitlines() if SKEW_MODEL in ln]
+    assert skew_lines, out[:2000]
+    rates = [
+        int(match.group(1))
+        for ln in skew_lines
+        if (match := re.search(r"nc 0%/(\d+)%", ln))
+    ]
+    assert rates and 30 <= rates[0] <= 70, skew_lines
+    assert all("extens COLLAPSED" not in ln for ln in skew_lines), skew_lines
+    assert any("noise COLLAPSED" in ln for ln in skew_lines), skew_lines

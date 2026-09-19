@@ -1,6 +1,8 @@
 """Contracts for induction-analysis statistical plumbing."""
 
+import contextlib
 import inspect
+import io
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -15,20 +17,13 @@ from scipy.stats import binom
 
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
-
 # The fixture names register pytest fixtures.
 # pylint: disable=unused-import
-from tests.analysis._trees import (  # noqa: F401
-    ANALYSIS_DIR,
-    SHALLOW_DEPTH,
-    build_tree,
-    extens_vs_noise,
-    multiplicity_sim,
-    paired_analysis,
-    power_analysis,
-    repoint,
-    significance_report,
-)
+from tests.analysis._trees import SHALLOW_DEPTH  # noqa: F401
+from tests.analysis._trees import (ANALYSIS_DIR, build_tree, extens_vs_noise,
+                                   multiplicity_sim, paired_analysis,
+                                   power_analysis, repoint,
+                                   significance_report)
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 
@@ -248,9 +243,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         lambda diffs: calls.append(1) or real(diffs),
     )
 
-    import contextlib
-    import io
-
     with (
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
@@ -346,9 +338,6 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
     """One trend test cannot cost `ALPHA/28` in part 5 and `ALPHA/154` in part 4 of the same family."""
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
-    import contextlib
-    import io
-
     with contextlib.redirect_stdout(io.StringIO()):
         multiplicity_sim.part5(rng, n_sims=200)
     part5 = multiplicity_sim.OUT["part5"]
@@ -379,6 +368,71 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(
     assert first == second
     info = fn.cache_info()
     assert info.hits == 1 and info.misses == 1, info
+
+
+def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> None:
+    """Nested draws make the power curve reproducible and monotone up to MC noise, and the crossing is its first hit."""
+    fn = power_analysis.replicates_needed
+    fn.cache_clear()
+    a = np.full(power_analysis.N_HARMONICS, 0.75)
+    b = np.full(power_analysis.N_HARMONICS, 0.55)
+    needed, curve = fn(a, b)
+    fn.cache_clear()
+    needed_again, curve_again = fn(a, b)
+    assert needed == needed_again and curve == curve_again
+
+    reps = sorted(curve)
+    assert reps == list(range(1, reps[-1] + 1))
+    powers = [curve[r] for r in reps]
+    # Shared noise: consecutive estimates may only differ by the few experiments
+    # whose verdict flips on one more replicate, never by independent MC error.
+    drops = [x - y for x, y in zip(powers, powers[1:]) if y < x]
+    assert not drops or max(drops) < 0.01, drops
+    for target, r_hit in needed.items():
+        assert r_hit is not None
+        assert r_hit == min(r for r in reps if curve[r] >= target)
+        assert all(curve[r] < target for r in reps if r < r_hit)
+
+
+def test_recommended_replicates_carries_censored_contrasts(
+    power_analysis: ModuleType,
+) -> None:
+    """A censored family has no whole-family R, and the render says so instead of dropping them."""
+    censored = power_analysis.recommended_replicates(40, 3, 210)
+    assert censored["family_r"] is None
+    assert censored["n_powered"] == 207 and censored["n_primary"] == 210
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        power_analysis.render_recommended_replicates(censored)
+    out = buf.getvalue()
+    assert "CENSORED" in out and "3 of 210" in out and "207 of 210" in out, out
+    assert "excluded" not in out.lower(), out
+
+    full = power_analysis.recommended_replicates(40, 0, 210)
+    assert full["family_r"] == 40
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        power_analysis.render_recommended_replicates(full)
+    assert "fully powered" in buf.getvalue()
+
+
+def test_primary_contrasts_table_reports_the_family_size(
+    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`r_star` covers every powerable contrast and `family_r` is `None` while any is censored."""
+
+    def fake_results(contrasts: list, *_args: Any) -> list:
+        rows = []
+        for i, (name, _ka, _kb) in enumerate(contrasts):
+            r80 = None if i == 0 else 10 + (i % 5)
+            rows.append((name, None, None, {0.80: r80, 0.90: None}, None))
+        return rows
+
+    monkeypatch.setattr(power_analysis, "_compute_sizing_results", fake_results)
+    data = power_analysis.primary_contrasts_table({}, {})
+    assert data["n_primary"] == len(data["results"]) == power_analysis.N_PRIMARY
+    assert data["n_censored"] == 1 and data["family_r"] is None
+    assert data["r_star"] == 14
 
 
 def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) -> None:
@@ -469,6 +523,34 @@ def test_the_replicate_latent_is_arm_specific_not_shared(
     assert within_replicate_phi(marks_a) > 0.10
 
 
+def test_icc_does_not_attenuate_the_requested_cross_arm_correlation(
+    multiplicity_sim: ModuleType,
+) -> None:
+    """Clustering must not dilute `rho`; the mark-level phi should match the un-clustered draw."""
+
+    def phi(marks_a: np.ndarray, marks_b: np.ndarray) -> float:
+        return float(
+            np.corrcoef(marks_a.ravel().astype(float), marks_b.ravel().astype(float))[
+                0, 1
+            ]
+        )
+
+    args = (0.7, 0.7, 0.6, 400, 30)
+    flat = phi(*multiplicity_sim.paired_marks(*args, np.random.default_rng(17)))
+    clustered = phi(
+        *multiplicity_sim.paired_marks(*args, np.random.default_rng(19), icc=0.4)
+    )
+    assert flat > 0.3
+    assert abs(clustered - flat) < 0.03
+    # A dilution to (1 - icc) * rho would move phi by far more than that.
+    diluted = phi(
+        *multiplicity_sim.paired_marks(
+            0.7, 0.7, 0.36, 400, 30, np.random.default_rng(17)
+        )
+    )
+    assert flat - diluted > 0.1
+
+
 def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
     multiplicity_sim: ModuleType,
 ) -> None:
@@ -494,9 +576,6 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
 
 def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     """Each ICC has a labeled output block."""
-    import contextlib
-    import io
-
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         multiplicity_sim.part2(np.random.default_rng(2), n_sims=200, search_sims=100)
@@ -526,9 +605,6 @@ def test_each_icc_block_reports_the_design_effect_it_produces(
     multiplicity_sim: ModuleType,
 ) -> None:
     """Each ICC block reports its simulated design effect."""
-    import contextlib
-    import io
-
     with contextlib.redirect_stdout(io.StringIO()):
         multiplicity_sim.part2(np.random.default_rng(3), n_sims=200, search_sims=100)
     blocks = multiplicity_sim.OUT["part2"]["icc"]

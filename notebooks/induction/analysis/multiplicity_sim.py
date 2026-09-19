@@ -2,6 +2,10 @@
 
 `study_design_effect` compares the observed design effect with simulated `icc` clustering;
 they differ because `icc` is latent share and `design_effect` an observed variance ratio.
+
+Rejection boundary: a p-value rejects when ``p <= alpha`` (the statsmodels convention
+`paired_analysis.holm` and `significance_report.hochberg` follow). Tests decided on a
+chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
 """
 
 from __future__ import annotations
@@ -18,15 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from _power_common import ALPHA, SEED, results_dir
-from power_analysis import (
-    ALPHA_PRIMARY,
-    N_HARMONICS,
-    N_PRIMARY,
-    cmh_p,
-    cmh_stat,
-    gcmh_stat,
-    mcnemar_exact_p,
-)
+from power_analysis import (ALPHA_PRIMARY, N_HARMONICS, N_PRIMARY, cmh_p,
+                            cmh_stat, gcmh_stat, mcnemar_exact_p)
 from scipy.stats import chi2
 
 K_HARM = N_HARMONICS
@@ -120,7 +117,9 @@ def paired_marks(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Simulate matched marks from a latent bivariate normal.
 
-    Skip clustering draws at zero `icc` to preserve RNG order; arm latents remain independent.
+    Skip clustering draws at zero `icc` to preserve RNG order. The replicate latents are
+    correlated at `rho` like the item latents, so mixing them in at `icc` leaves the
+    cross-arm latent correlation at `rho` instead of attenuating it to ``(1 - icc) * rho``.
 
     Parameters
     ----------
@@ -152,6 +151,7 @@ def paired_marks(
     if icc > 0.0:
         u_a = rng.standard_normal((n_sims, reps, 1), dtype=np.float32)
         u_b = rng.standard_normal((n_sims, reps, 1), dtype=np.float32)
+        u_b = rho * u_a + np.sqrt(max(1.0 - rho * rho, 0.0)) * u_b
         w1, w2 = np.sqrt(icc), np.sqrt(1.0 - icc)
         z1 = w1 * u_a + w2 * z1
         zb = w1 * u_b + w2 * zb
@@ -432,7 +432,7 @@ def _paired_powers(
     b = (ma & ~mb).sum(axis=(1, 2))
     c = (~ma & mb).sum(axis=(1, 2))
     pv = mcnemar_exact_p(b, c)
-    powers = float(unp), float((pv < ALPHA_BONF).mean())
+    powers = float(unp), float((pv <= ALPHA_BONF).mean())
     if not stats:
         # ``None`` distinguishes unmeasured diagnostics from zero.
         return powers[0], powers[1], None, None
@@ -688,7 +688,7 @@ def apply_corrections(pv: np.ndarray) -> dict[str, np.ndarray]:
     order = np.argsort(pv, axis=1)
     sortedp = np.take_along_axis(pv, order, axis=1)
     ranks = np.arange(1, m + 1)
-    out["Bonferroni"] = pv < ALPHA / m
+    out["Bonferroni"] = pv <= ALPHA / m
     thr = ALPHA / (m - ranks + 1)
     viol = sortedp > thr
     first = np.where(viol.any(axis=1), viol.argmax(axis=1), m)
@@ -823,7 +823,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> None:
     # Fixed size isolates test choice from correction size.
     fixed_alpha = summarize(
         "test-swap only (alpha=0.05/210)",
-        {"Bonferroni@210": pv_red < ALPHA / N_PRIMARY},
+        {"Bonferroni@210": pv_red <= ALPHA / N_PRIMARY},
         null_red,
         flag_red,
     )

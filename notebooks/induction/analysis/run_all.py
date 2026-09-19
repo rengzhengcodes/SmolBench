@@ -6,6 +6,7 @@ CHAIN order is fixed: each later script import-time-checks invariants against th
 """
 
 import argparse
+import importlib
 import sys
 from pathlib import Path
 
@@ -13,15 +14,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import extens_vs_noise  # noqa: E402
-
-# Keep this module-level import patchable in tests.
-import multiplicity_sim  # noqa: E402
 import paired_analysis  # noqa: E402
 import power_analysis  # noqa: E402  (path shim above must precede the import)
 import significance_report  # noqa: E402
 
 #: Modules permit direct calls and banner names.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
+
+#: Imported only behind ``--with-sim`` so the default chain never pays for it.
+SIM_MODULE = "multiplicity_sim"
 
 
 def _banner(name: str) -> None:
@@ -70,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         _banner(module.__name__)
         module.main()
     if args.with_sim:
+        multiplicity_sim = importlib.import_module(SIM_MODULE)
         _banner(multiplicity_sim.__name__)
         multiplicity_sim.main()
     return 0

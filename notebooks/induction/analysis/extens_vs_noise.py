@@ -13,33 +13,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (  # noqa: E402
-    aligned,
-    build_primary_contrasts,
-    cmh_unpaired_p,
-    holm,
-    load_marks,
-    mcnemar_exact_p,
-    seed_diffs,
-    signflip_exact_p,
-)
-
+from paired_analysis import (aligned, build_primary_contrasts,  # noqa: E402
+                             cmh_unpaired_p, holm, load_marks, mcnemar_exact_p,
+                             seed_diffs, signflip_exact_p)
 # Import the owned threshold to avoid a divergent local value.
 from power_analysis import ALPHA, MODELS  # noqa: E402
-from significance_report import (  # noqa: E402
-    COLLAPSE_THRESHOLD,
-    compliance_census,
-    hochberg,
-)
+from significance_report import (COLLAPSE_THRESHOLD,  # noqa: E402
+                                 common_seed_rate, compliance_census, hochberg)
+
+MECHANISMS = ("information", "noise COLLAPSED", "extens COLLAPSED", "both COLLAPSED")
 
 
 def mechanism(nc_e: float, nc_n: float) -> str:
-    """Classify which of the two mechanisms a lane's contrast can speak to."""
-    if nc_n >= COLLAPSE_THRESHOLD:
-        return "COLLAPSE"  # noise arm broken: extens-higher is forced
-    if nc_e >= COLLAPSE_THRESHOLD:
-        return "extens degraded"  # the OTHER arm is the broken one
-    return "information"  # both arms well-formed
+    """Annotate which arms crossed the collapse threshold.
+
+    The label is a compliance annotation only: it says which arm(s) failed the output
+    contract on the compared seeds, not which arm scored higher. Direction is always
+    read from the measured accuracies (`direction`).
+    """
+    e_bad, n_bad = nc_e >= COLLAPSE_THRESHOLD, nc_n >= COLLAPSE_THRESHOLD
+    if e_bad and n_bad:
+        return "both COLLAPSED"
+    if n_bad:
+        return "noise COLLAPSED"
+    if e_bad:
+        return "extens COLLAPSED"
+    return "information"
 
 
 def direction(acc_e: float, acc_n: float) -> str:
@@ -74,9 +73,12 @@ def main() -> None:
     correct, valid, compliance = load_marks()
     census = compliance_census(compliance)
 
-    def nc(key: tuple[str, str]) -> float:
-        # Missing cells already fail alignment.
-        return census[key]["rate"]
+    def nc(key: tuple[str, str], seeds: list[int]) -> float:
+        # Same seed population as the accuracy contrast; `aligned` already
+        # rejected an empty intersection, so the pooled rate exists.
+        rate = common_seed_rate(census[key], seeds)
+        assert rate is not None
+        return rate
 
     # Keep the full family: the displayed subset is selected after measurement.
     full = []
@@ -111,6 +113,8 @@ def main() -> None:
         fr = full[i_full]
         # This descriptive column needs the aligned arrays.
         a, b, _sidx, hidx = aligned(correct, valid, ka, kb, drop_invalid=False)
+        seeds = sorted(set(correct[ka]) & set(correct[kb]))
+        nc_e, nc_n = nc(ka, seeds), nc(kb, seeds)
         rows.append(
             {
                 "model": model,
@@ -126,9 +130,9 @@ def main() -> None:
                 "p_unp": cmh_unpaired_p(a, b, hidx),
                 "holm210": bool(holm_full[i_full]),
                 "holm210_item": bool(holm_full_item[i_full]),
-                "nc_e": nc(ka),
-                "nc_n": nc(kb),
-                "mech": mechanism(nc(ka), nc(kb)),
+                "nc_e": nc_e,
+                "nc_n": nc_n,
+                "mech": mechanism(nc_e, nc_n),
             }
         )
 
@@ -142,7 +146,9 @@ def main() -> None:
         "-- WHERE THE NOISE ARM IS A WORKING CONTROL. Where the padding broke "
         "the output\ncontract instead, the same row is a padding-robustness "
         "result; the `mechanism`\ncolumn says which, from measured "
-        "non-compliance on both arms."
+        "non-compliance on both arms over the seeds the\ntwo arms share. It "
+        "annotates compliance only; the direction of every row is the\n"
+        "measured one."
     )
     print(
         f"PRIMARY p = exact seed-level sign-flip over "
@@ -224,19 +230,27 @@ def main() -> None:
             "saturated failure mode repeated, not graded induction difficulty",
         ),
         (
-            "COLLAPSE",
+            "noise COLLAPSED",
             "PADDING-ROBUSTNESS COLLAPSE (noise arm >= "
-            f"{COLLAPSE_THRESHOLD:.0%} non-compliant)",
-            "extens > noise is mechanically forced here: an unparseable arm cannot "
-            "score.\n  These rows measure what whitespace padding does to the "
-            "output contract",
+            f"{COLLAPSE_THRESHOLD:.0%} non-compliant, extens arm intact)",
+            "the pad broke the output contract on the noise arm, so this row "
+            "measures\n  what whitespace padding does to compliance as much as "
+            "to accuracy. Direction is\n  reported as measured, not inferred "
+            "from the compliance gap",
         ),
         (
-            "extens degraded",
+            "extens COLLAPSED",
             f"EXTENS ARM >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT (noise arm "
             f"intact)",
-            "the enumeration, not the pad, is what broke the format -- so a "
-            "noise-higher\n  result here is partly a format effect too",
+            "the enumeration, not the pad, is what broke the format -- so the "
+            "accuracy\n  contrast here is partly a format effect too",
+        ),
+        (
+            "both COLLAPSED",
+            f"BOTH ARMS >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT",
+            "neither arm is a working control; the row is a compliance result "
+            "on both\n  sides and its accuracy direction is not attributable to "
+            "either mechanism",
         ),
     ):
         sel = [r for r in rows if r["mech"] == mech]
@@ -267,8 +281,9 @@ def main() -> None:
 
     up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])
     down_all = sum(1 for r in rows if r["acc_n"] < r["acc_e"])
-    coll = [r for r in rows if r["mech"] == "COLLAPSE"]
+    coll = [r for r in rows if r["mech"] != "information"]
     coll_down = sum(1 for r in coll if r["acc_n"] < r["acc_e"])
+    coll_up = sum(1 for r in coll if r["acc_n"] > r["acc_e"])
     print(
         f"\n{'=' * 78}\nRAW DIRECTION, ALL {len(rows)} LANES, NO SIGNIFICANCE "
         f"FILTER\n{'=' * 78}"
@@ -278,11 +293,11 @@ def main() -> None:
         f"{len(rows) - up_all - down_all} exactly tied."
     )
     print(
-        f"  {coll_down} of the {down_all} extens-higher lanes are "
-        f"collapse lanes, where the direction is\n  forced by an unparseable "
-        f"noise arm. Any lane list that removed them would remove\n  almost "
-        f"exactly the lanes pointing one way -- which is why they are kept "
-        f"here and\n  separated by mechanism instead."
+        f"  {coll_down} of the {down_all} extens-higher and {coll_up} of the "
+        f"{up_all} noise-higher lanes have at least one\n  arm over the "
+        f"{COLLAPSE_THRESHOLD:.0%} non-compliance threshold. Those lanes are "
+        f"kept and annotated rather\n  than removed: dropping them would "
+        f"select on a covariate of the outcome."
     )
     clean_down = [
         r for r in rows if r["acc_n"] < r["acc_e"] and r["mech"] == "information"

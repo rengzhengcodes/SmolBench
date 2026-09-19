@@ -13,20 +13,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (  # noqa: E402
-    aligned,
-    cmh_unpaired_p,
-    holm,
-    load_marks,
-    mcnemar_exact_p,
-    seed_diffs,
-    signflip_exact_p,
-)
-from power_analysis import (  # noqa: E402
-    ALPHA,
-    MODELS,
-    build_primary_contrasts,
-)
+from paired_analysis import (aligned, cmh_unpaired_p, holm,  # noqa: E402
+                             load_marks, mcnemar_exact_p, seed_diffs,
+                             signflip_exact_p)
+from power_analysis import ALPHA, MODELS, build_primary_contrasts  # noqa: E402
 from statsmodels.stats.multitest import multipletests
 
 # Import the label so a rename cannot silently read empty values as zero.
@@ -298,14 +288,14 @@ def main() -> None:
 
     print(
         f"{'test':26s} {'procedure':10s} {'rejected':>9s}  "
-        f"{'uncorrected p<0.05':>19s}"
+        f"{'uncorrected p<=0.05':>19s}"
     )
     print("-" * 70)
     for name, (pv, rej_by) in rej_by_test.items():
         for proc, rej in (*rej_by.items(), ("Bonferroni", pv <= ALPHA / m)):
             print(
                 f"{name:26s} {proc:10s} {int(rej.sum()):9d}  "
-                f"{int((pv < ALPHA).sum()):19d}"
+                f"{int((pv <= ALPHA).sum()):19d}"
             )
 
     n_lad_all = sum(1 for r in rows if r["kind_is_ladder"])
@@ -368,7 +358,6 @@ def main() -> None:
         (k for k, v in census.items() if v["rate"] >= COLLAPSE_THRESHOLD),
         key=lambda k: -census[k]["rate"],
     )
-    noise_over = [k for k in over if k[1] == "noise_intens"]
     print(
         f"\n{'=' * 78}\nCOLLAPSE CENSUS -- padding robustness, stated as a "
         f"result\n{'=' * 78}"
@@ -401,16 +390,20 @@ def main() -> None:
             }
         )
 
-    # Mixed basis: numerator is whole-cell census rate, denominator is
-    # matched-arm rows -- the two can disagree.
+    # Numerator and denominator share one basis: the matched-arm rows, with
+    # the noise rate taken over the seeds both arms cover.
+    noise_over = [r for r in pad_rows if r["rate_n"] >= COLLAPSE_THRESHOLD]
     print(
         "The `noise_intens` arm is the compact rule form padded with "
         "WHITESPACE to exactly\nthe extensional arm's token count under the "
         "model's own tokenizer. It adds no\ninformation and no content -- so a "
         "model that obeys the output contract on\n`intens` should obey it "
         "here. In "
-        f"{len(noise_over)} of {len(pad_rows)} lanes it does not, and the table "
-        f"below separates the\nlanes where the PAD is responsible from the "
+        f"{len(noise_over)} of {len(pad_rows)} lanes with both arms measured it "
+        f"does not (noise arm >= "
+        f"{COLLAPSE_THRESHOLD:.0%} non-compliant on the seeds both arms "
+        f"cover), and the\ntable below separates the lanes where the PAD is "
+        f"responsible from the "
         f"lanes that were already failing the\ncontract unpadded. That is a "
         f"finding about padding robustness in its own right,\nand it is "
         f"reported here rather than used as grounds for exclusion.\n"
@@ -647,11 +640,20 @@ def main() -> None:
             )
             for r in sorted(unexplained, key=lambda r: -r["acc_a"]):
                 print(f"    {r['label']}")
+    n_zz_sig = sum(hp[i] for i in zz)
     print(
-        f"\n{len(zz)} zero-vs-zero ladder contrasts (baseline against "
-        f"baseline): {sum(hp[i] for i in zz)} significant\n  -- null by "
-        f"construction, and they come out null."
+        f"\n{len(zz)} zero-vs-zero ladder contrasts (one model's empty-context "
+        f"baseline against\n  another's): {n_zz_sig} significant. These compare "
+        f"different models' floors, so a\n  rejection is a real between-model "
+        f"difference at zero information, not an error."
     )
+    for i in sorted(zz, key=lambda i: rows[i]["p_cluster"]):
+        if hp[i]:
+            r = rows[i]
+            print(
+                f"  SIG    {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}"
+                f"   p={r['p_cluster']:.2e}"
+            )
 
     # ---- what is NOT significant, which is half the story -------------------
     ns = [r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"]

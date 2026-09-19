@@ -13,13 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import (
-    ALPHA,
-    POWER_TARGETS,
-    SEED,
-    fmt_r,
-    results_dir,
-)
+from _power_common import ALPHA, POWER_TARGETS, SEED, fmt_r, results_dir
 from scipy.stats import binom, chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
@@ -294,13 +288,27 @@ _SizingScan = tuple[dict[float, int | None], dict[int, float]]
 
 @functools.lru_cache(maxsize=None)
 def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
-    """`replicates_needed`'s memoized core, keyed on hashable rate tuples."""
+    """`replicates_needed`'s memoized core, keyed on hashable rate tuples.
+
+    Common random numbers: each simulated experiment draws one Bernoulli stream of
+    `MAX_REPLICATES` trials per harmonic and arm, and the R-replicate design is its
+    first R trials. Successive R therefore share their noise, so the power curve is
+    a nested-sample estimate rather than independent draws whose sampling error
+    could reorder neighbouring R and pull the first crossing early or late.
+    """
     a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
+    crit = chi2.isf(alpha, df=1)
+    trials_a = rng.random((N_SIMS, MAX_REPLICATES, a.size), dtype=np.float32) < a
+    trials_b = rng.random((N_SIMS, MAX_REPLICATES, b.size), dtype=np.float32) < b
+    cum_a = np.cumsum(trials_a, axis=1, dtype=np.int16)
+    cum_b = np.cumsum(trials_b, axis=1, dtype=np.int16)
     needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
-        power = simulated_power(a, b, n_reps, rng, alpha=alpha)
+        succ_a = cum_a[:, n_reps - 1].astype(np.int64)
+        succ_b = cum_b[:, n_reps - 1].astype(np.int64)
+        power = float((cmh_stat(succ_a, succ_b, n_reps) > crit).mean())
         curve[n_reps] = power
         for target in POWER_TARGETS:
             if needed[target] is None and power >= target:
@@ -391,7 +399,7 @@ def fisher_check(
         key = (int(ka), int(kb))
         if key not in cache:
             _, p = fisher_exact([[ka, total - ka], [kb, total - kb]])
-            cache[key] = p < alpha
+            cache[key] = p <= alpha
         rejections += cache[key]
     return rejections / N_SIMS
 
@@ -815,8 +823,9 @@ def primary_contrasts_table(
 ) -> dict:
     """Build PRIMARY sizing data and recommendation inputs.
 
-    Use the maximum powered R, not the ceiling, so censored contrasts do not set
-    the recommendation.
+    `r_star` is the smallest R that powers every contrast that is powerable within
+    `MAX_REPLICATES`; `n_censored` counts the contrasts it leaves unpowered, and
+    `family_r` is the whole-family R (``None`` when any contrast is censored).
 
     Parameters
     ----------
@@ -828,7 +837,8 @@ def primary_contrasts_table(
     Returns
     -------
     dict
-        With keys `results`, `r_star`, `n_censored`, `label_w`.
+        With keys `results`, `r_star`, `family_r`, `n_censored`, `n_primary`,
+        `label_w`, `n_ladder`.
 
     Raises
     ------
@@ -850,7 +860,9 @@ def primary_contrasts_table(
     return {
         "results": results,
         "r_star": r_star,
+        "family_r": r_star if n_censored == 0 else None,
         "n_censored": n_censored,
+        "n_primary": len(results),
         "label_w": label_w,
         "n_ladder": n_ladder,
     }
@@ -956,24 +968,30 @@ def render_secondary_contrasts_table(
     print()
 
 
-def recommended_replicates(r_star: int, n_censored: int) -> dict:
+def recommended_replicates(r_star: int, n_censored: int, n_primary: int) -> dict:
     """Derive recommendation figures from PRIMARY sizing.
 
     Parameters
     ----------
     r_star : int
-        Recommended replicate count from PRIMARY sizing.
+        Smallest R powering every powerable PRIMARY contrast at 80%.
     n_censored : int
         Number of PRIMARY contrasts that never reached 80% power.
+    n_primary : int
+        Size of the PRIMARY family the sizing was run over.
 
     Returns
     -------
     dict
-        With ``r_star``, ``n_censored``, ``extra_runs``.
+        With ``r_star``, ``family_r``, ``n_censored``, ``n_primary``, ``n_powered``,
+        ``extra_runs``, ``extra_questions``.
     """
     return {
         "r_star": r_star,
+        "family_r": r_star if n_censored == 0 else None,
         "n_censored": n_censored,
+        "n_primary": n_primary,
+        "n_powered": n_primary - n_censored,
         "extra_runs": r_star - 1,
         "extra_questions": (r_star - 1) * N_HARMONICS,
     }
@@ -982,18 +1000,29 @@ def recommended_replicates(r_star: int, n_censored: int) -> dict:
 def render_recommended_replicates(data: dict) -> None:
     """Print the recommended-R section `recommended_replicates` returns."""
     print(
-        f"Recommended replicates per condition (max feasible PRIMARY R at "
-        f"80%): {data['r_star']}"
+        f"Recommended replicates per condition: {data['r_star']} -- the smallest "
+        f"R at which every\n  PRIMARY contrast that is powerable within "
+        f"R <= {MAX_REPLICATES} reaches 80% "
+        f"({data['n_powered']} of {data['n_primary']})."
     )
     print(
         f"  = {data['extra_runs']} additional quiz runs "
         f"({data['extra_questions']} more questions) per condition beyond "
         f"the existing pilot run."
     )
-    print(
-        f"  ({data['n_censored']} PRIMARY contrasts never reached 80% within "
-        f"R <= {MAX_REPLICATES} and are excluded from this max.)"
-    )
+    if data["family_r"] is None:
+        print(
+            f"  Whole-family sizing is CENSORED: {data['n_censored']} of "
+            f"{data['n_primary']} PRIMARY contrasts never reached 80%\n  within "
+            f"R <= {MAX_REPLICATES}, so no R in range powers the full family. "
+            f"At R={data['r_star']} they stay\n  underpowered and are reported as "
+            f"such; the recommendation does not size them away."
+        )
+    else:
+        print(
+            f"  All {data['n_primary']} PRIMARY contrasts reach 80% by "
+            f"R={data['family_r']}; the family is fully powered."
+        )
     print(
         "  The study itself collects R=30 (user-locked in run_study.py, "
         "uniform across checkpoints); this prospective figure is the sizing "
@@ -1163,7 +1192,9 @@ def main() -> None:
     secondary = secondary_contrasts_table(rates, pooled)
     render_secondary_contrasts_table(secondary, outcomes)  # 5
 
-    render_recommended_replicates(recommended_replicates(r_star, n_censored))  # 6
+    render_recommended_replicates(
+        recommended_replicates(r_star, n_censored, primary["n_primary"])
+    )  # 6
 
     render_equivalence_checks(
         equivalence_checks(primary["results"], rates, r_star),
