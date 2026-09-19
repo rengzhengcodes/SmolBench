@@ -34,7 +34,8 @@ from smolbench.evals.study_config import families as _study_families
 from smolbench.evals.study_config import roster_keys, tag_for
 
 # Derive tags from the committed configuration.
-MODELS = tuple(tag_for(key) for key in roster_keys())
+ROSTER_KEYS = tuple(roster_keys())
+MODELS = tuple(tag_for(key) for key in ROSTER_KEYS)
 
 FAMILIES: dict[str, tuple[str, ...]] = {
     family: tuple(tag_for(key) for key in rungs)
@@ -67,8 +68,32 @@ MAX_REPLICATES = (
 )
 SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
 
-# The pre-registered roster, by tag. Counts alone would pass a same-family
-# checkpoint swap, so the identity is pinned too.
+# The pre-registered roster. Counts alone would pass a same-family checkpoint
+# swap, so the checkpoint keys (what the study runs) and their tags (what names
+# the result directories) are both pinned.
+PREREGISTERED_KEYS = (
+    "qwen3.5-27b",
+    "qwen3.5-122b-a10b",
+    "qwen3.5-397b-a17b",
+    "nemotron-3-nano-4b",
+    "nemotron-3-nano-30b-a3b",
+    "nemotron-3-super-120b-a12b",
+    "gemma-4-e2b",
+    "gemma-4-12b",
+    "gemma-4-31b",
+    "glm-4.7-flash",
+    "glm-4.5-air",
+    "glm-4.7",
+    "ministral-3-3b",
+    "ministral-3-8b",
+    "ministral-3-14b",
+    "exaone-4.0-32b",
+    "exaone-4.5-33b",
+    "k-exaone-236b-a23b",
+    "deepseek-v4-flash",
+    "deepseek-v3.1",
+    "deepseek-v4-pro",
+)
 PREREGISTERED_MODELS = (
     "qwen35_27b",
     "qwen35_122b",
@@ -735,10 +760,16 @@ def check_design_invariants() -> None:
             f"(expected 210), N_SECONDARY={N_SECONDARY} (expected 63)"
         )
 
+    if ROSTER_KEYS != PREREGISTERED_KEYS:
+        raise RuntimeError(
+            f"study_config roster keys {ROSTER_KEYS!r} disagree with the "
+            f"pre-registered roster {PREREGISTERED_KEYS!r}; re-pin "
+            "PREREGISTERED_KEYS deliberately if the study changed"
+        )
     if MODELS != PREREGISTERED_MODELS:
         raise RuntimeError(
-            f"study_config roster {MODELS!r} disagrees with the pre-registered "
-            f"roster {PREREGISTERED_MODELS!r}; re-pin PREREGISTERED_MODELS "
+            f"study_config roster tags {MODELS!r} disagree with the pre-registered "
+            f"tags {PREREGISTERED_MODELS!r}; re-pin PREREGISTERED_MODELS "
             "deliberately if the study changed"
         )
 

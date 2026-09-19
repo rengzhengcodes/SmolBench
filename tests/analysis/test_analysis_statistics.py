@@ -112,6 +112,18 @@ def test_design_invariants_pin_roster_identity(
         tuple(new if t == old else t for t in power_analysis.MODELS),
     )
     assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
+    with pytest.raises(RuntimeError, match="pre-registered tags"):
+        power_analysis.check_design_invariants()
+
+
+def test_design_invariants_pin_roster_keys_not_only_tags(
+    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkpoint swap that keeps the old tag must still fail on the key."""
+    keys = list(power_analysis.ROSTER_KEYS)
+    keys[0] = "qwen3.5-9b"
+    monkeypatch.setattr(power_analysis, "ROSTER_KEYS", tuple(keys))
+    assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
     with pytest.raises(RuntimeError, match="pre-registered roster"):
         power_analysis.check_design_invariants()
 
