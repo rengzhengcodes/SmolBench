@@ -306,7 +306,11 @@ def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
     `MAX_REPLICATES` trials per harmonic and arm, and the R-replicate design is its
     first R trials. Successive R therefore share their noise, so the power curve is
     a nested-sample estimate rather than independent draws whose sampling error
-    could reorder neighbouring R and pull the first crossing early or late.
+    could reorder neighbouring R. A target's R is the sustained crossing: the
+    smallest R from which the estimated power stays at or above the target through
+    `MAX_REPLICATES`, so the maximum over contrasts powers every one of them at
+    that R. A first noisy crossing could dip back below the target at a larger R
+    set by another contrast.
     """
     a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
@@ -322,11 +326,12 @@ def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
         succ_b = cum_b[:, n_reps - 1].astype(np.int64)
         power = float((cmh_stat(succ_a, succ_b, n_reps) > crit).mean())
         curve[n_reps] = power
-        for target in POWER_TARGETS:
-            if needed[target] is None and power >= target:
+    for target in POWER_TARGETS:
+        ok = True
+        for n_reps in range(MAX_REPLICATES, 0, -1):
+            ok = curve[n_reps] >= target and ok
+            if ok:
                 needed[target] = n_reps
-        if all(needed[t] is not None for t in POWER_TARGETS):
-            break
     return needed, curve
 
 
@@ -351,7 +356,8 @@ def replicates_needed(
     Returns
     -------
     _SizingScan
-        ``(needed, curve)``: `needed` maps power target -> smallest R reaching it.
+        ``(needed, curve)``: `needed` maps power target -> smallest R from which
+        power stays at or above it.
 
     Raises
     ------

@@ -323,7 +323,7 @@ def test_equivalence_replicates_finds_generous_margin_quickly(
 
 
 def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> None:
-    """Nested draws make the power curve reproducible and monotone up to MC noise, and the crossing is its first hit."""
+    """Nested draws make the power curve reproducible, and the crossing is sustained."""
     fn = power_analysis.replicates_needed
     fn.cache_clear()
     a = np.full(power_analysis.N_HARMONICS, 0.75)
@@ -334,15 +334,41 @@ def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> N
     assert needed == needed_again and curve == curve_again
 
     reps = sorted(curve)
-    assert reps == list(range(1, reps[-1] + 1))
-    powers = [curve[r] for r in reps]
-    # Shared noise: estimates differ only by verdicts that flip on one more replicate.
-    drops = [x - y for x, y in zip(powers, powers[1:]) if y < x]
-    assert not drops or max(drops) < 0.01, drops
+    assert reps == list(range(1, power_analysis.MAX_REPLICATES + 1))
     for target, r_hit in needed.items():
-        assert r_hit is not None
-        assert r_hit == min(r for r in reps if curve[r] >= target)
-        assert all(curve[r] < target for r in reps if r < r_hit)
+        assert r_hit == min(
+            (
+                r
+                for r in reps
+                if all(curve[later] >= target for later in reps if later >= r)
+            ),
+            default=None,
+        )
+
+
+def test_sizing_crossing_is_sustained_not_first_hit(
+    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A noisy first crossing is not accepted when later power dips below target."""
+
+    def fake_cmh_stat(_succ_a: np.ndarray, _succ_b: np.ndarray, n: int) -> np.ndarray:
+        fraction = 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
+        n_reject = int(round(fraction * power_analysis.N_SIMS))
+        return np.concatenate(
+            (np.full(n_reject, 1e6), np.zeros(power_analysis.N_SIMS - n_reject))
+        )
+
+    power_analysis._sizing_scan.cache_clear()
+    monkeypatch.setattr(power_analysis, "cmh_stat", fake_cmh_stat)
+    try:
+        rates = np.full(power_analysis.N_HARMONICS, 0.5)
+        needed, curve = power_analysis.replicates_needed(rates, rates)
+        assert needed[0.80] == 8
+        assert needed[0.90] is None
+        assert curve[5] == pytest.approx(0.85)
+        assert curve[7] == pytest.approx(0.79)
+    finally:
+        power_analysis._sizing_scan.cache_clear()
 
 
 def test_recommended_replicates_carries_censored_contrasts(
