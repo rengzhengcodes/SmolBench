@@ -1,15 +1,42 @@
 # Induction
 
-The current operational definition of induction is information derived from empirical evidence. In induction,  propositions that have to fit empirical evidence and any change in empirical evidence necessitates the model change (i.e., the model does not control the observables, but the observables control the model). The full enumerative list of empirical evidence is called the extensional representation. The pattern-fitted version is called the intensional representation. Our hypothesis is that while extensional and intensional representations both represent positive information, the fact that extensional representations usually require more tokens leads to performance degradation compared to intensional representations.
+This study compares extensional evidence lists with intensional pattern rules.
 
-The following are a non-exhaustive list of types of induction, which all follow the same format: extensional representations are compacted into shorter intensional representations. Note that, for induction, all intensional representations supervene on extensional representations and that changes in the extensional representation by necessity can change the intensional representation.
+`noise_intens` pads the intensional prompt to the extensional token count under
+the tested model's tokenizer, separating length from representation. `zero`
+uses an empty context and omits `$seq_len`, which would reveal the period-1
+answer.
 
-## Chromatic Intervals
+Conditions (`intens`, `extens`, `noise_intens`, `zero`) come from
+`periodic.CONDITIONS` and remain ordered dictionary keys.
 
-Chromatic intervals are examples where an interval has a certain "color" and whatever color is contained in the interval leads to certain properties. For example, the terms of presidencies are chromatic intervals, where the president is the color, the intervals are on time, and the additional properties are how one conducts the duties of the presidency.
+## Periodic patterns
 
-The extensional representation for presidencies is "George Washington was President Apr. 30 1789, May 1 1789, May 2 1789,... and Mar. 4 1797." The intensional representation is "George Washington was President between Apr. 30 1789 and Mar. 4 1797." Note that if George Washington's presidency had for some reason changed (e.g., if he sought a third term, retired early, been temporarily incapacitated, etc.) the extensional representation changes which induces a change in the intensional representation.
+A periodic pattern combines labels from rules firing at multiples of each period.
 
-A query on a chromatic interval always involves the form "was the interval [color] from [start, end]." For example, "could George Washington have signed the Judiciary Act of 1789" involves querying "was the presidency 'George Washington' from [Sep. 24 1789, Sep. 24 1789]."
+Extensional: "Position 2: fizz. Position 3: buzz. ... Position 6: fizz|buzz."
+Intensional: "Every 2 positions write fizz. Every 3 positions write buzz."
 
-The above distinguishes itself from classical needle-in-a-haystack (NIAH) problems because the queries are not necessarily limited to just one date but can encompass multiple dates. For example, the query "could George Washington have signed a bill on Jan. 1 1800" requires taking the complement of all of time and the time George Washington was President. In that case, both intensional and extensional representations are positive utility information but the intensional representation has less tokens that need to be processed.
+Queries ask membership at a position or a count across one period.
+
+## The experiment API
+
+`smolbench.induction.experiment.InductionExperiment` is the shared harness.
+The driver is `notebooks/induction/run_study.py`.
+
+### keys.env first, then import
+
+Load `keys.env` before imports that read `EC2_*`: `ec2` captures them at import.
+
+### Seed conventions
+
+A replicate regenerates the same quiz with a new seed. Shards partition the
+seed tuple by `r % count` and need separate EC2 state files and tags.
+
+Each seed drives quiz and decoding randomness. Recreate prompts with
+`make_quizzes(seed, model)`; the model controls noise-arm padding.
+
+### Offline vs. billed methods
+
+`summarize()` reads stored marks. Provisioning, running, status, and teardown
+use billed EC2 instances.

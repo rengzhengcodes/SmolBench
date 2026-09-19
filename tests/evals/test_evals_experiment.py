@@ -76,6 +76,20 @@ def test_shards_partition_the_seeds() -> None:
     )
     assert build(n_replicates=5).seeds == (0, 1, 2, 3, 4)
 
+    unsharded = build().seeds
+    for count in (1, 2, 3, 4, 7, 30):
+        shards = [
+            build(shard=(index, count), state_file="s.json").seeds
+            for index in range(count)
+        ]
+        collected = [seed for shard in shards for seed in shard]
+        assert sorted(collected) == sorted(unsharded)
+        assert len(collected) == len(set(collected))
+        sizes = [len(shard) for shard in shards]
+        assert max(sizes) - min(sizes) <= 1
+        for index, shard in enumerate(shards):
+            assert all(seed % count == index for seed in shard)
+
 
 def test_shard_tags_and_state_files_are_distinct(
     monkeypatch: pytest.MonkeyPatch,
@@ -165,7 +179,7 @@ def test_a_blank_state_file_is_refused(state_file: str) -> None:
         build(state_file=state_file)
 
 
-@pytest.mark.parametrize("shard", [(0, 0), (2, 2), (-1, 1)])
+@pytest.mark.parametrize("shard", [(0, 0), (2, 2), (-1, 1), (3, 3), (-1, 2), (5, 3)])
 def test_bad_shard_bounds_are_refused(shard: tuple[int, int]) -> None:
     """Refuse shard indices outside a positive shard-count range."""
     with pytest.raises(ValueError, match="shard"):
