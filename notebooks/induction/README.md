@@ -61,9 +61,19 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 
 ## audits/ and results/ -- archived
 
-The three concluded audit scripts (`check_currency.py`,
-`verify_survivorship.py`, `response_audit.py`) are not in this tree: they
-left it on 2026-08-30 and live on S3 under
+The three concluded audit scripts are not in this tree:
+
+- `check_currency.py`: checked that every local `results/` file matched the
+  earliest-timestamped S3 object for its (model, seed, arm) by content size,
+  i.e. that the local tree was current under earliest-wins.
+- `verify_survivorship.py`: compared the empty-response rate of
+  ministral-3-14b's seven re-collected seeds against the other 23, per arm,
+  to size the exclusion-bias caveat left by a delivery fault.
+- `response_audit.py`: tallied raw responses per condition (empty, scored
+  correct, correct answer present anywhere, longest) to tell a genuinely
+  low-accuracy lane from a broken one.
+
+They left it on 2026-08-30 and live on S3 under
 `archives/2026-08-30/notebooks/induction/audits/` (and in the PR #4 release
 zip). `results/` is likewise S3-mirrored rather than tracked. The exact
 locations are listed in `notebooks/ARCHIVE.md`.

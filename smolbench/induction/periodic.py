@@ -142,6 +142,11 @@ class PeriodicConfig:
         for lbl in self.labels:
             if self.sep in lbl:
                 raise ValueError(f"Label '{lbl}' contains the separator '{self.sep}'.")
+            if any(ch.isdigit() for ch in lbl):
+                # Precondition of ``_verify_no_range_leak``: the rendered
+                # range-free prompt is scanned for the sequence length's
+                # digits, so no substitution may carry digits of its own.
+                raise ValueError(f"Label '{lbl}' contains a digit.")
 
     @property
     def ascending_periods(self) -> tuple[int, ...]:
@@ -291,6 +296,12 @@ def _verify_no_range_leak(
     is the period-1 answer. A range placeholder is rejected structurally; the
     rendered text is searched only for values too long to collide with
     unrelated digits.
+
+    Precondition: no non-range substitution contains a digit. Labels satisfy
+    this by construction (``_LABEL_CHARSET`` is alphabetic and
+    ``PeriodicConfig`` rejects caller labels with digits), so the only digits
+    in a rendered range-free prompt come from the template's own wording or
+    from a leaked range value.
 
     Parameters
     ----------

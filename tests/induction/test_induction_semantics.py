@@ -143,9 +143,18 @@ def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
 @pytest.mark.parametrize(
     "kwargs, match",
     [
+        # "Pairwise coprime" = every pair of periods has gcd 1, so the
+        # sequence length lcm(periods) is exactly their product. Without
+        # expect_seq_len that is the only case PeriodicConfig accepts, because
+        # a shared factor silently shrinks the sequence: here gcd(2, 4) = 2, so
+        # lcm(1, 2, 4, 5) = 20, not the product 40, and the caller's mental
+        # model of the sequence length would be wrong.
         ({"n": 4, "labels": 4, "periods": (1, 2, 4, 5)}, "pairwise coprime"),
         ({"n": 4, "labels": 4, "periods": (1, 2, 3)}, "must equal n"),
         ({"n": 4, "labels": 4, "periods": (1, 3, 3, 5)}, "distinct"),
+        # Digits in a label would collide with _verify_no_range_leak's scan
+        # for the sequence length ("x12" in a length-12 zero prompt).
+        ({"n": 4, "labels": ("a", "b", "x12", "d")}, "contains a digit"),
         # Extra 11 changes the LCM.
         (
             {
