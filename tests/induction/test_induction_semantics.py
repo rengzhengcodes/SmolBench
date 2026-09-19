@@ -16,7 +16,6 @@ from smolbench.induction._common import Prompter
 from smolbench.induction.periodic import (
     CONDITIONS,
     PeriodicConfig,
-    generate_sequence,
     get_periodic_numeric_quiz,
     get_periodic_quiz,
     numeric_count_query_gen,
@@ -33,7 +32,7 @@ TOF_TMPL = string.Template(
 
 def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
     """Check numeric answers against divisible-position tallies."""
-    period_to_label, pos_to_compound = generate_sequence(cfg)
+    period_to_label, pos_to_compound = cfg.generate_sequence()
     label_to_period = {label: period for period, label in period_to_label.items()}
     quizzes = get_periodic_numeric_quiz(
         cfg,
@@ -57,7 +56,7 @@ def _check_counts(cfg: PeriodicConfig) -> tuple[dict[int, str], dict[int, str]]:
 def test_periodic_tof_answers_match_divisibility_rule() -> None:
     """ToF answers must equal ``pos % period == 0``, identically across all three arms."""
     cfg = PeriodicConfig(n=4, labels=["a", "bb", "ccc", "dddd"], seed=7)
-    period_to_label, _ = generate_sequence(cfg)
+    period_to_label, _ = cfg.generate_sequence()
     label_to_period = {label: period for period, label in period_to_label.items()}
 
     quizzes = get_periodic_quiz(
@@ -103,7 +102,7 @@ def test_coprime_periods_make_sequence_length_the_product() -> None:
     assert max(pos_to_compound) == prod(periods)
 
     shuffled = PeriodicConfig(n=6, labels=labels, seed=13, periods=(13, 1, 7, 2, 11, 3))
-    assert generate_sequence(shuffled)[0] == period_to_label
+    assert shuffled.generate_sequence()[0] == period_to_label
 
 
 def test_divisor_periods_add_harmonics_without_moving_sequence_length() -> None:
@@ -221,7 +220,7 @@ def test_a_single_condition_mapping_renders_exactly_that_arm() -> None:
 def test_the_zero_arm_states_no_range_and_leaks_no_answer() -> None:
     """The zero arm must not leak answers through its range."""
     cfg = PeriodicConfig(n=6, labels=6, seed=5)
-    _p2l, p2c = generate_sequence(cfg)
+    _p2l, p2c = cfg.generate_sequence()
     seq_len = max(p2c)
     quizzes = _quizzes(cfg)
     zero = quizzes["zero"]

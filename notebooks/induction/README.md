@@ -61,6 +61,9 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 
 ## audits/ and results/ -- archived
 
-The three concluded probes (`check_currency.py`, `verify_survivorship.py`,
-`response_audit.py`) left the tree on 2026-08-30, and `results/` is S3-mirrored
-rather than tracked; `notebooks/ARCHIVE.md` says where both live.
+The three concluded audit scripts (`check_currency.py`,
+`verify_survivorship.py`, `response_audit.py`) are not in this tree: they
+left it on 2026-08-30 and live on S3 under
+`archives/2026-08-30/notebooks/induction/audits/` (and in the PR #4 release
+zip). `results/` is likewise S3-mirrored rather than tracked. The exact
+locations are listed in `notebooks/ARCHIVE.md`.

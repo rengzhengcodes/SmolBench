@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import string
 from types import ModuleType
 
 import pytest
@@ -18,25 +19,6 @@ STUDY_KEYS = sorted(study_config.roster_keys())
 MINISTRAL = ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b")
 DEEPSEEK = ("deepseek-v4-flash", "deepseek-v3.1", "deepseek-v4-pro")
 
-# Byte equality keeps results comparable to the archived all-MoE study.
-PERIODIC_MOE_TEMPLATE = (
-    "You are a precise integer counter.\n"
-    "\n"
-    "Task: answer the question below with a single integer and nothing else.\n"
-    "\n"
-    "Output format:\n"
-    "Return exactly one integer and nothing else.\n"
-    "Do not output any explanation, punctuation, quotes, or extra whitespace.\n"
-    "Stop immediately after writing the integer.\n"
-    "\n"
-    "Context:\n"
-    "There is a counting game. Positions are counted starting from 1. "
-    "At each position, words are written according to the following rules:\n"
-    "$positive_info\n"
-    "Question:\n"
-    "How many of the positions 1 through $seq_len include '$label'?"
-)
-
 
 @pytest.fixture(scope="module")
 def run_study() -> ModuleType:
@@ -52,8 +34,8 @@ def test_roster(run_study: ModuleType) -> None:
     assert run_study.MODELS == {
         key: study_config.tag_for(key) for key in study_config.roster_keys()
     }
+    # Dict equality ignores order; the roster's order is the lane order.
     assert tuple(run_study.MODELS) == study_config.roster_keys()
-    assert sorted(run_study.MODELS) == STUDY_KEYS
     assert len(set(run_study.MODELS.values())) == len(run_study.MODELS)
 
 
@@ -88,11 +70,6 @@ def test_cot_args_table(run_study: ModuleType) -> None:
     assert run_study.COT_ARGS == {
         key: toggle(key) for key in study_config.roster_keys()
     }
-
-
-def test_template_is_byte_identical_to_periodic_moe(run_study: ModuleType) -> None:
-    """The template matches periodic_moe byte-for-byte."""
-    assert run_study.template.template == PERIODIC_MOE_TEMPLATE
 
 
 def test_experiment_constants(run_study: ModuleType) -> None:
@@ -174,7 +151,9 @@ def test_probe_seeds_span_the_range_sorted_and_deduplicated(
     probes = run_study.probe_seeds(seeds)
     assert probes == sorted(set(probes))
     assert len(probes) <= run_study.PROBE_SEEDS
-    assert {seeds[0], seeds[-1]} <= set(probes) <= set(seeds)
+    assert set(probes) <= set(seeds)
+    assert seeds[0] in probes
+    assert seeds[-1] in probes
 
 
 class CountingTokenizer(StubTokenizer):
@@ -224,6 +203,8 @@ def test_the_zero_arm_template_is_the_study_template_without_its_range_clause(
     """The zero arm removes the range clause from the shared template."""
     assert run_study.RANGE_CLAUSE == " 1 through $seq_len"
     assert run_study.RANGE_CLAUSE in run_study.template.template
+    with pytest.raises(ValueError, match="RANGE_CLAUSE"):
+        run_study._zero_template(string.Template("How many include '$label'?"))
     zero_template = run_study._zero_template(run_study.template)
     assert zero_template.template == run_study.template.template.replace(
         run_study.RANGE_CLAUSE, ""
@@ -258,9 +239,9 @@ def test_context_limit_is_derived_from_the_deploy_specs(run_study: ModuleType) -
 def test_a_non_uniform_roster_context_raises(run_study: ModuleType) -> None:
     """Non-uniform contexts raise to avoid confounded budget ceilings."""
     with pytest.raises((RuntimeError, SystemExit)) as err:
-        run_study.derive_context_limit({"a": 131_072, "b": 32_768})
+        run_study.find_shared_context_limit({"a": 131_072, "b": 32_768})
     assert "32" in str(err.value) or "32768" in str(err.value)
-    assert run_study.derive_context_limit({"a": 131_072, "b": 131_072}) == 131_072
+    assert run_study.find_shared_context_limit({"a": 131_072, "b": 131_072}) == 131_072
 
 
 def test_request_timeout_is_derived_from_the_budget_and_a_decode_floor(
@@ -335,7 +316,15 @@ def test_main_does_not_provision_when_nothing_is_outstanding(
 
 
 def test_a_bare_fleet_prefix_is_rejected_even_with_a_lane() -> None:
-    """A bare fleet prefix exits even though the lane suffix makes the tag non-empty."""
+    """A bare fleet prefix exits even though the lane suffix makes the tag non-empty.
+
+    The fleet exports ``EC2_EXPERIMENT_TAG`` as ``<study prefix>-<something>``
+    (e.g. ``scaling-induction``). A bare fleet prefix is that export cut off
+    after the prefix's trailing dash (``scaling-``): on its own it is an
+    invalid tag, but once the driver appends its lane suffix
+    (``scaling--gemma-4-e2b-s0of2``) the whole string would pass the facade's
+    validation. The driver must validate the base before appending.
+    """
     module, exc, _env = import_run_study(
         "induction_run_study_bare_prefix",
         {

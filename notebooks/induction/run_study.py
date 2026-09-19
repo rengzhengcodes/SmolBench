@@ -10,9 +10,11 @@ Environment knobs (``keys.env`` or the fleet's per-lane export):
 - ``INDUCTION_MODELS``: comma-separated spec keys; unset runs the roster.
 - ``INDUCTION_SHARD``: ``index/count`` seed stride for one of several processes.
 - ``INDUCTION_STATE_FILE``: EC2 state-file override; defaults from the tag.
-- ``INDUCTION_FORCE_RERUN``: ``1`` or ``a-b`` seeds to re-collect.
+- ``INDUCTION_FORCE_RERUN``: ``all`` or ``a-b`` seeds to re-collect.
 - ``EC2_EXPERIMENT_TAG``: fleet-exported base tag; defaults to the study's
   ``standalone_tag``.
+
+Replacing these knobs with a config file logged per replication is issue #62.
 """
 
 import argparse
@@ -21,6 +23,7 @@ import os
 import string
 from math import ceil
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -32,17 +35,21 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
 
-def _parse_shard(var: str) -> tuple[int, int] | None:
-    """Parse environment variable `var` as ``"index/count"``; ``None`` if unset/empty.
+def _parse_shard(var: str) -> Optional[tuple[int, int]]:
+    """Read the shard from the environment variable named `var`.
+
+    The value is ``"index/count"`` (``INDUCTION_SHARD=0/3`` is process 0 of 3);
+    only the pair is parsed here. The ``-s<index>of<count>`` tag suffix and the
+    per-shard state file are derived from it by the ``Experiment`` facade.
 
     Parameters
     ----------
     var : str
-        Environment variable name to parse.
+        Environment variable name to read.
 
     Returns
     -------
-    tuple[int, int] | None
+    Optional[tuple[int, int]]
         Shard index and process count, or ``None`` when unset or empty.
 
     Raises
@@ -64,7 +71,11 @@ def _parse_shard(var: str) -> tuple[int, int] | None:
     return index, count
 
 
-def _parse_force_seeds(raw: str, full_range: range) -> frozenset[int] | None:
+#: Sentinel for every seed; a word, so it cannot be mistaken for a seed number.
+FORCE_RERUN_ALL: str = "all"
+
+
+def _parse_force_seeds(raw: str, full_range: range) -> Optional[frozenset[int]]:
     """Parse ``INDUCTION_FORCE_RERUN`` into the set of seeds to re-collect.
 
     Parameters
@@ -76,7 +87,7 @@ def _parse_force_seeds(raw: str, full_range: range) -> frozenset[int] | None:
 
     Returns
     -------
-    frozenset[int] | None
+    Optional[frozenset[int]]
         Seeds to re-collect, or ``None`` when reruns are disabled.
 
     Raises
@@ -87,13 +98,14 @@ def _parse_force_seeds(raw: str, full_range: range) -> frozenset[int] | None:
     raw = raw.strip()
     if not raw:
         return None
-    if raw == "1":
+    if raw == FORCE_RERUN_ALL:
         return frozenset(full_range)
     try:
         lo, hi = (int(part) for part in raw.split("-", 1))
     except ValueError as exc:
         raise SystemExit(
-            f"INDUCTION_FORCE_RERUN={raw!r}: expected '1' or 'a-b' (e.g. '0-11')"
+            f"INDUCTION_FORCE_RERUN={raw!r}: expected {FORCE_RERUN_ALL!r} or "
+            "'a-b' (e.g. '0-11')"
         ) from exc
     if lo > hi or lo < full_range.start or hi >= full_range.stop:
         raise SystemExit(
@@ -143,23 +155,41 @@ if SHARD is not None:
         for key in os.environ.get("INDUCTION_MODELS", "").split(",")
         if key.strip()
     ]
+    # Unknown keys are rejected by ``selected_models`` before anything runs.
     _chosen = set(_requested)
     _lane_models = [model for model in MODELS if model in _chosen]
-    _lane_models += [key for key in dict.fromkeys(_requested) if key not in MODELS]
     _LANE = "-" + "-".join(_lane_models) if _lane_models else ""
 
-# The facade validates the full tag; a bare fleet prefix hidden by the lane
-# suffix must be caught on the base.
-_base_tag = (
-    os.environ.get("EC2_EXPERIMENT_TAG") or load_study_config().fleet.standalone_tag
-)
-try:
-    validate_experiment_tag(_base_tag, None)
-except ValueError as exc:
-    raise SystemExit(str(exc)) from exc
+
+def base_experiment_tag() -> str:
+    """Resolve the fleet-exported (or standalone) base tag, rejecting a bare prefix.
+
+    This is a runtime guard on the process's configuration, not a test: the
+    facade validates the full tag, but a fleet supervisor that exports only its
+    ``scaling-`` prefix would pass once the lane suffix is appended, so the base
+    is validated on its own before the suffix can hide it.
+
+    Returns
+    -------
+    str
+        ``EC2_EXPERIMENT_TAG`` if set, else the study's ``standalone_tag``.
+
+    Raises
+    ------
+    SystemExit
+        If the base tag is not itself a valid experiment tag.
+    """
+    tag = (
+        os.environ.get("EC2_EXPERIMENT_TAG") or load_study_config().fleet.standalone_tag
+    )
+    try:
+        validate_experiment_tag(tag, None)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return tag
 
 
-def derive_context_limit(lengths: dict[str, int]) -> int:
+def find_shared_context_limit(lengths: dict[str, int]) -> int:
     """Return the single context window that every model in `lengths` shares.
 
     Parameters
@@ -178,7 +208,9 @@ def derive_context_limit(lengths: dict[str, int]) -> int:
         If `lengths` is empty or holds more than one distinct value.
     """
     if not lengths:
-        raise SystemExit("derive_context_limit: empty {model: context_length} mapping")
+        raise SystemExit(
+            "find_shared_context_limit: empty {model: context_length} mapping"
+        )
     distinct = sorted(set(lengths.values()))
     if len(distinct) > 1:
         # A family's ceiling must differ from its siblings' by parameter
@@ -195,7 +227,7 @@ def derive_context_limit(lengths: dict[str, int]) -> int:
 
 
 #: Derived from specs so model context cannot confound scaling.
-CONTEXT_LIMIT: int = derive_context_limit(
+CONTEXT_LIMIT: int = find_shared_context_limit(
     {key: ec2.get_model_context_length(key) for key in MODELS}
 )
 
@@ -247,10 +279,6 @@ template = string.Template(
 #: Kept separate so a changed template cannot silently leak its range.
 RANGE_CLAUSE: str = " 1 through $seq_len"
 
-if RANGE_CLAUSE not in template.template:
-    # ``replace`` would otherwise silently retain the range.
-    raise RuntimeError(f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template.")
-
 
 def _zero_template(base: string.Template) -> string.Template:
     """Derive the zero condition's range-free question from `base`.
@@ -266,7 +294,15 @@ def _zero_template(base: string.Template) -> string.Template:
     -------
     string.Template
         The range-free question template.
+
+    Raises
+    ------
+    ValueError
+        If `base` lacks ``RANGE_CLAUSE``, since ``replace`` would silently
+        retain the range.
     """
+    if RANGE_CLAUSE not in base.template:
+        raise ValueError(f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.")
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
 
@@ -421,7 +457,7 @@ EXPERIMENT = InductionExperiment(
     n_replicates=N_REPLICATES,
     base_seed=BASE_SEED,
     state_file=os.environ.get("INDUCTION_STATE_FILE") or None,
-    experiment_tag=_base_tag + _LANE,
+    experiment_tag=base_experiment_tag() + _LANE,
     shard=SHARD,
     # Sharding limits forced reruns to owned seeds.
     force_seeds=_parse_force_seeds(
@@ -454,14 +490,14 @@ def selected_models() -> tuple[str, ...]:
     return tuple(m for m in MODELS if m in chosen)
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: Optional[list[str]] = None) -> None:
     """Warm tokenizers, derive budgets, provision, run, and summarize: the entry point.
 
     Provisions only when selected models have outstanding replicates.
 
     Parameters
     ----------
-    argv : list[str] | None, optional
+    argv : Optional[list[str]], optional
         A parameter so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(

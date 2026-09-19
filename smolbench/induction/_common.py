@@ -12,6 +12,7 @@ from typing import (
     Collection,
     Iterable,
     Mapping,
+    Optional,
 )
 
 import numpy as np
@@ -33,8 +34,11 @@ class Prompter:
     template: string.Template
     #: Query generator yielding substitutions and answers.
     query_gen: Callable[..., Iterable[tuple[dict[str, str], Any]]]
-    #: Position-range-free template; required by range-omitting conditions.
-    range_free_template: string.Template | None = None
+    #: Variant of ``template`` with the position range removed. The range is the
+    #: span of positions a query covers, e.g. "positions 1 through $seq_len",
+    #: and ``$seq_len`` is the period-1 count, so a zero-information arm that
+    #: stated it would leak an answer. Required by range-omitting conditions.
+    range_free_template: Optional[string.Template] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,30 +77,25 @@ def build_substitution(query: dict[str, str], positive_info: str) -> dict[str, s
 
 
 def context_renderer(
-    prompter: Prompter,
-    query: dict[str, str],
-    template: string.Template | None = None,
+    template: string.Template, query: dict[str, str]
 ) -> Callable[[str], str]:
     """Build a deterministic ``context -> prompt`` renderer.
 
     Parameters
     ----------
-    prompter : Prompter
-        Prompter supplying the default template.
+    template : string.Template
+        Template to render; the arm's own choice of a ``Prompter``'s templates.
     query : dict[str, str]
         Query substitutions for each rendering.
-    template : string.Template | None, optional
-        Template to render.
 
     Returns
     -------
     Callable[[str], str]
         Function mapping context to a rendered prompt.
     """
-    resolved: string.Template = template if template is not None else prompter.template
 
     def render(context: str) -> str:
-        return resolved.safe_substitute(build_substitution(query, context))
+        return template.safe_substitute(build_substitution(query, context))
 
     return render
 

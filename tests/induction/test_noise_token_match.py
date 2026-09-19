@@ -1,5 +1,7 @@
 """Test whitespace-padded, token-matched induction noise prompts."""
 
+import difflib
+
 import pytest
 from conftest import MergeEverythingTokenizer, StubTokenizer, TruncatingTokenizer
 from tests.induction._periodic import PERIODIC_TMPL, POSITIVE_ARMS
@@ -32,10 +34,7 @@ def tiktoken_tokenizer(encoding_name: str) -> TiktokenTokenizer:
 
 
 def _render() -> str:
-    return context_renderer(
-        PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-        {"seq_len": "60", "label": "gerbil"},
-    )
+    return context_renderer(PERIODIC_TMPL, {"seq_len": "60", "label": "gerbil"})
 
 
 @pytest.fixture(params=["stub", "cl100k_base", "o200k_base"])
@@ -79,8 +78,21 @@ def test_pad_adds_only_whitespace(
     intens, noise = quizzes["intens"], quizzes["noise_intens"]
     assert len(intens) == len(noise) > 0
     for intens_q, noise_q in zip(intens, noise):
-        assert "".join(noise_q.prompt.split()) == "".join(intens_q.prompt.split())
-        assert len(noise_q.prompt) > len(intens_q.prompt)
+        # Strip-and-compare alone would pass if whitespace were moved rather
+        # than added, so also require the intens prompt to survive verbatim
+        # once the inserted pad is removed: the diff must be one whitespace run.
+        diff = [
+            op
+            for op in difflib.SequenceMatcher(
+                None, intens_q.prompt, noise_q.prompt, autojunk=False
+            ).get_opcodes()
+            if op[0] != "equal"
+        ]
+        assert len(diff) == 1
+        tag, i1, i2, j1, j2 = diff[0]
+        assert tag == "insert" and i1 == i2
+        assert noise_q.prompt[j1:j2].isspace()
+        assert noise_q.prompt[:j1] + noise_q.prompt[j2:] == intens_q.prompt
 
 
 def test_other_arms_are_independent_of_the_tokenizer() -> None:
@@ -137,19 +149,32 @@ def test_token_matched_noise_prompt_hits_arbitrary_targets(
     assert tokenizer.count(prompt) == target
 
 
-def test_unmatched_targets_raise(
+def test_a_target_below_the_unpadded_prompt_raises(
     tokenizer: StubTokenizer | TiktokenTokenizer,
 ) -> None:
-    """Reject unreachable token targets."""
+    """Padding only appends, so a target the unpadded prompt already exceeds is unreachable."""
     render = _render()
-    with pytest.raises(ValueError) as over_long:
+    base = tokenizer.count(render(CONTEXT))
+    assert base > 1
+    with pytest.raises(ValueError, match="already") as over_long:
         token_matched_noise_prompt(render, CONTEXT, 1, tokenizer)
-    # Name counts to distinguish length from search failures.
-    assert "1" in str(over_long.value)
-    with pytest.raises(ValueError):
-        token_matched_noise_prompt(
-            render, CONTEXT, 5_000, MergeEverythingTokenizer(), unit=" \t"
-        )
+    # The message names both counts so length failures read differently
+    # from search failures.
+    assert str(base) in str(over_long.value)
+
+
+def test_a_target_the_pad_unit_cannot_step_to_raises() -> None:
+    """A unit whose token cost is not fine-grained enough exhausts the search.
+
+    ``MergeEverythingTokenizer`` counts any whitespace run as one token, so
+    every pad length yields the same count: the target is above the unpadded
+    prompt, but no repetition count can reach it.
+    """
+    render = _render()
+    tokenizer = MergeEverythingTokenizer()
+    assert tokenizer.count(render(CONTEXT)) < 5_000
+    with pytest.raises(ValueError, match="could not pad"):
+        token_matched_noise_prompt(render, CONTEXT, 5_000, tokenizer, unit=" \t")
 
 
 @pytest.mark.parametrize("n", (1, 2))
