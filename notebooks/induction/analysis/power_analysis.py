@@ -2,6 +2,13 @@
 
 Tier-2 contrasts require omnibus gates; Tier 3 uses rank-1 BH sizing. Rates
 shrink toward condition means because sparse pilot harmonics can degenerate.
+
+Every sizing here powers the pre-registered harmonic-stratified CMH test on
+independent per-harmonic Bernoulli streams. The PRIMARY inference in
+`significance_report` is the exact seed-level sign-flip, whose power depends on
+within-seed dependence a one-replicate pilot cannot estimate; these tables are
+therefore the pre-registration sizing check and a descriptive sensitivity
+analysis, not a power statement about the sign-flip test.
 """
 
 import functools
@@ -823,6 +830,13 @@ def render_design_banner(data: dict) -> None:
     )
     print(f"{data['n_sims']} sims per point, seed={data['seed']}.")
     print(
+        "Sizing test: harmonic-stratified CMH on independent per-harmonic "
+        "Bernoulli streams (the pre-registered sizing). The PRIMARY inference "
+        "is the exact seed-level sign-flip (significance_report.py); all R "
+        "figures below are descriptive sensitivity for that test, whose power "
+        "also depends on within-seed dependence the R=1 pilot cannot estimate."
+    )
+    print(
         f"Assumed rates: per-harmonic outcomes shrunk toward condition mean "
         f"(c={data['shrinkage']}); 'pooled' column = sensitivity with "
         f"condition-mean rates only."
@@ -1039,6 +1053,11 @@ def render_recommended_replicates(data: dict) -> None:
         "  The study itself collects R=30 (user-locked in run_study.py, "
         "uniform across checkpoints); this prospective figure is the sizing "
         "check that decision was made against, not a superseding value."
+    )
+    print(
+        "  This R powers the CMH sizing test, not the PRIMARY seed sign-flip; "
+        "nine harmonics sharing a seed give R independent units, not 9R, so "
+        "the sign-flip may need more replicates than shown here."
     )
     print(
         "  (Tier 3 / SECONDARY contrasts are exploratory and do not drive "
