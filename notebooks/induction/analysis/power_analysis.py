@@ -407,8 +407,8 @@ def _equivalence_power_curve(
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
         total = n_reps * N_HARMONICS
-        succ_a = cum_a[:, n_reps - 1].astype(np.int64)
-        succ_b = cum_b[:, n_reps - 1].astype(np.int64)
+        succ_a = cum_a[:, n_reps - 1].sum(axis=1, dtype=np.int64)
+        succ_b = cum_b[:, n_reps - 1].sum(axis=1, dtype=np.int64)
         adj_a = (succ_a + 1) / (total + 2)
         adj_b = (succ_b + 1) / (total + 2)
         diff = adj_a - adj_b

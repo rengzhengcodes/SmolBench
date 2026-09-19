@@ -342,6 +342,19 @@ def test_equivalence_replicates_finds_generous_margin_quickly(
     assert isinstance(result, int) and result <= 5
 
 
+def test_equivalence_power_pools_successes_across_harmonics(
+    power_analysis: ModuleType,
+) -> None:
+    """Saturated arms pool to total/total; per-harmonic counts would sit near 1/9."""
+    rates = np.ones(power_analysis.N_HARMONICS)
+    curve = power_analysis._equivalence_power_curve(
+        rates, 0.05, np.random.default_rng(0), 0.05, 200
+    )
+    # Pooled: diff = 0 and the Agresti–Caffo half-width at R=10 is ~0.025 < 0.05.
+    # Unpooled counts give adjusted rates near 0.12 and a half-width near 0.08.
+    assert curve[10] == 1.0
+
+
 def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> None:
     """Nested draws make the power curve reproducible, and the crossing is sustained."""
     fn = power_analysis.replicates_needed
