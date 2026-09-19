@@ -67,6 +67,32 @@ MAX_REPLICATES = (
 )
 SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
 
+# The pre-registered roster, by tag. Counts alone would pass a same-family
+# checkpoint swap, so the identity is pinned too.
+PREREGISTERED_MODELS = (
+    "qwen35_27b",
+    "qwen35_122b",
+    "qwen35_397b",
+    "nemo3_4b",
+    "nemo3_30b",
+    "nemo3_120b",
+    "gemma4_e2b",
+    "gemma4_12b",
+    "gemma4_31b",
+    "glm_flash",
+    "glm_air",
+    "glm_47",
+    "min3_3b",
+    "min3_8b",
+    "min3_14b",
+    "exaone_32b",
+    "exaone_33b",
+    "exaone_236b",
+    "ds_flash",
+    "ds_v31",
+    "ds_pro",
+)
+
 N_PRIMARY = 210  # 84 ladder (7x4x3) + 126 info (21x6).
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
@@ -707,6 +733,13 @@ def check_design_invariants() -> None:
         raise RuntimeError(
             f"pre-registered family sizes changed: N_PRIMARY={N_PRIMARY} "
             f"(expected 210), N_SECONDARY={N_SECONDARY} (expected 63)"
+        )
+
+    if MODELS != PREREGISTERED_MODELS:
+        raise RuntimeError(
+            f"study_config roster {MODELS!r} disagrees with the pre-registered "
+            f"roster {PREREGISTERED_MODELS!r}; re-pin PREREGISTERED_MODELS "
+            "deliberately if the study changed"
         )
 
     # A MODELS/FAMILIES disagreement silently changes which contrasts exist.

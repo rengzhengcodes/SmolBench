@@ -92,6 +92,30 @@ def test_mcnemar_is_defined_once(
     assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
+def test_design_invariants_pin_roster_identity(
+    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A same-family checkpoint swap keeps every count but must still fail."""
+    power_analysis.check_design_invariants()
+    old, new = power_analysis.MODELS[0], "qwen35_9b"
+    monkeypatch.setattr(
+        power_analysis,
+        "FAMILIES",
+        {
+            fam: tuple(new if t == old else t for t in rungs)
+            for fam, rungs in power_analysis.FAMILIES.items()
+        },
+    )
+    monkeypatch.setattr(
+        power_analysis,
+        "MODELS",
+        tuple(new if t == old else t for t in power_analysis.MODELS),
+    )
+    assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
+    with pytest.raises(RuntimeError, match="pre-registered roster"):
+        power_analysis.check_design_invariants()
+
+
 def test_design_invariants_survive_python_dash_o() -> None:
     """Design gates survive ``python -O``."""
     code = (
