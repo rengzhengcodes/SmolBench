@@ -42,6 +42,25 @@ CAVEAT_MODEL = "ds_flash"
 _SKEW_SPLIT = 10
 
 
+def _skew_census(
+    module: ModuleType, key: tuple[str, str], per_seed: dict[range, tuple[int, int]]
+) -> Callable[[dict], dict]:
+    """Wrap `module.compliance_census` so `key`'s per-seed counts are overwritten."""
+    real = module.compliance_census
+
+    def skewed(compliance: dict) -> dict:
+        census = real(compliance)
+        cell = census[key]
+        for seeds, counts in per_seed.items():
+            for seed in seeds:
+                cell["per_seed"][seed] = counts
+        nc = sum(n for n, _t in cell["per_seed"].values())
+        cell["rate"] = nc / sum(t for _n, t in cell["per_seed"].values())
+        return census
+
+    return skewed
+
+
 def _run(fn: Callable[[], None]) -> str:
     """Call `fn`, returning everything it wrote to stdout and stderr."""
     buf = io.StringIO()
@@ -575,20 +594,12 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
 ) -> None:
     """Non-compliance outside the seeds the noise arm covers must not colour the contrast."""
     repoint(collapse_tree)
-    real_census = extens_vs_noise.compliance_census
-
-    def skewed(compliance: dict) -> dict:
-        census = real_census(compliance)
-        cell = census[(SKEW_MODEL, "extens")]
-        # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
-        for seed in range(_SKEW_SPLIT, DEEP_DEPTH):
-            cell["per_seed"][seed] = (9, 9)
-        nc = sum(n for n, _t in cell["per_seed"].values())
-        tot = sum(t for _n, t in cell["per_seed"].values())
-        cell["rate"] = nc / tot
-        assert cell["rate"] >= extens_vs_noise.COLLAPSE_THRESHOLD
-        return census
-
+    # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
+    skewed = _skew_census(
+        extens_vs_noise,
+        (SKEW_MODEL, "extens"),
+        {range(_SKEW_SPLIT, DEEP_DEPTH): (9, 9)},
+    )
     monkeypatch.setattr(extens_vs_noise, "compliance_census", skewed)
     out = _run(extens_vs_noise.main)
     skew_lines = [ln for ln in out.splitlines() if SKEW_MODEL in ln]
@@ -610,22 +621,11 @@ def test_collapse_tags_use_the_compared_seeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Collapse tags use only seeds shared by the compared contrast arms."""
-    real_census = significance_report.compliance_census
-
-    def skewed(compliance: dict) -> dict:
-        census = real_census(compliance)
-        key = (SKEW_MODEL, "noise_intens")
-        cell = census[key]
-        for seed in range(_SKEW_SPLIT):
-            cell["per_seed"][seed] = (0, 9)
-        for seed in range(_SKEW_SPLIT, DEEP_DEPTH):
-            cell["per_seed"][seed] = (9, 9)
-        nc = sum(n for n, _t in cell["per_seed"].values())
-        total = sum(t for _n, t in cell["per_seed"].values())
-        cell["rate"] = nc / total
-        assert cell["rate"] >= significance_report.COLLAPSE_THRESHOLD
-        return census
-
+    skewed = _skew_census(
+        significance_report,
+        (SKEW_MODEL, "noise_intens"),
+        {range(_SKEW_SPLIT): (0, 9), range(_SKEW_SPLIT, DEEP_DEPTH): (9, 9)},
+    )
     monkeypatch.setattr(significance_report, "compliance_census", skewed)
     out = report(collapse_tree)
     label = "[exaone_32b] noise_intens vs zero"
@@ -633,16 +633,9 @@ def test_collapse_tags_use_the_compared_seeds(
     assert lines, out[:3000]
     assert all("[COLLAPSE:" not in line for line in lines), lines
 
-    def crossing(compliance: dict) -> dict:
-        census = real_census(compliance)
-        cell = census[(SKEW_MODEL, "noise_intens")]
-        for seed in range(_SKEW_SPLIT):
-            cell["per_seed"][seed] = (9, 9)
-        nc = sum(n for _seed, (n, _t) in cell["per_seed"].items())
-        total = sum(t for _n, t in cell["per_seed"].values())
-        cell["rate"] = nc / total
-        return census
-
+    crossing = _skew_census(
+        significance_report, (SKEW_MODEL, "noise_intens"), {range(_SKEW_SPLIT): (9, 9)}
+    )
     monkeypatch.setattr(significance_report, "compliance_census", crossing)
     out = report(collapse_tree)
     lines = [line for line in out.splitlines() if label in line]

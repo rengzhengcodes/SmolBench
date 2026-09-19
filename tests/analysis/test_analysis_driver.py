@@ -144,8 +144,7 @@ def test_apply_corrections_share_one_inclusive_boundary(
     """Every procedure rejects a p-value sitting exactly on its threshold (``<=``)."""
     alpha = multiplicity_sim.ALPHA
     m = 4
-    # Row 1: p exactly at the Bonferroni bar, then exactly at Holm's second step.
-    # Row 2: all p exactly at the BH ranks i * alpha / m.
+    # Rows sit exactly on the Bonferroni/Holm and BH thresholds (i * alpha / m).
     pv = np.array(
         [
             [alpha / m, alpha / (m - 1), 0.5, 0.9],

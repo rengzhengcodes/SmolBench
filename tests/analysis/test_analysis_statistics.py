@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import json
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -233,7 +234,6 @@ def test_dump_creates_its_own_results_directory(
     multiplicity_sim: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Dump creates the ignored results directory on fresh checkouts."""
     target = tmp_path / "results" / "multiplicity_sim_results.json"
@@ -244,8 +244,6 @@ def test_dump_creates_its_own_results_directory(
     multiplicity_sim.dump("probe")
 
     assert target.exists()
-    import json
-
     assert json.loads(target.read_text()) == {"probe": 1}
 
 

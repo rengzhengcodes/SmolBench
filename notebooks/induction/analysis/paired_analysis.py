@@ -408,6 +408,8 @@ def main() -> None:
             f"  paired McNemar+ Holm       : {rej_pair.sum():3d}"
         )
         if not drop_invalid:
+            des = np.array([r["de"] for r in rows if r["de"] is not None])
+            frac_pos = f"{(des > 1.0).mean():.0%}" if des.size else "n/a"
             p_cl = np.array([r["p_cluster"] for r in rows])
             rej_cl = holm(p_cl)
             print(
@@ -418,8 +420,8 @@ def main() -> None:
                 f"  => vs item-level McNemar: "
                 f"{int((rej_pair & ~rej_cl).sum())} lost, "
                 f"{int((rej_cl & ~rej_pair).sum())} gained "
-                f"(item-level p is anticonservative wherever\n     the seed x "
-                f"arm interaction is positive, which is the majority here)"
+                f"(item-level p is anticonservative where the seed x arm "
+                f"interaction is positive: {frac_pos} of measurable contrasts here)"
             )
         gained = [r for r, gp, gu in zip(rows, rej_pair, rej_unp) if gp and not gu]
         lost = [r for r, gp, gu in zip(rows, rej_pair, rej_unp) if gu and not gp]
@@ -465,7 +467,6 @@ def main() -> None:
                 )
 
             # --- clustering sign ---
-            des = np.array([r["de"] for r in rows if r["de"] is not None])
             print(
                 f"\nClustering / cross-stratum covariance, over {des.size} measurable "
                 f"PRIMARY contrasts:\n"

@@ -60,7 +60,7 @@ if _writer_results.resolve() != RESULTS_DIR.resolve():
         file=sys.stderr,
     )
 
-# Replicates are the sampling unit; more harmonics change the task.
+# Replicates are the sampling unit; more harmonics would change the task.
 N_SIMS = 10_000  # Monte Carlo SE of a power estimate <= 0.005.
 MAX_REPLICATES = (
     200  # Search ceiling only: still-unpowered contrasts are censored, not sized.
