@@ -40,8 +40,7 @@ ALPHA_BONF = ALPHA_PRIMARY
 
 R_DEFAULT = 30  # Avoid importing run_study, which freezes EC2 configuration.
 
-# Equivalent-R search ladder, roughly geometric for efficient matching and
-# starting at R_DEFAULT so "pairing bought nothing" stays reachable.
+# Equivalent-R search ladder, starting at R_DEFAULT so "pairing bought nothing" stays reachable.
 EQ_R_GRID = (
     R_DEFAULT,
     35,
@@ -322,8 +321,7 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
         Simulations per rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
-    # The same 28 trend tests as PART 4's reduced family, corrected over that
-    # whole family so trend and pairwise are corrected comparably.
+    # The same 28 trend tests as PART 4's reduced family, corrected comparably to pairwise.
     alpha_trend_studywide = ALPHA / N_REDUCED
     # Sensitivity only: correcting the 28 trend tests among themselves.
     alpha_trend_only = ALPHA / 28
@@ -349,8 +347,7 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> None:
         res = {"label": label, "rates": rates}
         # study-wide alphas
         res["trend_studywide"] = float((tr > chi2.isf(alpha_trend_studywide, 1)).mean())
-        # Same statistic at the narrower, not pre-registered, trend-only
-        # alpha, reported beside the headline rather than instead of it.
+        # Same statistic at the narrower, not pre-registered, trend-only alpha.
         res["trend_trend_only_family"] = float(
             (tr > chi2.isf(alpha_trend_only, 1)).mean()
         )
@@ -528,14 +525,11 @@ def part2(
                     unp, pair, phi, agree = _paired_powers(
                         p_a, delta, rho, R_DEFAULT, n_sims, rng, icc=icc
                     )
-                    # smallest R at which the unpaired test matches the paired
-                    # power at R_DEFAULT (paired data throughout).
+                    # Smallest R where the unpaired test matches paired power at R_DEFAULT.
                     eq_r = None
                     if pair > unp + 0.005:
                         for rr in grid_r:
-                            # stats=False: only the unpaired power is read
-                            # here, so the diagnostics would otherwise be
-                            # computed and discarded once per rung.
+                            # stats=False: only unpaired power is read here.
                             u2 = _paired_powers(
                                 p_a,
                                 delta,
@@ -550,9 +544,7 @@ def part2(
                                 eq_r = rr
                                 break
                     else:
-                        # Pairing did not help: record R_DEFAULT with the
-                        # eq_searched flag below, rather than overload eq_R's
-                        # meaning between "matched by search" and "unsearched".
+                        # eq_searched distinguishes "matched by search" from "unsearched".
                         eq_r = R_DEFAULT
                     rows.append(
                         {
@@ -579,8 +571,7 @@ def part2(
         # null calibration of both tests under matched data
         nulls = {}
         for rho in (0.0, 0.5, 0.9):
-            # stats=False as above; `[:2]` already shows the diagnostics are
-            # unread, and this call uses the largest n_sims here.
+            # stats=False as above; `[:2]` drops the unread diagnostics.
             u, p = _paired_powers(
                 0.90, 0.0, rho, R_DEFAULT, 60000, rng, stats=False, icc=icc
             )[:2]
@@ -591,10 +582,7 @@ def part2(
                 flush=True,
             )
 
-        # This block's own design_effect: same null config as the
-        # calibration row above (p_a=p_b=0.90, rho=0.5), median over the
-        # measurable simulated blocks -- the same quantity study_design_effect
-        # reports over real contrasts.
+        # This block's own design_effect under the null config above (p_a=p_b=0.90, rho=0.5).
         ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, R_DEFAULT, rng, icc=icc)
         seed_idx = np.repeat(np.arange(R_DEFAULT), K_HARM)
         harm_idx = np.tile(np.arange(K_HARM), R_DEFAULT)
@@ -627,8 +615,7 @@ def part2(
             "design_effect_simulated": deff_sim,
         }
 
-    # icc keys are strings: JSON has no float keys, so the in-memory shape
-    # already matches the on-disk shape.
+    # icc keys are strings: JSON has no float keys.
     OUT["part2"] = {
         "n_sims": n_sims,
         "alpha": ALPHA_BONF,

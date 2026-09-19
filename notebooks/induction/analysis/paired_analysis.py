@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from power_analysis import (  # noqa: E402  (path shim must precede the import); Descriptive only: inference uses seed-level sign-flips.
+from power_analysis import (  # noqa: E402  (path shim must precede the import)
     ALPHA,
     INFOS,
     MODELS,
@@ -128,8 +128,7 @@ def aligned(
             [valid[key_b][s] for s in seeds]
         )
     seed_idx = np.repeat(np.arange(len(seeds)), N_HARMONICS).reshape(a.shape)
-    # Carry the harmonic through the mask: dropping invalid pairs makes a survivor's position
-    # unrecoverable from the retained count alone.
+    # Carry the harmonic through the mask: a survivor's position is unrecoverable from the retained count.
     harm_idx = np.tile(np.arange(N_HARMONICS), (len(seeds), 1))
     return a[keep], b[keep], seed_idx[keep], harm_idx[keep]
 
@@ -214,6 +213,14 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     return float(chi2.sf(cmh_stat(succ_a, succ_b, counts), df=1))
 
 
+def _reject(pvals: np.ndarray, alpha: float, method: str) -> np.ndarray:
+    """Return the statsmodels rejection mask for `method` at level `alpha`."""
+    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
+        pvals, alpha=alpha, method=method
+    )
+    return np.asarray(reject, dtype=bool)
+
+
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Return Holm's FWER rejection mask.
 
@@ -232,10 +239,7 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
         Rejection mask.
     """
     # Monotone thresholds make unstable ordering of ties harmless.
-    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
-        pvals, alpha=alpha, method="holm"
-    )
-    return np.asarray(reject, dtype=bool)
+    return _reject(pvals, alpha, "holm")
 
 
 def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
@@ -255,11 +259,7 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    # Monotone thresholds make unstable ordering of ties harmless.
-    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
-        pvals, alpha=q, method="fdr_bh"
-    )
-    return np.asarray(reject, dtype=bool)
+    return _reject(pvals, q, "fdr_bh")
 
 
 def design_effect(

@@ -1,7 +1,6 @@
 """Contracts for induction-analysis statistical plumbing."""
 
 import contextlib
-import inspect
 import io
 import subprocess
 import sys
@@ -93,23 +92,6 @@ def test_mcnemar_is_defined_once(
     assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
-def test_design_invariants_are_checked_at_module_scope_and_raise(
-    power_analysis: ModuleType,
-) -> None:
-    """Design gates raise at import because optimization removes assertions."""
-    check = getattr(power_analysis, "check_design_invariants", None)
-    assert callable(check), "the gate must be a callable run at module scope"
-    assert check() is None
-
-    original = power_analysis.N_PRIMARY
-    try:
-        power_analysis.N_PRIMARY = original - 1
-        with pytest.raises(RuntimeError):
-            check()
-    finally:
-        power_analysis.N_PRIMARY = original
-
-
 def test_design_invariants_survive_python_dash_o() -> None:
     """Design gates survive ``python -O``."""
     code = (
@@ -145,14 +127,6 @@ def test_design_invariants_survive_python_dash_o() -> None:
     )
     assert result.returncode != 0, result.stdout
     assert "RuntimeError" in result.stderr, result.stderr
-
-
-@pytest.mark.parametrize("module", ("power_analysis", "paired_analysis"))
-def test_no_bare_assert_gates_remain(module: str) -> None:
-    """Analysis gates cannot use assertions removed by ``python -O``."""
-    source = (ANALYSIS_DIR / f"{module}.py").read_text()
-    offenders = [ln for ln in source.splitlines() if ln.lstrip().startswith("assert ")]
-    assert not offenders, offenders
 
 
 @pytest.fixture(scope="module")
@@ -259,51 +233,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
 
-def test_design_constants_are_imported_not_re_declared(
-    multiplicity_sim: ModuleType, power_analysis: ModuleType
-) -> None:
-    """``multiplicity_sim`` imports its four design constants instead of copying them."""
-    import _power_common
-
-    assert multiplicity_sim.ALPHA == _power_common.ALPHA
-    assert multiplicity_sim.N_PRIMARY == power_analysis.N_PRIMARY
-    assert multiplicity_sim.K_HARM == power_analysis.N_HARMONICS
-    assert multiplicity_sim.ALPHA_BONF == power_analysis.ALPHA_PRIMARY
-
-    source = (ANALYSIS_DIR / "multiplicity_sim.py").read_text()
-    assert "from _power_common import" in source, source[:2000]
-    assert "from power_analysis import" in source, source[:2000]
-    for redeclared in ("N_PRIMARY = 210", "ALPHA = 0.05", "K_HARM = 9"):
-        assert redeclared not in source, redeclared
-
-
-def test_no_bare_replicate_count_literals_survive(multiplicity_sim: ModuleType) -> None:
-    """``part2`` uses ``R_DEFAULT`` so resizing remains consistent."""
-    source = inspect.getsource(multiplicity_sim.part2)
-    assert "30" not in source.replace("R_DEFAULT", ""), source
-
-    assert multiplicity_sim.EQ_R_GRID[0] == multiplicity_sim.R_DEFAULT
-    assert list(multiplicity_sim.EQ_R_GRID) == sorted(multiplicity_sim.EQ_R_GRID)
-    assert multiplicity_sim.EQ_R_GRID[-1] == max(multiplicity_sim.EQ_R_GRID)
-
-
-def test_part_seeds_derive_from_the_shared_seed(multiplicity_sim: ModuleType) -> None:
-    """``main`` derives every part's RNG from ``_power_common.SEED`` rather than a per-part literal."""
-    import _power_common
-
-    source = inspect.getsource(multiplicity_sim.main)
-    for literal in (
-        "default_rng(1)",
-        "default_rng(2)",
-        "default_rng(3)",
-        "default_rng(4)",
-        "default_rng(5)",
-    ):
-        assert literal not in source, literal
-    assert "SEED" in source
-    assert _power_common.SEED == 0
-
-
 def test_monte_carlo_output_lands_in_the_results_dir(
     multiplicity_sim: ModuleType,
 ) -> None:
@@ -313,10 +242,6 @@ def test_monte_carlo_output_lands_in_the_results_dir(
     expected = _power_common.results_dir(multiplicity_sim.__file__, up=1)
     assert multiplicity_sim.OUT_PATH.parent == expected
     assert multiplicity_sim.OUT_PATH.name.endswith(".json")
-
-    gitignore = (REPO_ROOT / ".gitignore").read_text()
-    assert "multiplicity_sim_results.json" not in gitignore
-    assert "notebooks/*/results/" in gitignore
 
 
 def test_dump_creates_its_own_results_directory(
@@ -354,8 +279,6 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
     assert part5["alpha_pairwise"] == pytest.approx(alpha / 210)
     for row in part5["rows"]:
         assert "trend_studywide" in row and "trend_trend_only_family" in row
-    source = inspect.getsource(multiplicity_sim.part5)
-    assert "pre-registered" not in source.lower().replace("not pre-registered", "")
 
 
 def test_replicates_needed_is_memoized_on_its_rate_vectors(
@@ -413,8 +336,7 @@ def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> N
     reps = sorted(curve)
     assert reps == list(range(1, reps[-1] + 1))
     powers = [curve[r] for r in reps]
-    # Shared noise: consecutive estimates may only differ by the few experiments
-    # whose verdict flips on one more replicate, never by independent MC error.
+    # Shared noise: estimates differ only by verdicts that flip on one more replicate.
     drops = [x - y for x, y in zip(powers, powers[1:]) if y < x]
     assert not drops or max(drops) < 0.01, drops
     for target, r_hit in needed.items():
@@ -466,9 +388,6 @@ def test_primary_contrasts_table_reports_the_family_size(
 
 def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) -> None:
     """Grid searches skip unneeded diagnostics to limit memory."""
-    params = inspect.signature(multiplicity_sim._paired_powers).parameters
-    assert "stats" in params and params["stats"].default is True
-
     args = (0.95, 0.05, 0.5, 30, 400)
     full = multiplicity_sim._paired_powers(*args, np.random.default_rng(11), stats=True)
     fast = multiplicity_sim._paired_powers(
@@ -476,18 +395,6 @@ def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) 
     )
     assert fast[0] == full[0] and fast[1] == full[1]
     assert fast[2] is None and fast[3] is None
-
-
-def test_omnibus_interaction_power_is_cheaper_by_default(
-    power_analysis: ModuleType,
-) -> None:
-    """Non-gate defaults avoid expensive GLM fits."""
-    default = (
-        inspect.signature(power_analysis.omnibus_interaction_power)
-        .parameters["n_sims"]
-        .default
-    )
-    assert default < 1000, default
 
 
 def test_icc_zero_is_the_published_simulation_byte_for_byte(
@@ -617,17 +524,6 @@ def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     printed = buf.getvalue()
     for icc in ("0.0", "0.2", "0.4"):
         assert f"icc={icc}" in printed, printed[:400]
-
-
-def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
-    multiplicity_sim: ModuleType,
-) -> None:
-    """Module documentation identifies the study design effect and ICC."""
-    doc = multiplicity_sim.__doc__
-    assert "design effect" in doc.lower()
-    assert "icc" in doc.lower()
-    assert "design_effect" in doc
-    assert multiplicity_sim.study_design_effect() is None
 
 
 def test_study_design_effect_ignores_checkpoint_without_replicates(

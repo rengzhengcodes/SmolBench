@@ -92,8 +92,7 @@ def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
             addr = ReplicateAddress(tag=model, info=info, seed=PILOT_SEED)
             path = store._path(addr)
             if not store.exists(addr):
-                # Results are S3-backed; sync_down() pulls them into the
-                # {model}_{info}/rep_{seed}.yaml layout this script reads.
+                # sync_down() pulls S3 results into the rep_{seed}.yaml layout this script reads.
                 raise SystemExit(
                     f"No pilot replicate for ({model}, {info}) at {path}\n"
                     f"Run the pilot in notebooks/induction/run_study.py first, "
@@ -515,8 +514,7 @@ def omnibus_power(
     return gcmh_reject(succ, n_reps, alpha).mean()
 
 
-#: Diagnostic default: 200 keeps two GLM passes affordable; its worst-case
-#: Monte Carlo SE is 0.035, adequate for a non-gate.
+#: Diagnostic default: 200 keeps two GLM passes affordable (worst-case MC SE 0.035).
 N_SIMS_OMNIBUS_DIAGNOSTIC = 200
 
 
@@ -706,16 +704,14 @@ def check_design_invariants() -> None:
     Reads the module globals on each call so a patched constant re-checks; that
     is how a test demonstrates the gate fires.
     """
-    # Literal protocol denominators prevent silent redesign; every
-    # correction threshold divides by these pre-registered family sizes.
+    # Every correction threshold divides by these pre-registered family sizes.
     if N_PRIMARY != 210 or N_SECONDARY != 63:
         raise RuntimeError(
             f"pre-registered family sizes changed: N_PRIMARY={N_PRIMARY} "
             f"(expected 210), N_SECONDARY={N_SECONDARY} (expected 63)"
         )
 
-    # Both contrast builders walk MODELS and FAMILIES, so a disagreement
-    # silently changes which contrasts exist and how many there are.
+    # A MODELS/FAMILIES disagreement silently changes which contrasts exist.
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
     if MODELS != expected_models:
         raise RuntimeError(
@@ -1098,8 +1094,7 @@ def equivalence_checks(
         )
         fisher.append((name, p_fisher))
 
-    # The 20-R cut is a report grouping, not an inferential threshold.
-    # Saturated rates yield zero-width Wald intervals and R=1.
+    # The 20-R cut is a report grouping, not an inferential threshold; saturated rates give R=1.
     near_ties = [
         (name, key_a, key_b)
         for name, key_a, key_b, needed, _pooled in primary_results

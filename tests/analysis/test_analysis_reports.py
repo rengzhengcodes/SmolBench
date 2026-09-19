@@ -325,13 +325,10 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     report: Callable[[Path], str], shallow_tree: Path, collapse_tree: Path
 ) -> None:
     """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
-    # The one-sided claim that must never print again: it names the
-    # family-scaling story as the operative one and denies the info-arm
-    # story, whatever n_lad is.
+    # The one-sided claim that must never print again, whatever n_lad is.
     one_sided = "bites the family-scaling story, not the info-arm story"
 
-    # Floor-bound: Holm rejects nothing, so `lost` carries no information about
-    # clustering at all and no story claim is earned -- not even a two-sided one.
+    # Floor-bound: Holm rejects nothing, so no story claim is earned.
     shallow = report(shallow_tree)
     assert one_sided not in shallow
     assert "bites the family-scaling story" not in shallow
@@ -346,9 +343,7 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     if n_lad:
         assert "bites the family-scaling story" in tail, tail
     else:
-        # The zero branch may still explain the mechanism two-sidedly, but
-        # must name the side the data shows rather than just avoid the
-        # one-sided phrase (which `one_sided not in tail` alone would allow).
+        # The zero branch must name the side the data shows, not just avoid the phrase.
         assert one_sided not in tail, tail
         assert "info-arm story" in tail, tail
 
@@ -410,9 +405,7 @@ def test_collapsed_lane_buckets_as_collapse(
     """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
     repoint(collapse_tree)
     out = _run(extens_vs_noise.main)
-    # The per-model table only: its rows carry the `mechanism` column, unlike
-    # the per-bucket detail rows further down, which take their mechanism from
-    # the bucket heading above them.
+    # The per-model table only: detail rows take their mechanism from the bucket heading.
     table = out.split("mechanism / non-compliance", 1)[1].split("\nH210 =", 1)[0]
     rows = {
         ln.split()[0]: ln

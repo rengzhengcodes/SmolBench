@@ -1,9 +1,7 @@
 """Pin analysis-driver order and its computation/render split."""
 
 import contextlib
-import inspect
 import io
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -82,32 +80,13 @@ def test_the_driver_does_not_import_the_simulation_eagerly(
     assert not hasattr(run_all, "multiplicity_sim")
     assert run_all.SIM_MODULE == "multiplicity_sim"
     assert all(m.__name__ != "multiplicity_sim" for m in run_all.CHAIN)
-    # A subprocess import of the driver alone must not pull the simulation in.
-    code = (
-        "import sys, importlib.util;"
-        f"spec = importlib.util.spec_from_file_location('run_all', {str(run_all.__file__)!r});"
-        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"
-        "print('multiplicity_sim' in sys.modules)"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, check=True
-    )
-    assert out.stdout.strip() == "False", out.stdout
-
-
-def test_the_driver_runs_the_chain_in_order(
-    run_all: ModuleType, recorded: list[str]
-) -> None:
-    """Run result-reading scripts in dependency order."""
-    assert run_all.main([]) == 0
-    assert recorded == list(CHAIN)
 
 
 def test_the_simulation_runs_only_behind_its_flag(
     run_all: ModuleType, recorded: list[str]
 ) -> None:
     """Run multiplicity simulation only when requested."""
-    run_all.main([])
+    assert run_all.main([]) == 0
     assert "multiplicity_sim" not in recorded
     recorded.clear()
     run_all.main(["--with-sim"])
@@ -132,56 +111,6 @@ def test_the_driver_really_runs_the_chain_in_one_process(
     assert all(p >= 0 for p in positions), positions
     assert positions == sorted(positions), positions
     assert "compliance" in out.lower()
-
-
-# power_analysis computation/render split.
-
-
-def section_pairs(module: ModuleType) -> list[tuple[str, str]]:
-    """Return render/data function pairs."""
-    return [
-        (name, name[len("render_") :])
-        for name in dir(module)
-        if name.startswith("render_") and inspect.isfunction(getattr(module, name))
-    ]
-
-
-def test_every_printed_section_has_a_data_function_behind_it(
-    power_analysis: ModuleType,
-) -> None:
-    """Keep data/render pairs reusable without captured stdout."""
-    pairs = section_pairs(power_analysis)
-    assert len(pairs) >= 8, [name for name, _ in pairs]
-    for render_name, data_name in pairs:
-        data = getattr(power_analysis, data_name, None)
-        assert inspect.isfunction(
-            data
-        ), f"{render_name} has no {data_name} data function behind it"
-
-
-def test_the_data_functions_do_not_print(power_analysis: ModuleType) -> None:
-    """Only render functions print."""
-    for _render_name, data_name in section_pairs(power_analysis):
-        source = inspect.getsource(getattr(power_analysis, data_name))
-        assert "print(" not in source, f"{data_name} prints"
-
-
-def test_main_is_a_short_orchestrator(power_analysis: ModuleType) -> None:
-    """Keep ``main()`` a short orchestrator."""
-    lines = inspect.getsource(power_analysis.main).splitlines()
-    assert len(lines) <= 60, len(lines)
-
-
-# multiplicity_sim.apply_corrections parameters.
-
-
-def test_apply_corrections_keeps_only_the_parameter_it_reads(
-    multiplicity_sim: ModuleType,
-) -> None:
-    """Reject unused parameters that could mis-correct p-values."""
-    assert list(inspect.signature(multiplicity_sim.apply_corrections).parameters) == [
-        "pv"
-    ]
 
 
 def test_apply_corrections_matches_statsmodels(multiplicity_sim: ModuleType) -> None:

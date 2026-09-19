@@ -47,22 +47,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="run_all.py",
         description=(
-            "Run the induction study's analysis/ report chain in one process: "
-            "power_analysis -> paired_analysis -> significance_report -> "
-            "extens_vs_noise, in that dependency order. Must run under the "
-            "project venv (.venv/bin/python), which is where numpy, scipy, "
-            "statsmodels and this repo's own packages are installed."
+            "Run the induction analysis chain in one process under the "
+            "project venv: power_analysis -> paired_analysis -> "
+            "significance_report -> extens_vs_noise."
         ),
     )
     parser.add_argument(
         "--with-sim",
         action="store_true",
         help=(
-            "Also run multiplicity_sim.main() last, after the four scripts "
-            "above. Off by default: multiplicity_sim reads no results tree "
-            "(it is a Monte Carlo study of test/correction choice, not a "
-            "report on this study's data) and its simulation takes far "
-            "longer than the rest of this chain combined."
+            "Also run multiplicity_sim.main() last. Off by default: it is a "
+            "slow Monte Carlo study, not a report on this study's data."
         ),
     )
     args = parser.parse_args(argv)

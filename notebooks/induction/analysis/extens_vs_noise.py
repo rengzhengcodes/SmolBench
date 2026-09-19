@@ -86,8 +86,7 @@ def main() -> None:
     census = compliance_census(compliance)
 
     def nc(key: tuple[str, str], seeds: list[int]) -> float:
-        # Same seed population as the accuracy contrast; `aligned` already
-        # rejected an empty intersection, so the pooled rate exists.
+        # `aligned` already rejected an empty intersection, so the pooled rate exists.
         rate = common_seed_rate(census[key], seeds)
         assert rate is not None
         return rate

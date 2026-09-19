@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from paired_analysis import (  # noqa: E402
+    _reject,
     aligned,
     cmh_unpaired_p,
     holm,
@@ -27,7 +28,6 @@ from power_analysis import (  # noqa: E402
     MODELS,
     build_primary_contrasts,
 )
-from statsmodels.stats.multitest import multipletests
 
 # Import the label so a rename cannot silently read empty values as zero.
 from smolbench.evals.parsing import EMPTY
@@ -55,10 +55,7 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
-        pvals, alpha=alpha, method="simes-hochberg"
-    )
-    return np.asarray(reject, dtype=bool)
+    return _reject(pvals, alpha, "simes-hochberg")
 
 
 def compliance_census(compliance: dict) -> dict:
@@ -254,8 +251,7 @@ def main() -> None:
 
     hp = holm(p_cl, ALPHA)
     hb = hochberg(p_cl, ALPHA)
-    # Every correction pass this report needs, taken ONCE: each is O(m log m)
-    # and the summary table below would otherwise re-run three of them.
+    # Every correction pass this report needs, taken ONCE so the summary table does not re-run them.
     h_item = holm(p_item, ALPHA)
     rej_by_test = {
         "seed sign-flip (PRIMARY)": (p_cl, {"Holm": hp, "Hochberg": hb}),
@@ -269,9 +265,7 @@ def main() -> None:
         ),
     }
 
-    # ---- DEPTH GUARD: is any rejection arithmetically reachable? -----------
-    # A contrast's floor is set by the seeds its two arms share (`n_seeds`);
-    # gating on the DEEPEST contrast asks whether ANYTHING is rejectable.
+    # ---- DEPTH GUARD: gating on the DEEPEST contrast asks whether ANYTHING is rejectable. ---
     depth_min = min(r["n_seeds"] for r in rows)
     depth_max = max(r["n_seeds"] for r in rows)
     holm_first_step = ALPHA / m
@@ -301,8 +295,7 @@ def main() -> None:
         f"matched items per contrast, over "
         f"{min(seeds)}-{max(seeds)} replicate seeds"
     )
-    # Computed from the landed data, not hard-coded, so a short sync cannot
-    # print a depth the marks do not have (at full depth: 270 / 30 / 2^30).
+    # Computed from the landed data so a short sync cannot print a depth the marks lack.
     mx_n, mx_s = max(r["n"] for r in rows), max(seeds)
     print(
         "PRIMARY TEST: exact seed-level sign-flip randomization over the "
@@ -346,9 +339,7 @@ def main() -> None:
     _print_signed(lost, "-", "p_item")
     _print_signed(gained, "+", "p_cluster")
     n_lad = sum(1 for r in lost if r["kind_is_ladder"])
-    # `lost` means different things per case: floor-bound (losses carry no
-    # clustering information), ladder-dominated, and no-ladder-loss (stated as
-    # its own branch, since (2) would assert the inverse when n_lad is 0).
+    # Floor-bound losses carry no clustering information; n_lad==0 needs its own branch.
     if lost and floor_bound:
         print(
             f"   Both counts are artifacts of the resolution floor: Holm "
@@ -392,16 +383,14 @@ def main() -> None:
         f"result\n{'=' * 78}"
     )
 
-    # A lane needs a census cell for BOTH arms, so `len(MODELS)` would
-    # over-count; pad_rows supplies the intro sentence's denominator.
+    # pad_rows supplies the intro's denominator; `len(MODELS)` would over-count unpaired lanes.
     pad_rows = []
     for model in MODELS:
         ci = census.get((model, "intens"))
         cn = census.get((model, "noise_intens"))
         if ci is None or cn is None:
             continue
-        # Rates over shared seeds, matching `paired_analysis.aligned`: the
-        # cells are censused independently and could cover different seed sets.
+        # Rates over shared seeds, matching `paired_analysis.aligned`.
         common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
         rate_i = common_seed_rate(ci, common)
         rate_n = common_seed_rate(cn, common)
@@ -419,8 +408,7 @@ def main() -> None:
             }
         )
 
-    # Numerator and denominator share one basis: the matched-arm rows, with
-    # the noise rate taken over the seeds both arms cover.
+    # Numerator and denominator share one basis: matched-arm rows on common seeds.
     noise_over = [r for r in pad_rows if r["rate_n"] >= COLLAPSE_THRESHOLD]
     print(
         "The `noise_intens` arm is the compact rule form padded with "
@@ -438,7 +426,7 @@ def main() -> None:
         f"reported here rather than used as grounds for exclusion.\n"
     )
 
-    # The causal claim is scoped to what is actually computed: matched seeds.
+    # The causal claim is scoped to what is computed: matched seeds.
     print(
         f"PADDING EFFECT ON COMPLIANCE, over the {len(pad_rows)} lanes with "
         "both arms measured\n(`intens` is the same rule text, unpadded) -- so "
@@ -450,12 +438,10 @@ def main() -> None:
         f"{'noise empty':>12s} {'n':>4s}  verdict"
     )
     print("-" * 78)
-    # delta descending, ties broken by lane name so the order is deterministic.
+    # delta descending, lane-name tiebreak for determinism.
     for row in sorted(pad_rows, key=lambda r: (-r["delta"], r["model"])):
         cn, delta = row["cn"], row["delta"]
-        # Mixed basis: the two rates above are common-seed, but this mode
-        # share stays whole-cell -- a descriptive "what broke" column, not an
-        # input to the delta or verdict, so it is left un-decomposed.
+        # Mode share stays whole-cell: a descriptive column, not an input to the verdict.
         empty = cn["modes"].get(EMPTY, 0) / cn["n"]
         if row["rate_n"] >= COLLAPSE_THRESHOLD:
             verdict = (
@@ -557,11 +543,7 @@ def main() -> None:
                 f"(item {r['p_item']:.2e}){tag(r)}"
             )
     n_flag = sum(1 for r in sel if tag(r))
-    # TWO-MECHANISM needs at least one finding that touches a collapsed cell;
-    # printed unconditionally it would read as a conclusion drawn from zero
-    # findings and zero collapses. The branches below separate that case from
-    # significant findings none of which is collapse-adjacent (evidence
-    # against a second mechanism, not merely absence of data).
+    # TWO-MECHANISM needs findings touching a collapsed cell; the branches separate that case.
     print(
         f"\n  [COLLAPSE] {n_flag} of {len(sel)} findings touch a cell at or "
         f"above {COLLAPSE_THRESHOLD:.0%}\n      non-compliance.",
@@ -609,10 +591,7 @@ def main() -> None:
             f"   p={r['p_cluster']:.2e}{note}"
         )
     if fails and floor_bound:
-        # At a floor-bound depth every positive control fails arithmetically
-        # regardless of effect size or compliance, so these failures carry no
-        # information about padding -- attributing them to the pad would be
-        # the same unearned conclusion the partition below exists to prevent.
+        # Floor-bound failures are arithmetically forced and carry no information about padding.
         print(
             f"\n  All {len(fails)} of these failures are forced by the "
             f"resolution floor (see the\n  INCOMPLETE SYNC banner at the top "
@@ -622,18 +601,12 @@ def main() -> None:
             f"the models."
         )
     elif fails:
-        # Partitioned rather than one blanket paragraph: a fixed exoneration
-        # would misdescribe whichever failures do not actually qualify (e.g.
-        # a fully compliant `intens` arm the pad cannot explain).
+        # Partitioned: a fixed exoneration would misdescribe non-qualifying failures.
         qualifying, unexplained = [], []
         for r in fails:
-            # An arm-vs-floor contrast pairs one informative arm against the
-            # `zero` baseline, but `build_primary_contrasts` does not
-            # guarantee which side the baseline lands on, so the informative
-            # arm is identified by its own info label rather than position.
+            # The informative arm is identified by its info label, not position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
-            # An unmeasured arm cannot support the padding explanation, so an
-            # explicit None test rather than a `.get(...)["rate"]` chain.
+            # Explicit None test: an unmeasured arm cannot support the padding explanation.
             info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
             if (
                 info_key[1] == "noise_intens"
@@ -653,8 +626,7 @@ def main() -> None:
                 f"padding-robustness finding."
             )
         if unexplained:
-            # Labels are listed after this sentence, not woven into it, so the
-            # section can be split on the claim and the rows found below it.
+            # Labels listed after the sentence so the section can be split on the claim.
             print(
                 f"\n  {len(unexplained)} of {len(fails)} failures are NOT "
                 f"explained by padding: the informative arm\n  is either not a "
@@ -683,9 +655,7 @@ def main() -> None:
     # ---- what is NOT significant, which is half the story -------------------
     ns = [r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"]
     ceiling = [r for r in ns if min(r["acc_a"], r["acc_b"]) >= 0.95]
-    # Measured, not asserted: `b`/`c` are carried on every row, so this count
-    # and the ceiling count above are kept on one output line and cannot
-    # drift apart across a wrap.
+    # Measured, not asserted: `b`/`c` are carried on every row.
     n_zero_disc = sum(1 for r in ceiling if r["b"] + r["c"] == 0)
     print(f"\n{'=' * 78}\nNOT significant: {len(ns)} of {tot} findings")
     if ceiling:
@@ -697,9 +667,7 @@ def main() -> None:
             f"decision)."
         )
     else:
-        # No ceiling pairs: the earned reading (ties by construction) is exactly
-        # what the data does NOT show, so the branch states the alternative it
-        # leaves standing rather than printing a "0 -- these are ties" line.
+        # States the standing alternative rather than printing a "0 -- these are ties" line.
         print(
             f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)} -- "
             f"so none of these\n  non-rejections is a ceiling effect. Every one "
