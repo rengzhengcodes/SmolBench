@@ -11,6 +11,7 @@ chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -88,8 +89,14 @@ def dump(tag: str) -> None:
         Checkpoint label written to the log.
     """
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT_PATH, "w", encoding="utf-8") as fh:
-        json.dump(OUT, fh, indent=2, default=float)
+    tmp_path = OUT_PATH.with_suffix(".json.tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(OUT, fh, indent=2, default=float)
+        os.replace(tmp_path, OUT_PATH)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
     print(f"[checkpoint written after {tag}]", flush=True)
 
 

@@ -330,8 +330,8 @@ def contrast_row(
         "key_a": key_a,
         "key_b": key_b,
         "n": a.size,
-        "acc_a": a.mean(),
-        "acc_b": b.mean(),
+        "acc_a": float(a.mean()) if a.size else None,
+        "acc_b": float(b.mean()) if b.size else None,
         "b": nb,
         "c": nc,
         "disc": (nb + nc) / max(a.size, 1),
@@ -342,6 +342,11 @@ def contrast_row(
         "p_cluster": None if drop_invalid else signflip_exact_p(seed_diffs(a, b, sidx)),
         "de": design_effect(a, b, sidx, hidx),
     }
+
+
+def _acc(x: float | None) -> str:
+    """Format an accuracy, including an empty-comparison marker."""
+    return "  n/a" if x is None else f"{x:.3f}"
 
 
 def main() -> None:
@@ -431,13 +436,15 @@ def main() -> None:
         )
         for r in sorted(gained, key=lambda r: r["p_item"])[:20]:
             print(
-                f"    GAINED {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}  "
+                f"    GAINED {r['label']:52s} {_acc(r['acc_a']):>7s} vs "
+                f"{_acc(r['acc_b']):>7s}  "
                 f"disc={r['disc']:.3f}  p_pair={r['p_item']:.2e}  "
                 f"p_unpair={r['p_unpaired']:.2e}"
             )
         for r in sorted(lost, key=lambda r: r["p_unpaired"])[:20]:
             print(
-                f"    LOST   {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}  "
+                f"    LOST   {r['label']:52s} {_acc(r['acc_a']):>7s} vs "
+                f"{_acc(r['acc_b']):>7s}  "
                 f"disc={r['disc']:.3f}  p_pair={r['p_item']:.2e}  "
                 f"p_unpair={r['p_unpaired']:.2e}"
             )
@@ -448,7 +455,11 @@ def main() -> None:
                 "\nStanding question -- intens vs noise_intens, per model "
                 "(no prior study ever separated these):"
             )
-            hdr = f"  {'model':14s} {'intens':>7s} {'noise':>7s} {'disc':>7s} {'b/c':>9s} {'p_paired':>10s} {'p_unpaired':>11s}"
+            hdr = (
+                f"  {'model':14s} {'intens':>7s} {'noise':>7s} {'disc':>7s} "
+                f"{'b/c':>9s} {'p_paired':>10s} {'p_unpaired':>11s} "
+                f"{'p_signflip':>11s}"
+            )
             print(hdr)
             print("  " + "-" * (len(hdr) - 2))
             for r in rows:
@@ -456,14 +467,15 @@ def main() -> None:
                     continue
                 model = r["label"].split("]")[0].strip("[")
                 flag = ""
-                if r["p_item"] <= ALPHA / N_PRIMARY:
+                if r["p_cluster"] <= ALPHA / N_PRIMARY:
                     flag = "  <== SEPARATES (Bonferroni)"
-                elif r["p_item"] <= ALPHA:
+                elif r["p_cluster"] <= ALPHA:
                     flag = "  <== p<0.05 uncorrected"
                 print(
                     f"  {model:14s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
                     f"{r['disc']:7.3f} {r['b']:4d}/{r['c']:<4d} "
-                    f"{r['p_item']:10.2e} {r['p_unpaired']:11.2e}{flag}"
+                    f"{r['p_item']:10.2e} {r['p_unpaired']:11.2e} "
+                    f"{r['p_cluster']:11.2e}{flag}"
                 )
 
             # --- clustering sign ---
@@ -491,12 +503,15 @@ def main() -> None:
     sec_rows = [contrast_row(correct, valid, ka, kb) for _label, ka, kb in sec]
     p_pair_s = np.array([r["p_item"] for r in sec_rows])
     p_unp_s = np.array([r["p_unpaired"] for r in sec_rows])
+    p_cl_s = np.array([r["p_cluster"] for r in sec_rows])
 
     print(
         f"\n{'=' * 78}\nSECONDARY family ({len(sec)} cross-family size-matched "
-        f"contrasts, intens only), Benjamini-Hochberg q=0.05\n{'=' * 78}\n"
-        f"  unpaired CMH   : {bh(p_unp_s).sum():3d} discoveries\n"
-        f"  paired McNemar : {bh(p_pair_s).sum():3d} discoveries"
+        f"contrasts, intens only), Benjamini-Hochberg q=0.05 on seed sign-flip p-values\n"
+        f"{'=' * 78}\n"
+        f"  seed sign-flip : {bh(p_cl_s).sum():3d} discoveries   <== inferential\n"
+        f"  unpaired CMH (descriptive)   : {bh(p_unp_s).sum():3d} discoveries\n"
+        f"  paired McNemar (descriptive) : {bh(p_pair_s).sum():3d} discoveries"
     )
 
 

@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import sys
+import warnings
 from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -318,6 +319,54 @@ def test_dump_creates_its_own_results_directory(
 
     assert target.exists()
     assert json.loads(target.read_text()) == {"probe": 1}
+
+
+def test_dump_keeps_previous_checkpoint_when_write_fails(
+    multiplicity_sim: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed checkpoint write does not replace the previous JSON."""
+    target = tmp_path / "multiplicity_sim_results.json"
+    monkeypatch.setattr(multiplicity_sim, "OUT_PATH", target)
+    monkeypatch.setattr(multiplicity_sim, "OUT", {"first": 1})
+    multiplicity_sim.dump("first")
+
+    def fail_dump(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("simulated checkpoint failure")
+
+    monkeypatch.setattr(multiplicity_sim.json, "dump", fail_dump)
+    monkeypatch.setattr(multiplicity_sim, "OUT", {"second": 2})
+    with pytest.raises(RuntimeError, match="simulated checkpoint failure"):
+        multiplicity_sim.dump("second")
+
+    assert json.loads(target.read_text()) == {"first": 1}
+    assert not target.with_suffix(".json.tmp").exists()
+
+
+def test_contrast_row_handles_empty_drop_invalid_pairs(
+    paired_analysis: ModuleType,
+) -> None:
+    """Dropping all invalid marks returns empty accuracies without warnings."""
+    key_a = ("model_a", "intens")
+    key_b = ("model_b", "noise_intens")
+    correct = {
+        key_a: {seed: np.ones(9, dtype=bool) for seed in range(2)},
+        key_b: {seed: np.zeros(9, dtype=bool) for seed in range(2)},
+    }
+    valid = {
+        key_a: {seed: np.ones(9, dtype=bool) for seed in range(2)},
+        key_b: {seed: np.zeros(9, dtype=bool) for seed in range(2)},
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        row = paired_analysis.contrast_row(
+            correct, valid, key_a, key_b, drop_invalid=True
+        )
+
+    assert row["n"] == 0
+    assert row["acc_a"] is None
+    assert row["acc_b"] is None
 
 
 def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
