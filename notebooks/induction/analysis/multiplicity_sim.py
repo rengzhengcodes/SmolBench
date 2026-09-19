@@ -33,6 +33,8 @@ from power_analysis import (
 )
 from scipy.stats import chi2
 
+from smolbench.evals.results_store import LocalResultsStore
+
 K_HARM = N_HARMONICS
 ALPHA_BONF = ALPHA_PRIMARY
 
@@ -453,13 +455,19 @@ def _paired_powers(
 def study_design_effect() -> float | None:
     """Read the study's measured design effect.
 
-    Return ``None`` without results; propagate failures to avoid partial estimates.
+    Return ``None`` when no study replicate lane exists (a checkpoint JSON alone
+    does not count); propagate failures once data is present.
     """
     # Avoid results-reading import effects during simulation imports.
     import paired_analysis
     import power_analysis
 
-    if not paired_analysis.RESULTS_DIR.exists():
+    store = LocalResultsStore(paired_analysis.RESULTS_DIR)
+    if not any(
+        store.list_seeds(None, model, info)
+        for model in power_analysis.MODELS
+        for info in power_analysis.INFOS
+    ):
         return None
     correct, valid, _compliance = paired_analysis.load_marks()
     deffs = []

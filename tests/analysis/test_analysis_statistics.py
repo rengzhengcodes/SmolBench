@@ -630,6 +630,18 @@ def test_the_module_docstring_relates_the_study_design_effect_to_an_icc(
     assert multiplicity_sim.study_design_effect() is None
 
 
+def test_study_design_effect_ignores_checkpoint_without_replicates(
+    multiplicity_sim: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A checkpoint directory is not a measured study lane."""
+    (tmp_path / "multiplicity_sim_results.json").write_text("{}", encoding="utf-8")
+    paired_analysis = sys.modules["paired_analysis"]
+    monkeypatch.setattr(paired_analysis, "RESULTS_DIR", tmp_path)
+    assert multiplicity_sim.study_design_effect() is None
+
+
 def test_each_icc_block_reports_the_design_effect_it_produces(
     multiplicity_sim: ModuleType,
 ) -> None:
