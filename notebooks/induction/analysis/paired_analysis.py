@@ -467,17 +467,24 @@ def main() -> None:
                 )
 
             # --- clustering sign ---
-            print(
-                f"\nClustering / cross-stratum covariance, over {des.size} measurable "
-                f"PRIMARY contrasts:\n"
-                f"  design effect = Var(per-seed total diff) / sum_k Var_k  "
-                f"(>1 anticonservative, <1 conservative)\n"
-                f"    median {np.median(des):.3f}   mean {des.mean():.3f}   "
-                f"p10 {np.percentile(des, 10):.3f}   p90 {np.percentile(des, 90):.3f}   "
-                f"max {des.max():.3f}\n"
-                f"    fraction > 1.0 : {(des > 1.0).mean():.3f}   "
-                f"fraction > 1.5 : {(des > 1.5).mean():.3f}"
-            )
+            if des.size == 0:
+                print(
+                    "Clustering / cross-stratum covariance: no measurable PRIMARY "
+                    "contrasts (every contrast has zero independence-assumed "
+                    "variance), so no design effect is reported."
+                )
+            else:
+                print(
+                    f"\nClustering / cross-stratum covariance, over {des.size} measurable "
+                    f"PRIMARY contrasts:\n"
+                    f"  design effect = Var(per-seed total diff) / sum_k Var_k  "
+                    f"(>1 anticonservative, <1 conservative)\n"
+                    f"    median {np.median(des):.3f}   mean {des.mean():.3f}   "
+                    f"p10 {np.percentile(des, 10):.3f}   p90 {np.percentile(des, 90):.3f}   "
+                    f"max {des.max():.3f}\n"
+                    f"    fraction > 1.0 : {(des > 1.0).mean():.3f}   "
+                    f"fraction > 1.5 : {(des > 1.5).mean():.3f}"
+                )
 
     # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()

@@ -632,23 +632,52 @@ def main() -> None:
         )
     elif fails:
         # Partitioned: a fixed exoneration would misdescribe non-qualifying failures.
-        qualifying, unexplained = [], []
+        total, partial, unexplained = [], [], []
         for r in fails:
             # The informative arm is identified by its info label, not position.
             info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
             if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
-                qualifying.append(r)
+                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
+                if info_rate is not None and info_rate >= TOTAL_COLLAPSE:
+                    total.append(r)
+                else:
+                    partial.append(r)
             else:
                 unexplained.append(r)
-        if qualifying:
+        if total:
             print(
-                f"\n  These {len(qualifying)} of {len(fails)} failures are the "
+                f"\n  These {len(total)} of {len(fails)} failures are the "
                 f"collapse result surfacing in the controls,\n  not a pipeline "
                 f"fault: each is a noise arm the whitespace padding drove to\n"
                 f"  near-total non-compliance, so it cannot outscore an empty "
                 f"prompt. Reported\n  plainly, as part of the "
                 f"padding-robustness finding."
             )
+        if partial:
+            rates = [
+                1 - (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"])
+                for r in partial
+                if (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]) is not None
+            ]
+            if not rates:
+                compliance = "an unmeasured rate"
+            elif len({round(rate, 10) for rate in rates}) == 1:
+                compliance = f"{rates[0]:.1%}"
+            else:
+                compliance = f"{min(rates):.1%}–{max(rates):.1%}"
+            print(
+                f"\n  {len(partial)} of {len(fails)} failures are noise arms on "
+                f"a lane the pad carried over the {COLLAPSE_THRESHOLD:.0%} "
+                f"criterion, but the arm is still {compliance} "
+                f"compliant on the compared seeds, so the padding crossing is "
+                f"a caveat, not a demonstrated cause of the failed control:"
+            )
+            for r in sorted(partial, key=lambda r: -r["acc_a"]):
+                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
+                if info_rate is None:
+                    print(f"    {r['label']} (compared-seed rate unavailable)")
+                else:
+                    print(f"    {r['label']} ({1 - info_rate:.1%} compliant)")
         if unexplained:
             # Labels listed after the sentence so the section can be split on the claim.
             print(
@@ -688,10 +717,11 @@ def main() -> None:
     if ceiling:
         print(
             f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)}. "
-            f"{n_zero_disc} of them have ZERO discordant items:\n  exact ties "
-            f"that no replicate count can separate (see the +/-0.20 "
-            f"equivalence decision);\n  the other {len(ceiling) - n_zero_disc} "
-            f"have discordant items and are UNRESOLVED at this depth, not ties."
+            f"{n_zero_disc} of them have ZERO discordant items:\n  observed "
+            f"exact ties in this sample; additional replicates can still create "
+            f"discordances (see the +/-0.20 equivalence decision).\n  The other "
+            f"{len(ceiling) - n_zero_disc} have discordant items and are "
+            f"UNRESOLVED at this depth, not ties."
         )
     else:
         # States the standing alternative rather than printing a "0 -- these are ties" line.

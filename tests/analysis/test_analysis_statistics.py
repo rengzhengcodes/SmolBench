@@ -161,6 +161,43 @@ def test_walkers_skip_an_unparsable_replicate_filename(
     assert census[cell]["n"] == SHALLOW_DEPTH * 9
 
 
+def test_paired_report_handles_no_measurable_design_effects(
+    repoint: Callable[[Path], None],
+    power_analysis: ModuleType,
+    paired_analysis: ModuleType,
+    tmp_path: Path,
+) -> None:
+    """Identical cells produce no measurable design effects but still report cleanly."""
+    source = (power_analysis.MODELS[0], power_analysis.INFOS[0])
+    copies = {
+        (model, info): source
+        for model in power_analysis.MODELS
+        for info in power_analysis.INFOS
+        if (model, info) != source
+    }
+    build_tree(
+        tmp_path,
+        power_analysis.MODELS,
+        power_analysis.INFOS,
+        lambda _model, _info: (
+            0.90,
+            0.0,
+            "empty",
+            range(SHALLOW_DEPTH),
+        ),
+        copies=copies,
+    )
+    repoint(tmp_path)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        paired_analysis.main()
+    assert (
+        "Clustering / cross-stratum covariance: no measurable PRIMARY contrasts "
+        "(every contrast has zero independence-assumed variance), so no design "
+        "effect is reported."
+    ) in buf.getvalue()
+
+
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     repoint: Callable[[Path], None],
     paired_analysis: ModuleType,

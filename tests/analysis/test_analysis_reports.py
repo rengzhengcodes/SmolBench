@@ -38,6 +38,8 @@ TIED_MODEL = "nemo3_30b"
 REVERSED_MODEL = "ds_flash"
 #: Model whose collapse annotation is not caused by padding.
 CAVEAT_MODEL = "ds_flash"
+#: Model whose copied noise control does not reject while compliance is skewed.
+PAD_CONTROL_MODEL = "ds_flash"
 
 _SKEW_SPLIT = 10
 
@@ -137,6 +139,13 @@ def _caveat_profile(model: str, info: str) -> tuple[float, float, str, range]:
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
 
+def _padding_control_profile(model: str, info: str) -> tuple[float, float, str, range]:
+    seeds = range(DEEP_DEPTH)
+    if model == PAD_CONTROL_MODEL and info in {"intens", "noise_intens", "zero"}:
+        return 0.10, 0.0, "empty", seeds
+    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
+
+
 @pytest.fixture(scope="session")
 def shallow_tree(
     tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
@@ -216,6 +225,25 @@ def caveat_tree(
     return root
 
 
+@pytest.fixture(scope="session")
+def padding_control_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """Build a copied noise control whose compliance can be skewed independently."""
+    root = tmp_path_factory.mktemp("padding-control")
+    source = (PAD_CONTROL_MODEL, "zero")
+    build_tree(
+        root,
+        power_analysis.MODELS,
+        power_analysis.INFOS,
+        _padding_control_profile,
+        copies={
+            (PAD_CONTROL_MODEL, info): source for info in ("intens", "noise_intens")
+        },
+    )
+    return root
+
+
 @pytest.fixture
 def report(
     repoint: Callable[[Path], None], significance_report: ModuleType
@@ -251,7 +279,7 @@ def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
 def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
     report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
-    """Exactly one of the two failing controls is a collapsed noise arm; the other is compliant and must not be exonerated."""
+    """Collapsed noise controls are split from compliant failures."""
     out = report(collapse_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     fails = [ln for ln in controls.splitlines() if ln.strip().startswith("FAILS")]
@@ -261,15 +289,87 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
 
     match = re.search(r"These (\d+) of (\d+) failures", controls)
     assert match, controls
-    assert (int(match.group(1)), int(match.group(2))) == (len(qualifying), len(fails))
+    total_count, total_denominator = map(int, match.groups())
+    partial = re.search(
+        r"(\d+) of (\d+) failures are noise arms on a lane the pad carried over",
+        controls,
+    )
+    assert partial, controls
+    assert total_denominator == len(fails)
+    assert total_count + int(partial.group(1)) == len(qualifying)
 
     assert "NOT explained by padding" in controls
     explained, _, unexplained = controls.partition("NOT explained by padding")
-    # The exoneration paragraph sits above the split ...
-    assert "whitespace padding drove" in explained
+    # The partial-collapse caveat sits above the split ...
+    assert "caveat, not a demonstrated cause of the failed control" in explained
     # ... and the compliant, non-noise failure is named below it.
     assert WEAK_MODEL in unexplained
     assert WEAK_MODEL not in explained.rsplit("These ", 1)[-1]
+
+
+def _padding_control_report(
+    report: Callable[[Path], str],
+    significance_report: ModuleType,
+    padding_control_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    noise_counts: tuple[int, int],
+) -> str:
+    """Return a report with matched-seed intens/noise compliance rates overridden."""
+    monkeypatch.setattr(
+        significance_report,
+        "compliance_census",
+        _skew_census(
+            significance_report,
+            (PAD_CONTROL_MODEL, "intens"),
+            {range(DEEP_DEPTH): (0, 9)},
+        ),
+    )
+    monkeypatch.setattr(
+        significance_report,
+        "compliance_census",
+        _skew_census(
+            significance_report,
+            (PAD_CONTROL_MODEL, "noise_intens"),
+            {range(DEEP_DEPTH): noise_counts},
+        ),
+    )
+    return report(padding_control_tree)
+
+
+def test_partial_pad_crossing_is_not_called_near_total(
+    report: Callable[[Path], str],
+    significance_report: ModuleType,
+    padding_control_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial compliance collapse is reported as a caveat, not control causation."""
+    controls = _padding_control_report(
+        report,
+        significance_report,
+        padding_control_tree,
+        monkeypatch,
+        (4, 9),
+    ).split("ZERO-ARM CONTROLS", 1)[1]
+    assert "near-total non-compliance" not in controls
+    assert "55.6% compliant on the compared seeds" in controls
+    assert "caveat, not a demonstrated cause of the failed control" in controls
+
+
+def test_total_pad_crossing_keeps_near_total_exoneration(
+    report: Callable[[Path], str],
+    significance_report: ModuleType,
+    padding_control_tree: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A total compliance collapse retains the padding exoneration."""
+    controls = _padding_control_report(
+        report,
+        significance_report,
+        padding_control_tree,
+        monkeypatch,
+        (9, 9),
+    ).split("ZERO-ARM CONTROLS", 1)[1]
+    assert "near-total non-compliance" in controls
 
 
 def test_reversed_controls_are_not_counted_as_passing(
