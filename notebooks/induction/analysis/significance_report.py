@@ -282,6 +282,30 @@ def collapse_tag(row: dict, census: dict) -> str:
     return ("   [COLLAPSE: " + "; ".join(hits) + "]") if hits else ""
 
 
+def gate_note(row: dict, gates: dict[str, dict]) -> str:
+    """Return the exploratory annotation for an ungated ladder finding.
+
+    Parameters
+    ----------
+    row : dict
+        Computed primary-contrast row.
+    gates : dict[str, dict]
+        Family omnibus gate results.
+
+    Returns
+    -------
+    str
+        Exploratory annotation, or ``""`` when the row is not an ungated
+        ladder finding.
+    """
+    if not row["kind_is_ladder"] or row["gated"]:
+        return ""
+    p = gates[row["family"]]["p"]
+    if p is None:
+        return f"  [EXPLORATORY: {row['family']} omnibus has no common-seed data]"
+    return f"  [EXPLORATORY: {row['family']} omnibus p={p:.2e}]"
+
+
 @dataclass(frozen=True)
 class Report:
     """Computed significance-report quantities."""
@@ -598,18 +622,11 @@ def render(report: Report) -> None:
         for r in sorted(bucket, key=lambda r: r["p_cluster"]):
             direction = "^" if r["acc_b"] > r["acc_a"] else "v"
             lead = "  " if bucket is not ladders or r["gated"] else "* "
-            gate_note = (
-                ""
-                if bucket is not ladders or r["gated"]
-                else (
-                    f"  [EXPLORATORY: {r['family']} omnibus "
-                    f"p={report.gates[r['family']]['p']:.2e}]"
-                )
-            )
+            note = gate_note(r, report.gates)
             print(
                 f"{lead}{direction} {r['label']:52s} {r['acc_a']:.3f} -> "
                 f"{r['acc_b']:.3f}   p={r['p_cluster']:.2e} "
-                f"(item {r['p_item']:.2e}){r['collapse_tag']}{gate_note}"
+                f"(item {r['p_item']:.2e}){r['collapse_tag']}{note}"
             )
         if bucket is ladders and report.n_ladder_ungated:
             print(

@@ -80,6 +80,25 @@ def test_collapse_note_uses_the_supplied_rate(significance_report: ModuleType) -
     )
 
 
+def test_gate_note_handles_no_data_and_numeric_gates(
+    significance_report: ModuleType,
+) -> None:
+    """Ungated ladder findings render both available and unavailable gate p-values."""
+    row = {"kind_is_ladder": True, "gated": False, "family": "family"}
+    assert (
+        significance_report.gate_note(row, {"family": {"p": None}})
+        == "  [EXPLORATORY: family omnibus has no common-seed data]"
+    )
+    assert (
+        significance_report.gate_note(row, {"family": {"p": 0.001234}})
+        == "  [EXPLORATORY: family omnibus p=1.23e-03]"
+    )
+    assert (
+        significance_report.gate_note({**row, "gated": True}, {"family": {"p": None}})
+        == ""
+    )
+
+
 @pytest.mark.parametrize(
     ("rate_i", "rate_n", "expected"),
     ((0.30, 0.60, False), (0.10, 0.25, True), (0.10, 0.20, False)),
@@ -237,6 +256,56 @@ def test_missing_family_cell_yields_no_data_gate(
     out = report(clean_tree)
     assert f"{gated_steep_family:12s} n_seeds=  0 stat=     n/a" in out
     assert "no data" in out
+
+
+@pytest.fixture
+def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
+    """Pairwise ladder overlaps remain while the family-wide intersection is empty."""
+    family, rungs = next(iter(power_analysis.FAMILIES.items()))
+    r2_seeds = {
+        "intens": tuple(range(20)),
+        "extens": tuple(range(10, 30)),
+        "noise_intens": tuple(range(10)) + tuple(range(20, 30)),
+        "zero": tuple(range(5)) + tuple(range(15, 30)),
+    }
+
+    def profile(
+        model: str, info: str
+    ) -> tuple[float, float, str, range | tuple[int, ...]]:
+        if model == rungs[0]:
+            return 0.0, 0.0, "empty", range(power_analysis.N_REPLICATES)
+        if model == rungs[1]:
+            return 1.0, 0.0, "empty", range(power_analysis.N_REPLICATES)
+        if model == rungs[2]:
+            return 0.9, 0.0, "empty", r2_seeds[info]
+        return (
+            0.10 if info == "zero" else 0.90,
+            0.0,
+            "empty",
+            range(power_analysis.N_REPLICATES),
+        )
+
+    build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS, profile)
+    return tmp_path
+
+
+def test_no_data_gate_renders_exploratory(
+    no_data_gate_tree: Path,
+    power_analysis: ModuleType,
+    significance_report: ModuleType,
+) -> None:
+    """An ungated significant ladder finding renders a no-data explanation."""
+    family = next(iter(power_analysis.FAMILIES))
+    computed = significance_report.compute(no_data_gate_tree)
+    ungated = [
+        row
+        for row in computed.findings
+        if row["kind_is_ladder"] and row["family"] == family and not row["gated"]
+    ]
+    assert ungated
+    assert computed.gates[family]["p"] is None
+    out = _run(lambda: significance_report.render(computed))
+    assert "omnibus has no common-seed data" in out
 
 
 def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
