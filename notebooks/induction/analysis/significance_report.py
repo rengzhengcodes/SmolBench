@@ -4,8 +4,8 @@ PRIMARY uses exact seed-level sign flips because harmonic marks within a seed ar
 Hochberg is sensitivity-only: its positive-dependence condition is unverified.
 Collapsed cells are annotated, never excluded.
 
-This study is exploratory end to end: it is pilot-sized, its roster was fixed
-post hoc against a pre-registered plan, and it makes no confirmatory claims.
+This study is exploratory end to end: it is pilot-sized, its sizing rests on an
+independent-harmonic approximation, and it makes no confirmatory claims.
 The Tier-1 omnibus gate and the Holm/BH corrections order the evidence within
 that exploratory frame; a gated ladder finding is a stronger exploratory
 signal, not a confirmed effect.
@@ -62,15 +62,33 @@ N_GATE_PERMS = 4000
 #: Fixed RNG seed; the gate is deterministic.
 GATE_PERM_SEED = 20260920
 
-#: Row key a missing-cell or empty-seed family reports under the omnibus gate.
-GATE_NO_DATA = {
-    "n_seeds": 0,
-    "stat": None,
-    "p": None,
-    "p_perm": None,
-    "p_gate": None,
-    "reject": False,
-}
+#: Rendered twice: under the method note and again under the Tier-1 gate table.
+EXPLORATORY_NOTE = (
+    "This study is exploratory end to end (pilot-sized, sizing rests on an\n"
+    "  independent-harmonic approximation, no confirmatory claims). The Tier-1 "
+    "omnibus\n  gate and Holm/BH corrections order the evidence within that "
+    "exploratory frame;\n  a gated ladder finding is a stronger exploratory "
+    "signal, not a confirmed effect.\n"
+)
+
+
+def _gate_row(
+    n_seeds: int, stat: float | None, p: float | None, p_perm: float | None
+) -> dict:
+    """One `omnibus_gates` entry; ``p_gate = max(p, p_perm)`` gates at `ALPHA_OMNIBUS`."""
+    p_gate = None if p is None or p_perm is None else max(p, p_perm)
+    return {
+        "n_seeds": n_seeds,
+        "stat": stat,
+        "p": p,
+        "p_perm": p_perm,
+        "p_gate": p_gate,
+        "reject": p_gate is not None and p_gate <= ALPHA_OMNIBUS,
+    }
+
+
+#: Row a missing-cell or empty-seed family reports under the omnibus gate.
+GATE_NO_DATA = _gate_row(0, None, None, None)
 
 
 def permutation_omnibus_p(
@@ -134,10 +152,11 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     gates: dict[str, dict] = {}
     for family, rungs in FAMILIES.items():
         cells = [(rung, info) for rung in rungs for info in INFOS]
-        if any(cell not in marks.correct for cell in cells):
-            gates[family] = dict(GATE_NO_DATA)
-            continue
-        seeds = sorted(set.intersection(*(set(marks.correct[cell]) for cell in cells)))
+        seeds = (
+            sorted(set.intersection(*(set(marks.correct[cell]) for cell in cells)))
+            if all(cell in marks.correct for cell in cells)
+            else []
+        )
         if not seeds:
             gates[family] = dict(GATE_NO_DATA)
             continue
@@ -158,16 +177,9 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         succ = marks_tensor.sum(axis=0)[None]
         stat = float(gcmh_stat(succ, len(seeds))[0])
         p = float(chi2.sf(stat, df=2))
-        p_perm = permutation_omnibus_p(marks_tensor, stat, rng)
-        p_gate = max(p, p_perm)
-        gates[family] = {
-            "n_seeds": len(seeds),
-            "stat": stat,
-            "p": p,
-            "p_perm": p_perm,
-            "p_gate": p_gate,
-            "reject": p_gate <= ALPHA_OMNIBUS,
-        }
+        gates[family] = _gate_row(
+            len(seeds), stat, p, permutation_omnibus_p(marks_tensor, stat, rng)
+        )
     return gates
 
 
@@ -486,11 +498,7 @@ def render(report: Report) -> None:
         f"are {mx_s} clusters of {N_HARMONICS}, not {mx_n}\n  independent pairs. "
         f"Exact (2^{mx_s} assignments enumerated by DP), deterministic,\n"
         "  and equal to exact McNemar when every cluster is a singleton.\n"
-        "This study is exploratory end to end (pilot-sized, roster fixed post hoc\n"
-        "  against a pre-registered plan, no confirmatory claims). The Tier-1 "
-        "omnibus\n  gate and Holm/BH corrections order the evidence within that "
-        "exploratory frame;\n  a gated ladder finding is a stronger exploratory "
-        "signal, not a confirmed effect.\n"
+        f"{EXPLORATORY_NOTE}"
         "  NULL ASSUMPTION: arms are exchangeable WITHIN a replicate. The collection "
         "guarantees\n  this, not a check here: `ReplicateHarness.run_replicates` builds "
         "a seed's arms from one\n  `make_quizzes(seed, model)` call and scores them in "
@@ -646,11 +654,7 @@ def render(report: Report) -> None:
         "clustering; the permutation p re-labels rungs\nwithin each seed "
         f"({N_GATE_PERMS} Monte-Carlo draws, fixed seed) and is cluster-valid. "
         "The\ngate takes the stricter of the two.\n"
-        "This study is exploratory end to end (pilot-sized, roster fixed post hoc\n"
-        "  against a pre-registered plan, no confirmatory claims). The Tier-1 "
-        "omnibus\n  gate and Holm/BH corrections order the evidence within that "
-        "exploratory frame;\n  a gated ladder finding is a stronger exploratory "
-        "signal, not a confirmed effect.\n\n"
+        f"{EXPLORATORY_NOTE}\n"
         f"\n{'=' * 78}\nSIGNIFICANT FINDINGS (Holm, seed sign-flip): "
         f"{len(sel)} of {tot}\n{'=' * 78}\n"
         f"No contrast is excluded. Where an arm is at or above {crit} non-compliant the\n"

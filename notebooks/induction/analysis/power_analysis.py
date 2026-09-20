@@ -10,8 +10,8 @@ within-seed dependence a one-replicate pilot cannot estimate; these tables are
 therefore the pre-registration sizing check and a descriptive sensitivity
 analysis, not a power statement about the sign-flip test.
 
-This study is exploratory end to end: it is pilot-sized, its roster was fixed
-post hoc against a pre-registered plan, and it makes no confirmatory claims.
+This study is exploratory end to end: it is pilot-sized, its sizing rests on an
+independent-harmonic approximation, and it makes no confirmatory claims.
 The Tier-1 omnibus gate and the Holm/BH corrections order the evidence within
 that exploratory frame; a gated ladder finding is a stronger exploratory
 signal, not a confirmed effect.

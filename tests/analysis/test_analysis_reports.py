@@ -24,6 +24,7 @@ from tests.analysis._trees import (  # noqa: F401
     MODELS,
     N_HARMONICS,
     SHALLOW_DEPTH,
+    Cell,
     build_tree,
     extens_vs_noise,
     paired_analysis,
@@ -116,16 +117,24 @@ def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> 
 
 
 _STEEP_RUNGS = next(iter(FAMILIES.values()))
-ladder_tree = tree_fixture(
-    "ladder_tree",
-    profile_for(
+
+
+def _steep_profile(depth: int) -> Callable[[str, str], Cell]:
+    """First family's rungs rise 0.2/0.5/0.9 over `depth` seeds; all else default."""
+    return profile_for(
         {
-            (rung, info): (rate, 0.0, "empty", range(DEEP_DEPTH))
+            (rung, info): (rate, 0.0, "empty", range(depth))
             for rung, rate in zip(_STEEP_RUNGS, (0.20, 0.50, 0.90))
             for info in INFOS
             if info != "zero"
-        }
-    ),
+        },
+        depth=depth,
+    )
+
+
+ladder_tree = tree_fixture(
+    "ladder_tree",
+    _steep_profile(DEEP_DEPTH),
     "16 seeds; the first family's rungs rise steeply (0.2/0.5/0.9).",
 )
 
@@ -200,14 +209,7 @@ def test_ungated_ladder_findings_are_labelled_exploratory(
         significance_report,
         "omnibus_gates",
         lambda _marks: {
-            family: {
-                "n_seeds": DEEP_DEPTH,
-                "stat": 0.0,
-                "p": 0.5,
-                "p_perm": 0.5,
-                "p_gate": 0.5,
-                "reject": False,
-            }
+            family: significance_report._gate_row(DEEP_DEPTH, 0.0, 0.5, 0.5)
             for family in significance_report.FAMILIES
         },
     )
@@ -315,18 +317,7 @@ def test_gate_requires_both_p_values(
     tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
 ) -> None:
     """With 2 seeds the permutation p floors above ALPHA_OMNIBUS, so the asymptotic reject does not gate."""
-    build_tree(
-        tmp_path,
-        profile_for(
-            {
-                (rung, info): (rate, 0.0, "empty", range(2))
-                for rung, rate in zip(_STEEP_RUNGS, (0.20, 0.50, 0.90))
-                for info in INFOS
-                if info != "zero"
-            },
-            depth=2,
-        ),
-    )
+    build_tree(tmp_path, _steep_profile(2))
     marks = significance_report.load_marks(tmp_path)
     gates = significance_report.omnibus_gates(marks)
     family = next(iter(power_analysis.FAMILIES))
