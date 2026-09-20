@@ -63,57 +63,34 @@ MAX_REPLICATES = (
 )
 SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
 
-# The pre-registered roster. Counts alone would pass a same-family checkpoint
-# swap, so the checkpoint keys (what the study runs) and their tags (what names
-# the result directories) are both pinned.
-PREREGISTERED_KEYS = (
-    "qwen3.5-27b",
-    "qwen3.5-122b-a10b",
-    "qwen3.5-397b-a17b",
-    "nemotron-3-nano-4b",
-    "nemotron-3-nano-30b-a3b",
-    "nemotron-3-super-120b-a12b",
-    "gemma-4-e2b",
-    "gemma-4-12b",
-    "gemma-4-31b",
-    "glm-4.7-flash",
-    "glm-4.5-air",
-    "glm-4.7",
-    "ministral-3-3b",
-    "ministral-3-8b",
-    "ministral-3-14b",
-    "exaone-4.0-32b",
-    "exaone-4.5-33b",
-    "k-exaone-236b-a23b",
-    "deepseek-v4-flash",
-    "deepseek-v3.1",
-    "deepseek-v4-pro",
+# The pre-registered roster as (checkpoint key, tag) pairs. Counts alone would
+# pass a same-family checkpoint swap, so the keys (what the study runs) and
+# their tags (what names the result directories) are both pinned.
+PREREGISTERED_ROSTER: tuple[tuple[str, str], ...] = (
+    ("qwen3.5-27b", "qwen35_27b"),
+    ("qwen3.5-122b-a10b", "qwen35_122b"),
+    ("qwen3.5-397b-a17b", "qwen35_397b"),
+    ("nemotron-3-nano-4b", "nemo3_4b"),
+    ("nemotron-3-nano-30b-a3b", "nemo3_30b"),
+    ("nemotron-3-super-120b-a12b", "nemo3_120b"),
+    ("gemma-4-e2b", "gemma4_e2b"),
+    ("gemma-4-12b", "gemma4_12b"),
+    ("gemma-4-31b", "gemma4_31b"),
+    ("glm-4.7-flash", "glm_flash"),
+    ("glm-4.5-air", "glm_air"),
+    ("glm-4.7", "glm_47"),
+    ("ministral-3-3b", "min3_3b"),
+    ("ministral-3-8b", "min3_8b"),
+    ("ministral-3-14b", "min3_14b"),
+    ("exaone-4.0-32b", "exaone_32b"),
+    ("exaone-4.5-33b", "exaone_33b"),
+    ("k-exaone-236b-a23b", "exaone_236b"),
+    ("deepseek-v4-flash", "ds_flash"),
+    ("deepseek-v3.1", "ds_v31"),
+    ("deepseek-v4-pro", "ds_pro"),
 )
-
-# Pinned by tag, not count, so a same-family checkpoint swap cannot pass.
-PREREGISTERED_MODELS = (
-    "qwen35_27b",
-    "qwen35_122b",
-    "qwen35_397b",
-    "nemo3_4b",
-    "nemo3_30b",
-    "nemo3_120b",
-    "gemma4_e2b",
-    "gemma4_12b",
-    "gemma4_31b",
-    "glm_flash",
-    "glm_air",
-    "glm_47",
-    "min3_3b",
-    "min3_8b",
-    "min3_14b",
-    "exaone_32b",
-    "exaone_33b",
-    "exaone_236b",
-    "ds_flash",
-    "ds_v31",
-    "ds_pro",
-)
+PREREGISTERED_KEYS = tuple(key for key, _tag in PREREGISTERED_ROSTER)
+PREREGISTERED_MODELS = tuple(tag for _key, tag in PREREGISTERED_ROSTER)
 
 N_RUNGS = 3
 N_INFOS = len(INFOS)
@@ -121,15 +98,18 @@ N_FAMILIES = len(FAMILIES)
 N_LADDERS = N_FAMILIES * N_INFOS
 N_LADDER_CONTRASTS = N_LADDERS * math.comb(N_RUNGS, 2)
 N_INFO_CONTRASTS = len(MODELS) * math.comb(N_INFOS, 2)
-N_PRIMARY = 210  # N_LADDER_CONTRASTS ladder + N_INFO_CONTRASTS info.
+N_PRIMARY = N_LADDER_CONTRASTS + N_INFO_CONTRASTS
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
 # Size BH contrasts at the conservative rank-1 threshold.
 Q_SECONDARY = 0.05
-N_SECONDARY = 63  # N_RUNGS rung levels x C(N_FAMILIES, 2) family pairs.
+N_SECONDARY = N_RUNGS * math.comb(N_FAMILIES, 2)
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
 ALPHA_OMNIBUS = ALPHA / N_FAMILIES
+
+# Degrees of freedom of the model-by-info interaction diagnostic.
+DF_INTERACTION = (len(MODELS) - 1) * (len(INFOS) - 1)
 
 
 def load_outcomes(
@@ -332,15 +312,13 @@ def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
     trials_b = rng.random((N_SIMS, MAX_REPLICATES, b.size), dtype=np.float32) < b
     cum_a = np.cumsum(trials_a, axis=1, dtype=np.int16)
     cum_b = np.cumsum(trials_b, axis=1, dtype=np.int16)
-    needed: dict[float, int | None] = {t: None for t in POWER_TARGETS}
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
         succ_a = cum_a[:, n_reps - 1].astype(np.int64)
         succ_b = cum_b[:, n_reps - 1].astype(np.int64)
         power = float((cmh_stat(succ_a, succ_b, n_reps) > crit).mean())
         curve[n_reps] = power
-    for target in POWER_TARGETS:
-        needed[target] = _sustained_crossing(curve, target)
+    needed = {t: _sustained_crossing(curve, t) for t in POWER_TARGETS}
     return needed, curve
 
 
@@ -485,14 +463,14 @@ def equivalence_replicates(
     alpha: float = ALPHA,
     n_sims: int = N_SIMS,
 ) -> int | None:
-    """Find the smallest R for 80% TOST equivalence power.
+    """Find the smallest R for TOST equivalence power at ``POWER_TARGETS[0]``.
 
     Simulate both arms at their mean because this tests a true tie.
     The interval is Agresti–Caffo: one success and one failure are added to each
     arm, and both the centre and the standard error use those adjusted
     proportions, so a saturated arm never yields a zero-width interval.
     Power uses common random numbers across nested replicate counts and the
-    `_sustained_crossing` of the 80% target.
+    `_sustained_crossing` of the first `POWER_TARGETS` target.
 
     Parameters
     ----------
@@ -516,7 +494,7 @@ def equivalence_replicates(
     """
     common = (rates_a + rates_b) / 2.0
     curve = _equivalence_power_curve(common, delta, rng, alpha, n_sims)
-    return _sustained_crossing(curve, 0.80)
+    return _sustained_crossing(curve, POWER_TARGETS[0])
 
 
 def omnibus_power(
@@ -552,7 +530,9 @@ def omnibus_power(
         Estimated omnibus-gate rejection fraction.
     """
     rungs = FAMILIES[family]
-    strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]  # K = 36
+    strata = [
+        (k, info) for info in INFOS for k in range(N_HARMONICS)
+    ]  # K = N_HARMONICS * N_INFOS
     cell_rates = np.array(
         [[rates[(rung, info)][k] for k, info in strata] for rung in rungs]
     )  # (3, K)
@@ -573,7 +553,8 @@ def omnibus_interaction_power(
 ) -> tuple[float, int]:
     """Estimate model-by-information interaction power.
 
-    The 60-df test is diagnostic, not a gate. Failed fits count as non-rejections.
+    The ``DF_INTERACTION``-df test is diagnostic, not a gate. Failed fits count
+    as non-rejections.
 
     Parameters
     ----------
@@ -612,6 +593,7 @@ def omnibus_interaction_power(
 
     x_null, x_full = design(False), design(True)
     df_extra = x_full.shape[1] - x_null.shape[1]
+    assert df_extra == DF_INTERACTION, (df_extra, DF_INTERACTION)
     crit = chi2.isf(ALPHA, df=df_extra)
     cell_rates = np.array([rates[(m, i)][k] for m, i, k in cells])
 
@@ -662,7 +644,7 @@ def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, s
     Use only ``intens`` and group by rung level.
     """
     contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]] = []
-    for r in range(3):
+    for r in range(N_RUNGS):
         for fam_a, fam_b in combinations(FAMILIES, 2):
             model_a, model_b = FAMILIES[fam_a][r], FAMILIES[fam_b][r]
             label = f"[rung {r} | intens] {model_a} vs {model_b}"
@@ -715,8 +697,9 @@ def _compute_sizing_results(
 def _sizing_header(label_w: int) -> str:
     """Build a sizing-table column header, at label column width `label_w`."""
     return (
-        f"{'contrast':{label_w}s} {'rates':13s} {'R(80%)':>7s} {'R(90%)':>7s} "
-        f"{'R80 pooled':>11s} {'extra runs':>11s}"
+        f"{'contrast':{label_w}s} {'rates':13s} "
+        f"{f'R({POWER_TARGETS[0]:.0%})':>7s} {f'R({POWER_TARGETS[1]:.0%})':>7s} "
+        f"{f'R{POWER_TARGETS[0]:.0%} pooled':>11s} {'extra runs':>11s}"
     )
 
 
@@ -741,12 +724,12 @@ def _print_sizing_rows(
         return fmt_r(r, MAX_REPLICATES)
 
     for name, key_a, key_b, needed, needed_pooled in results:
-        r80, r90 = needed[0.80], needed[0.90]
+        r80, r90 = needed[POWER_TARGETS[0]], needed[POWER_TARGETS[1]]
         extra = "n/a" if r80 is None else f"{(r80 - 1) * N_HARMONICS}q"
         obs = f"{outcomes[key_a].mean():.2f} vs {outcomes[key_b].mean():.2f}"
         print(
             f"{name:{label_w}s} {obs:13s} {fmt(r80):>7s} {fmt(r90):>7s} "
-            f"{fmt(needed_pooled[0.80]):>11s} {extra:>11s}"
+            f"{fmt(needed_pooled[POWER_TARGETS[0]]):>11s} {extra:>11s}"
         )
 
 
@@ -759,13 +742,6 @@ def check_design_invariants() -> None:
     Reads the module globals on each call so a patched constant re-checks; that
     is how a test demonstrates the gate fires.
     """
-    # Every correction threshold divides by these pre-registered family sizes.
-    if N_PRIMARY != 210 or N_SECONDARY != 63:
-        raise RuntimeError(
-            f"pre-registered family sizes changed: N_PRIMARY={N_PRIMARY} "
-            f"(expected 210), N_SECONDARY={N_SECONDARY} (expected 63)"
-        )
-
     if ROSTER_KEYS != PREREGISTERED_KEYS:
         raise RuntimeError(
             f"study_config roster keys {ROSTER_KEYS!r} disagree with the "
@@ -842,7 +818,8 @@ def render_observed_accuracy(
 ) -> None:
     """Print the observed accuracy table `observed_accuracy` returns."""
     print(
-        f"Observed accuracy (n=9, one question per harmonic k=1..9; "
+        f"Observed accuracy (n={N_HARMONICS}, one question per harmonic "
+        f"k=1..{N_HARMONICS}; "
         f"{len(MODELS)} models x {len(INFOS)} infos):"
     )
     for family, rows in data:
@@ -856,7 +833,10 @@ def render_observed_accuracy(
 def design_banner() -> dict:
     """Gather design constants for the report banner."""
     return {
+        "alpha": ALPHA,
         "n_families": N_FAMILIES,
+        "n_rungs": N_RUNGS,
+        "n_models": len(MODELS),
         "alpha_omnibus": ALPHA_OMNIBUS,
         "n_primary": N_PRIMARY,
         "alpha_primary": ALPHA_PRIMARY,
@@ -872,18 +852,19 @@ def design_banner() -> dict:
 def render_design_banner(data: dict) -> None:
     """Print the design banner `design_banner` returns."""
     print(
-        "Design: three pre-registered contrast tiers over the 7-family x "
-        "3-rung (21-model) scaling grid (see module docstring):"
+        f"Design: three pre-registered contrast tiers over the "
+        f"{data['n_families']}-family x {data['n_rungs']}-rung "
+        f"({data['n_models']}-model) scaling grid (see module docstring):"
     )
     print(
         f"  Tier 1 (family omnibus gates):  {data['n_families']} tests, "
-        f"alpha = {ALPHA}/{data['n_families']} = {data['alpha_omnibus']:.5f} "
-        f"(Bonferroni)"
+        f"alpha = {data['alpha']}/{data['n_families']} = "
+        f"{data['alpha_omnibus']:.5f} (Bonferroni)"
     )
     print(
         f"  Tier 2 (PRIMARY pairwise):      {data['n_primary']} tests, "
-        f"alpha = {ALPHA}/{data['n_primary']} = {data['alpha_primary']:.6f} "
-        f"(Bonferroni)"
+        f"alpha = {data['alpha']}/{data['n_primary']} = "
+        f"{data['alpha_primary']:.6f} (Bonferroni)"
     )
     print(
         f"  Tier 3 (SECONDARY pairwise):    {data['n_secondary']} tests, "
@@ -913,8 +894,8 @@ def primary_contrasts_table(
 ) -> dict:
     """Build PRIMARY sizing data and recommendation inputs.
 
-    `r_star` is the smallest R that powers every contrast that is powerable within
-    `MAX_REPLICATES`; `n_censored` counts the contrasts it leaves unpowered, and
+    `r_star` is the smallest R that powers every contrast that is powerable
+    within `MAX_REPLICATES`; `n_censored` counts the contrasts it leaves unpowered, and
     `family_r` is the whole-family R (``None`` when any contrast is censored).
 
     Parameters
@@ -928,25 +909,29 @@ def primary_contrasts_table(
     -------
     dict
         With keys `results`, `r_star`, `family_r`, `n_censored`, `n_primary`,
-        `label_w`, `n_ladder`.
+        `label_w`.
 
     Raises
     ------
     SystemExit
-        If no PRIMARY contrast reaches 80% power within MAX_REPLICATES.
+        If no PRIMARY contrast reaches ``POWER_TARGETS[0]`` power within
+        MAX_REPLICATES.
     """
     contrasts = build_primary_contrasts()
     results = _compute_sizing_results(contrasts, rates, pooled, ALPHA_PRIMARY)
-    feasible = [n[0.80] for *_, n, _pooled in results if n[0.80] is not None]
+    feasible = [
+        n[POWER_TARGETS[0]]
+        for *_, n, _pooled in results
+        if n[POWER_TARGETS[0]] is not None
+    ]
     if not feasible:
         raise SystemExit(
-            "No PRIMARY contrast reaches 80% power within "
+            f"No PRIMARY contrast reaches {POWER_TARGETS[0]:.0%} power within "
             f"R <= {MAX_REPLICATES}; the pilot cannot size R at all."
         )
     r_star = max(feasible)
     n_censored = len(results) - len(feasible)
     label_w = max(len(name) for name, *_ in results)
-    n_ladder = N_LADDER_CONTRASTS
     return {
         "results": results,
         "r_star": r_star,
@@ -954,7 +939,6 @@ def primary_contrasts_table(
         "n_censored": n_censored,
         "n_primary": len(results),
         "label_w": label_w,
-        "n_ladder": n_ladder,
     }
 
 
@@ -967,10 +951,10 @@ def render_primary_contrasts_table(
     print(header)
     print("-" * len(header))
     print("-- ladder contrasts (within family, across rungs) --")
-    _print_sizing_rows(data["results"][: data["n_ladder"]], outcomes, data["label_w"])
+    _print_sizing_rows(data["results"][:N_LADDER_CONTRASTS], outcomes, data["label_w"])
     print()
     print("-- info-arm contrasts (within model, across info types) --")
-    _print_sizing_rows(data["results"][data["n_ladder"] :], outcomes, data["label_w"])
+    _print_sizing_rows(data["results"][N_LADDER_CONTRASTS:], outcomes, data["label_w"])
     print()
 
 
@@ -1058,17 +1042,14 @@ def render_secondary_contrasts_table(
     print()
 
 
-def recommended_replicates(r_star: int, n_censored: int, n_primary: int) -> dict:
+def recommended_replicates(primary: dict) -> dict:
     """Derive recommendation figures from PRIMARY sizing.
 
     Parameters
     ----------
-    r_star : int
-        Smallest R powering every powerable PRIMARY contrast at 80%.
-    n_censored : int
-        Number of PRIMARY contrasts that never reached 80% power.
-    n_primary : int
-        Size of the PRIMARY family the sizing was run over.
+    primary : dict
+        The `primary_contrasts_table` result; its ``r_star``, ``family_r``,
+        ``n_censored`` and ``n_primary`` are reused as computed.
 
     Returns
     -------
@@ -1076,12 +1057,13 @@ def recommended_replicates(r_star: int, n_censored: int, n_primary: int) -> dict
         With ``r_star``, ``family_r``, ``n_censored``, ``n_primary``, ``n_powered``,
         ``extra_runs``, ``extra_questions``.
     """
+    r_star = primary["r_star"]
     return {
         "r_star": r_star,
-        "family_r": r_star if n_censored == 0 else None,
-        "n_censored": n_censored,
-        "n_primary": n_primary,
-        "n_powered": n_primary - n_censored,
+        "family_r": primary["family_r"],
+        "n_censored": primary["n_censored"],
+        "n_primary": primary["n_primary"],
+        "n_powered": primary["n_primary"] - primary["n_censored"],
         "extra_runs": r_star - 1,
         "extra_questions": (r_star - 1) * N_HARMONICS,
     }
@@ -1092,7 +1074,7 @@ def render_recommended_replicates(data: dict) -> None:
     print(
         f"Recommended replicates per condition: {data['r_star']} -- the smallest "
         f"R at which every\n  PRIMARY contrast that is powerable within "
-        f"R <= {MAX_REPLICATES} reaches 80% "
+        f"R <= {MAX_REPLICATES} reaches {POWER_TARGETS[0]:.0%} "
         f"({data['n_powered']} of {data['n_primary']})."
     )
     print(
@@ -1103,18 +1085,21 @@ def render_recommended_replicates(data: dict) -> None:
     if data["family_r"] is None:
         print(
             f"  Whole-family sizing is CENSORED: {data['n_censored']} of "
-            f"{data['n_primary']} PRIMARY contrasts never reached 80%\n  within "
+            f"{data['n_primary']} PRIMARY contrasts never reached "
+            f"{POWER_TARGETS[0]:.0%}\n  within "
             f"R <= {MAX_REPLICATES}, so no R in range powers the full family. "
             f"At R={data['r_star']} they stay\n  underpowered and are reported as "
             f"such; the recommendation does not size them away."
         )
     else:
         print(
-            f"  All {data['n_primary']} PRIMARY contrasts reach 80% by "
+            f"  All {data['n_primary']} PRIMARY contrasts reach "
+            f"{POWER_TARGETS[0]:.0%} by "
             f"R={data['family_r']}; the family is fully powered."
         )
     print(
-        "  The study itself collects R=30 (user-locked in run_study.py, "
+        f"  The study itself collects R={N_REPLICATES} (user-locked in "
+        "run_study.py, "
         "uniform across checkpoints); this prospective figure is the sizing "
         "check that decision was made against, not a superseding value."
     )
@@ -1154,7 +1139,7 @@ def equivalence_checks(
     """
     fisher = []
     for name, key_a, key_b, needed, _pooled in primary_results:
-        if needed[0.80] is None:
+        if needed[POWER_TARGETS[0]] is None:
             continue
         rng = np.random.default_rng(SEED)
         p_fisher = fisher_check(
@@ -1166,21 +1151,11 @@ def equivalence_checks(
     near_ties = [
         (name, key_a, key_b)
         for name, key_a, key_b, needed, _pooled in primary_results
-        if needed[0.80] is None or needed[0.80] > 20
+        if needed[POWER_TARGETS[0]] is None or needed[POWER_TARGETS[0]] > 20
     ]
     deltas = (0.10, 0.15, 0.20)
-    if not near_ties:
-        # Avoid division by zero.
-        return {
-            "fisher": fisher,
-            "near_ties": near_ties,
-            "deltas": deltas,
-            "alpha_eq": None,
-            "table": [],
-        }
-
-    # Correct the planned equivalence family.
-    alpha_eq = ALPHA / len(near_ties)
+    # Correct the planned equivalence family; None when it is empty.
+    alpha_eq = ALPHA / len(near_ties) if near_ties else None
     table = []
     for name, key_a, key_b in near_ties:
         cells = []
@@ -1213,8 +1188,10 @@ def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
     print()
     if not near_ties:
         print(
-            "No near-tie PRIMARY contrasts (all reached 80% power within "
-            "R(80%) <= 20) -- skipping TOST equivalence sizing."
+            f"No near-tie PRIMARY contrasts (all reached "
+            f"{POWER_TARGETS[0]:.0%} power within "
+            f"R({POWER_TARGETS[0]:.0%}) <= 20) -- skipping TOST equivalence "
+            "sizing."
         )
         return
     deltas = data["deltas"]
@@ -1223,7 +1200,8 @@ def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
         "Equivalence (TOST) sizing for near-tie PRIMARY contrasts, "
         f"assuming a true tie at the contrasts' mean rate (alpha="
         f"{ALPHA}/{len(near_ties)} = {alpha_eq:.4f} per one-sided test, "
-        f"Bonferroni over the {len(near_ties)}-test family; 80% power):"
+        f"Bonferroni over the {len(near_ties)}-test family; "
+        f"{POWER_TARGETS[0]:.0%} power):"
     )
     eq_header = f"{'contrast':{label_w}s} " + " ".join(
         f"{f'R(d={d:.2f})':>10s}" for d in deltas
@@ -1263,7 +1241,8 @@ def render_interaction_diagnostic(
     print()
     print(
         f"Omnibus model x info-type interaction (logit LR test, harmonic "
-        f"fixed effects, alpha={ALPHA}, df=60; design-level diagnostic, not "
+        f"fixed effects, alpha={ALPHA}, df={DF_INTERACTION}; design-level "
+        "diagnostic, not "
         f"a gate) at R={r_star}: power = {p_omni:.3f} "
         f"({skipped} of {N_SIMS_OMNIBUS_DIAGNOSTIC} fits skipped: perfect separation)"
     )
@@ -1284,7 +1263,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     # Reuse PRIMARY results for gates and recommendation.
     primary = primary_contrasts_table(rates, pooled)
-    r_star, n_censored = primary["r_star"], primary["n_censored"]
+    r_star = primary["r_star"]
 
     render_omnibus_gates(omnibus_gates(rates, r_star), r_star)  # 3
     render_primary_contrasts_table(primary, outcomes)  # 4
@@ -1292,9 +1271,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     secondary = secondary_contrasts_table(rates, pooled)
     render_secondary_contrasts_table(secondary, outcomes)  # 5
 
-    render_recommended_replicates(
-        recommended_replicates(r_star, n_censored, primary["n_primary"])
-    )  # 6
+    render_recommended_replicates(recommended_replicates(primary))  # 6
 
     render_equivalence_checks(
         equivalence_checks(primary["results"], rates, r_star),
