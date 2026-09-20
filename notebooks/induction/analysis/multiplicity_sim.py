@@ -401,6 +401,11 @@ def _paired_powers(
 ) -> tuple[float, float, float | None, float | None]:
     """Compute unpaired and paired power on identical simulated marks.
 
+    The paired arm is the item-level exact McNemar test, which treats every
+    matched mark as independent and so is anticonservative when ``icc > 0``
+    (Part 3 measures the inflation); it is descriptive, not the study's
+    seed-level sign-flip primary test.
+
     Disabling diagnostics preserves powers and avoids costly float upcasts.
 
     Parameters
@@ -477,12 +482,14 @@ def part2(
 ) -> dict:
     """Measure pairing gains over unpaired testing.
 
-    Compare simulated `design_effect` at each `icc` with the study
-    estimate. ``eq_R`` is searched only when paired power exceeds unpaired
-    by more than `EQ_R_TOL`; smaller gaps are within Monte-Carlo error and
-    reported unsearched at `N_REPLICATES`. Along the search, unpaired power
-    within `EQ_R_TOL` of paired counts as matching; a match on the first
-    grid rung is likewise reported unsearched.
+    The paired column is item-level McNemar power (anticonservative at
+    ``icc > 0``, so ``eq_R`` in those blocks is biased upward). Compare
+    simulated `design_effect` at each `icc` with the study estimate. ``eq_R``
+    is searched only when paired power exceeds unpaired by more than
+    `EQ_R_TOL`; smaller gaps are within Monte-Carlo error and reported
+    unsearched at `N_REPLICATES`. Along the search, unpaired power within
+    `EQ_R_TOL` of paired counts as matching; a match on the first grid rung
+    is likewise reported unsearched.
 
     Parameters
     ----------
@@ -501,6 +508,8 @@ def part2(
     )
     print(
         "\n=== PART 2: pairing gain (matched items) ===\n"
+        "  paired = item-level exact McNemar, anticonservative at icc>0 (see "
+        "PART 3); it is not the seed-level sign-flip primary test\n"
         f"  study's own measured design effect: {measured_str} -- compare "
         f"against each icc block's design_effect_simulated below\n"
         f"  eq_R: smallest grid R whose unpaired power reaches paired power "
@@ -563,7 +572,8 @@ def part2(
                     print(
                         f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
                         f"phi_bin={phi:.3f} agree={agree:.3f} "
-                        f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}{suffix}",
+                        f"unpaired={unp:.4f} paired(item-McNemar)={pair:.4f} "
+                        f"eqR={eq_r}{suffix}",
                         flush=True,
                     )
         # null calibration of both tests under matched data
