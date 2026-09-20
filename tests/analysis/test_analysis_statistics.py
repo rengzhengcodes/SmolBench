@@ -612,7 +612,14 @@ def test_recommended_replicates_carries_censored_contrasts(
     power_analysis: ModuleType,
 ) -> None:
     """A censored family has no whole-family R, and the render says so instead of dropping them."""
-    censored = power_analysis.recommended_replicates(40, 3, power_analysis.N_PRIMARY)
+    censored = power_analysis.recommended_replicates(
+        {
+            "r_star": 40,
+            "family_r": None,
+            "n_censored": 3,
+            "n_primary": power_analysis.N_PRIMARY,
+        }
+    )
     assert censored["family_r"] is None
     assert (
         censored["n_powered"] == power_analysis.N_PRIMARY - 3
@@ -629,7 +636,14 @@ def test_recommended_replicates_carries_censored_contrasts(
     ), out
     assert "excluded" not in out.lower(), out
 
-    full = power_analysis.recommended_replicates(40, 0, power_analysis.N_PRIMARY)
+    full = power_analysis.recommended_replicates(
+        {
+            "r_star": 40,
+            "family_r": 40,
+            "n_censored": 0,
+            "n_primary": power_analysis.N_PRIMARY,
+        }
+    )
     assert full["family_r"] == 40
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -794,16 +808,18 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
 
     flat, clustered = type_i(0.0), type_i(0.4)
     assert clustered > flat
-    assert clustered > multiplicity_sim.ALPHA_BONF
+    assert clustered > multiplicity_sim.ALPHA_PRIMARY
 
 
 def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     """Each ICC has a labeled output block."""
+    import _power_common
+
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         out = multiplicity_sim.part2(
             np.random.default_rng(2),
-            multiplicity_sim.results_dir("induction"),
+            _power_common.results_dir("induction"),
             n_sims=200,
             search_sims=100,
         )
@@ -831,10 +847,12 @@ def test_each_icc_block_reports_the_design_effect_it_produces(
     multiplicity_sim: ModuleType,
 ) -> None:
     """Each ICC block reports its simulated design effect."""
+    import _power_common
+
     with contextlib.redirect_stdout(io.StringIO()):
         out = multiplicity_sim.part2(
             np.random.default_rng(3),
-            multiplicity_sim.results_dir("induction"),
+            _power_common.results_dir("induction"),
             n_sims=200,
             search_sims=100,
         )

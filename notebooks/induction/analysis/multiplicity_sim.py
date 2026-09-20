@@ -26,9 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import paired_analysis
 import power_analysis
-from _power_common import ALPHA, SEED, apply_corrections, results_dir
+from _power_common import ALPHA, SEED, apply_corrections
 from power_analysis import (
+    ALPHA_OMNIBUS,
     ALPHA_PRIMARY,
+    INFOS,
+    MODELS,
     N_FAMILIES,
     N_HARMONICS,
     N_INFOS,
@@ -38,7 +41,6 @@ from power_analysis import (
     N_REPLICATES,
     N_RUNGS,
     RESULTS_DIR,
-    STUDY,
     cmh_p,
     cmh_stat,
     gcmh_stat,
@@ -47,9 +49,6 @@ from power_analysis import (
 from scipy.stats import chi2, norm
 
 from smolbench.evals.results_store import LocalResultsStore
-
-K_HARM = N_HARMONICS
-ALPHA_BONF = ALPHA_PRIMARY
 
 # Equivalent-R search ladder, starting at N_REPLICATES so "pairing bought nothing" stays reachable.
 EQ_R_GRID = (
@@ -80,7 +79,6 @@ EQ_R_GRID = (
 ICC_GRID = (0.0, 0.2, 0.4)
 
 N_REDUCED = N_LADDERS + N_PRIMARY - N_LADDER_CONTRASTS
-ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 # Anchor checkpoints to the study results tree.
 OUT_NAME = "multiplicity_sim_results.json"
 OUT_PATH = RESULTS_DIR / OUT_NAME
@@ -112,7 +110,9 @@ def dump(out: dict, path: Path, tag: str) -> None:
 
 
 def trend_stat(
-    succ: np.ndarray, n: int, scores: tuple[float, ...] = (1.0, 2.0, 3.0)
+    succ: np.ndarray,
+    n: int,
+    scores: tuple[float, ...] = tuple(float(i) for i in range(1, N_RUNGS + 1)),
 ) -> np.ndarray:
     """1-df CMH correlation (linear trend) statistic across the 3 rungs, `n` trials per cell."""
     x = np.asarray(scores)
@@ -171,8 +171,8 @@ def paired_marks(
     """
     if not 0.0 <= icc < 1.0:
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
-    z1 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
-    z2 = rng.standard_normal((n_sims, reps, K_HARM), dtype=np.float32)
+    z1 = rng.standard_normal((n_sims, reps, N_HARMONICS), dtype=np.float32)
+    z2 = rng.standard_normal((n_sims, reps, N_HARMONICS), dtype=np.float32)
     zb = rho * z1 + np.sqrt(max(1.0 - rho * rho, 0.0)) * z2
     if icc > 0.0:
         u_a = rng.standard_normal((n_sims, reps, 1), dtype=np.float32)
@@ -203,10 +203,10 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
         d = step
         while d <= min(p_a, 0.60) + 1e-9 and len(found) < 2:
             p_b = p_a - d
-            sa = rng.binomial(N_REPLICATES, p_a, (n_sims, K_HARM))
-            sb = rng.binomial(N_REPLICATES, p_b, (n_sims, K_HARM))
+            sa = rng.binomial(N_REPLICATES, p_a, (n_sims, N_HARMONICS))
+            sb = rng.binomial(N_REPLICATES, p_b, (n_sims, N_HARMONICS))
             st = cmh_stat(sa, sb, N_REPLICATES)
-            for a_lab, a in (("bonf", ALPHA_BONF), ("naive", ALPHA)):
+            for a_lab, a in (("bonf", ALPHA_PRIMARY), ("naive", ALPHA)):
                 if a_lab not in found:
                     pw = (st > chi2.isf(a, df=1)).mean()
                     if pw >= 0.80:
@@ -226,8 +226,8 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
         )
         rows.append(row)
         print(
-            f"  p_A={p_a:.2f}  MDD(alpha={ALPHA_BONF:.2e})={row['mdd_bonf']}  "
-            f"MDD(alpha=0.05)={row['mdd_naive']}  ratio={row['ratio']}",
+            f"  p_A={p_a:.2f}  MDD(alpha={ALPHA_PRIMARY:.2e})={row['mdd_bonf']}  "
+            f"MDD(alpha={ALPHA})={row['mdd_naive']}  ratio={row['ratio']}",
             flush=True,
         )
     return {"n_sims": n_sims, "grid_step": step, "rows": rows}
@@ -250,7 +250,7 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
         flush=True,
     )
     crit05 = chi2.isf(ALPHA, df=1)
-    critb = chi2.isf(ALPHA_BONF, df=1)
+    critb = chi2.isf(ALPHA_PRIMARY, df=1)
     rows = []
     for p in (0.90, 0.70):
         for icc in (0.0, 0.1, 0.2, 0.4):
@@ -270,10 +270,10 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
                         else rng.standard_normal((s, N_REPLICATES, 1), dtype=np.float32)
                     )
                     ea = rng.standard_normal(
-                        (s, N_REPLICATES, K_HARM), dtype=np.float32
+                        (s, N_REPLICATES, N_HARMONICS), dtype=np.float32
                     )
                     eb = rng.standard_normal(
-                        (s, N_REPLICATES, K_HARM), dtype=np.float32
+                        (s, N_REPLICATES, N_HARMONICS), dtype=np.float32
                     )
                     w1, w2 = np.sqrt(icc), np.sqrt(1.0 - icc)
                     ma = (w1 * u_a + w2 * ea) < thr
@@ -285,7 +285,7 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
                         # mean over k<k' of E[cx_k cx_k'] / var
                         ssum = cx.sum(axis=2)
                         cross = (ssum**2 - (cx**2).sum(axis=2)).mean() / (
-                            K_HARM * (K_HARM - 1)
+                            N_HARMONICS * (N_HARMONICS - 1)
                         )
                         phis.append(cross / (mu * (1 - mu)))
                     sa = ma.sum(axis=1)
@@ -302,14 +302,14 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
                     "t1_alpha05": r05 / n_sims,
                     "t1_alpha_bonf": rb / n_sims,
                     "infl05": (r05 / n_sims) / ALPHA,
-                    "inflb": (rb / n_sims) / ALPHA_BONF,
+                    "inflb": (rb / n_sims) / ALPHA_PRIMARY,
                     "n_sims": n_sims,
                 }
                 rows.append(row)
                 print(
                     f"  p={p} icc={icc} {variant:11s} phi_bin={row['phi_binary']:.3f} "
-                    f"T1@0.05={row['t1_alpha05']:.4f} ({row['infl05']:.2f}x)  "
-                    f"T1@{ALPHA_BONF:.2e}={row['t1_alpha_bonf']:.6f} "
+                    f"T1@{ALPHA}={row['t1_alpha05']:.4f} ({row['infl05']:.2f}x)  "
+                    f"T1@{ALPHA_PRIMARY:.2e}={row['t1_alpha_bonf']:.6f} "
                     f"({row['inflb']:.2f}x)",
                     flush=True,
                 )
@@ -343,7 +343,7 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
     alpha_trend_studywide = ALPHA / N_REDUCED
     # Sensitivity only: correcting the trend tests among themselves.
     alpha_trend_only = ALPHA / N_LADDERS
-    alpha_pair = ALPHA_BONF  # pairwise inside the N_PRIMARY family
+    alpha_pair = ALPHA_PRIMARY  # pairwise inside the N_PRIMARY family
     rows = []
     for label, rates in (
         ("monotone 0.60/0.75/0.88", (0.60, 0.75, 0.88)),
@@ -354,7 +354,8 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
         ("non-monotone-ceiling 0.99/0.93/0.96", (0.99, 0.93, 0.96)),
     ):
         succ = np.stack(
-            [rng.binomial(N_REPLICATES, r, (n_sims, K_HARM)) for r in rates], axis=1
+            [rng.binomial(N_REPLICATES, r, (n_sims, N_HARMONICS)) for r in rates],
+            axis=1,
         )
         tr = trend_stat(succ, N_REPLICATES)
         gc = gcmh_stat(succ, N_REPLICATES)
@@ -384,20 +385,20 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
         rows.append(res)
         print(f"  {label}", flush=True)
         print(
-            f"    study-wide: trend[a=.05/{N_REDUCED}]="
+            f"    study-wide: trend[a={ALPHA}/{N_REDUCED}]="
             f"{res['trend_studywide']:.4f} "
-            f"gcmh(2df)[a=.05/{N_FAMILIES}]={res['gcmh_studywide']:.4f} "
-            f"any-pairwise[a=.05/{N_PRIMARY}]="
+            f"gcmh(2df)[a={ALPHA}/{N_FAMILIES}]={res['gcmh_studywide']:.4f} "
+            f"any-pairwise[a={ALPHA}/{N_PRIMARY}]="
             f"{res['pairwise_any_studywide']:.4f}",
             flush=True,
         )
         print(
-            f"    sensitivity: trend[a=.05/{N_LADDERS}, trend-only family, "
+            f"    sensitivity: trend[a={ALPHA}/{N_LADDERS}, trend-only family, "
             f"not pre-registered]={res['trend_trend_only_family']:.4f}",
             flush=True,
         )
         print(
-            f"    local a=.05: trend={res['trend_local05']:.4f} "
+            f"    local a={ALPHA}: trend={res['trend_local05']:.4f} "
             f"gcmh={res['gcmh_local05']:.4f} any-pairwise={res['pairwise_any_local']:.4f}",
             flush=True,
         )
@@ -406,7 +407,7 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
         "n_sims": n_sims,
         "alpha_trend_studywide": alpha_trend_studywide,
         "alpha_trend_only": alpha_trend_only,
-        "alpha_pairwise": ALPHA_BONF,
+        "alpha_pairwise": ALPHA_PRIMARY,
         "alpha_gcmh": ALPHA_OMNIBUS,
     }
 
@@ -454,11 +455,11 @@ def _paired_powers(
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng, icc=icc)
     sa = ma.sum(axis=1)
     sb = mb.sum(axis=1)
-    unp = (cmh_stat(sa, sb, reps) > chi2.isf(ALPHA_BONF, 1)).mean()
+    unp = (cmh_stat(sa, sb, reps) > chi2.isf(ALPHA_PRIMARY, 1)).mean()
     b = (ma & ~mb).sum(axis=(1, 2))
     c = (~ma & mb).sum(axis=(1, 2))
     pv = mcnemar_exact_p(b, c)
-    powers = float(unp), float((pv <= ALPHA_BONF).mean())
+    powers = float(unp), float((pv <= ALPHA_PRIMARY).mean())
     if not stats:
         # ``None`` distinguishes unmeasured diagnostics from zero.
         return powers[0], powers[1], None, None
@@ -477,9 +478,7 @@ def study_design_effect(results_dir: Path) -> float | None:
     """
     store = LocalResultsStore(results_dir)
     if not any(
-        store.list_seeds(None, model, info)
-        for model in power_analysis.MODELS
-        for info in power_analysis.INFOS
+        store.list_seeds(None, model, info) for model in MODELS for info in INFOS
     ):
         return None
     marks = paired_analysis.load_marks(results_dir)
@@ -598,8 +597,8 @@ def part2(
 
         # This block's own design_effect under the null config above (p_a=p_b=0.90, rho=0.5).
         ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, N_REPLICATES, rng, icc=icc)
-        seed_idx = np.repeat(np.arange(N_REPLICATES), K_HARM)
-        harm_idx = np.tile(np.arange(K_HARM), N_REPLICATES)
+        seed_idx = np.repeat(np.arange(N_REPLICATES), N_HARMONICS)
+        harm_idx = np.tile(np.arange(N_HARMONICS), N_REPLICATES)
         deffs = [
             paired_analysis.design_effect(
                 ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx
@@ -632,7 +631,7 @@ def part2(
     # icc keys are strings: JSON has no float keys.
     return {
         "n_sims": n_sims,
-        "alpha": ALPHA_BONF,
+        "alpha": ALPHA_PRIMARY,
         "grid_r": grid_r,
         "icc": icc_blocks,
     }
@@ -706,12 +705,12 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     )
     print(f"  true-effect deltas: {np.sort(true_diff[~is_null])}", flush=True)
 
-    succ = np.empty((n_sims, N_FAMILIES, N_RUNGS, N_INFOS, K_HARM), dtype=np.int32)
+    succ = np.empty((n_sims, N_FAMILIES, N_RUNGS, N_INFOS, N_HARMONICS), dtype=np.int32)
     for f in range(N_FAMILIES):
         for r in range(N_RUNGS):
             for i in range(N_INFOS):
                 succ[:, f, r, i, :] = rng.binomial(
-                    N_REPLICATES, rates[f, r, i], (n_sims, K_HARM)
+                    N_REPLICATES, rates[f, r, i], (n_sims, N_HARMONICS)
                 )
     pv = np.empty((n_sims, m_full))
     for t, c in enumerate(contrasts):
@@ -780,8 +779,8 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     )
     # Fixed size isolates test choice from correction size.
     fixed_alpha = summarize(
-        f"test-swap only (alpha={ALPHA_BONF:.2e})",
-        {f"Bonferroni@{N_PRIMARY}": pv_red <= ALPHA_BONF},
+        f"test-swap only (alpha={ALPHA_PRIMARY:.2e})",
+        {f"Bonferroni@{N_PRIMARY}": pv_red <= ALPHA_PRIMARY},
         null_red,
         flag_red,
     )
