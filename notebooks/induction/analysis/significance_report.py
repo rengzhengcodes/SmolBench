@@ -19,12 +19,17 @@ from _power_common import apply_corrections  # noqa: E402
 from paired_analysis import CellMarks, contrast_row, holm, load_marks  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
+    ALPHA_OMNIBUS,
+    FAMILIES,
     INFOS,
     MODELS,
+    N_FAMILIES,
     N_HARMONICS,
     RESULTS_DIR,
     build_primary_contrasts,
+    gcmh_stat,
 )
+from scipy.stats import chi2
 
 # Import the label so a rename cannot silently read empty values as zero.
 from smolbench.evals.parsing import EMPTY
@@ -38,6 +43,60 @@ TOTAL_COLLAPSE = 0.95
 
 #: Both arms at or above this accuracy are a ceiling pair, not a finding.
 CEILING = 0.95
+
+
+#: Row key a missing-cell or empty-seed family reports under the omnibus gate.
+GATE_NO_DATA = {"n_seeds": 0, "stat": None, "p": None, "reject": False}
+
+
+def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
+    """Compute the observed Tier-1 family omnibus gates.
+
+    One generalized-CMH test per family across its rungs, stratified by
+    ``(info, harmonic)`` like `power_analysis.omnibus_power`. The marks are
+    the observed ones, so strata hold only the seeds all of the family's cells
+    share; an absent cell or empty intersection yields the no-data entry.
+
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `paired_analysis.load_marks`.
+
+    Returns
+    -------
+    dict[str, dict]
+        Family name -> ``n_seeds``, ``stat``, ``p``, ``reject``.
+    """
+    gates: dict[str, dict] = {}
+    for family, rungs in FAMILIES.items():
+        cells = [(rung, info) for rung in rungs for info in INFOS]
+        if any(cell not in marks.correct for cell in cells):
+            gates[family] = dict(GATE_NO_DATA)
+            continue
+        seeds = sorted(set.intersection(*(set(marks.correct[cell]) for cell in cells)))
+        if not seeds:
+            gates[family] = dict(GATE_NO_DATA)
+            continue
+        succ = np.array(
+            [
+                [
+                    sum(marks.correct[(rung, info)][seed][k] for seed in seeds)
+                    for info in INFOS
+                    for k in range(N_HARMONICS)
+                ]
+                for rung in rungs
+            ],
+            dtype=np.int64,
+        )[None, :, :]
+        stat = float(gcmh_stat(succ, len(seeds))[0])
+        p = float(chi2.sf(stat, df=2))
+        gates[family] = {
+            "n_seeds": len(seeds),
+            "stat": stat,
+            "p": p,
+            "reject": p <= ALPHA_OMNIBUS,
+        }
+    return gates
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
@@ -269,6 +328,8 @@ class Report:
     item_max: int
     n_floor: int
     n_lost_ladder: int
+    gates: dict[str, dict]
+    n_ladder_ungated: int
     hochberg_only: list[dict]
     n_ladder_rejections: int
     n_info_rejections: int
@@ -492,6 +553,27 @@ def render(report: Report) -> None:
     sel = report.findings
     tot = report.n_findings_total
     print(
+        f"\n{'=' * 78}\nTIER 1 -- family omnibus gates (generalized CMH, "
+        f"df=2, alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f})\n"
+        f"{'=' * 78}"
+    )
+    for family, gate in report.gates.items():
+        if gate["p"] is None:
+            print(f"  {family:12s} n_seeds=  0 stat=     n/a p=      n/a  no data")
+        else:
+            verdict = "REJECT" if gate["reject"] else "no reject"
+            print(
+                f"  {family:12s} n_seeds={gate['n_seeds']:3d} "
+                f"stat={gate['stat']:8.3f} p={gate['p']:.3e}  {verdict}"
+            )
+    print(
+        "\nThe gate is the pre-registered condition for reporting a family's "
+        "ladder contrasts\nas more than exploratory. It is an unpaired "
+        "harmonic-stratified test (independent-\nharmonic assumption, like the "
+        "descriptive CMH column), so it gates but does not\nreplace the "
+        "seed-level sign-flip.\n"
+    )
+    print(
         f"\n{'=' * 78}\nSIGNIFICANT FINDINGS (Holm, seed sign-flip): "
         f"{len(sel)} of {tot}\n{'=' * 78}"
     )
@@ -515,10 +597,25 @@ def render(report: Report) -> None:
         print(f"\n-- {title}: {len(bucket)} of {denom}")
         for r in sorted(bucket, key=lambda r: r["p_cluster"]):
             direction = "^" if r["acc_b"] > r["acc_a"] else "v"
+            lead = "  " if bucket is not ladders or r["gated"] else "* "
+            gate_note = (
+                ""
+                if bucket is not ladders or r["gated"]
+                else (
+                    f"  [EXPLORATORY: {r['family']} omnibus "
+                    f"p={report.gates[r['family']]['p']:.2e}]"
+                )
+            )
             print(
-                f"  {direction} {r['label']:52s} {r['acc_a']:.3f} -> "
+                f"{lead}{direction} {r['label']:52s} {r['acc_a']:.3f} -> "
                 f"{r['acc_b']:.3f}   p={r['p_cluster']:.2e} "
-                f"(item {r['p_item']:.2e}){r['collapse_tag']}"
+                f"(item {r['p_item']:.2e}){r['collapse_tag']}{gate_note}"
+            )
+        if bucket is ladders and report.n_ladder_ungated:
+            print(
+                f"  * {report.n_ladder_ungated} of {len(ladders)} ladder "
+                "findings are in families whose omnibus gate did not reject: "
+                "reported as EXPLORATORY, not confirmed scaling effects."
             )
     n_flag, n_pad = report.n_flag, report.n_pad
     # TWO-MECHANISM needs findings touching a collapsed cell; the branches separate that case.
@@ -679,6 +776,8 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     """Compute the significance report without printing."""
     marks = load_marks(results_dir)
     census = compliance_census(marks)
+    gates = omnibus_gates(marks)
+    family_of = {rung: family for family, rungs in FAMILIES.items() for rung in rungs}
     rows = []
     for label, key_a, key_b in build_primary_contrasts():
         row = contrast_row(marks, key_a, key_b)
@@ -698,6 +797,12 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
                 ),
                 "kind": classify(key_a, key_b),
                 "kind_is_ladder": key_a[0] != key_b[0],
+                "family": family_of.get(key_a[0]) if key_a[0] != key_b[0] else None,
+                "gated": (
+                    gates[family_of[key_a[0]]]["reject"]
+                    if key_a[0] != key_b[0]
+                    else False
+                ),
             }
         )
     p_cl = np.array([r["p_cluster"] for r in rows])
@@ -851,6 +956,10 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
         item_max=max(r["n"] for r in rows),
         n_floor=len(floor),
         n_lost_ladder=sum(r["kind_is_ladder"] for r in lost),
+        gates=gates,
+        n_ladder_ungated=sum(
+            1 for r in findings if r["kind_is_ladder"] and not r["gated"]
+        ),
         hochberg_only=[rows[i] for i in range(m) if hb[i] and not hp[i]],
         n_ladder_rejections=sum(hp[i] for i in range(m) if rows[i]["kind_is_ladder"]),
         n_info_rejections=sum(hp[i] for i in range(m) if not rows[i]["kind_is_ladder"]),

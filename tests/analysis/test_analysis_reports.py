@@ -97,6 +97,148 @@ def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> 
         significance_report.classify(("m", "zero"), ("m", "intens"))
 
 
+@pytest.fixture(scope="session")
+def ladder_tree(
+    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+) -> Path:
+    """16 seeds; the first family's rungs rise steeply (0.2/0.5/0.9)."""
+    rungs = next(iter(power_analysis.FAMILIES.values()))
+    rung_rate = dict(zip(rungs, (0.20, 0.50, 0.90)))
+
+    def profile(model: str, info: str) -> tuple[float, float, str, range]:
+        seeds = range(DEEP_DEPTH)
+        if info == "zero":
+            return 0.10, 0.0, "empty", seeds
+        return rung_rate.get(model, 0.90), 0.0, "empty", seeds
+
+    root = tmp_path_factory.mktemp("ladder")
+    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, profile)
+    return root
+
+
+@pytest.fixture(scope="session")
+def gated_steep_family(power_analysis: ModuleType) -> str:
+    """The family `ladder_tree` makes steep."""
+    return next(iter(power_analysis.FAMILIES))
+
+
+def test_omnibus_gates_reject_on_a_steep_ladder(
+    ladder_tree: Path,
+    gated_steep_family: str,
+    significance_report: ModuleType,
+    power_analysis: ModuleType,
+) -> None:
+    """A clearly rising family trips its Tier-1 gate."""
+    marks = significance_report.load_marks(ladder_tree)
+    gates = significance_report.omnibus_gates(marks)
+    gate = gates[gated_steep_family]
+    assert gate["n_seeds"] == DEEP_DEPTH
+    assert gate["reject"]
+    assert gate["p"] < power_analysis.ALPHA_OMNIBUS
+
+
+def test_omnibus_gates_do_not_reject_flat_family(
+    clean_tree: Path, significance_report: ModuleType
+) -> None:
+    """Equal rung rates leave every gate unrejected."""
+    marks = significance_report.load_marks(clean_tree)
+    gates = significance_report.omnibus_gates(marks)
+    assert gates
+    for gate in gates.values():
+        assert gate["p"] > 0.05
+        assert not gate["reject"]
+
+
+def test_omnibus_gate_uses_only_common_seeds(
+    tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
+) -> None:
+    """A cell missing seeds shrinks the gate's seed set to the intersection."""
+    family, rungs = next(iter(power_analysis.FAMILIES.items()))
+    narrow = (rungs[0], "intens")
+
+    def profile(model: str, info: str) -> tuple[float, float, str, range]:
+        seeds = range(10) if (model, info) == narrow else range(DEEP_DEPTH)
+        return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
+
+    build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS, profile)
+    marks = significance_report.load_marks(tmp_path)
+    gates = significance_report.omnibus_gates(marks)
+    assert gates[family]["n_seeds"] == 10
+    for other, gate in gates.items():
+        if other != family:
+            assert gate["n_seeds"] == DEEP_DEPTH
+
+
+def test_ungated_ladder_findings_are_labelled_exploratory(
+    ladder_tree: Path,
+    gated_steep_family: str,
+    significance_report: ModuleType,
+    report: Callable[[Path], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A significant ladder contrast in a non-rejecting family is marked EXPLORATORY."""
+    computed = significance_report.compute(ladder_tree)
+    assert computed.gates[gated_steep_family]["reject"]
+    gated_ladders = [r for r in computed.findings if r["kind_is_ladder"] and r["gated"]]
+    assert gated_ladders, "ladder_tree should yield gated ladder findings"
+    out = report(ladder_tree)
+    assert "[EXPLORATORY:" not in out
+
+    monkeypatch.setattr(
+        significance_report,
+        "omnibus_gates",
+        lambda _marks: {
+            family: {"n_seeds": DEEP_DEPTH, "stat": 0.0, "p": 0.5, "reject": False}
+            for family in significance_report.FAMILIES
+        },
+    )
+    ungated = significance_report.compute(ladder_tree)
+    assert ungated.n_ladder_ungated == len(gated_ladders)
+    out = report(ladder_tree)
+    assert "[EXPLORATORY:" in out
+    assert "EXPLORATORY, not confirmed scaling effects" in out
+
+
+def test_missing_family_cell_yields_no_data_gate(
+    clean_tree: Path,
+    gated_steep_family: str,
+    significance_report: ModuleType,
+    report: Callable[[Path], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absent cell reports the no-data gate entry, and render prints it."""
+    marks = significance_report.load_marks(clean_tree)
+    rungs = significance_report.FAMILIES[gated_steep_family]
+    del marks.correct[(rungs[0], "intens")]
+    gates = significance_report.omnibus_gates(marks)
+    assert gates[gated_steep_family] == {
+        "n_seeds": 0,
+        "stat": None,
+        "p": None,
+        "reject": False,
+    }
+
+    # load_marks cannot produce a missing cell, so render is checked against a
+    # patched gate entry on a complete (flat) tree -- flat families add no
+    # findings, so no ungated row ever formats the missing p.
+    real = significance_report.omnibus_gates
+
+    def fake(marks: object) -> dict:
+        gates = real(marks)
+        gates[gated_steep_family] = {
+            "n_seeds": 0,
+            "stat": None,
+            "p": None,
+            "reject": False,
+        }
+        return gates
+
+    monkeypatch.setattr(significance_report, "omnibus_gates", fake)
+    out = report(clean_tree)
+    assert f"{gated_steep_family:12s} n_seeds=  0 stat=     n/a" in out
+    assert "no data" in out
+
+
 def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(SHALLOW_DEPTH)
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
