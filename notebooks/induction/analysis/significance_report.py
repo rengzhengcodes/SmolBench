@@ -3,6 +3,12 @@
 PRIMARY uses exact seed-level sign flips because harmonic marks within a seed are correlated.
 Hochberg is sensitivity-only: its positive-dependence condition is unverified.
 Collapsed cells are annotated, never excluded.
+
+This study is exploratory end to end: it is pilot-sized, its roster was fixed
+post hoc against a pre-registered plan, and it makes no confirmatory claims.
+The Tier-1 omnibus gate and the Holm/BH corrections order the evidence within
+that exploratory frame; a gated ladder finding is a stronger exploratory
+signal, not a confirmed effect.
 """
 
 import sys
@@ -50,8 +56,54 @@ TOTAL_COLLAPSE = 0.95
 CEILING = 0.95
 
 
+#: Monte-Carlo permutations per family gate.
+N_GATE_PERMS = 4000
+
+#: Fixed RNG seed; the gate is deterministic.
+GATE_PERM_SEED = 20260920
+
 #: Row key a missing-cell or empty-seed family reports under the omnibus gate.
-GATE_NO_DATA = {"n_seeds": 0, "stat": None, "p": None, "reject": False}
+GATE_NO_DATA = {
+    "n_seeds": 0,
+    "stat": None,
+    "p": None,
+    "p_perm": None,
+    "p_gate": None,
+    "reject": False,
+}
+
+
+def permutation_omnibus_p(
+    marks_tensor: np.ndarray, stat_obs: float, rng: np.random.Generator
+) -> float:
+    """Within-seed rung-permutation p-value for the observed GCMH statistic.
+
+    Under the null the three rungs' stratum vectors are exchangeable within a
+    seed, so each seed's rung labels are permuted independently; the fraction
+    of permuted statistics at or above the observed one is cluster-valid
+    where the asymptotic chi2 is not.
+
+    Parameters
+    ----------
+    marks_tensor : np.ndarray
+        Correct marks shaped ``(n_seeds, 3, K)``, strata ordered
+        ``(info, k) for info in INFOS for k in range(N_HARMONICS)``.
+    stat_obs : float
+        Observed `power_analysis.gcmh_stat` value.
+    rng : np.random.Generator
+        Random-number generator for the permutations.
+
+    Returns
+    -------
+    float
+        Plus-one-corrected Monte-Carlo p-value over `N_GATE_PERMS` draws.
+    """
+    n_seeds = marks_tensor.shape[0]
+    perms = np.argsort(rng.random((N_GATE_PERMS, n_seeds, 3)), axis=2)
+    permuted = np.take_along_axis(marks_tensor[None], perms[..., None], axis=2)
+    succ = permuted.sum(axis=1)
+    stats = gcmh_stat(succ, n_seeds)
+    return float((1 + np.count_nonzero(stats >= stat_obs - 1e-12)) / (N_GATE_PERMS + 1))
 
 
 def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
@@ -62,6 +114,11 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     the observed ones, so strata hold only the seeds all of the family's cells
     share; an absent cell or empty intersection yields the no-data entry.
 
+    Under the gate's null the family's rungs are exchangeable within each
+    seed. The gate rejects only when BOTH the asymptotic chi2 p-value and the
+    within-seed permutation p-value (cluster-valid) clear `ALPHA_OMNIBUS` --
+    ``p_gate`` is the stricter of the two.
+
     Parameters
     ----------
     marks : CellMarks
@@ -70,8 +127,10 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     Returns
     -------
     dict[str, dict]
-        Family name -> ``n_seeds``, ``stat``, ``p``, ``reject``.
+        Family name -> ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate``,
+        ``reject``.
     """
+    rng = np.random.default_rng(GATE_PERM_SEED)
     gates: dict[str, dict] = {}
     for family, rungs in FAMILIES.items():
         cells = [(rung, info) for rung in rungs for info in INFOS]
@@ -82,24 +141,32 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         if not seeds:
             gates[family] = dict(GATE_NO_DATA)
             continue
-        succ = np.array(
+        marks_tensor = np.array(
             [
                 [
-                    sum(marks.correct[(rung, info)][seed][k] for seed in seeds)
-                    for info in INFOS
-                    for k in range(N_HARMONICS)
+                    [
+                        marks.correct[(rung, info)][seed][k]
+                        for info in INFOS
+                        for k in range(N_HARMONICS)
+                    ]
+                    for rung in rungs
                 ]
-                for rung in rungs
+                for seed in seeds
             ],
             dtype=np.int64,
-        )[None, :, :]
+        )
+        succ = marks_tensor.sum(axis=0)[None]
         stat = float(gcmh_stat(succ, len(seeds))[0])
         p = float(chi2.sf(stat, df=2))
+        p_perm = permutation_omnibus_p(marks_tensor, stat, rng)
+        p_gate = max(p, p_perm)
         gates[family] = {
             "n_seeds": len(seeds),
             "stat": stat,
             "p": p,
-            "reject": p <= ALPHA_OMNIBUS,
+            "p_perm": p_perm,
+            "p_gate": p_gate,
+            "reject": p_gate <= ALPHA_OMNIBUS,
         }
     return gates
 
@@ -305,7 +372,7 @@ def collapse_tag(row: dict, census: dict) -> str:
 
 
 def gate_note(row: dict, gates: dict[str, dict]) -> str:
-    """Return the exploratory annotation for an ungated ladder finding.
+    """Return the ungated annotation for a ladder finding in a non-rejecting family.
 
     Parameters
     ----------
@@ -317,15 +384,15 @@ def gate_note(row: dict, gates: dict[str, dict]) -> str:
     Returns
     -------
     str
-        Exploratory annotation, or ``""`` when the row is not an ungated
+        Ungated annotation, or ``""`` when the row is not an ungated
         ladder finding.
     """
     if not row["kind_is_ladder"] or row["gated"]:
         return ""
-    p = gates[row["family"]]["p"]
-    if p is None:
-        return f"  [EXPLORATORY: {row['family']} omnibus has no common-seed data]"
-    return f"  [EXPLORATORY: {row['family']} omnibus p={p:.2e}]"
+    p_gate = gates[row["family"]]["p_gate"]
+    if p_gate is None:
+        return f"  [UNGATED: {row['family']} omnibus has no common-seed data]"
+    return f"  [UNGATED: {row['family']} omnibus p={p_gate:.2e}]"
 
 
 @dataclass(frozen=True)
@@ -419,6 +486,11 @@ def render(report: Report) -> None:
         f"are {mx_s} clusters of {N_HARMONICS}, not {mx_n}\n  independent pairs. "
         f"Exact (2^{mx_s} assignments enumerated by DP), deterministic,\n"
         "  and equal to exact McNemar when every cluster is a singleton.\n"
+        "This study is exploratory end to end (pilot-sized, roster fixed post hoc\n"
+        "  against a pre-registered plan, no confirmatory claims). The Tier-1 "
+        "omnibus\n  gate and Holm/BH corrections order the evidence within that "
+        "exploratory frame;\n  a gated ladder finding is a stronger exploratory "
+        "signal, not a confirmed effect.\n"
         "  NULL ASSUMPTION: arms are exchangeable WITHIN a replicate. The collection "
         "guarantees\n  this, not a check here: `ReplicateHarness.run_replicates` builds "
         "a seed's arms from one\n  `make_quizzes(seed, model)` call and scores them in "
@@ -551,22 +623,34 @@ def render(report: Report) -> None:
     sel, tot = report.findings, report.n_findings_total
     print(
         f"\n{'=' * 78}\nTIER 1 -- family omnibus gates (generalized CMH, "
-        f"df=2, alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f})\n{'=' * 78}"
+        f"df=2; gate p = max(chi2 p, within-seed permutation p) <= "
+        f"alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f})\n{'=' * 78}"
     )
     for family, gate in report.gates.items():
-        if gate["p"] is None:
-            print(f"  {family:12s} n_seeds=  0 stat=     n/a p=      n/a  no data")
+        if gate["p_gate"] is None:
+            print(
+                f"  {family:12s} n_seeds=  0 stat=     n/a p_chi2=      n/a "
+                f"p_perm=      n/a  no data"
+            )
         else:
             print(
                 f"  {family:12s} n_seeds={gate['n_seeds']:3d} "
-                f"stat={gate['stat']:8.3f} p={gate['p']:.3e}  "
+                f"stat={gate['stat']:8.3f} p_chi2={gate['p']:.3e} "
+                f"p_perm={gate['p_perm']:.3e}  "
                 f"{'REJECT' if gate['reject'] else 'no reject'}"
             )
     print(
         "\nThe gate is the pre-registered condition for reporting a family's ladder "
-        "contrasts\nas more than exploratory. It is an unpaired harmonic-stratified test "
-        "(independent-\nharmonic assumption, like the descriptive CMH column), so it "
-        "gates but does not\nreplace the seed-level sign-flip.\n\n"
+        "contrasts\nas gated rather than ungated. The chi2 p treats the "
+        "(info, harmonic) strata as\nindependent and ignores within-seed "
+        "clustering; the permutation p re-labels rungs\nwithin each seed "
+        f"({N_GATE_PERMS} Monte-Carlo draws, fixed seed) and is cluster-valid. "
+        "The\ngate takes the stricter of the two.\n"
+        "This study is exploratory end to end (pilot-sized, roster fixed post hoc\n"
+        "  against a pre-registered plan, no confirmatory claims). The Tier-1 "
+        "omnibus\n  gate and Holm/BH corrections order the evidence within that "
+        "exploratory frame;\n  a gated ladder finding is a stronger exploratory "
+        "signal, not a confirmed effect.\n\n"
         f"\n{'=' * 78}\nSIGNIFICANT FINDINGS (Holm, seed sign-flip): "
         f"{len(sel)} of {tot}\n{'=' * 78}\n"
         f"No contrast is excluded. Where an arm is at or above {crit} non-compliant the\n"
@@ -596,8 +680,9 @@ def render(report: Report) -> None:
         if bucket is ladders and report.n_ladder_ungated:
             print(
                 f"  * {report.n_ladder_ungated} of {len(ladders)} ladder "
-                "findings are in families whose omnibus gate did not reject: "
-                "reported as EXPLORATORY, not confirmed scaling effects."
+                "findings are in families whose Tier-1 omnibus gate did not "
+                "reject (UNGATED); the gate ranks evidence within an "
+                "exploratory study, it does not confer confirmatory status."
             )
     n_flag, n_pad = report.n_flag, report.n_pad
     # TWO-MECHANISM needs findings touching a collapsed cell; the branches separate that case.

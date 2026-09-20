@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import pytest
 
 from smolbench.evals import Marks
@@ -82,15 +83,17 @@ def test_gate_note_handles_no_data_and_numeric_gates(
     """Ungated ladder findings render both available and unavailable gate p-values."""
     row = {"kind_is_ladder": True, "gated": False, "family": "family"}
     assert (
-        significance_report.gate_note(row, {"family": {"p": None}})
-        == "  [EXPLORATORY: family omnibus has no common-seed data]"
+        significance_report.gate_note(row, {"family": {"p_gate": None}})
+        == "  [UNGATED: family omnibus has no common-seed data]"
     )
     assert (
-        significance_report.gate_note(row, {"family": {"p": 0.001234}})
-        == "  [EXPLORATORY: family omnibus p=1.23e-03]"
+        significance_report.gate_note(row, {"family": {"p_gate": 0.001234}})
+        == "  [UNGATED: family omnibus p=1.23e-03]"
     )
     assert (
-        significance_report.gate_note({**row, "gated": True}, {"family": {"p": None}})
+        significance_report.gate_note(
+            {**row, "gated": True}, {"family": {"p_gate": None}}
+        )
         == ""
     )
 
@@ -146,6 +149,7 @@ def test_omnibus_gates_reject_on_a_steep_ladder(
     assert gate["n_seeds"] == DEEP_DEPTH
     assert gate["reject"]
     assert gate["p"] < power_analysis.ALPHA_OMNIBUS
+    assert gate["p_perm"] < power_analysis.ALPHA_OMNIBUS
 
 
 def test_omnibus_gates_do_not_reject_flat_family(
@@ -157,6 +161,7 @@ def test_omnibus_gates_do_not_reject_flat_family(
     assert gates
     for gate in gates.values():
         assert gate["p"] > 0.05
+        assert gate["p_perm"] > 0.05
         assert not gate["reject"]
 
 
@@ -183,27 +188,34 @@ def test_ungated_ladder_findings_are_labelled_exploratory(
     report: Callable[[Path], str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A significant ladder contrast in a non-rejecting family is marked EXPLORATORY."""
+    """A significant ladder contrast in a non-rejecting family is marked UNGATED."""
     computed = significance_report.compute(ladder_tree)
     assert computed.gates[gated_steep_family]["reject"]
     gated_ladders = [r for r in computed.findings if r["kind_is_ladder"] and r["gated"]]
     assert gated_ladders, "ladder_tree should yield gated ladder findings"
     out = report(ladder_tree)
-    assert "[EXPLORATORY:" not in out
+    assert "[UNGATED:" not in out
 
     monkeypatch.setattr(
         significance_report,
         "omnibus_gates",
         lambda _marks: {
-            family: {"n_seeds": DEEP_DEPTH, "stat": 0.0, "p": 0.5, "reject": False}
+            family: {
+                "n_seeds": DEEP_DEPTH,
+                "stat": 0.0,
+                "p": 0.5,
+                "p_perm": 0.5,
+                "p_gate": 0.5,
+                "reject": False,
+            }
             for family in significance_report.FAMILIES
         },
     )
     ungated = significance_report.compute(ladder_tree)
     assert ungated.n_ladder_ungated == len(gated_ladders)
     out = report(ladder_tree)
-    assert "[EXPLORATORY:" in out
-    assert "EXPLORATORY, not confirmed scaling effects" in out
+    assert "[UNGATED:" in out
+    assert "does not confer confirmatory status" in out
 
 
 def test_missing_family_cell_yields_no_data_gate(
@@ -218,12 +230,7 @@ def test_missing_family_cell_yields_no_data_gate(
     rungs = significance_report.FAMILIES[gated_steep_family]
     del marks.correct[(rungs[0], "intens")]
     gates = significance_report.omnibus_gates(marks)
-    assert gates[gated_steep_family] == {
-        "n_seeds": 0,
-        "stat": None,
-        "p": None,
-        "reject": False,
-    }
+    assert gates[gated_steep_family] == significance_report.GATE_NO_DATA
 
     # load_marks cannot produce a missing cell, so render is checked against a
     # patched gate entry on a complete (flat) tree -- flat families add no
@@ -232,18 +239,15 @@ def test_missing_family_cell_yields_no_data_gate(
 
     def fake(marks: object) -> dict:
         gates = real(marks)
-        gates[gated_steep_family] = {
-            "n_seeds": 0,
-            "stat": None,
-            "p": None,
-            "reject": False,
-        }
+        gates[gated_steep_family] = dict(significance_report.GATE_NO_DATA)
         return gates
 
     monkeypatch.setattr(significance_report, "omnibus_gates", fake)
     out = report(clean_tree)
-    assert f"{gated_steep_family:12s} n_seeds=  0 stat=     n/a" in out
-    assert "no data" in out
+    assert (
+        f"{gated_steep_family:12s} n_seeds=  0 stat=     n/a p_chi2=      n/a "
+        "p_perm=      n/a  no data" in out
+    )
 
 
 @pytest.fixture
@@ -270,7 +274,7 @@ def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
     return tmp_path
 
 
-def test_no_data_gate_renders_exploratory(
+def test_no_data_gate_renders_ungated(
     no_data_gate_tree: Path,
     power_analysis: ModuleType,
     significance_report: ModuleType,
@@ -287,6 +291,74 @@ def test_no_data_gate_renders_exploratory(
     assert computed.gates[family]["p"] is None
     out = run_captured(lambda: significance_report.render(computed))
     assert "omnibus has no common-seed data" in out
+
+
+def test_permutation_p_is_deterministic_and_bounded(
+    significance_report: ModuleType, power_analysis: ModuleType
+) -> None:
+    """Same tensor and seed give the same p; the plus-one keeps it in (0, 1]."""
+    rng = np.random.default_rng(0)
+    tensor = rng.random((8, 3, power_analysis.N_HARMONICS * len(INFOS))) < 0.9
+    tensor = tensor.astype(np.int64)
+    stat = float(power_analysis.gcmh_stat(tensor.sum(axis=0)[None], 8)[0])
+    p1 = significance_report.permutation_omnibus_p(
+        tensor, stat, np.random.default_rng(significance_report.GATE_PERM_SEED)
+    )
+    p2 = significance_report.permutation_omnibus_p(
+        tensor, stat, np.random.default_rng(significance_report.GATE_PERM_SEED)
+    )
+    assert p1 == p2
+    assert 0 < p1 <= 1
+
+
+def test_gate_requires_both_p_values(
+    tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
+) -> None:
+    """With 2 seeds the permutation p floors above ALPHA_OMNIBUS, so the asymptotic reject does not gate."""
+    build_tree(
+        tmp_path,
+        profile_for(
+            {
+                (rung, info): (rate, 0.0, "empty", range(2))
+                for rung, rate in zip(_STEEP_RUNGS, (0.20, 0.50, 0.90))
+                for info in INFOS
+                if info != "zero"
+            },
+            depth=2,
+        ),
+    )
+    marks = significance_report.load_marks(tmp_path)
+    gates = significance_report.omnibus_gates(marks)
+    family = next(iter(power_analysis.FAMILIES))
+    gate = gates[family]
+    assert gate["n_seeds"] == 2
+    assert gate["p_perm"] >= 1 / (significance_report.N_GATE_PERMS + 1)
+    assert gate["p_perm"] > power_analysis.ALPHA_OMNIBUS
+    assert gate["p_gate"] == max(gate["p"], gate["p_perm"])
+    assert gate["reject"] is False
+
+
+def test_steep_ladder_rejects_under_both_p(
+    ladder_tree: Path,
+    gated_steep_family: str,
+    significance_report: ModuleType,
+    power_analysis: ModuleType,
+) -> None:
+    """A deep steep ladder clears both the asymptotic and permutation p."""
+    marks = significance_report.load_marks(ladder_tree)
+    gate = significance_report.omnibus_gates(marks)[gated_steep_family]
+    assert gate["p"] < power_analysis.ALPHA_OMNIBUS
+    assert gate["p_perm"] < power_analysis.ALPHA_OMNIBUS
+    assert gate["reject"] is True
+
+
+def test_flat_family_permutation_p_is_large(
+    clean_tree: Path, significance_report: ModuleType
+) -> None:
+    """Flat families stay far from rejection under the permutation p too."""
+    marks = significance_report.load_marks(clean_tree)
+    for gate in significance_report.omnibus_gates(marks).values():
+        assert gate["p_perm"] > 0.05
 
 
 _DEEP = range(DEEP_DEPTH)
