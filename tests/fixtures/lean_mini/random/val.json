@@ -4,6 +4,7 @@
     "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
     "file_path": "Mini/A.lean",
     "full_name": "Mini.theoremA",
+    "postcutoff": false,
     "start": [
       1,
       1
@@ -72,6 +73,7 @@
     "commit": "fe4454af900584467d21f4fd4fe951d29d9332a7",
     "file_path": "Mini/B.lean",
     "full_name": "Mini.theoremB",
+    "postcutoff": false,
     "start": [
       1,
       1

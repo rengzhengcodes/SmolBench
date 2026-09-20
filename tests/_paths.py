@@ -1,4 +1,4 @@
-"""Single source of truth for repo-relative path anchors used across the test suite.
+"""Single source of truth for repo-relative paths and path-based test imports.
 
 tests/ is grouped into subject subdirectories (evals/, induction/, deduction/,
 tooling/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
@@ -9,7 +9,10 @@ these constants instead of hand-counting
 test file moves to a different directory depth.
 """
 
+import importlib.util
+import sys
 from pathlib import Path
+from types import ModuleType
 
 TESTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_DIR.parent
@@ -22,3 +25,28 @@ LEAN_MINI = FIXTURES / "lean_mini"
 LEAN_MINI_POSTCUTOFF = FIXTURES / "lean_mini_postcutoff"
 SCRIPTS = REPO_ROOT / "scripts"
 NOTEBOOKS = REPO_ROOT / "notebooks"
+
+
+def load_by_path(path: Path, name: str) -> ModuleType:
+    """Load `path` as module `name` and register it during execution.
+
+    Path-loaded scripts commonly define dataclasses or import sibling modules;
+    both require the executing module to be present in ``sys.modules``.
+
+    Parameters
+    ----------
+    path : Path
+        Python source file to execute.
+    name : str
+        Temporary module name.
+
+    Returns
+    -------
+    ModuleType
+        Executed module.
+    """
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
