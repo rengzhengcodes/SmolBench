@@ -19,7 +19,9 @@ from _power_common import apply_corrections  # noqa: E402
 from paired_analysis import CellMarks, contrast_row, holm, load_marks  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
+    INFOS,
     MODELS,
+    N_HARMONICS,
     RESULTS_DIR,
     build_primary_contrasts,
 )
@@ -33,6 +35,9 @@ COLLAPSE_THRESHOLD = 0.25
 
 #: Near-total parse failure threshold; census wording only.
 TOTAL_COLLAPSE = 0.95
+
+#: Both arms at or above this accuracy are a ceiling pair, not a finding.
+CEILING = 0.95
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
@@ -162,7 +167,11 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
         return "zero-vs-zero"
-    if za or zb:
+    if za:
+        # build_primary_contrasts puts the informative arm in key_a; a
+        # reversed pair would invert every arm-vs-floor reading below.
+        raise RuntimeError(f"zero arm must be key_b, got {key_a} vs {key_b}")
+    if zb:
         return "arm-vs-floor"
     return "finding"
 
@@ -311,8 +320,10 @@ def render(report: Report) -> None:
         "PRIMARY TEST: exact seed-level sign-flip randomization over the "
         "per-seed arm\n  differences. The seed is the unit the design "
         "randomizes -- one label alphabet\n  and ONE SHARED ANSWER VECTOR per "
-        f"replicate, reused by all 9 harmonic items and\n  by all four info "
-        f"arms -- so the {mx_n} marks are {mx_s} clusters of 9, not {mx_n}\n  "
+        f"replicate, reused by all {N_HARMONICS} harmonic items and\n  by "
+        f"all {len(INFOS)} info "
+        f"arms -- so the {mx_n} marks are {mx_s} clusters of {N_HARMONICS}, "
+        f"not {mx_n}\n  "
         f"independent pairs. Exact (2^{mx_s} assignments enumerated by DP), "
         "deterministic,\n  and equal to exact McNemar when every cluster is a "
         "singleton.\n"
@@ -326,7 +337,7 @@ def render(report: Report) -> None:
 
     print(
         f"{'test':26s} {'procedure':10s} {'rejected':>9s}  "
-        f"{'uncorrected p<=0.05':>19s}"
+        f"{f'uncorrected p<={ALPHA}':>19s}"
     )
     print("-" * 70)
     for name, (pv, rej_by) in rej_by_test.items():
@@ -558,15 +569,8 @@ def render(report: Report) -> None:
         "Two-sided test: a non-rejection is an arm not shown to beat an empty "
         "context at this\ndepth -- not a broken pipeline and not a tie."
     )
-    for r in sorted(
-        reversed_,
-        key=lambda r: -(r["acc_b"] if r["key_a"][1] == "zero" else r["acc_a"]),
-    ):
-        info_acc, zero_acc = (
-            (r["acc_b"], r["acc_a"])
-            if r["key_a"][1] == "zero"
-            else (r["acc_a"], r["acc_b"])
-        )
+    for r in sorted(reversed_, key=lambda r: -r["acc_a"]):
+        info_acc, zero_acc = r["acc_a"], r["acc_b"]
         note = r["collapse_tag"]
         print(
             f"  REVERSED {r['label']:52s} {info_acc:.3f} vs floor "
@@ -607,7 +611,7 @@ def render(report: Report) -> None:
                 f"caveat, not a demonstrated cause of the failed control:"
             )
             for r in sorted(partial, key=lambda r: -r["acc_a"]):
-                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
+                info_rate = r["rate_a"]
                 if info_rate is None:
                     print(f"    {r['label']} (compared-seed rate unavailable)")
                 else:
@@ -646,7 +650,8 @@ def render(report: Report) -> None:
     print(f"\n{'=' * 78}\nNOT significant: {len(ns)} of {tot} findings")
     if ceiling:
         print(
-            f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)}. "
+            f"  of which CEILING pairs (both arms >= {CEILING}): "
+            f"{len(ceiling)}. "
             f"{n_zero_disc} of them have ZERO discordant items:\n  exact ties "
             "in this sample, which more replicates could still break (see the "
             f"+/-0.20\n  equivalence decision). The other {len(ceiling) - n_zero_disc} "
@@ -655,8 +660,9 @@ def render(report: Report) -> None:
     else:
         # States the standing alternative rather than printing a "0 -- these are ties" line.
         print(
-            f"  of which CEILING pairs (both arms >= 0.95): {len(ceiling)} -- "
-            "none is a ceiling effect.\n  Every one has an arm below 0.95: "
+            f"  of which CEILING pairs (both arms >= {CEILING}): "
+            f"{len(ceiling)} -- "
+            f"none is a ceiling effect.\n  Every one has an arm below {CEILING}: "
             "contrasts the corrected test could not separate at\n  this depth, "
             "not pairs that agree."
         )
@@ -691,7 +697,7 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
                     else None
                 ),
                 "kind": classify(key_a, key_b),
-                "kind_is_ladder": "ladder" in label,
+                "kind_is_ladder": key_a[0] != key_b[0],
             }
         )
     p_cl = np.array([r["p_cluster"] for r in rows])
@@ -764,19 +770,14 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     fails = [rows[i] for i in floor if not hp[i]]
     for i in floor:
         r = rows[i]
-        info_acc, zero_acc = (
-            (r["acc_b"], r["acc_a"])
-            if r["key_a"][1] == "zero"
-            else (r["acc_a"], r["acc_b"])
-        )
         if hp[i]:
-            (passing if info_acc > zero_acc else reversed_).append(r)
+            (passing if r["acc_a"] > r["acc_b"] else reversed_).append(r)
     fails_total, fails_partial, fails_unexplained = [], [], []
     if fails and not floor_bound:
         for r in fails:
-            info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
+            info_key = r["key_a"]
             if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
-                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
+                info_rate = r["rate_a"]
                 if info_rate is not None and info_rate >= TOTAL_COLLAPSE:
                     fails_total.append(r)
                 else:
@@ -786,7 +787,7 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     not_significant = [
         r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"
     ]
-    ceiling = [r for r in not_significant if min(r["acc_a"], r["acc_b"]) >= 0.95]
+    ceiling = [r for r in not_significant if min(r["acc_a"], r["acc_b"]) >= CEILING]
     n_zero_discordant = sum(r["b"] + r["c"] == 0 for r in ceiling)
     n_ladder = sum(r["kind_is_ladder"] for r in rows)
     n_noise_over_cells = sum(1 for key in over if key[1] == "noise_intens")
@@ -798,11 +799,7 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     n_ladder_findings = sum(r["kind_is_ladder"] for r in rows if r["kind"] == "finding")
     n_info_findings = n_findings_total - n_ladder_findings
     n_zero_significant = sum(hp[i] for i in zero_vs_zero)
-    partial_rates = [
-        1 - (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"])
-        for r in fails_partial
-        if (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]) is not None
-    ]
+    partial_rates = [1 - r["rate_a"] for r in fails_partial if r["rate_a"] is not None]
     if not partial_rates:
         partial_compliance = "an unmeasured rate"
     elif len({round(rate, 10) for rate in partial_rates}) == 1:

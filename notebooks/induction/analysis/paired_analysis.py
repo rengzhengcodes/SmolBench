@@ -467,9 +467,9 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             print(hdr)
             print("  " + "-" * (len(hdr) - 2))
             for r in rows:
-                if "] intens vs noise_intens" not in r["label"]:
+                if {r["key_a"][1], r["key_b"][1]} != {"intens", "noise_intens"}:
                     continue
-                model = r["label"].split("]")[0].strip("[")
+                model = r["key_a"][0]
                 flag = ""
                 if r["p_cluster"] <= ALPHA / N_PRIMARY:
                     flag = "  <== SEPARATES (Bonferroni)"

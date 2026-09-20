@@ -91,6 +91,12 @@ def test_pad_crossing(
     assert significance_report.pad_crossing(rate_i, rate_n) is expected
 
 
+def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> None:
+    """A zero arm in `key_a` would invert the arm-vs-floor reading; refuse it."""
+    with pytest.raises(RuntimeError, match="zero arm must be key_b"):
+        significance_report.classify(("m", "zero"), ("m", "intens"))
+
+
 def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(SHALLOW_DEPTH)
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
@@ -758,12 +764,14 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
 
 
 def test_collapsed_lane_buckets_as_collapse(
-    extens_vs_noise: ModuleType, collapse_tree: Path
+    extens_vs_noise: ModuleType, power_analysis: ModuleType, collapse_tree: Path
 ) -> None:
     """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
     out = _run(lambda: extens_vs_noise.main(collapse_tree))
     # The per-model table only: detail rows take their mechanism from the bucket heading.
-    table = out.split("mechanism / non-compliance", 1)[1].split("\nH210 =", 1)[0]
+    table = out.split("mechanism / non-compliance", 1)[1].split(
+        f"\nH{power_analysis.N_PRIMARY} =", 1
+    )[0]
     rows = {
         ln.split()[0]: ln
         for ln in table.splitlines()
