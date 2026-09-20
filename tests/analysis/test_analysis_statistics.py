@@ -31,8 +31,12 @@ from tests.analysis._trees import (  # noqa: F401
     multiplicity_sim,
     paired_analysis,
     power_analysis,
+    profile_for,
+    run_captured,
     significance_report,
 )
+
+import _power_common  # noqa: E402  # `_trees` puts notebooks/ on sys.path
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
 
@@ -44,8 +48,6 @@ def _noisy_curve(n: int) -> float:
 
 def test_apply_corrections_matches_statsmodels() -> None:
     """Batched masks agree with statsmodels row by row away from exact ties."""
-    import _power_common
-
     alpha = _power_common.ALPHA
     rng = np.random.default_rng(7)
     pv = np.vstack(
@@ -70,8 +72,6 @@ def test_apply_corrections_matches_statsmodels() -> None:
 
 def test_apply_corrections_share_one_inclusive_boundary() -> None:
     """Every procedure rejects a p-value sitting exactly on its threshold."""
-    import _power_common
-
     alpha = _power_common.ALPHA
     m = 4
     pv = np.array(
@@ -211,17 +211,7 @@ def small_tree(
 ) -> tuple[Path, tuple[str, str]]:
     """A 6-seed tree with one unparsable replicate filename."""
     tmp_path = tmp_path_factory.mktemp("small-tree")
-    build_tree(
-        tmp_path,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        lambda m, i: (
-            (0.10 if i == "zero" else 0.90),
-            0.0,
-            "empty",
-            range(SHALLOW_DEPTH),
-        ),
-    )
+    build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH))
     bogus = Marks(
         model="stub-model",
         marks=tuple(
@@ -264,25 +254,13 @@ def test_paired_report_handles_no_measurable_design_effects(
         if (model, info) != source
     }
     build_tree(
-        tmp_path,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        lambda _model, _info: (
-            0.90,
-            0.0,
-            "empty",
-            range(SHALLOW_DEPTH),
-        ),
-        copies=copies,
+        tmp_path, lambda _m, _i: (0.90, 0.0, "empty", range(SHALLOW_DEPTH)), copies
     )
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        paired_analysis.main(tmp_path)
     assert (
         "Clustering / cross-stratum covariance: no measurable PRIMARY contrasts "
         "(every contrast has zero independence-assumed variance), so no design "
         "effect is reported."
-    ) in buf.getvalue()
+    ) in run_captured(lambda: paired_analysis.main(tmp_path))
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
@@ -330,11 +308,7 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         lambda diffs: calls.append(1) or real(diffs),
     )
 
-    with (
-        contextlib.redirect_stdout(io.StringIO()),
-        contextlib.redirect_stderr(io.StringIO()),
-    ):
-        extens_vs_noise.main(root)
+    run_captured(lambda: extens_vs_noise.main(root))
 
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
@@ -343,8 +317,6 @@ def test_monte_carlo_output_lands_in_the_results_dir(
     multiplicity_sim: ModuleType,
 ) -> None:
     """Checkpoint JSON uses the general ignored results directory."""
-    import _power_common
-
     expected = _power_common.results_dir("induction")
     assert multiplicity_sim.OUT_PATH.parent == expected
     assert multiplicity_sim.OUT_PATH.name.endswith(".json")
@@ -356,31 +328,9 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit results directory controls the default checkpoint path."""
-    monkeypatch.setattr(
-        multiplicity_sim,
-        "part1",
-        lambda rng: {"part": 1},
-    )
-    monkeypatch.setattr(
-        multiplicity_sim,
-        "part2",
-        lambda rng, results_dir: {"part": 2},
-    )
-    monkeypatch.setattr(
-        multiplicity_sim,
-        "part3",
-        lambda rng: {"part": 3},
-    )
-    monkeypatch.setattr(
-        multiplicity_sim,
-        "part4",
-        lambda rng: {"part": 4},
-    )
-    monkeypatch.setattr(
-        multiplicity_sim,
-        "part5",
-        lambda rng: {"part": 5},
-    )
+    monkeypatch.setattr(multiplicity_sim, "part2", lambda rng, results_dir: {"part": 2})
+    for i in (1, 3, 4, 5):
+        monkeypatch.setattr(multiplicity_sim, f"part{i}", lambda rng, i=i: {"part": i})
 
     multiplicity_sim.main(results_dir=tmp_path)
 
@@ -813,8 +763,6 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
 
 def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     """Each ICC has a labeled output block."""
-    import _power_common
-
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         out = multiplicity_sim.part2(
@@ -847,8 +795,6 @@ def test_each_icc_block_reports_the_design_effect_it_produces(
     multiplicity_sim: ModuleType,
 ) -> None:
     """Each ICC block reports its simulated design effect."""
-    import _power_common
-
     with contextlib.redirect_stdout(io.StringIO()):
         out = multiplicity_sim.part2(
             np.random.default_rng(3),

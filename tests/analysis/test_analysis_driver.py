@@ -1,7 +1,5 @@
 """Pin analysis-driver order and its computation/render split."""
 
-import contextlib
-import io
 import os
 import subprocess
 import sys
@@ -16,33 +14,18 @@ from tests._paths import REPO_ROOT
 
 # pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
-    DEEP_DEPTH,
-    build_tree,
     extens_vs_noise,
     multiplicity_sim,
     power_analysis,
+    profile_for,
     run_all,
+    run_captured,
+    tree_fixture,
 )
 
-
-@pytest.fixture(scope="session")
-def driver_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a complete synthetic tree."""
-    root = tmp_path_factory.mktemp("driver")
-    build_tree(
-        root,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        lambda model, info: (
-            (0.10 if info == "zero" else 0.99),
-            0.0,
-            "empty",
-            range(DEEP_DEPTH),
-        ),
-    )
-    return root
+driver_tree = tree_fixture(
+    "driver_tree", profile_for(rate=0.99), "Build a complete synthetic tree."
+)
 
 
 @pytest.fixture
@@ -93,10 +76,7 @@ def test_the_driver_really_runs_the_chain_in_one_process(
     """Run the chain against a synthetic tree."""
     chain = tuple(m.__name__ for m in run_all.CHAIN)
     monkeypatch.setattr(sys.modules["power_analysis"], "main", lambda *a, **k: None)
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        assert run_all.main([], results_dir=driver_tree) == 0
-    out = buf.getvalue()
+    out = run_captured(lambda: run_all.main([], results_dir=driver_tree))
     # Ordered banners keep long logs attributable.
     positions = [out.find(name) for name in chain]
     assert all(p >= 0 for p in positions), positions

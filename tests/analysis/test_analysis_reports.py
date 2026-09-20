@@ -3,8 +3,6 @@
 Synthetic trees keep reported claims conditional on their supporting data.
 """
 
-import contextlib
-import io
 import re
 import shutil
 from collections import Counter
@@ -20,13 +18,19 @@ from smolbench.evals import Marks
 # pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401
     DEEP_DEPTH,
+    FAMILIES,
+    INFOS,
+    MODELS,
     N_HARMONICS,
     SHALLOW_DEPTH,
     build_tree,
     extens_vs_noise,
     paired_analysis,
     power_analysis,
+    profile_for,
+    run_captured,
     significance_report,
+    tree_fixture,
 )
 
 #: Collapsed noise arm whose failed control is padding-driven.
@@ -60,14 +64,6 @@ def _skew_census(
         return census
 
     return skewed
-
-
-def _run(fn: Callable[[], None]) -> str:
-    """Call `fn`, returning everything it wrote to stdout and stderr."""
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        fn()
-    return buf.getvalue()
 
 
 def test_collapse_note_uses_the_supplied_rate(significance_report: ModuleType) -> None:
@@ -116,23 +112,19 @@ def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> 
         significance_report.classify(("m", "zero"), ("m", "intens"))
 
 
-@pytest.fixture(scope="session")
-def ladder_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """16 seeds; the first family's rungs rise steeply (0.2/0.5/0.9)."""
-    rungs = next(iter(power_analysis.FAMILIES.values()))
-    rung_rate = dict(zip(rungs, (0.20, 0.50, 0.90)))
-
-    def profile(model: str, info: str) -> tuple[float, float, str, range]:
-        seeds = range(DEEP_DEPTH)
-        if info == "zero":
-            return 0.10, 0.0, "empty", seeds
-        return rung_rate.get(model, 0.90), 0.0, "empty", seeds
-
-    root = tmp_path_factory.mktemp("ladder")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, profile)
-    return root
+_STEEP_RUNGS = next(iter(FAMILIES.values()))
+ladder_tree = tree_fixture(
+    "ladder_tree",
+    profile_for(
+        {
+            (rung, info): (rate, 0.0, "empty", range(DEEP_DEPTH))
+            for rung, rate in zip(_STEEP_RUNGS, (0.20, 0.50, 0.90))
+            for info in INFOS
+            if info != "zero"
+        }
+    ),
+    "16 seeds; the first family's rungs rise steeply (0.2/0.5/0.9).",
+)
 
 
 @pytest.fixture(scope="session")
@@ -175,11 +167,7 @@ def test_omnibus_gate_uses_only_common_seeds(
     family, rungs = next(iter(power_analysis.FAMILIES.items()))
     narrow = (rungs[0], "intens")
 
-    def profile(model: str, info: str) -> tuple[float, float, str, range]:
-        seeds = range(10) if (model, info) == narrow else range(DEEP_DEPTH)
-        return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-    build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS, profile)
+    build_tree(tmp_path, profile_for({narrow: (0.90, 0.0, "empty", range(10))}))
     marks = significance_report.load_marks(tmp_path)
     gates = significance_report.omnibus_gates(marks)
     assert gates[family]["n_seeds"] == 10
@@ -261,31 +249,24 @@ def test_missing_family_cell_yields_no_data_gate(
 @pytest.fixture
 def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
     """Pairwise ladder overlaps remain while the family-wide intersection is empty."""
-    family, rungs = next(iter(power_analysis.FAMILIES.items()))
+    rungs = next(iter(FAMILIES.values()))
+    n_rep = power_analysis.N_REPLICATES
     r2_seeds = {
         "intens": tuple(range(20)),
         "extens": tuple(range(10, 30)),
         "noise_intens": tuple(range(10)) + tuple(range(20, 30)),
         "zero": tuple(range(5)) + tuple(range(15, 30)),
     }
-
-    def profile(
-        model: str, info: str
-    ) -> tuple[float, float, str, range | tuple[int, ...]]:
-        if model == rungs[0]:
-            return 0.0, 0.0, "empty", range(power_analysis.N_REPLICATES)
-        if model == rungs[1]:
-            return 1.0, 0.0, "empty", range(power_analysis.N_REPLICATES)
-        if model == rungs[2]:
-            return 0.9, 0.0, "empty", r2_seeds[info]
-        return (
-            0.10 if info == "zero" else 0.90,
-            0.0,
-            "empty",
-            range(power_analysis.N_REPLICATES),
+    overrides = {
+        (rung, info): (rate, 0.0, "empty", seeds)
+        for info in INFOS
+        for rung, rate, seeds in (
+            (rungs[0], 0.0, range(n_rep)),
+            (rungs[1], 1.0, range(n_rep)),
+            (rungs[2], 0.9, r2_seeds[info]),
         )
-
-    build_tree(tmp_path, power_analysis.MODELS, power_analysis.INFOS, profile)
+    }
+    build_tree(tmp_path, profile_for(overrides, depth=n_rep))
     return tmp_path
 
 
@@ -304,183 +285,79 @@ def test_no_data_gate_renders_exploratory(
     ]
     assert ungated
     assert computed.gates[family]["p"] is None
-    out = _run(lambda: significance_report.render(computed))
+    out = run_captured(lambda: significance_report.render(computed))
     assert "omnibus has no common-seed data" in out
 
 
-def _shallow_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(SHALLOW_DEPTH)
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
+_DEEP = range(DEEP_DEPTH)
+_LOW, _HIGH = (0.10, 0.0, "empty", _DEEP), (0.90, 0.0, "empty", _DEEP)
 
-
-def _collapse_profile(
-    model: str, info: str
-) -> tuple[float, float | Callable[[int], float], str, range]:
-    seeds = range(DEEP_DEPTH)
-    if model == COLLAPSE_MODEL and info == "noise_intens":
-        return 0.10, 0.90, "empty", seeds
-    if model == WEAK_MODEL and info == "intens":
-        return 0.10, 0.0, "empty", seeds
-    if model == SKEW_MODEL and info == "intens":
-        # Non-compliance is outside noise's seed coverage.
-        return 0.90, (lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0), "empty", seeds
-    if model == SKEW_MODEL and info == "noise_intens":
-        return 0.90, 0.50, "empty", range(_SKEW_SPLIT)
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-
-def _clean_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(DEEP_DEPTH)
-    return (0.10 if info == "zero" else 0.99), 0.0, "empty", seeds
-
-
-def _reversed_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(DEEP_DEPTH)
-    if model == PAD_MODEL and info == "intens":
-        return 0.10, 0.0, "empty", seeds
-    if model == PAD_MODEL and info == "zero":
-        return 0.90, 0.0, "empty", seeds
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-
-def _ceiling_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(DEEP_DEPTH)
-    return (0.10 if info == "zero" else 0.97), 0.0, "empty", seeds
-
-
-def _caveat_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(DEEP_DEPTH)
-    if model == PAD_MODEL and info == "intens":
-        return 0.50, 0.50, "empty", seeds
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-
-def _padding_control_profile(model: str, info: str) -> tuple[float, float, str, range]:
-    seeds = range(DEEP_DEPTH)
-    if model == PAD_MODEL and info in {"intens", "noise_intens", "zero"}:
-        return 0.10, 0.0, "empty", seeds
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-
-def _shared_seed_noise_profile(
-    model: str, info: str
-) -> tuple[float, float, str, range]:
-    if model == SKEW_MODEL and info == "intens":
-        return 0.90, 0.0, "empty", range(_SKEW_SPLIT)
-    if model == SKEW_MODEL and info == "noise_intens":
-        return 0.90, 0.0, "empty", range(DEEP_DEPTH)
-    return (0.10 if info == "zero" else 0.90), 0.0, "empty", range(DEEP_DEPTH)
-
-
-@pytest.fixture(scope="session")
-def shallow_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """6 seeds everywhere: below the sign-flip resolution floor."""
-    root = tmp_path_factory.mktemp("shallow")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _shallow_profile)
-    return root
-
-
-@pytest.fixture(scope="session")
-def collapse_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """16 seeds, with the four engineered anomalies this module's constants name."""
-    root = tmp_path_factory.mktemp("collapse")
-    build_tree(
-        root,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        _collapse_profile,
-        copies={(TIED_MODEL, "noise_intens"): (TIED_MODEL, "extens")},
-    )
-    return root
-
-
-@pytest.fixture(scope="session")
-def clean_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """16 seeds, every informative arm at 0.99 and compliant: all ties, no collapse."""
-    root = tmp_path_factory.mktemp("clean")
-    source = (power_analysis.MODELS[0], "intens")
-    copies = {
-        (model, info): source
-        for model in power_analysis.MODELS
-        for info in power_analysis.INFOS
-        if info != "zero" and (model, info) != source
-    }
-    build_tree(
-        root,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        _clean_profile,
-        copies=copies,
-    )
-    return root
-
-
-@pytest.fixture(scope="session")
-def reversed_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a tree with one significant informative arm below its floor."""
-    root = tmp_path_factory.mktemp("reversed")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _reversed_profile)
-    return root
-
-
-@pytest.fixture(scope="session")
-def ceiling_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a tree with ceiling pairs that include discordances."""
-    root = tmp_path_factory.mktemp("ceiling")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _ceiling_profile)
-    return root
-
-
-@pytest.fixture(scope="session")
-def caveat_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a tree with collapse findings but no padding crossing."""
-    root = tmp_path_factory.mktemp("caveat")
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, _caveat_profile)
-    return root
-
-
-@pytest.fixture(scope="session")
-def padding_control_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a copied noise control whose compliance can be skewed independently."""
-    root = tmp_path_factory.mktemp("padding-control")
-    source = (PAD_MODEL, "zero")
-    build_tree(
-        root,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        _padding_control_profile,
-        copies={(PAD_MODEL, info): source for info in ("intens", "noise_intens")},
-    )
-    return root
-
-
-@pytest.fixture(scope="session")
-def shared_seed_noise_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
-) -> Path:
-    """Build a lane with clean extra noise seeds absent from intens."""
-    root = tmp_path_factory.mktemp("shared-seed-noise")
-    build_tree(
-        root,
-        power_analysis.MODELS,
-        power_analysis.INFOS,
-        _shared_seed_noise_profile,
-    )
-    return root
+shallow_tree = tree_fixture(
+    "shallow_tree",
+    profile_for(depth=SHALLOW_DEPTH),
+    "6 seeds everywhere: below the sign-flip resolution floor.",
+)
+collapse_tree = tree_fixture(
+    "collapse_tree",
+    profile_for(
+        {
+            (COLLAPSE_MODEL, "noise_intens"): (0.10, 0.90, "empty", _DEEP),
+            (WEAK_MODEL, "intens"): _LOW,
+            # Non-compliance is outside noise's seed coverage.
+            (SKEW_MODEL, "intens"): (
+                0.90,
+                lambda seed: 0.90 if seed >= _SKEW_SPLIT else 0.0,
+                "empty",
+                _DEEP,
+            ),
+            (SKEW_MODEL, "noise_intens"): (0.90, 0.50, "empty", range(_SKEW_SPLIT)),
+        }
+    ),
+    "16 seeds, with the four engineered anomalies this module's constants name.",
+    copies={(TIED_MODEL, "noise_intens"): (TIED_MODEL, "extens")},
+)
+_CLEAN_SOURCE = (MODELS[0], "intens")
+clean_tree = tree_fixture(
+    "clean_tree",
+    profile_for(rate=0.99),
+    "16 seeds, every informative arm at 0.99 and compliant: all ties, no collapse.",
+    copies={
+        (model, info): _CLEAN_SOURCE
+        for model in MODELS
+        for info in INFOS
+        if info != "zero" and (model, info) != _CLEAN_SOURCE
+    },
+)
+reversed_tree = tree_fixture(
+    "reversed_tree",
+    profile_for({(PAD_MODEL, "intens"): _LOW, (PAD_MODEL, "zero"): _HIGH}),
+    "Build a tree with one significant informative arm below its floor.",
+)
+ceiling_tree = tree_fixture(
+    "ceiling_tree",
+    profile_for(rate=0.97),
+    "Build a tree with ceiling pairs that include discordances.",
+)
+caveat_tree = tree_fixture(
+    "caveat_tree",
+    profile_for({(PAD_MODEL, "intens"): (0.50, 0.50, "empty", _DEEP)}),
+    "Build a tree with collapse findings but no padding crossing.",
+)
+padding_control_tree = tree_fixture(
+    "padding_control_tree",
+    profile_for(
+        {(PAD_MODEL, info): _LOW for info in ("intens", "noise_intens", "zero")}
+    ),
+    "Build a copied noise control whose compliance can be skewed independently.",
+    copies={
+        (PAD_MODEL, info): (PAD_MODEL, "zero") for info in ("intens", "noise_intens")
+    },
+)
+shared_seed_noise_tree = tree_fixture(
+    "shared_seed_noise_tree",
+    profile_for({(SKEW_MODEL, "intens"): (0.90, 0.0, "empty", range(_SKEW_SPLIT))}),
+    "Build a lane with clean extra noise seeds absent from intens.",
+)
 
 
 @pytest.fixture
@@ -490,7 +367,7 @@ def report(
     """Return captured report output for an explicit result directory."""
 
     def _report(root: Path) -> str:
-        return _run(lambda: significance_report.main(root))
+        return run_captured(lambda: significance_report.main(root))
 
     return _report
 
@@ -655,16 +532,9 @@ def test_replicate_depth_gate_uses_the_shallowest_lane(
     deep_cell = (power_analysis.MODELS[0], "intens")
     root = tmp_path_factory.mktemp("mixed_depth")
 
-    def profile(model: str, info: str) -> tuple[float, float, str, range]:
-        seeds = (
-            range(power_analysis.N_REPLICATES)
-            if (model, info) == deep_cell
-            else range(SHALLOW_DEPTH)
-        )
-        return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
-
-    build_tree(root, power_analysis.MODELS, power_analysis.INFOS, profile)
-    out = _run(lambda: paired_analysis.main(root))
+    deep = (0.90, 0.0, "empty", range(power_analysis.N_REPLICATES))
+    build_tree(root, profile_for({deep_cell: deep}, depth=SHALLOW_DEPTH))
+    out = run_captured(lambda: paired_analysis.main(root))
     assert "WARNING" in out
     assert str(SHALLOW_DEPTH) in out
 
@@ -962,7 +832,7 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
     extens_vs_noise: ModuleType, collapse_tree: Path
 ) -> None:
     """A byte-identical pair of arms must be labelled tied, not awarded to either side."""
-    out = _run(lambda: extens_vs_noise.main(collapse_tree))
+    out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     tied_rows = [ln for ln in out.splitlines() if TIED_MODEL in ln]
     assert tied_rows, out[:2000]
     for line in tied_rows:
@@ -978,7 +848,7 @@ def test_collapsed_lane_buckets_as_collapse(
     extens_vs_noise: ModuleType, power_analysis: ModuleType, collapse_tree: Path
 ) -> None:
     """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
-    out = _run(lambda: extens_vs_noise.main(collapse_tree))
+    out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     # The per-model table only: detail rows take their mechanism from the bucket heading.
     table = out.split("mechanism / non-compliance", 1)[1].split(
         f"\nH{power_analysis.N_PRIMARY} =", 1
@@ -1026,7 +896,7 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
         },
     )
     monkeypatch.setattr(extens_vs_noise, "compliance_census", skewed)
-    out = _run(lambda: extens_vs_noise.main(collapse_tree))
+    out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     skew_lines = [ln for ln in out.splitlines() if SKEW_MODEL in ln]
     assert skew_lines, out[:2000]
     rates = [

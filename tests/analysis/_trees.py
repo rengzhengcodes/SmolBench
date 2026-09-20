@@ -1,6 +1,8 @@
 """Sibling test directories import root conftest by bare name; a second conftest here would shadow it."""
 
+import contextlib
 import hashlib
+import io
 import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -32,6 +34,33 @@ DEEP_DEPTH = 16
 
 N_HARMONICS = power_analysis.N_HARMONICS
 N_PRIMARY = power_analysis.N_PRIMARY
+MODELS = power_analysis.MODELS
+FAMILIES = power_analysis.FAMILIES
+INFOS = power_analysis.INFOS
+
+Cell = tuple[float, float | Callable[[int], float], str, Sequence[int]]
+
+
+def run_captured(fn: Callable[[], object]) -> str:
+    """Call `fn`, returning everything it wrote to stdout and stderr."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        fn()
+    return buf.getvalue()
+
+
+def profile_for(
+    overrides: Mapping[tuple[str, str], Cell] | None = None,
+    rate: float = 0.90,
+    depth: int = DEEP_DEPTH,
+) -> Callable[[str, str], Cell]:
+    """Compliant cells at `rate` (0.10 on the zero arm) over `depth` seeds, except `overrides`."""
+
+    def profile(model: str, info: str) -> Cell:
+        base: Cell = (0.10 if info == "zero" else rate), 0.0, "empty", range(depth)
+        return (overrides or {}).get((model, info), base)
+
+    return profile
 
 
 def _marks_for(
@@ -58,16 +87,12 @@ def _marks_for(
 
 def build_tree(
     root: Path,
-    models: Sequence[str],
-    infos: Sequence[str],
-    profile: Callable[
-        [str, str], tuple[float, float | Callable[[int], float], str, Sequence[int]]
-    ],
+    profile: Callable[[str, str], Cell],
     copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> None:
-    """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root`."""
-    for model in models:
-        for info in infos:
+    """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root` for every study cell."""
+    for model in MODELS:
+        for info in INFOS:
             rate, noncompliance, mode, seeds = profile(model, info)
             rate_of = (
                 noncompliance
@@ -90,6 +115,24 @@ def build_tree(
         src_dir = root / f"{src[0]}_{src[1]}"
         shutil.rmtree(dst_dir, ignore_errors=True)
         shutil.copytree(src_dir, dst_dir)
+
+
+def tree_fixture(
+    name: str,
+    profile: Callable[[str, str], Cell],
+    doc: str,
+    copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
+) -> Callable[[pytest.TempPathFactory], Path]:
+    """Return a session fixture named `name` that builds `profile` once."""
+
+    @pytest.fixture(scope="session", name=name)
+    def fixture(tmp_path_factory: pytest.TempPathFactory) -> Path:
+        root = tmp_path_factory.mktemp(name)
+        build_tree(root, profile, copies=copies)
+        return root
+
+    fixture.__doc__ = doc
+    return fixture
 
 
 @pytest.fixture(scope="session")
