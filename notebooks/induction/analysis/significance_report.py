@@ -62,7 +62,15 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     the observed ones, so strata hold only the seeds all of the family's cells
     share; an absent cell or empty intersection yields the no-data entry.
 
-    Returns family name -> ``n_seeds``, ``stat``, ``p``, ``reject``.
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `paired_analysis.load_marks`.
+
+    Returns
+    -------
+    dict[str, dict]
+        Family name -> ``n_seeds``, ``stat``, ``p``, ``reject``.
     """
     gates: dict[str, dict] = {}
     for family, rungs in FAMILIES.items():
@@ -97,12 +105,36 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
 
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Return the Hochberg step-up rejection mask at familywise level ``alpha``."""
+    """Return Hochberg step-up rejections at familywise level ``alpha``.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    alpha : float, optional
+        Familywise error-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
+    """
     return rejection_mask(pvals, alpha, "Hochberg")
 
 
 def compliance_census(marks: CellMarks) -> dict:
-    """Measure non-compliance per parsed ``(model, info)`` cell; cell key -> ``rate``."""
+    """Measure non-compliance per parsed ``(model, info)`` cell.
+
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `paired_analysis.load_marks`.
+
+    Returns
+    -------
+    dict
+        Cell key -> ``rate``.
+    """
     out = {}
     for key, by_seed in marks.compliance.items():
         vals = [v for seed_vals in by_seed.values() for v in seed_vals]
@@ -122,9 +154,21 @@ def compliance_census(marks: CellMarks) -> dict:
 
 
 def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
-    """Return a census cell's non-compliance rate over ``seeds``, or ``None`` if unmarked.
+    """Return a census cell's non-compliance rate over ``seeds``.
 
     Pool counts before division so unequal seed sizes retain their weight.
+
+    Parameters
+    ----------
+    cell : dict
+        Census entry for one cell.
+    seeds : Iterable[int]
+        Replicate seeds to include.
+
+    Returns
+    -------
+    float | None
+        ``None`` when the subset has no marks; otherwise its non-compliance rate.
     """
     counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
     total = sum(t for _nc, t in counts)
@@ -134,7 +178,22 @@ def common_seed_rate(cell: dict, seeds: Iterable[int]) -> float | None:
 
 
 def collapse_note(key: tuple[str, str], rate: float | None, census: dict) -> str:
-    """Annotate a cell whose compared-seed ``rate`` reaches `COLLAPSE_THRESHOLD`, else ``""``."""
+    """Return a mechanism annotation, or ``""`` below the collapse threshold.
+
+    Parameters
+    ----------
+    key : tuple[str, str]
+        Cell key.
+    rate : float | None
+        Non-compliance rate over the compared seeds.
+    census : dict
+        Compliance census by cell.
+
+    Returns
+    -------
+    str
+        Mechanism annotation, or ``""`` below `COLLAPSE_THRESHOLD`.
+    """
     cell = census.get(key)
     if cell is None or rate is None or rate < COLLAPSE_THRESHOLD:
         return ""
@@ -153,7 +212,20 @@ def pad_crossing(rate_i: float, rate_n: float) -> bool:
 
 
 def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
-    """Return the contrast bucket for two ``(model, info)`` keys."""
+    """Classify a contrast by its two ``(model, info)`` keys.
+
+    Parameters
+    ----------
+    key_a : tuple[str, str]
+        First cell key.
+    key_b : tuple[str, str]
+        Second cell key.
+
+    Returns
+    -------
+    str
+        Contrast bucket.
+    """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
         return "zero-vs-zero"
@@ -176,7 +248,19 @@ def _print_signed(rows: list, sign: str, key: str) -> None:
 
 
 def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
-    """Print Holm ranks around its boundary (`pvals` in `rows` order, `m` tests, `n_rej` rejected)."""
+    """Print Holm ranks around its stopping boundary.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in `rows` order.
+    rows : list
+        Contrast rows.
+    m : int
+        Number of hypotheses.
+    n_rej : int
+        Holm rejection count.
+    """
     order = np.argsort(pvals, kind="stable")
     print("\nHolm step-down at the boundary (rank / p / own threshold):")
     for i in range(max(n_rej - 2, 0), min(n_rej + 2, m)):
@@ -194,7 +278,22 @@ _ARM_KEYS = (("key_a", "rate_a"), ("key_b", "rate_b"))
 def _compared_rate(
     census: dict, key: tuple[str, str], seeds: Iterable[int]
 ) -> float | None:
-    """Return `common_seed_rate` for a censused cell, ``None`` for an absent one."""
+    """Return `common_seed_rate` for a censused cell, ``None`` for an absent one.
+
+    Parameters
+    ----------
+    census : dict
+        Output of `compliance_census`.
+    key : tuple[str, str]
+        ``(model, info)`` cell.
+    seeds : Iterable[int]
+        Common seeds of the contrast being annotated.
+
+    Returns
+    -------
+    float | None
+        Non-compliance rate over ``seeds``, or ``None`` when ``key`` is absent.
+    """
     return common_seed_rate(census[key], seeds) if key in census else None
 
 
@@ -206,7 +305,21 @@ def collapse_tag(row: dict, census: dict) -> str:
 
 
 def gate_note(row: dict, gates: dict[str, dict]) -> str:
-    """Return the ``[EXPLORATORY: ...]`` note for an ungated ladder row, else ``""``."""
+    """Return the exploratory annotation for an ungated ladder finding.
+
+    Parameters
+    ----------
+    row : dict
+        Computed primary-contrast row.
+    gates : dict[str, dict]
+        Family omnibus gate results.
+
+    Returns
+    -------
+    str
+        Exploratory annotation, or ``""`` when the row is not an ungated
+        ladder finding.
+    """
     if not row["kind_is_ladder"] or row["gated"]:
         return ""
     p = gates[row["family"]]["p"]

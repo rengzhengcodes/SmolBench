@@ -110,9 +110,23 @@ def aligned(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build item-matched vectors for one contrast.
 
-    ``drop_invalid`` drops item-pairs where either arm's mark is invalid
-    (``score: null``). Returns matched correct-a, correct-b, seed-index and
-    harmonic-index arrays.
+    Parameters
+    ----------
+    correct : dict
+        Per-cell correct-mark mappings.
+    valid : dict
+        Per-cell valid-mark mappings.
+    key_a : tuple[str, str]
+        First cell key.
+    key_b : tuple[str, str]
+        Second cell key.
+    drop_invalid : bool
+        Drops item-pairs where either arm's mark is invalid (``score: null``).
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        Matched correct, valid, seed-index, and harmonic-index arrays.
     """
     seeds = sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
     if not seeds:
@@ -135,7 +149,22 @@ def aligned(
 
 
 def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
-    """Return one arm difference (a minus b) per unique seed in ``seed_idx``."""
+    """Return one arm difference per seed.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    seed_idx : np.ndarray
+        Replicate index for each matched mark.
+
+    Returns
+    -------
+    list[int]
+        Arm differences, one per unique seed.
+    """
     a_i, b_i = a.astype(np.int64), b.astype(np.int64)
     return [
         int(a_i[seed_idx == s].sum() - b_i[seed_idx == s].sum())
@@ -147,6 +176,16 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
     """Compute an exact seed-level two-sided sign-flip p-value.
 
     Seeds, not marks, are independent because harmonic items share a seed.
+
+    Parameters
+    ----------
+    diffs : Iterable[int]
+        Per-seed arm differences.
+
+    Returns
+    -------
+    float
+        Exact two-sided sign-flip p-value.
     """
     diffs = [int(d) for d in diffs]
     if not diffs:
@@ -164,7 +203,22 @@ def signflip_exact_p(diffs: Iterable[int]) -> float:
 
 
 def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
-    """Return the repo's continuity-corrected 2x2xK CMH p-value, stratified by harmonic."""
+    """Compute continuity-corrected CMH p-value by harmonic stratum.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    harm_idx : np.ndarray
+        Harmonic index for each matched mark.
+
+    Returns
+    -------
+    float
+        P-value of the repo's continuity-corrected 2x2xK CMH.
+    """
     strata = np.unique(harm_idx)
     if strata.size == 0:
         return 1.0
@@ -175,7 +229,22 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
 
 
 def rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
-    """Return one `apply_corrections` mask for a single family of p-values."""
+    """Return one `apply_corrections` mask for a single family of p-values.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        Raw p-values of the family.
+    level : float
+        Error rate handed to `apply_corrections` (FWER alpha or FDR q).
+    method : str
+        Key of the correction to return, e.g. ``"holm"`` or ``"bh"``.
+
+    Returns
+    -------
+    np.ndarray
+        Boolean rejection mask aligned with ``pvals``.
+    """
     return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), level)[method][0]
 
 
@@ -183,14 +252,38 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Return Holm's FWER rejection mask.
 
     Holm permits arbitrary dependence among shared models, seeds, and harmonics.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    alpha : float, optional
+        Familywise error-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
     """
     return rejection_mask(pvals, alpha, "Holm")
 
 
 def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
-    """Return the Benjamini-Hochberg FDR rejection mask.
+    """Return Benjamini-Hochberg FDR rejection mask.
 
     The imported default keeps this secondary-tier level owned by power_analysis.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    q : float, optional
+        False discovery-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
     """
     return rejection_mask(pvals, q, "BH")
 
@@ -201,6 +294,22 @@ def design_effect(
     """Return observed over independence-assumed variance.
 
     ``None`` represents every unmeasurable case, preventing NaNs from passing filters.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First arm's matched marks.
+    b : np.ndarray
+        Second arm's matched marks.
+    seed_idx : np.ndarray
+        Replicate index for each matched mark.
+    harm_idx : np.ndarray
+        Harmonic index for each matched mark.
+
+    Returns
+    -------
+    float | None
+        Observed / independence-assumed variance ratio.
     """
     d = a.astype(float) - b.astype(float)
     seeds = np.unique(seed_idx)
@@ -222,12 +331,23 @@ def contrast_row(
 ) -> dict:
     """Compute every paired statistic the reports share for one contrast.
 
-    ``drop_invalid`` is forwarded to `aligned`; dropping pairs changes the
-    per-seed statistic, so ``p_cluster`` is ``None`` in that mode. Returns
-    ``key_a``, ``key_b``, ``n``, ``acc_a``, ``acc_b``, ``b``, ``c``, ``disc``,
-    ``seeds`` (sorted common seeds), ``n_seeds``, ``p_item`` (exact McNemar),
-    ``p_unpaired`` (harmonic-stratified CMH), ``p_cluster`` (seed sign-flip)
-    and ``de`` (`design_effect`).
+    Parameters
+    ----------
+    correct, valid : dict
+        Per-cell mark views from `load_marks`.
+    key_a, key_b : tuple[str, str]
+        The two ``(model, info)`` cells being compared.
+    drop_invalid : bool, optional
+        Forwarded to `aligned`. Dropping pairs changes the per-seed statistic,
+        so ``p_cluster`` is ``None`` in that mode.
+
+    Returns
+    -------
+    dict
+        ``key_a``, ``key_b``, ``n``, ``acc_a``, ``acc_b``, ``b``, ``c``, ``disc``,
+        ``seeds`` (sorted common seeds), ``n_seeds``, ``p_item`` (exact McNemar),
+        ``p_unpaired`` (harmonic-stratified CMH), ``p_cluster`` (seed sign-flip)
+        and ``de`` (`design_effect`).
     """
     a, b, sidx, hidx = aligned(marks, key_a, key_b, drop_invalid)
     nb, nc = int((a & ~b).sum()), int((~a & b).sum())
@@ -252,7 +372,22 @@ def contrast_row(
 def labeled_rows(
     marks: CellMarks, contrasts: Iterable[tuple], drop_invalid: bool = False
 ) -> list[dict]:
-    """Return one `contrast_row` per ``(label, key_a, key_b)``, with its label."""
+    """Return one `contrast_row` per ``(label, key_a, key_b)``, with its label.
+
+    Parameters
+    ----------
+    marks : CellMarks
+        Loaded per-cell marks.
+    contrasts : Iterable[tuple]
+        ``(label, key_a, key_b)`` triples as built by `build_primary_contrasts`.
+    drop_invalid : bool
+        Forwarded to `contrast_row`.
+
+    Returns
+    -------
+    list[dict]
+        `contrast_row` dicts, each with an added ``"label"`` entry.
+    """
     return [
         {"label": label, **contrast_row(marks, key_a, key_b, drop_invalid)}
         for label, key_a, key_b in contrasts

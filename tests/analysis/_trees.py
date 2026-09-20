@@ -42,7 +42,18 @@ Cell = tuple[float, float | Callable[[int], float], str, Sequence[int]]
 
 
 def run_captured(fn: Callable[[], object]) -> str:
-    """Call `fn`, returning everything it wrote to stdout and stderr."""
+    """Call `fn`, returning everything it wrote to stdout and stderr.
+
+    Parameters
+    ----------
+    fn : Callable[[], object]
+        Zero-argument callable to run under capture.
+
+    Returns
+    -------
+    str
+        Combined stdout and stderr text.
+    """
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         fn()
@@ -54,7 +65,22 @@ def profile_for(
     rate: float = 0.90,
     depth: int = DEEP_DEPTH,
 ) -> Callable[[str, str], Cell]:
-    """Compliant cells at `rate` (0.10 on the zero arm) over `depth` seeds, except `overrides`."""
+    """Build a cell profile: `rate` everywhere (0.10 on the zero arm) unless overridden.
+
+    Parameters
+    ----------
+    overrides : Mapping[tuple[str, str], Cell] | None
+        Explicit cells keyed by ``(model, info)``; all others use the default.
+    rate : float
+        Accuracy of the default non-zero cells.
+    depth : int
+        Number of seeds in the default cells.
+
+    Returns
+    -------
+    Callable[[str, str], Cell]
+        ``profile(model, info)`` for `build_tree`.
+    """
 
     def profile(model: str, info: str) -> Cell:
         base: Cell = (0.10 if info == "zero" else rate), 0.0, "empty", range(depth)
@@ -123,7 +149,24 @@ def tree_fixture(
     doc: str,
     copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> Callable[[pytest.TempPathFactory], Path]:
-    """Return a session fixture named `name` that builds `profile` once."""
+    """Return a session fixture named `name` that builds `profile` once.
+
+    Parameters
+    ----------
+    name : str
+        Fixture name; also the ``tmp_path_factory`` directory basename.
+    profile : Callable[[str, str], Cell]
+        Cell profile handed to `build_tree`.
+    doc : str
+        Docstring given to the generated fixture.
+    copies : Mapping[tuple[str, str], tuple[str, str]] | None
+        Forwarded to `build_tree`.
+
+    Returns
+    -------
+    Callable[[pytest.TempPathFactory], Path]
+        The fixture function, to be bound at module scope.
+    """
 
     @pytest.fixture(scope="session", name=name)
     def fixture(tmp_path_factory: pytest.TempPathFactory) -> Path:
