@@ -592,7 +592,6 @@ def omnibus_interaction_power(
     x_null, x_full = design(False), design(True)
     df_extra = x_full.shape[1] - x_null.shape[1]
     if df_extra != DF_INTERACTION:
-        # ``python -O`` strips asserts; this invariant sizes the chi2 threshold.
         raise RuntimeError(
             f"interaction design gained {df_extra} df, expected "
             f"DF_INTERACTION={DF_INTERACTION}"
