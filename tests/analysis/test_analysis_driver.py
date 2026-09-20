@@ -2,6 +2,8 @@
 
 import contextlib
 import io
+import os
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -9,6 +11,8 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
+from tests._paths import REPO_ROOT
 
 # pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
@@ -19,8 +23,6 @@ from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
     power_analysis,
     run_all,
 )
-
-CHAIN = ("power_analysis", "paired_analysis", "significance_report", "extens_vs_noise")
 
 
 @pytest.fixture(scope="session")
@@ -49,6 +51,7 @@ def recorded(
 ) -> list[str]:
     """Record script calls without running costly simulations."""
     calls: list = []
+    chain = tuple(m.__name__ for m in run_all.CHAIN)
 
     def recorder(name: str) -> Callable[..., None]:
         def _main(*args: Any, **kwargs: Any) -> None:
@@ -56,7 +59,7 @@ def recorded(
 
         return _main
 
-    for name in CHAIN + ("multiplicity_sim",):
+    for name in chain + ("multiplicity_sim",):
         monkeypatch.setattr(sys.modules[name], "main", recorder(name))
     return calls
 
@@ -74,11 +77,12 @@ def test_the_simulation_runs_only_behind_its_flag(
     run_all: ModuleType, recorded: list[str]
 ) -> None:
     """Run multiplicity simulation only when requested."""
+    chain = tuple(m.__name__ for m in run_all.CHAIN)
     assert run_all.main([]) == 0
     assert "multiplicity_sim" not in recorded
     recorded.clear()
     run_all.main(["--with-sim"])
-    assert recorded == list(CHAIN) + ["multiplicity_sim"]
+    assert recorded == list(chain) + ["multiplicity_sim"]
 
 
 def test_the_driver_really_runs_the_chain_in_one_process(
@@ -87,13 +91,49 @@ def test_the_driver_really_runs_the_chain_in_one_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run the chain against a synthetic tree."""
+    chain = tuple(m.__name__ for m in run_all.CHAIN)
     monkeypatch.setattr(sys.modules["power_analysis"], "main", lambda *a, **k: None)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         assert run_all.main([], results_dir=driver_tree) == 0
     out = buf.getvalue()
     # Ordered banners keep long logs attributable.
-    positions = [out.find(name) for name in CHAIN]
+    positions = [out.find(name) for name in chain]
     assert all(p >= 0 for p in positions), positions
     assert positions == sorted(positions), positions
     assert "compliance" in out.lower()
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "power_analysis",
+        "paired_analysis",
+        "significance_report",
+        "extens_vs_noise",
+        "multiplicity_sim",
+    ),
+)
+def test_analysis_scripts_import_by_path(name: str) -> None:
+    """Each analysis script imports with only the repository root on ``PYTHONPATH``."""
+    path = REPO_ROOT / "notebooks" / "induction" / "analysis" / f"{name}.py"
+    code = """
+import importlib.util
+import sys
+
+name, path = sys.argv[1:]
+spec = importlib.util.spec_from_file_location(name, path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[name] = module
+spec.loader.exec_module(module)
+"""
+    env = {"PYTHONPATH": str(REPO_ROOT)}
+    result = subprocess.run(
+        [sys.executable, "-c", code, name, str(path)],
+        cwd=REPO_ROOT,
+        env={**os.environ, **env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

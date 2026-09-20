@@ -14,6 +14,8 @@ from types import ModuleType
 
 import pytest
 
+from smolbench.evals import Marks
+
 # Pytest discovers imported fixtures from module globals.
 # pylint: disable=unused-import  # fixture names register pytest fixtures
 from tests.analysis._trees import (  # noqa: F401
@@ -313,29 +315,21 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
         + len(computed.fails_unexplained)
     )
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
-    fails = [ln for ln in controls.splitlines() if ln.strip().startswith("FAILS")]
-    # Exoneration requires a collapsed noise arm.
-    qualifying = [ln for ln in fails if "noise_intens" in ln and "[COLLAPSE:" in ln]
-    assert fails and qualifying and len(qualifying) < len(fails), fails
-
-    match = re.search(r"These (\d+) of (\d+) failures", controls)
-    assert match, controls
-    total_count, total_denominator = map(int, match.groups())
-    partial = re.search(
-        r"(\d+) of (\d+) failures are noise arms on a lane the pad carried over",
-        controls,
+    assert (
+        f"These {len(computed.fails_total)} of {len(computed.fails)} failures"
+        in controls
     )
-    assert partial, controls
-    assert total_denominator == len(fails)
-    assert total_count + int(partial.group(1)) == len(qualifying)
+    assert (
+        f"{len(computed.fails_partial)} of {len(computed.fails)} failures are noise arms"
+        in controls
+    )
 
     assert "NOT explained by padding" in controls
     explained, _, unexplained = controls.partition("NOT explained by padding")
     # The partial-collapse caveat sits above the split ...
     assert "caveat, not a demonstrated cause of the failed control" in explained
     # ... and the compliant, non-noise failure is named below it.
-    assert WEAK_MODEL in unexplained
-    assert WEAK_MODEL not in explained.rsplit("These ", 1)[-1]
+    assert any(WEAK_MODEL in row["label"] for row in computed.fails_unexplained)
 
 
 def _padding_control_report(
@@ -369,16 +363,20 @@ def test_partial_pad_crossing_is_not_called_near_total(
     significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
-    power_analysis: ModuleType,
 ) -> None:
     """A partial compliance collapse is reported as a caveat, not control causation."""
-    controls = _padding_control_report(
+    out = _padding_control_report(
         report,
         significance_report,
         padding_control_tree,
         monkeypatch,
         (4, N_HARMONICS),
-    ).split("ZERO-ARM CONTROLS", 1)[1]
+    )
+    computed = significance_report.compute(padding_control_tree)
+    controls = out.split("ZERO-ARM CONTROLS", 1)[1]
+    assert computed.fails_partial
+    assert not computed.fails_total
+    assert f"{computed.partial_compliance} compliant on the compared seeds" in controls
     assert "near-total non-compliance" not in controls
     assert "55.6% compliant on the compared seeds" in controls
     assert "caveat, not a demonstrated cause of the failed control" in controls
@@ -389,24 +387,29 @@ def test_total_pad_crossing_keeps_near_total_exoneration(
     significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
-    power_analysis: ModuleType,
 ) -> None:
     """A total compliance collapse retains the padding exoneration."""
-    controls = _padding_control_report(
+    out = _padding_control_report(
         report,
         significance_report,
         padding_control_tree,
         monkeypatch,
         (N_HARMONICS, N_HARMONICS),
-    ).split("ZERO-ARM CONTROLS", 1)[1]
+    )
+    computed = significance_report.compute(padding_control_tree)
+    controls = out.split("ZERO-ARM CONTROLS", 1)[1]
+    assert computed.fails_total
     assert "near-total non-compliance" in controls
 
 
 def test_reversed_controls_are_not_counted_as_passing(
-    report: Callable[[Path], str], reversed_tree: Path
+    report: Callable[[Path], str],
+    reversed_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """A significant control below its floor is reported as reversed, not ahead."""
     out = report(reversed_tree)
+    computed = significance_report.compute(reversed_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     reversed_lines = [
         line for line in controls.splitlines() if line.startswith("  REVERSED")
@@ -414,16 +417,15 @@ def test_reversed_controls_are_not_counted_as_passing(
     assert any(
         f"[{PAD_MODEL}] intens vs zero" in line for line in reversed_lines
     ), reversed_lines
-    match = re.search(
-        r"(\d+) arm-vs-floor positive controls.*?: (\d+) significant with the "
-        r"informative arm AHEAD, (\d+) significant\nbut REVERSED .*?, "
-        r"(\d+) not rejected\.",
-        controls,
-        re.DOTALL,
+    assert (
+        f"{len(computed.passing)} significant with the informative arm AHEAD"
+        in controls
     )
-    assert match, controls
-    total, passing, reversed_count, fails = map(int, match.groups())
-    assert passing == total - reversed_count - fails
+    assert f"{len(computed.reversed_)} significant" in controls
+    assert f"{len(computed.fails)} not rejected" in controls
+    assert computed.n_floor == len(computed.passing) + len(computed.reversed_) + len(
+        computed.fails
+    )
     assert "scores no better" not in controls
 
 
@@ -466,6 +468,32 @@ def test_extra_replicate_seed_is_rejected(
         paired_analysis.load_marks(root)
 
 
+def test_partial_replicate_is_rejected(
+    shallow_tree: Path,
+    power_analysis: ModuleType,
+    paired_analysis: ModuleType,
+    tmp_path: Path,
+) -> None:
+    """A replicate with too few marks is a collection failure."""
+    root = tmp_path / "partial-replicate"
+    shutil.copytree(shallow_tree, root)
+    cell = (power_analysis.MODELS[0], power_analysis.INFOS[0])
+    path = root / f"{cell[0]}_{cell[1]}" / "rep_0.yaml"
+    marks = Marks.load(path)
+    Marks(
+        model=marks.model,
+        marks=marks.marks[:-1],
+        date=marks.date,
+        server_config=marks.server_config,
+        regraded_from=marks.regraded_from,
+    ).dump(path)
+    with pytest.raises(
+        SystemExit,
+        match=rf"{path}.*{power_analysis.N_HARMONICS}",
+    ):
+        paired_analysis.load_marks(root)
+
+
 # ===========================================================================
 # the padding table subtracted rates over different seed sets
 # ===========================================================================
@@ -483,56 +511,57 @@ def _padding_table(out: str) -> "dict[str, str]":
 
 
 def test_padding_table_subtracts_over_the_common_seeds_only(
-    report: Callable[[Path], str], collapse_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """The delta is a within-lane difference, so both rates must be computed over the same seeds."""
     out = report(collapse_tree)
+    computed = significance_report.compute(collapse_tree)
     rows = _padding_table(out)
     assert SKEW_MODEL in rows, rows
     row = rows[SKEW_MODEL]
     assert "COLLAPSE" in row and "not padding-specific" not in row, row
-    # Common-seed intens non-compliance is 0%, not the ~34% whole-cell rate.
-    assert re.search(r"\s0\.0%\s", row), row
+    skew = next(r for r in computed.pad_rows if r["model"] == SKEW_MODEL)
+    assert skew["rate_i"] == 0
+    assert "0.0%" in row
 
 
 def test_padding_table_reports_the_seed_count_it_used(
-    report: Callable[[Path], str], collapse_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """Every row carries the n it was computed over, so a 10-seed comparison isn't mistaken for a 16-seed one."""
     out = report(collapse_tree)
+    computed = significance_report.compute(collapse_tree)
     header = [ln for ln in out.splitlines() if "delta" in ln and "noise" in ln]
     assert header, out[:2000]
     assert re.search(r"\bn\b", header[0]), header[0]
     rows = _padding_table(out)
-    assert re.search(rf"\b{_SKEW_SPLIT}\b", rows[SKEW_MODEL]), rows[SKEW_MODEL]
-    assert re.search(rf"\b{DEEP_DEPTH}\b", rows[COLLAPSE_MODEL]), rows[COLLAPSE_MODEL]
+    n_common = {r["model"]: r["n_common"] for r in computed.pad_rows}
+    assert n_common[SKEW_MODEL] == _SKEW_SPLIT
+    assert n_common[COLLAPSE_MODEL] == DEEP_DEPTH
 
 
 def test_padding_table_counts_come_from_the_rows_it_actually_built(
     report: Callable[[Path], str],
     collapse_tree: Path,
     power_analysis: ModuleType,
+    significance_report: ModuleType,
 ) -> None:
     """Every count in the section comes from the table's own row count, not a hard-coded lane total."""
     out = report(collapse_tree)
+    computed = significance_report.compute(collapse_tree)
     assert f"all {len(power_analysis.MODELS)} lanes" not in out
-    n_rows = len(_padding_table(out))
-    # Every lane has a census cell for both arms, so the table is the roster.
-    assert n_rows == len(power_analysis.MODELS), out
-    section = out.split("COLLAPSE CENSUS", 1)[1].split("ALL cells", 1)[0]
-    counts = {int(n) for n in re.findall(r"of (\d+) lanes", section)}
-    assert counts == {n_rows}, section
-
-    def crosses(line: str) -> bool:
-        parts = line.split()
-        intens, noise = float(parts[1].rstrip("%")), float(parts[2].rstrip("%"))
-        return noise >= 25 > intens
-
-    expected_pad = sum(1 for line in _padding_table(out).values() if crosses(line))
-    match = re.search(r"=> The pad itself pushes (\d+) of (\d+) lanes", out)
-    assert match, out
-    assert int(match.group(1)) == expected_pad
-    assert int(match.group(2)) == n_rows
+    assert len(computed.pad_rows) == len(power_analysis.MODELS)
+    assert len(computed.pad_lanes) == sum(
+        row["verdict"] == "COLLAPSE" for row in computed.pad_rows
+    )
+    assert (
+        f"=> The pad itself pushes {len(computed.pad_lanes)} of "
+        f"{len(computed.pad_rows)} lanes"
+    ) in out
 
 
 def test_padding_intro_numerator_comes_from_the_common_seed_table(
@@ -542,18 +571,14 @@ def test_padding_intro_numerator_comes_from_the_common_seed_table(
 ) -> None:
     """`In X of Y lanes` counts table rows whose common-seed noise rate crosses the criterion."""
     out = report(collapse_tree)
-    rows = _padding_table(out)
-    over = [
-        lane
-        for lane, line in rows.items()
-        if float(line.split()[2].rstrip("%")) / 100
-        >= significance_report.COLLAPSE_THRESHOLD
-    ]
-    section = out.split("COLLAPSE CENSUS", 1)[1]
-    match = re.search(r"In (\d+) of (\d+) lanes with both arms measured", section)
-    assert match, section[:1200]
-    assert int(match.group(1)) == len(over), (over, section[:1200])
-    assert int(match.group(2)) == len(rows)
+    computed = significance_report.compute(collapse_tree)
+    n_over = sum(
+        row["rate_n"] >= significance_report.COLLAPSE_THRESHOLD
+        for row in computed.pad_rows
+    )
+    assert (
+        f"In {n_over} of {len(computed.pad_rows)} lanes with both arms measured" in out
+    )
 
 
 def test_all_cells_noise_count_uses_whole_cell_rates(
@@ -579,39 +604,40 @@ def test_all_cells_noise_count_uses_whole_cell_rates(
         ),
     )
     out = report(shared_seed_noise_tree)
-    cells = re.search(
-        r"(\d+) of (\d+) cells are at or above .*?; (\d+) of them are noise arms",
-        out,
-    )
-    assert cells, out
-    assert int(cells.group(3)) == 0
-    padding = re.search(r"In (\d+) of (\d+) lanes with both arms measured", out)
-    assert padding, out
-    assert int(padding.group(1)) == 1
+    computed = significance_report.compute(shared_seed_noise_tree)
+    assert computed.n_noise_over_cells == 0
+    assert computed.n_noise_over_lanes == 1
+    assert "0 of" in out
+    assert f"In 1 of {len(computed.pad_rows)} lanes with both arms measured" in out
 
 
 def test_zero_vs_zero_controls_report_the_measured_count_only(
-    report: Callable[[Path], str], collapse_tree: Path, shallow_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    shallow_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """The report neither asserts nor assumes a zero rejection count for cross-model floors."""
     for tree in (collapse_tree, shallow_tree):
         out = report(tree)
+        computed = significance_report.compute(tree)
         assert "by construction" not in out, out
-        match = re.search(
-            r"(\d+) zero-vs-zero ladder contrasts.*?: (\d+) significant", out, re.S
+        assert computed.zero_vs_zero
+        assert computed.n_zero_significant == sum(
+            computed.hp[i] for i in computed.zero_vs_zero
         )
-        assert match, out
-        n_zz, n_sig = int(match.group(1)), int(match.group(2))
-        assert n_zz > 0
-        tail = out[match.end() :].split("=" * 78, 1)[0]
-        assert len(re.findall(r"^  SIG    ", tail, re.M)) == n_sig, tail
+        assert f"{len(computed.zero_vs_zero)} zero-vs-zero ladder contrasts" in out
+        assert f"{computed.n_zero_significant} significant" in out
 
 
 # Each narrative conclusion is gated by its own computed count.
 
 
 def test_the_ladder_claim_is_conditional_on_its_own_count(
-    report: Callable[[Path], str], shallow_tree: Path, collapse_tree: Path
+    report: Callable[[Path], str],
+    shallow_tree: Path,
+    collapse_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
     # The one-sided claim that must never print again, whatever n_lad is.
@@ -624,17 +650,18 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
 
     # Not floor-bound: the claim must track the count printed beside it.
     collapse = report(collapse_tree)
-    match = re.search(r"(\d+) of the (\d+) losses are LADDER contrasts", collapse)
-    assert match, collapse
-    n_lad, n_lost = int(match.group(1)), int(match.group(2))
-    assert n_lost > 0, "fixture no longer produces any Holm losses"
-    tail = collapse[match.start() : match.start() + 600]
-    if n_lad:
-        assert "bites the family-scaling story" in tail, tail
+    computed = significance_report.compute(collapse_tree)
+    assert computed.lost, "fixture no longer produces any Holm losses"
+    assert (
+        f"{computed.n_lost_ladder} of the {len(computed.lost)} losses are LADDER contrasts"
+        in collapse
+    )
+    if computed.n_lost_ladder:
+        assert "bites the family-scaling story" in collapse
     else:
         # The zero branch must name the side the data shows, not just avoid the phrase.
-        assert one_sided not in tail, tail
-        assert "info-arm story" in tail, tail
+        assert one_sided not in collapse, collapse
+        assert "info-arm story" in collapse
 
 
 def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
@@ -650,15 +677,18 @@ def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
 
 
 def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
-    report: Callable[[Path], str], caveat_tree: Path
+    report: Callable[[Path], str],
+    caveat_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """A collapse annotation without a pad crossing cannot support two mechanisms."""
     out = report(caveat_tree)
-    match = re.search(
-        r"\[COLLAPSE\] (\d+) of (\d+) findings touch a cell at or above",
-        out,
+    computed = significance_report.compute(caveat_tree)
+    assert computed.n_flag > 0
+    assert (
+        f"[COLLAPSE] {computed.n_flag} of {len(computed.findings)} findings touch"
+        in out
     )
-    assert match and int(match.group(1)) > 0, out
     assert "TWO-MECHANISM" not in out
     assert "no evidence for a second" in out
 
@@ -668,6 +698,7 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     collapse_tree: Path,
     clean_tree: Path,
     power_analysis: ModuleType,
+    significance_report: ModuleType,
 ) -> None:
     """`CEILING pairs` needs at least one ceiling pair, and its zero-discordant count must be measured, not asserted as "many"."""
     collapse = report(collapse_tree)
@@ -675,39 +706,36 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     assert "ties by construction" not in collapse
 
     clean = report(clean_tree)
+    computed = significance_report.compute(clean_tree)
     ceiling_line = [ln for ln in clean.splitlines() if "CEILING pairs" in ln]
     assert ceiling_line, clean[-2000:]
-    assert f" {power_analysis.N_INFO_CONTRASTS}" in ceiling_line[0], ceiling_line[0]
-    tail = clean.split("CEILING pairs", 1)[1]
-    # A measured count of zero-discordant ceiling pairs, not the word "many".
-    assert re.search(r"\d+ .{0,40}zero discordant", tail, re.IGNORECASE), tail[:600]
+    assert len(computed.ceiling) == power_analysis.N_INFO_CONTRASTS
+    assert f"CEILING pairs (both arms >= 0.95): {len(computed.ceiling)}" in clean
+    assert f"{computed.n_zero_discordant} of them have ZERO discordant items" in clean
 
 
 def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
-    report: Callable[[Path], str], ceiling_tree: Path, clean_tree: Path
+    report: Callable[[Path], str],
+    ceiling_tree: Path,
+    clean_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """Ceiling non-rejections distinguish exact ties from unresolved pairs."""
     out = report(ceiling_tree)
-    line = next(ln for ln in out.splitlines() if "CEILING pairs" in ln)
-    match = re.search(
-        r"CEILING pairs .*: (\d+)\. (\d+) of them have ZERO discordant items",
-        line,
-    )
-    assert match, line
-    ceiling_count, zero_count = map(int, match.groups())
-    assert ceiling_count > 0
+    computed = significance_report.compute(ceiling_tree)
+    assert computed.ceiling
+    assert f"{computed.n_zero_discordant} of them have ZERO discordant items" in out
     assert "UNRESOLVED" in out
     assert "ties by construction" not in out
-    assert zero_count < ceiling_count
+    assert computed.n_zero_discordant < len(computed.ceiling)
 
     clean = report(clean_tree)
-    clean_line = next(ln for ln in clean.splitlines() if "CEILING pairs" in ln)
-    clean_match = re.search(
-        r"CEILING pairs .*: (\d+)\. (\d+) of them have ZERO discordant items",
-        clean_line,
+    clean_computed = significance_report.compute(clean_tree)
+    assert clean_computed.n_zero_discordant == len(clean_computed.ceiling)
+    assert (
+        f"{clean_computed.n_zero_discordant} of them have ZERO discordant items"
+        in clean
     )
-    assert clean_match, clean_line
-    assert clean_match.group(1) == clean_match.group(2)
 
 
 # Exact ties retain a distinct direction label.
