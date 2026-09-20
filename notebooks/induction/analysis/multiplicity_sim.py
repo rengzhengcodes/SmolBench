@@ -153,7 +153,7 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
         found = {}
         d = step
         while d <= min(p_a, 0.60) + 1e-9 and len(found) < 2:
-            p_b = p_a - d
+            p_b = max(0.0, p_a - d)
             sa = rng.binomial(N_REPLICATES, p_a, (n_sims, N_HARMONICS))
             sb = rng.binomial(N_REPLICATES, p_b, (n_sims, N_HARMONICS))
             st = cmh_stat(sa, sb, N_REPLICATES)
