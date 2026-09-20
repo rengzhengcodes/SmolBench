@@ -6,18 +6,26 @@ Seed-level sign-flips carry inference because items share seeds; CMH and McNemar
 import sys
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 # Required when loaded by path rather than as ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from power_analysis import (  # noqa: E402  (path shim must precede the import)
+from _power_common import apply_corrections
+from scipy.stats import chi2
+
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
+
+from power_analysis import (  # noqa: E402  (path shim must precede the import)  # isort: skip
     ALPHA,
+    BASE_SEED,
     INFOS,
     MODELS,
     N_HARMONICS,
     N_PRIMARY,
+    N_REPLICATES,
     Q_SECONDARY,
     RESULTS_DIR,
     build_primary_contrasts,
@@ -25,16 +33,18 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import)
     cmh_stat,
     mcnemar_exact_p,
 )
-from scipy.stats import chi2
-from statsmodels.stats.multitest import multipletests
-
-from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
-
-#: Absolute depth detects uniform shortfalls that raise the sign-flip floor.
-EXPECTED_R = 30
 
 
-def load_marks() -> tuple[dict, dict, dict]:
+@dataclass(frozen=True)
+class CellMarks:
+    """One map per `(model, info)` cell keyed by seed."""
+
+    correct: dict[tuple[str, str], dict[int, np.ndarray]]
+    valid: dict[tuple[str, str], dict[int, np.ndarray]]
+    compliance: dict[tuple[str, str], dict[int, tuple[str, ...]]]
+
+
+def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
     """Read replicates into per-condition maps.
 
     One parse supplies all views so reports cannot disagree about a replicate.
@@ -44,51 +54,56 @@ def load_marks() -> tuple[dict, dict, dict]:
     SystemExit
         If a condition yields no replicate seeds at all.
     """
-    correct: dict = {}
-    valid: dict = {}
-    compliance: dict = {}
-    store = LocalResultsStore(RESULTS_DIR)
+    correct: dict[tuple[str, str], dict[int, np.ndarray]] = {}
+    valid: dict[tuple[str, str], dict[int, np.ndarray]] = {}
+    compliance: dict[tuple[str, str], dict[int, tuple[str, ...]]] = {}
+    store = LocalResultsStore(results_dir)
+    expected = set(range(BASE_SEED, BASE_SEED + N_REPLICATES))
     for model in MODELS:
         for info in INFOS:
-            # Default args pin the loop's current cell (local keys by tag).
-            def addr_of(seed: int, _m: str = model, _i: str = info) -> ReplicateAddress:
-                return ReplicateAddress(tag=_m, info=_i, seed=seed)
-
             seeds = store.list_seeds(None, model, info)
             if not seeds:
                 # Gate on seeds: missing and empty lanes both lack usable data.
-                cdir = store._path(addr_of(0)).parent
+                cdir = store.path(
+                    ReplicateAddress(tag=model, info=info, seed=BASE_SEED)
+                ).parent
                 raise SystemExit(
                     f"No replicates for ({model}, {info}); no rep_{{seed}}.yaml "
                     f"files in\n  {cdir}\nCall "
                     "InductionExperiment.harness.sync_down() first."
                 )
+            unexpected = sorted(set(seeds) - expected)
+            if unexpected:
+                lane = store.path(
+                    ReplicateAddress(tag=model, info=info, seed=unexpected[0])
+                ).parent
+                raise SystemExit(
+                    f"Unexpected replicate seeds in {lane}: {unexpected}; "
+                    f"expected {min(expected)}–{max(expected)}"
+                )
             c_by_seed, v_by_seed, k_by_seed = {}, {}, {}
             for seed in seeds:
                 # Reuse one load for every view.
-                marks = store.load_marks(addr_of(seed)).marks
+                addr = ReplicateAddress(tag=model, info=info, seed=seed)
+                path = store.path(addr)
+                marks = store.load_marks(addr).marks
                 scores = [m.score for m in marks]
                 if len(scores) != N_HARMONICS:
-                    # Skip partial replicates to preserve harmonic alignment.
-                    print(
-                        f"  WARNING: {store._path(addr_of(seed))} has "
-                        f"{len(scores)} scores, expected {N_HARMONICS} "
-                        f"-- skipping this replicate",
-                        file=sys.stderr,
+                    raise SystemExit(
+                        f"Replicate {path} has {len(scores)} marks, expected "
+                        f"{N_HARMONICS}; collection failed"
                     )
-                    continue
                 c_by_seed[seed] = np.array([s == 1 for s in scores])
                 v_by_seed[seed] = np.array([s is not None for s in scores])
                 k_by_seed[seed] = tuple(m.compliance for m in marks)
             correct[(model, info)] = c_by_seed
             valid[(model, info)] = v_by_seed
             compliance[(model, info)] = k_by_seed
-    return correct, valid, compliance
+    return CellMarks(correct, valid, compliance)
 
 
 def aligned(
-    correct: dict,
-    valid: dict,
+    marks: CellMarks,
     key_a: tuple[str, str],
     key_b: tuple[str, str],
     drop_invalid: bool,
@@ -113,19 +128,19 @@ def aligned(
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
         Matched correct, valid, seed-index, and harmonic-index arrays.
     """
-    seeds = sorted(set(correct[key_a]) & set(correct[key_b]))
+    seeds = sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
     if not seeds:
         # Empty overlap is a data failure, not a NumPy error.
         raise SystemExit(
             f"No common seeds between {key_a} and {key_b}; one lane has no "
             "usable replicates -- re-run sync_down()."
         )
-    a = np.array([correct[key_a][s] for s in seeds])  # (n_seeds, 9)
-    b = np.array([correct[key_b][s] for s in seeds])
+    a = np.array([marks.correct[key_a][s] for s in seeds])
+    b = np.array([marks.correct[key_b][s] for s in seeds])
     keep = np.ones_like(a, dtype=bool)
     if drop_invalid:
-        keep = np.array([valid[key_a][s] for s in seeds]) & np.array(
-            [valid[key_b][s] for s in seeds]
+        keep = np.array([marks.valid[key_a][s] for s in seeds]) & np.array(
+            [marks.valid[key_b][s] for s in seeds]
         )
     seed_idx = np.repeat(np.arange(len(seeds)), N_HARMONICS).reshape(a.shape)
     # Carry the harmonic through the mask: a survivor's position is unrecoverable from the retained count.
@@ -213,14 +228,6 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     return float(chi2.sf(cmh_stat(succ_a, succ_b, counts), df=1))
 
 
-def _reject(pvals: np.ndarray, alpha: float, method: str) -> np.ndarray:
-    """Return the statsmodels rejection mask for `method` at level `alpha`."""
-    reject, _pvals_corrected, _alphac_sidak, _alphac_bonf = multipletests(
-        pvals, alpha=alpha, method=method
-    )
-    return np.asarray(reject, dtype=bool)
-
-
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Return Holm's FWER rejection mask.
 
@@ -238,8 +245,7 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    # Monotone thresholds make unstable ordering of ties harmless.
-    return _reject(pvals, alpha, "holm")
+    return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), alpha)["Holm"][0]
 
 
 def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
@@ -259,7 +265,7 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    return _reject(pvals, q, "fdr_bh")
+    return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), q)["BH"][0]
 
 
 def design_effect(
@@ -298,8 +304,7 @@ def design_effect(
 
 
 def contrast_row(
-    correct: dict,
-    valid: dict,
+    marks: CellMarks,
     key_a: tuple[str, str],
     key_b: tuple[str, str],
     drop_invalid: bool = False,
@@ -324,7 +329,7 @@ def contrast_row(
         ``p_unpaired`` (harmonic-stratified CMH), ``p_cluster`` (seed sign-flip)
         and ``de`` (`design_effect`).
     """
-    a, b, sidx, hidx = aligned(correct, valid, key_a, key_b, drop_invalid)
+    a, b, sidx, hidx = aligned(marks, key_a, key_b, drop_invalid)
     nb, nc = int((a & ~b).sum()), int((~a & b).sum())
     return {
         "key_a": key_a,
@@ -335,7 +340,7 @@ def contrast_row(
         "b": nb,
         "c": nc,
         "disc": (nb + nc) / max(a.size, 1),
-        "seeds": sorted(set(correct[key_a]) & set(correct[key_b])),
+        "seeds": sorted(set(marks.correct[key_a]) & set(marks.correct[key_b])),
         "n_seeds": int(np.unique(sidx).size),
         "p_item": mcnemar_exact_p(nb, nc),
         "p_unpaired": cmh_unpaired_p(a, b, hidx),
@@ -349,25 +354,24 @@ def _acc(x: float | None) -> str:
     return "  n/a" if x is None else f"{x:.3f}"
 
 
-def main() -> None:
+def main(results_dir: Path = RESULTS_DIR) -> None:
     """Run the paired re-analysis report."""
     print("Loading marks ...", flush=True)
-    # Load all views from one parse for the census consumer.
-    correct, valid, _compliance = load_marks()
-    depths = {k: len(v) for k, v in correct.items()}
+    marks = load_marks(results_dir)
+    depths = {k: len(v) for k, v in marks.correct.items()}
     print(
-        f"  {len(correct)} conditions; replicate depth "
+        f"  {len(marks.correct)} conditions; replicate depth "
         f"min={min(depths.values())} max={max(depths.values())}"
     )
     short = sorted({m for (m, _), n in depths.items() if n < max(depths.values())})
     if short:
         print(f"  still collecting (compared on their common seeds only): {short}")
     # The shallowest lane sets each shared-seed sign-flip resolution floor.
-    if min(depths.values()) < EXPECTED_R:
+    if min(depths.values()) < N_REPLICATES:
         print(
             f"  WARNING: shallowest lane has {min(depths.values())} replicates "
             f"and the deepest has {max(depths.values())}, but the study "
-            f"collects {EXPECTED_R}. A contrast is only as deep as its shorter "
+            f"collects {N_REPLICATES}. A contrast is only as deep as its shorter "
             f"arm, so the sign-flip floor reaches 2/2^{min(depths.values())} "
             f"and Holm may be unable to reject ANYTHING (including the positive "
             f"controls) on the contrasts that touch a short lane. This is an "
@@ -396,7 +400,7 @@ def main() -> None:
             rows.append(
                 {
                     "label": label,
-                    **contrast_row(correct, valid, key_a, key_b, drop_invalid),
+                    **contrast_row(marks, key_a, key_b, drop_invalid),
                 }
             )
 
@@ -500,7 +504,7 @@ def main() -> None:
 
     # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()
-    sec_rows = [contrast_row(correct, valid, ka, kb) for _label, ka, kb in sec]
+    sec_rows = [contrast_row(marks, ka, kb) for _label, ka, kb in sec]
     n_disc = {
         k: bh(np.array([r[k] for r in sec_rows])).sum()
         for k in ("p_cluster", "p_unpaired", "p_item")

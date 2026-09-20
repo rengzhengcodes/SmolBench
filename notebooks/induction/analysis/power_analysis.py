@@ -12,6 +12,7 @@ analysis, not a power statement about the sign-flip test.
 """
 
 import functools
+import math
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -20,18 +21,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import (
-    ALPHA,
-    POWER_TARGETS,
-    SEED,
-    fmt_r,
-    results_dir,
-)
-from scipy.stats import binom, chi2
+import statsmodels.api as sm
+from scipy.stats import binom, chi2, fisher_exact, norm
+from statsmodels.tools.sm_exceptions import PerfectSeparationError
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 from smolbench.evals.study_config import families as _study_families
 from smolbench.evals.study_config import roster_keys, tag_for
+
+from _power_common import (  # isort: skip
+    ALPHA,
+    POWER_TARGETS,
+    SEED,
+    apply_corrections,
+    fmt_r,
+    results_dir,
+)
 
 # Derive tags from the committed configuration.
 ROSTER_KEYS = tuple(roster_keys())
@@ -43,23 +48,12 @@ FAMILIES: dict[str, tuple[str, ...]] = {
 }
 
 INFOS = ("intens", "extens", "noise_intens", "zero")
+STUDY = "induction"
+RESULTS_DIR = results_dir(STUDY)
+_INITIAL_RESULTS_DIR = RESULTS_DIR
+BASE_SEED = 0
+N_REPLICATES = 30
 N_HARMONICS = 9
-PILOT_SEED = 0  # Equals _power_common.SEED only because the study is locked to BASE_SEED=0; unrelated.
-
-RESULTS_DIR = results_dir(__file__, up=1)
-
-# Warn when sync and analysis use different roots.
-from smolbench.evals.results_store import repo_root as _installed_repo_root
-
-_writer_results = _installed_repo_root() / "notebooks" / "induction" / "results"
-if _writer_results.resolve() != RESULTS_DIR.resolve():
-    print(
-        f"WARNING: this script reads {RESULTS_DIR}\n"
-        f"         but sync_down() writes {_writer_results}\n"
-        "         (different checkouts?). A sync from this shell will not "
-        "land where this script looks.",
-        file=sys.stderr,
-    )
 
 # Replicates are the sampling unit; more harmonics would change the task.
 N_SIMS = 10_000  # Monte Carlo SE of a power estimate <= 0.005.
@@ -120,30 +114,38 @@ PREREGISTERED_MODELS = (
     "ds_pro",
 )
 
-N_PRIMARY = 210  # 84 ladder (7x4x3) + 126 info (21x6).
+N_RUNGS = 3
+N_INFOS = len(INFOS)
+N_FAMILIES = len(FAMILIES)
+N_LADDERS = N_FAMILIES * N_INFOS
+N_LADDER_CONTRASTS = N_LADDERS * math.comb(N_RUNGS, 2)
+N_INFO_CONTRASTS = len(MODELS) * math.comb(N_INFOS, 2)
+N_PRIMARY = 210  # N_LADDER_CONTRASTS ladder + N_INFO_CONTRASTS info.
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
 # Size BH contrasts at the conservative rank-1 threshold.
 Q_SECONDARY = 0.05
-N_SECONDARY = 63  # 3 rung levels x C(7,2)=21 family pairs.
+N_SECONDARY = 63  # N_RUNGS rung levels x C(N_FAMILIES, 2) family pairs.
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
-N_FAMILIES = len(FAMILIES)  # 7
 ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 
 
-def load_outcomes() -> dict[tuple[str, str], np.ndarray]:
+def load_outcomes(
+    results_dir: Path = RESULTS_DIR,
+) -> dict[tuple[str, str], np.ndarray]:
     """Load pilot outcomes by model and information type.
 
     ``LocalResultsStore`` excludes trace text from marks.
     """
+    if results_dir == _INITIAL_RESULTS_DIR:
+        results_dir = RESULTS_DIR
     outcomes: dict[tuple[str, str], np.ndarray] = {}
-    # Honor a rebound RESULTS_DIR.
-    store = LocalResultsStore(RESULTS_DIR)
+    store = LocalResultsStore(results_dir)
     for model in MODELS:
         for info in INFOS:
-            addr = ReplicateAddress(tag=model, info=info, seed=PILOT_SEED)
-            path = store._path(addr)
+            addr = ReplicateAddress(tag=model, info=info, seed=BASE_SEED)
+            path = store.path(addr)
             if not store.exists(addr):
                 # sync_down() pulls S3 results into the rep_{seed}.yaml layout this script reads.
                 raise SystemExit(
@@ -428,8 +430,6 @@ def fisher_check(
     float
         The fraction of `N_SIMS` simulations rejecting at `alpha`.
     """
-    from scipy.stats import fisher_exact
-
     total = n_reps * N_HARMONICS
     succ_a = rng.binomial(n_reps, rates_a, size=(N_SIMS, rates_a.size)).sum(axis=1)
     succ_b = rng.binomial(n_reps, rates_b, size=(N_SIMS, rates_b.size)).sum(axis=1)
@@ -452,8 +452,6 @@ def _equivalence_power_curve(
     n_sims: int,
 ) -> dict[int, float]:
     """Estimate nested Agresti–Caffo equivalence power at every replicate count."""
-    from scipy.stats import norm
-
     z = norm.isf(alpha)
     trials_a = (
         rng.random((n_sims, MAX_REPLICATES, common.size), dtype=np.float32) < common
@@ -573,7 +571,7 @@ def omnibus_interaction_power(
     rates: dict[tuple[str, str], np.ndarray],
     n_reps: int,
     n_sims: int = N_SIMS_OMNIBUS_DIAGNOSTIC,
-) -> float:
+) -> tuple[float, int]:
     """Estimate model-by-information interaction power.
 
     The 60-df test is diagnostic, not a gate. Failed fits count as non-rejections.
@@ -589,11 +587,9 @@ def omnibus_interaction_power(
 
     Returns
     -------
-    float
-        Rejection fraction over `n_sims`.
+    tuple[float, int]
+        Rejection fraction and skipped-fit count.
     """
-    import statsmodels.api as sm
-
     # Isolate diagnostic draws from sizing draws.
     rng = np.random.default_rng(SEED + 1)
     # Design matrices are fixed across simulations.
@@ -621,17 +617,19 @@ def omnibus_interaction_power(
     cell_rates = np.array([rates[(m, i)][k] for m, i, k in cells])
 
     rejections = 0
+    n_skipped = 0
     for _ in range(n_sims):
         succ = rng.binomial(n_reps, cell_rates)
         endog = np.column_stack([succ, n_reps - succ])
         try:
             llf_null = sm.GLM(endog, x_null, family=sm.families.Binomial()).fit().llf
             llf_full = sm.GLM(endog, x_full, family=sm.families.Binomial()).fit().llf
-        except Exception:  # Perfect separation at tiny n_reps.
+        except PerfectSeparationError:
+            n_skipped += 1
             continue
         if 2 * (llf_full - llf_null) > crit:
             rejections += 1
-    return rejections / n_sims
+    return rejections / n_sims, n_skipped
 
 
 def build_primary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
@@ -942,7 +940,7 @@ def primary_contrasts_table(
     r_star = max(feasible)
     n_censored = len(results) - len(feasible)
     label_w = max(len(name) for name, *_ in results)
-    n_ladder = N_FAMILIES * len(INFOS) * len(list(combinations(range(3), 2)))  # 84
+    n_ladder = N_LADDER_CONTRASTS
     return {
         "results": results,
         "r_star": r_star,
@@ -1233,7 +1231,7 @@ def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
 
 def interaction_diagnostic(
     rates: dict[tuple[str, str], np.ndarray], r_star: int
-) -> tuple[float, float]:
+) -> tuple[tuple[float, int], tuple[float, int]]:
     """Compute interaction-diagnostic power at recommended R and R=1.
 
     Parameters
@@ -1245,27 +1243,33 @@ def interaction_diagnostic(
 
     Returns
     -------
-    tuple[float, float]
-        ``(power_at_r_star, power_at_1)``.
+    tuple[tuple[float, int], tuple[float, int]]
+        ``((power_at_r_star, skipped_at_r_star), (power_at_1, skipped_at_1))``.
     """
     return omnibus_interaction_power(rates, r_star), omnibus_interaction_power(rates, 1)
 
 
-def render_interaction_diagnostic(data: tuple[float, float], r_star: int) -> None:
+def render_interaction_diagnostic(
+    data: tuple[tuple[float, int], tuple[float, int]], r_star: int
+) -> None:
     """Print the interaction diagnostic `interaction_diagnostic` returns."""
-    p_omni, p_omni_1 = data
+    (p_omni, skipped), (p_omni_1, skipped_1) = data
     print()
     print(
         f"Omnibus model x info-type interaction (logit LR test, harmonic "
         f"fixed effects, alpha={ALPHA}, df=60; design-level diagnostic, not "
-        f"a gate) at R={r_star}: power = {p_omni:.3f}"
+        f"a gate) at R={r_star}: power = {p_omni:.3f} "
+        f"({skipped} of {N_SIMS_OMNIBUS_DIAGNOSTIC} fits skipped: perfect separation)"
     )
-    print(f"  ... at the current R=1: power = {p_omni_1:.3f}")
+    print(
+        f"  ... at the current R=1: power = {p_omni_1:.3f} "
+        f"({skipped_1} of {N_SIMS_OMNIBUS_DIAGNOSTIC} fits skipped: perfect separation)"
+    )
 
 
-def main() -> None:
+def main(results_dir: Path = RESULTS_DIR) -> None:
     """Run and print the family-ladder power analysis."""
-    outcomes = load_outcomes()
+    outcomes = load_outcomes(results_dir)
     rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
     pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}
 
