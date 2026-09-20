@@ -55,6 +55,10 @@ from smolbench.evals.results_store import LocalResultsStore
 EQ_R_GRID = (N_REPLICATES, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250)
 EQ_R_GRID += (300, 360, 430, 520, 620, 750, 900)
 
+#: Paired-vs-unpaired power gap treated as equal in the eq_R search: about one
+#: Monte-Carlo standard error of a power estimate near 0.8 at N_SIMS.
+EQ_R_TOL = 0.005
+
 # Include the unclustered baseline and plausible clustering range.
 ICC_GRID = (0.0, 0.2, 0.4)
 
@@ -474,7 +478,9 @@ def part2(
     """Measure pairing gains over unpaired testing.
 
     Compare simulated `design_effect` at each `icc` with the study
-    estimate.
+    estimate. ``eq_R`` is searched only when paired power exceeds unpaired
+    by more than `EQ_R_TOL`; smaller gaps are within Monte-Carlo error and
+    reported unsearched at `N_REPLICATES`.
 
     Parameters
     ----------
@@ -494,7 +500,10 @@ def part2(
     print(
         "\n=== PART 2: pairing gain (matched items) ===\n"
         f"  study's own measured design effect: {measured_str} -- compare "
-        f"against each icc block's design_effect_simulated below",
+        f"against each icc block's design_effect_simulated below\n"
+        f"  eq_R: smallest grid R whose unpaired power reaches paired power; "
+        f"gaps <= {EQ_R_TOL} are within Monte-Carlo error and reported "
+        f"unsearched at R={N_REPLICATES}",
         flush=True,
     )
     grid_r = list(EQ_R_GRID)
@@ -511,8 +520,9 @@ def part2(
                         p_a, delta, rho, N_REPLICATES, n_sims, rng, icc=icc
                     )
                     # Smallest R where the unpaired test matches paired power at study depth.
+                    searched = pair > unp + EQ_R_TOL
                     eq_r = None
-                    if pair > unp + 0.005:
+                    if searched:
                         for rr in grid_r:
                             # stats=False: only unpaired power is read here.
                             u2 = _paired_powers(
@@ -529,7 +539,6 @@ def part2(
                                 eq_r = rr
                                 break
                     else:
-                        # eq_searched distinguishes "matched by search" from "unsearched".
                         eq_r = N_REPLICATES
                     rows.append(
                         {
@@ -539,7 +548,7 @@ def part2(
                             "power_unpaired": unp,
                             "power_paired": pair,
                             "eq_R": eq_r,
-                            "eq_searched": pair > unp + 0.005,
+                            "eq_searched": searched,
                             "cap": EQ_R_GRID[-1],
                             "phi_binary": phi,
                             "agreement": agree,
@@ -547,10 +556,11 @@ def part2(
                             "icc": icc,
                         }
                     )
+                    suffix = "" if searched else f" (gap <= {EQ_R_TOL}, unsearched)"
                     print(
                         f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
                         f"phi_bin={phi:.3f} agree={agree:.3f} "
-                        f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}",
+                        f"unpaired={unp:.4f} paired={pair:.4f} eqR={eq_r}{suffix}",
                         flush=True,
                     )
         # null calibration of both tests under matched data
