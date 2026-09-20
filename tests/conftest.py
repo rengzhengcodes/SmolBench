@@ -9,7 +9,9 @@ import posixpath
 import re
 import sys
 import threading
+from collections.abc import Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import ModuleType
 from typing import Any, Iterator
 
@@ -17,6 +19,79 @@ import pytest
 
 from smolbench.evals.tokenization import Tokenizer
 from tests._paths import NOTEBOOKS
+
+
+def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
+    """Write `rows` with the production JSONL serializer.
+
+    Sharing `runner.jsonl_line` keeps Unicode and record terminators identical
+    to files emitted by a real deduction sweep.
+
+    Parameters
+    ----------
+    path : Path
+        Destination file.
+    rows : Iterable[dict[str, Any]]
+        JSON-compatible records.
+    """
+    from smolbench.deduction.lean.runner import jsonl_line
+
+    path.write_text("".join(jsonl_line(row) for row in rows))
+
+
+def cell_row(**overrides: Any) -> dict[str, Any]:
+    """Build a full-schema synthetic deduction cell row.
+
+    A shared complete record keeps tests focused on the fields they vary while
+    preserving the production schema expected by downstream scripts.
+
+    Parameters
+    ----------
+    **overrides : Any
+        Values replacing the defaults.
+
+    Returns
+    -------
+    dict[str, Any]
+        Synthetic cell row.
+    """
+    row: dict[str, Any] = {
+        "kind": "cell",
+        "theorem_id": "Mini.theoremA",
+        "file_path": "Mini.lean",
+        "k": 1,
+        "n_total_tactics": 2,
+        "chain": "stepk",
+        "level": 1,
+        "rung": "stepk:1",
+        "replicate_idx": 0,
+        "seed": 0,
+        "model": "model-a",
+        "api_model": "model-a",
+        "provider": "stub",
+        "temperature": 0.7,
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "finish_reason": "stop",
+        "context_chars": 10,
+        "gen_ms": 100,
+        "verify_ms": 0,
+        "candidate_proof": "rfl",
+        "raw_response": "```lean\nrfl\n```",
+        "reasoning_content": None,
+        "verdict": "success",
+        "lean_error": None,
+        "final_state_pp": None,
+        "ground_truth_remaining": "rfl",
+        "error": None,
+        "tactics_applied": 0,
+        "tactics_total": 1,
+        "ms": 0,
+    }
+    row.update(overrides)
+    return row
 
 
 def import_run_study(
@@ -123,7 +198,12 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.server.requests.append(
             {"path": self.path, "body": None, "headers": dict(self.headers)}
         )
-        self._reply({"data": [{"id": "stub-model"}]})
+        if self.path.endswith("/endpoints"):
+            self._reply({"data": {"endpoints": [{"context_length": 100000}]}})
+        elif "/models/" in self.path:
+            self._reply({"context_length": 100000})
+        else:
+            self._reply({"data": [{"id": "stub-model"}]})
 
     def log_message(self, *args: Any) -> None:
         """Suppress request logging in test servers."""
