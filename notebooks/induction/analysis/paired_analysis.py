@@ -14,11 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from _power_common import apply_corrections
-from scipy.stats import chi2
-
-from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
-
-from power_analysis import (  # noqa: E402  (path shim must precede the import)  # isort: skip
+from power_analysis import (  # noqa: E402
     ALPHA,
     BASE_SEED,
     INFOS,
@@ -33,6 +29,9 @@ from power_analysis import (  # noqa: E402  (path shim must precede the import) 
     cmh_stat,
     mcnemar_exact_p,
 )
+from scipy.stats import chi2
+
+from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@ analysis, not a power statement about the sign-flip test.
 import functools
 import math
 import sys
+import warnings
 from itertools import combinations
 from pathlib import Path
 
@@ -22,21 +23,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 import statsmodels.api as sm
+from _power_common import (
+    ALPHA,
+    POWER_TARGETS,
+    SEED,
+    fmt_r,
+    results_dir,
+)
 from scipy.stats import binom, chi2, fisher_exact, norm
-from statsmodels.tools.sm_exceptions import PerfectSeparationError
+from statsmodels.tools.sm_exceptions import (
+    PerfectSeparationError,
+    PerfectSeparationWarning,
+)
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 from smolbench.evals.study_config import families as _study_families
 from smolbench.evals.study_config import roster_keys, tag_for
-
-from _power_common import (  # isort: skip
-    ALPHA,
-    POWER_TARGETS,
-    SEED,
-    apply_corrections,
-    fmt_r,
-    results_dir,
-)
 
 # Derive tags from the committed configuration.
 ROSTER_KEYS = tuple(roster_keys())
@@ -50,7 +52,6 @@ FAMILIES: dict[str, tuple[str, ...]] = {
 INFOS = ("intens", "extens", "noise_intens", "zero")
 STUDY = "induction"
 RESULTS_DIR = results_dir(STUDY)
-_INITIAL_RESULTS_DIR = RESULTS_DIR
 BASE_SEED = 0
 N_REPLICATES = 30
 N_HARMONICS = 9
@@ -138,8 +139,6 @@ def load_outcomes(
 
     ``LocalResultsStore`` excludes trace text from marks.
     """
-    if results_dir == _INITIAL_RESULTS_DIR:
-        results_dir = RESULTS_DIR
     outcomes: dict[tuple[str, str], np.ndarray] = {}
     store = LocalResultsStore(results_dir)
     for model in MODELS:
@@ -622,9 +621,16 @@ def omnibus_interaction_power(
         succ = rng.binomial(n_reps, cell_rates)
         endog = np.column_stack([succ, n_reps - succ])
         try:
-            llf_null = sm.GLM(endog, x_null, family=sm.families.Binomial()).fit().llf
-            llf_full = sm.GLM(endog, x_full, family=sm.families.Binomial()).fit().llf
-        except PerfectSeparationError:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", PerfectSeparationWarning)
+                llf_null = (
+                    sm.GLM(endog, x_null, family=sm.families.Binomial()).fit().llf
+                )
+                llf_full = (
+                    sm.GLM(endog, x_full, family=sm.families.Binomial()).fit().llf
+                )
+        # statsmodels >=0.14 warns on separation and the fit then fails with LinAlgError.
+        except (PerfectSeparationError, np.linalg.LinAlgError):
             n_skipped += 1
             continue
         if 2 * (llf_full - llf_null) > crit:

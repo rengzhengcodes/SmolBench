@@ -1,7 +1,6 @@
-"""Provide synthetic result trees and imported analysis-module fixtures."""
+"""Sibling test directories import root conftest by bare name; a second conftest here would shadow it."""
 
 import hashlib
-import importlib.util
 import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -16,39 +15,23 @@ from smolbench.evals import Mark, Marks
 from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS
 
-_ROOT_CONFTEST = Path(__file__).parents[1] / "conftest.py"
-_ROOT_SPEC = importlib.util.spec_from_file_location(
-    "_smolbench_root_conftest", _ROOT_CONFTEST
-)
-if _ROOT_SPEC is None or _ROOT_SPEC.loader is None:
-    raise ImportError(f"Cannot load {_ROOT_CONFTEST}")
-_ROOT_MODULE = importlib.util.module_from_spec(_ROOT_SPEC)
-_ROOT_SPEC.loader.exec_module(_ROOT_MODULE)
-for _name in (
-    "MergeEverythingTokenizer",
-    "StubServer",
-    "StubTokenizer",
-    "TruncatingTokenizer",
-    "_StubHandler",
-    "chat_completion",
-    "import_run_study",
-):
-    globals()[_name] = getattr(_ROOT_MODULE, _name)
-
 ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
-sys.path.extend(str(path) for path in (NOTEBOOKS, ANALYSIS_DIR))
-import extens_vs_noise
-import multiplicity_sim
-import paired_analysis
-import power_analysis
-import significance_report
+sys.path.insert(0, str(ANALYSIS_DIR))
+sys.path.insert(0, str(NOTEBOOKS))
+import extens_vs_noise  # noqa: E402
+import multiplicity_sim  # noqa: E402
+import paired_analysis  # noqa: E402
+import power_analysis  # noqa: E402
+import run_all  # noqa: E402
+import significance_report  # noqa: E402
 
-#: Sign-flip floor 2/2**6 = 0.031 >> 0.05/210: nothing is rejectable.
+#: Sign-flip floor 2/2**6 is above the primary correction threshold.
 SHALLOW_DEPTH = 6
-#: 2/2**16 = 3.05e-5 < 0.05/210 = 2.381e-4: the normal path is reachable.
+#: 2/2**16 is below the primary correction threshold.
 DEEP_DEPTH = 16
 
 N_HARMONICS = power_analysis.N_HARMONICS
+N_PRIMARY = power_analysis.N_PRIMARY
 
 
 def _marks_for(
@@ -113,6 +96,12 @@ def build_tree(
 def power_analysis() -> ModuleType:
     """Return the power-analysis module."""
     return sys.modules["power_analysis"]
+
+
+@pytest.fixture(scope="session")
+def run_all() -> ModuleType:
+    """Return the analysis driver module."""
+    return sys.modules["run_all"]
 
 
 @pytest.fixture(scope="session")

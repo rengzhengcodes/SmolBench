@@ -13,10 +13,14 @@ from pathlib import Path
 # Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import extens_vs_noise  # noqa: E402
-import paired_analysis  # noqa: E402
+# CHAIN order: each module import-time-checks the ones before it.
+# isort: off
 import power_analysis  # noqa: E402
+import paired_analysis  # noqa: E402
 import significance_report  # noqa: E402
+import extens_vs_noise  # noqa: E402
+
+# isort: on
 
 #: Modules permit direct calls and banner names.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)

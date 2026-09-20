@@ -1,13 +1,11 @@
 """Compare extensional and noise-padded intensional prompts per model.
 
 Token matching separates information from length; non-compliance identifies broken controls.
-Seed-level tests: the 30 seeds are the independent unit; item-level McNemar would treat each
-seed's 9 harmonic items, which share one answer vector, as independent. They stay in the
-210-contrast family because re-correcting at m=21 after picking the subset would be
+Seed-level tests use the registered replicates as the independent unit; item-level McNemar
+would treat each seed's harmonic items, which share one answer vector, as independent. They
+stay in the primary contrast family because re-correcting after picking the subset would be
 data-dependent family sizing.
 """
-
-# isort: skip_file
 
 import sys
 from enum import StrEnum
@@ -15,17 +13,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from collections.abc import Mapping  # noqa: E402
-
 import numpy as np
-from paired_analysis import build_primary_contrasts  # noqa: E402
-from paired_analysis import contrast_row, holm, load_marks
-
-# Import the owned threshold to avoid a divergent local value.
-from power_analysis import RESULTS_DIR  # noqa: E402
-from power_analysis import ALPHA, MODELS  # noqa: E402
-from significance_report import COLLAPSE_THRESHOLD  # noqa: E402
-from significance_report import common_seed_rate, compliance_census, hochberg
+from paired_analysis import (  # noqa: E402
+    build_primary_contrasts,
+    contrast_row,
+    holm,
+    load_marks,
+)
+from power_analysis import ALPHA, MODELS, RESULTS_DIR  # noqa: E402
+from significance_report import (  # noqa: E402
+    COLLAPSE_THRESHOLD,
+    common_seed_rate,
+    compliance_census,
+    hochberg,
+)
 
 
 class Mechanism(StrEnum):
@@ -38,7 +39,6 @@ class Mechanism(StrEnum):
 
 
 MECHANISMS = tuple(Mechanism)
-_INITIAL_RESULTS_DIR = RESULTS_DIR
 
 
 def mechanism(nc_e: float, nc_n: float) -> str:
@@ -83,7 +83,7 @@ def direction(acc_e: float, acc_n: float) -> str:
 
 
 def nc(
-    census: Mapping[tuple[str, str], dict],
+    census: dict[tuple[str, str], dict],
     key: tuple[str, str],
     seeds: list[int],
 ) -> float:
@@ -104,11 +104,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     Three-way direction labels keep lane and aggregate tallies consistent.
     """
-    if results_dir == _INITIAL_RESULTS_DIR:
-        results_dir = RESULTS_DIR
     marks = load_marks(results_dir)
-    correct, valid = marks.correct, marks.valid
-    compliance = marks.compliance
     census = compliance_census(marks)
 
     # Keep the full family: the displayed subset is selected after measurement.

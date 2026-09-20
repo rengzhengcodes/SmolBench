@@ -13,15 +13,18 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from power_analysis import N_HARMONICS
 
 # Pytest discovers imported fixtures from module globals.
 # pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis.conftest import SHALLOW_DEPTH  # noqa: F401
-
-from tests.analysis.conftest import (  # isort: skip
+from tests.analysis._trees import (  # noqa: F401
     DEEP_DEPTH,
+    N_HARMONICS,
+    SHALLOW_DEPTH,
     build_tree,
+    extens_vs_noise,
+    paired_analysis,
+    power_analysis,
+    significance_report,
 )
 
 #: Collapsed noise arm whose failed control is padding-driven.
@@ -32,8 +35,6 @@ WEAK_MODEL = "min3_3b"
 SKEW_MODEL = "exaone_32b"
 #: Byte copy creates an exact tie.
 TIED_MODEL = "nemo3_30b"
-#: Model whose informative arm is deliberately below its empty-context floor.
-REVERSED_MODEL = "ds_flash"
 #: Model whose collapse annotation is not caused by padding.
 PAD_MODEL = "ds_flash"
 
@@ -116,9 +117,9 @@ def _clean_profile(model: str, info: str) -> tuple[float, float, str, range]:
 
 def _reversed_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(DEEP_DEPTH)
-    if model == REVERSED_MODEL and info == "intens":
+    if model == PAD_MODEL and info == "intens":
         return 0.10, 0.0, "empty", seeds
-    if model == REVERSED_MODEL and info == "zero":
+    if model == PAD_MODEL and info == "zero":
         return 0.90, 0.0, "empty", seeds
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
@@ -411,7 +412,7 @@ def test_reversed_controls_are_not_counted_as_passing(
         line for line in controls.splitlines() if line.startswith("  REVERSED")
     ]
     assert any(
-        f"[{REVERSED_MODEL}] intens vs zero" in line for line in reversed_lines
+        f"[{PAD_MODEL}] intens vs zero" in line for line in reversed_lines
     ), reversed_lines
     match = re.search(
         r"(\d+) arm-vs-floor positive controls.*?: (\d+) significant with the "
@@ -508,14 +509,16 @@ def test_padding_table_reports_the_seed_count_it_used(
 
 
 def test_padding_table_counts_come_from_the_rows_it_actually_built(
-    report: Callable[[Path], str], collapse_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    power_analysis: ModuleType,
 ) -> None:
     """Every count in the section comes from the table's own row count, not a hard-coded lane total."""
     out = report(collapse_tree)
-    assert "all 21 lanes" not in out
+    assert f"all {len(power_analysis.MODELS)} lanes" not in out
     n_rows = len(_padding_table(out))
     # Every lane has a census cell for both arms, so the table is the roster.
-    assert n_rows == 21, out
+    assert n_rows == len(power_analysis.MODELS), out
     section = out.split("COLLAPSE CENSUS", 1)[1].split("ALL cells", 1)[0]
     counts = {int(n) for n in re.findall(r"of (\d+) lanes", section)}
     assert counts == {n_rows}, section

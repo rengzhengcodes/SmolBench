@@ -9,23 +9,18 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-import run_all
-
-_RUN_ALL = run_all
 
 # pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis.conftest import (  # noqa: F401 -- imported for the fixtures  # isort: skip
+from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
     DEEP_DEPTH,
     build_tree,
+    extens_vs_noise,
+    multiplicity_sim,
+    power_analysis,
+    run_all,
 )
 
-CHAIN = tuple(m.__name__ for m in run_all.CHAIN)
-
-
-@pytest.fixture(scope="session")
-def run_all(extens_vs_noise: ModuleType) -> ModuleType:
-    """Load the driver after its chain modules."""
-    return _RUN_ALL
+CHAIN = ("power_analysis", "paired_analysis", "significance_report", "extens_vs_noise")
 
 
 @pytest.fixture(scope="session")
