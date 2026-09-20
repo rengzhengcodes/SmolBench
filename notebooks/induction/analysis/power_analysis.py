@@ -234,7 +234,7 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     Returns
     -------
     np.ndarray
-        Continuity-corrected GCMH statistics.
+        GCMH statistics.
 
     Raises
     ------
