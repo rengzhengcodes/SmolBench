@@ -781,6 +781,46 @@ def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
         assert f"icc={icc}" in printed, printed[:400]
 
 
+@pytest.mark.parametrize("match_rung", (0, 1))
+def test_part2_searches_eq_r_from_the_first_matching_rung(
+    multiplicity_sim: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    match_rung: int,
+) -> None:
+    """Equivalent-R search records whether it moved beyond study depth."""
+
+    def fake_powers(
+        _p_a: float,
+        _delta: float,
+        _rho: float,
+        reps: int,
+        _n_sims: int,
+        _rng: np.random.Generator,
+        stats: bool = True,
+        icc: float = 0.0,
+    ) -> tuple[float, float, float | None, float | None]:
+        del icc
+        if stats:
+            return 0.50, 0.80, 0.1, 0.9
+        if match_rung == 1 and reps == multiplicity_sim.N_REPLICATES:
+            return 0.50, 0.0, None, None
+        return 0.80 - multiplicity_sim.EQ_R_TOL / 2, 0.0, None, None
+
+    monkeypatch.setattr(multiplicity_sim, "_paired_powers", fake_powers)
+    monkeypatch.setattr(multiplicity_sim, "study_design_effect", lambda _d: None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        out = multiplicity_sim.part2(
+            np.random.default_rng(2),
+            _power_common.results_dir("induction"),
+            n_sims=50,
+            search_sims=50,
+        )
+
+    rows = out["icc"]["0.0"]["rows"]
+    assert all(row["eq_R"] == multiplicity_sim.EQ_R_GRID[match_rung] for row in rows)
+    assert all(row["eq_searched"] is (match_rung == 1) for row in rows)
+
+
 def test_study_design_effect_ignores_checkpoint_without_replicates(
     multiplicity_sim: ModuleType,
     tmp_path: Path,
