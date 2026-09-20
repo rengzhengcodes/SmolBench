@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import extens_vs_noise  # noqa: E402
 import paired_analysis  # noqa: E402
-import power_analysis  # noqa: E402  (path shim above must precede the import)
+import power_analysis  # noqa: E402
 import significance_report  # noqa: E402
 
 #: Modules permit direct calls and banner names.
@@ -31,7 +31,10 @@ def _banner(name: str) -> None:
     print(f"\n{rule}\n{name}\n{rule}", flush=True)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    results_dir: Path = power_analysis.RESULTS_DIR,
+) -> int:
     """Run analysis scripts in dependency order.
 
     Parameters
@@ -64,11 +67,11 @@ def main(argv: list[str] | None = None) -> int:
 
     for module in CHAIN:
         _banner(module.__name__)
-        module.main()
+        module.main(results_dir)
     if args.with_sim:
         multiplicity_sim = importlib.import_module(SIM_MODULE)
         _banner(multiplicity_sim.__name__)
-        multiplicity_sim.main()
+        multiplicity_sim.main(results_dir=results_dir)
     return 0
 
 
