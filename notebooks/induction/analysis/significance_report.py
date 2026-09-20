@@ -5,10 +5,6 @@ Hochberg is sensitivity-only: its positive-dependence condition is unverified.
 Collapsed cells are annotated, never excluded.
 """
 
-from __future__ import annotations
-
-# isort: skip_file
-
 import sys
 from collections import Counter
 from collections.abc import Iterable
@@ -20,8 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 from _power_common import apply_corrections  # noqa: E402
 from paired_analysis import CellMarks, contrast_row, holm, load_marks  # noqa: E402
-from power_analysis import RESULTS_DIR  # noqa: E402
-from power_analysis import ALPHA, MODELS, build_primary_contrasts
+from power_analysis import (  # noqa: E402
+    ALPHA,
+    MODELS,
+    RESULTS_DIR,
+    build_primary_contrasts,
+)
 
 # Import the label so a rename cannot silently read empty values as zero.
 from smolbench.evals.parsing import EMPTY
@@ -213,7 +213,58 @@ def collapse_tag(row: dict, census: dict) -> str:
     return ("   [COLLAPSE: " + "; ".join(hits) + "]") if hits else ""
 
 
-def _legacy_render(report: Report) -> None:
+@dataclass(frozen=True)
+class Report:
+    """Computed significance-report quantities."""
+
+    rows: list[dict]
+    m: int
+    hp: np.ndarray
+    hb: np.ndarray
+    h_item: np.ndarray
+    rej_by_test: dict
+    depth_min: int
+    depth_max: int
+    floor_bound: bool
+    census: dict
+    pad_rows: list[dict]
+    pad_lanes: set[str]
+    over: list[tuple[str, str]]
+    findings: list[dict]
+    n_findings_total: int
+    n_flag: int
+    n_pad: int
+    passing: list[dict]
+    reversed_: list[dict]
+    fails: list[dict]
+    fails_total: list[dict]
+    fails_partial: list[dict]
+    fails_unexplained: list[dict]
+    zero_vs_zero: list[int]
+    not_significant: list[dict]
+    ceiling: list[dict]
+    n_zero_discordant: int
+    lost: list[dict]
+    gained: list[dict]
+    n_ladder: int
+    n_noise_over_cells: int
+    n_noise_over_lanes: int
+    zero_over: list[tuple[str, str]]
+    total_cells: set[tuple[str, str]]
+    n_ladder_findings: int
+    n_info_findings: int
+    n_zero_significant: int
+    partial_compliance: str
+    item_min: int
+    item_max: int
+    n_floor: int
+    n_lost_ladder: int
+    hochberg_only: list[dict]
+    n_ladder_rejections: int
+    n_info_rejections: int
+
+
+def render(report: Report) -> None:
     """Run and print the significance report.
 
     Narrative claims remain conditional on displayed counts.
@@ -221,8 +272,6 @@ def _legacy_render(report: Report) -> None:
     rows = report.rows
     census = report.census
     p_cl = np.array([r["p_cluster"] for r in rows])
-    p_item = np.array([r["p_item"] for r in rows])
-    p_unp = np.array([r["p_unpaired"] for r in rows])
     m = report.m
     hp, hb, h_item = report.hp, report.hb, report.h_item
     rej_by_test = report.rej_by_test
@@ -249,15 +298,14 @@ def _legacy_render(report: Report) -> None:
             f"{2 / 2 ** depth_min:.3e} -- quoted by the closing paragraph.)\n"
         )
 
-    seeds = {r["n_seeds"] for r in rows}
     print(f"PRIMARY family: m = {m} pre-registered contrasts, FWER alpha = {ALPHA}")
     print(
-        f"Replicate depth: n = {min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} "
+        f"Replicate depth: n = {report.item_min}-{report.item_max} "
         f"matched items per contrast, over "
-        f"{min(seeds)}-{max(seeds)} replicate seeds"
+        f"{report.depth_min}-{report.depth_max} replicate seeds"
     )
     # Computed from the landed data so a short sync cannot print a depth the marks lack.
-    mx_n, mx_s = max(r["n"] for r in rows), max(seeds)
+    mx_n, mx_s = report.item_max, report.depth_max
     print(
         "PRIMARY TEST: exact seed-level sign-flip randomization over the "
         "per-seed arm\n  differences. The seed is the unit the design "
@@ -287,25 +335,23 @@ def _legacy_render(report: Report) -> None:
                 f"{int((pv <= ALPHA).sum()):19d}"
             )
 
-    n_lad_all = sum(1 for r in rows if r["kind_is_ladder"])
     print(
         f"\nPrimary rejections split over the whole family: "
-        f"{sum(hp[i] for i in range(m) if rows[i]['kind_is_ladder'])} of "
-        f"{n_lad_all} LADDER contrasts, "
-        f"{sum(hp[i] for i in range(m) if not rows[i]['kind_is_ladder'])} of "
-        f"{m - n_lad_all} INFO-ARM contrasts\n  (both counts include the "
+        f"{report.n_ladder_rejections} of "
+        f"{report.n_ladder} LADDER contrasts, "
+        f"{report.n_info_rejections} of "
+        f"{m - report.n_ladder} INFO-ARM contrasts\n  (both counts include the "
         f"zero-arm controls; the findings-only split is further down)."
     )
 
-    lost = [rows[i] for i in range(m) if h_item[i] and not hp[i]]
-    gained = [rows[i] for i in range(m) if hp[i] and not h_item[i]]
+    lost, gained = report.lost, report.gained
     print(
         f"\nCost of the correction: Holm loses {len(lost)} and gains "
         f"{len(gained)} against the item-level p."
     )
     _print_signed(lost, "-", "p_item")
     _print_signed(gained, "+", "p_cluster")
-    n_lad = sum(1 for r in lost if r["kind_is_ladder"])
+    n_lad = report.n_lost_ladder
     # Floor-bound losses carry no clustering information; n_lad==0 needs its own branch.
     if lost and floor_bound:
         print(
@@ -330,7 +376,7 @@ def _legacy_render(report: Report) -> None:
             f"where they are not;\n   here it is the info-arm story."
         )
 
-    extra = [rows[i] for i in range(m) if hb[i] and not hp[i]]
+    extra = report.hochberg_only
     print(
         f"\nHolm vs Hochberg (primary): Hochberg rejects "
         f"{'the same set' if not extra else f'{len(extra)} MORE'}"
@@ -341,50 +387,23 @@ def _legacy_render(report: Report) -> None:
     _step_boundary(p_cl, rows, m, int(hp.sum()))
 
     # ---- COLLAPSE CENSUS: a result, not a data-quality footnote -------------
-    over = sorted(
-        (k for k, v in census.items() if v["rate"] >= COLLAPSE_THRESHOLD),
-        key=lambda k: -census[k]["rate"],
-    )
+    over = report.over
     print(
         f"\n{'=' * 78}\nCOLLAPSE CENSUS -- padding robustness, stated as a "
         f"result\n{'=' * 78}"
     )
 
     # pad_rows supplies the intro's denominator; `len(MODELS)` would over-count unpaired lanes.
-    pad_rows = []
-    for model in MODELS:
-        ci = census.get((model, "intens"))
-        cn = census.get((model, "noise_intens"))
-        if ci is None or cn is None:
-            continue
-        # Rates over shared seeds, matching `paired_analysis.aligned`.
-        common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
-        rate_i = common_seed_rate(ci, common)
-        rate_n = common_seed_rate(cn, common)
-        if rate_i is None or rate_n is None:
-            # Skip rather than publish a 0% rate on a 0-seed basis.
-            continue
-        pad_rows.append(
-            {
-                "model": model,
-                "delta": rate_n - rate_i,
-                "rate_i": rate_i,
-                "rate_n": rate_n,
-                "n_common": len(common),
-                "cn": cn,
-            }
-        )
-
-    pad_lanes = {r["model"] for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"])}
-    # Numerator and denominator share one basis: matched-arm rows on common seeds.
-    noise_over = [r for r in pad_rows if r["rate_n"] >= COLLAPSE_THRESHOLD]
+    pad_rows = report.pad_rows
+    pad_lanes = report.pad_lanes
+    noise_over = report.n_noise_over_lanes
     print(
         "The `noise_intens` arm is the compact rule form padded with "
         "WHITESPACE to exactly\nthe extensional arm's token count under the "
         "model's own tokenizer. It adds no\ninformation and no content -- so a "
         "model that obeys the output contract on\n`intens` should obey it "
         "here. In "
-        f"{len(noise_over)} of {len(pad_rows)} lanes with both arms measured it "
+        f"{noise_over} of {len(pad_rows)} lanes with both arms measured it "
         f"does not (noise arm >= "
         f"{COLLAPSE_THRESHOLD:.0%} non-compliant on the seeds both arms "
         f"cover), and the\ntable below separates the lanes where the PAD is "
@@ -411,14 +430,7 @@ def _legacy_render(report: Report) -> None:
         cn, delta = row["cn"], row["delta"]
         # Mode share stays whole-cell: a descriptive column, not an input to the verdict.
         empty = cn["modes"].get(EMPTY, 0) / cn["n"]
-        if row["rate_n"] >= COLLAPSE_THRESHOLD:
-            verdict = (
-                "COLLAPSE"
-                if pad_crossing(row["rate_i"], row["rate_n"])
-                else "collapsed, but not padding-specific"
-            )
-        else:
-            verdict = "contract holds"
+        verdict = row["verdict"]
         print(
             f"{row['model']:13s} {row['rate_i']:8.1%} {row['rate_n']:8.1%} "
             f"{delta:+8.1%} {empty:12.1%} {row['n_common']:4d}  {verdict}"
@@ -445,19 +457,18 @@ def _legacy_render(report: Report) -> None:
             f"{name} {cnt / cell['n']:.1%}"
             for name, cnt in cell["modes"].most_common(3)
         )
-        star = " <== total" if cell["rate"] >= TOTAL_COLLAPSE else ""
+        star = " <== total" if key in report.total_cells else ""
         print(
             f"{key[0]:13s} {key[1]:13s} {cell['rate']:10.1%} {cell['n']:5d}  "
             f"{modes}{star}"
         )
-    n_noise_over_cells = sum(1 for k in over if k[1] == "noise_intens")
     print(
         f"\n{len(over)} of {len(census)} cells are at or above the "
-        f"{COLLAPSE_THRESHOLD:.0%} criterion; {n_noise_over_cells} of them are "
+        f"{COLLAPSE_THRESHOLD:.0%} criterion; {report.n_noise_over_cells} of them are "
         f"noise arms.\nThe criterion is applied SYMMETRICALLY to all four arms, "
         f"so non-noise arms appear here beside the noise arms."
     )
-    zero_over = [k for k in over if k[1] == "zero"]
+    zero_over = report.zero_over
     if zero_over:
         print(
             f"{len(zero_over)} of them are `zero` baseline cells "
@@ -466,8 +477,8 @@ def _legacy_render(report: Report) -> None:
             f"not padding-specific."
         )
 
-    sel = [r for i, r in enumerate(rows) if hp[i] and r["kind"] == "finding"]
-    tot = sum(1 for r in rows if r["kind"] == "finding")
+    sel = report.findings
+    tot = report.n_findings_total
     print(
         f"\n{'=' * 78}\nSIGNIFICANT FINDINGS (Holm, seed sign-flip): "
         f"{len(sel)} of {tot}\n{'=' * 78}"
@@ -486,10 +497,8 @@ def _legacy_render(report: Report) -> None:
         ("LADDER contrasts (scaling within a family)", ladders),
         ("INFO-ARM contrasts (within one model)", infos),
     ):
-        denom = sum(
-            1
-            for r in rows
-            if r["kind"] == "finding" and r["kind_is_ladder"] == (bucket is ladders)
+        denom = (
+            report.n_ladder_findings if bucket is ladders else report.n_info_findings
         )
         print(f"\n-- {title}: {len(bucket)} of {denom}")
         for r in sorted(bucket, key=lambda r: r["p_cluster"]):
@@ -497,15 +506,9 @@ def _legacy_render(report: Report) -> None:
             print(
                 f"  {direction} {r['label']:52s} {r['acc_a']:.3f} -> "
                 f"{r['acc_b']:.3f}   p={r['p_cluster']:.2e} "
-                f"(item {r['p_item']:.2e}){collapse_tag(r, census)}"
+                f"(item {r['p_item']:.2e}){r['collapse_tag']}"
             )
-    n_flag = sum(1 for r in sel if collapse_tag(r, census))
-    n_pad = sum(
-        1
-        for r in sel
-        if {r["key_a"][1], r["key_b"][1]} == {"extens", "noise_intens"}
-        and r["key_a"][0] in pad_lanes
-    )
+    n_flag, n_pad = report.n_flag, report.n_pad
     # TWO-MECHANISM needs findings touching a collapsed cell; the branches separate that case.
     print(
         f"\n  [COLLAPSE] {n_flag} of {len(sel)} findings touch a cell at or "
@@ -542,22 +545,12 @@ def _legacy_render(report: Report) -> None:
         )
 
     # ---- zero-arm controls -------------------------------------------------
-    floor = [i for i, r in enumerate(rows) if r["kind"] == "arm-vs-floor"]
-    zz = [i for i, r in enumerate(rows) if r["kind"] == "zero-vs-zero"]
-    passing, reversed_ = [], []
-    fails = [rows[i] for i in floor if not hp[i]]
-    for i in floor:
-        r = rows[i]
-        info_acc, zero_acc = (
-            (r["acc_b"], r["acc_a"])
-            if r["key_a"][1] == "zero"
-            else (r["acc_a"], r["acc_b"])
-        )
-        if hp[i]:
-            (passing if info_acc > zero_acc else reversed_).append(r)
+    zz = report.zero_vs_zero
+    passing, reversed_ = report.passing, report.reversed_
+    fails = report.fails
     print(f"\n{'=' * 78}\nZERO-ARM CONTROLS\n{'=' * 78}")
     print(
-        f"{len(floor)} arm-vs-floor positive controls (informative arm vs the "
+        f"{report.n_floor} arm-vs-floor positive controls (informative arm vs the "
         f"chance baseline): {len(passing)} significant with the "
         f"informative arm AHEAD, {len(reversed_)} significant\nbut REVERSED "
         f"(informative arm below the floor), {len(fails)} not rejected.\n"
@@ -573,13 +566,13 @@ def _legacy_render(report: Report) -> None:
             if r["key_a"][1] == "zero"
             else (r["acc_a"], r["acc_b"])
         )
-        note = collapse_tag(r, census)
+        note = r["collapse_tag"]
         print(
             f"  REVERSED {r['label']:52s} {info_acc:.3f} vs floor "
             f"{zero_acc:.3f}   p={r['p_cluster']:.2e}{note}"
         )
     for r in sorted(fails, key=lambda r: -r["acc_a"]):
-        note = collapse_tag(r, census)
+        note = r["collapse_tag"]
         print(
             f"  FAILS  {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}"
             f"   p={r['p_cluster']:.2e}{note}"
@@ -594,18 +587,9 @@ def _legacy_render(report: Report) -> None:
         )
     elif fails:
         # Partitioned: a fixed exoneration would misdescribe non-qualifying failures.
-        total, partial, unexplained = [], [], []
-        for r in fails:
-            # The informative arm is identified by its info label, not position.
-            info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
-            if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
-                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
-                if info_rate is not None and info_rate >= TOTAL_COLLAPSE:
-                    total.append(r)
-                else:
-                    partial.append(r)
-            else:
-                unexplained.append(r)
+        total = report.fails_total
+        partial = report.fails_partial
+        unexplained = report.fails_unexplained
         if total:
             print(
                 f"\n  These {len(total)} of {len(fails)} failures are the "
@@ -614,21 +598,10 @@ def _legacy_render(report: Report) -> None:
                 "near-total non-compliance, so it cannot outscore an empty prompt."
             )
         if partial:
-            rates = [
-                1 - (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"])
-                for r in partial
-                if (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]) is not None
-            ]
-            if not rates:
-                compliance = "an unmeasured rate"
-            elif len({round(rate, 10) for rate in rates}) == 1:
-                compliance = f"{rates[0]:.1%}"
-            else:
-                compliance = f"{min(rates):.1%}–{max(rates):.1%}"
             print(
                 f"\n  {len(partial)} of {len(fails)} failures are noise arms on "
                 f"a lane the pad carried over the {COLLAPSE_THRESHOLD:.0%} "
-                f"criterion, but the arm is still {compliance} "
+                f"criterion, but the arm is still {report.partial_compliance} "
                 f"compliant on the compared seeds, so the crossing is a "
                 f"caveat, not a demonstrated cause of the failed control:"
             )
@@ -651,10 +624,9 @@ def _legacy_render(report: Report) -> None:
             )
             for r in sorted(unexplained, key=lambda r: -r["acc_a"]):
                 print(f"    {r['label']}")
-    n_zz_sig = sum(hp[i] for i in zz)
     print(
         f"\n{len(zz)} zero-vs-zero ladder contrasts (one model's empty-context "
-        f"baseline against\n  another's): {n_zz_sig} significant. A rejection "
+        f"baseline against\n  another's): {report.n_zero_significant} significant. A rejection "
         "is a real between-model difference at zero\n  information, not an "
         "error."
     )
@@ -667,10 +639,9 @@ def _legacy_render(report: Report) -> None:
             )
 
     # ---- what is NOT significant, which is half the story -------------------
-    ns = [r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"]
-    ceiling = [r for r in ns if min(r["acc_a"], r["acc_b"]) >= 0.95]
-    # Measured, not asserted: `b`/`c` are carried on every row.
-    n_zero_disc = sum(1 for r in ceiling if r["b"] + r["c"] == 0)
+    ns = report.not_significant
+    ceiling = report.ceiling
+    n_zero_disc = report.n_zero_discordant
     print(f"\n{'=' * 78}\nNOT significant: {len(ns)} of {tot} findings")
     if ceiling:
         print(
@@ -689,45 +660,12 @@ def _legacy_render(report: Report) -> None:
             "not pairs that agree."
         )
     print(
-        f"  The cluster test also has a floor: with {min(seeds)} seeds it "
-        f"cannot resolve any\n  contrast below 2/2^{min(seeds)} = "
-        f"{2 / 2 ** min(seeds):.3e}, and a contrast whose discordances all "
+        f"  The cluster test also has a floor: with {report.depth_min} seeds it "
+        f"cannot resolve any\n  contrast below 2/2^{report.depth_min} = "
+        f"{2 / 2 ** report.depth_min:.3e}, and a contrast whose discordances all "
         f"live in\n  a handful of replicates cannot go below "
         f"2/2^(that handful)."
     )
-
-
-@dataclass(frozen=True)
-class Report:
-    """Computed significance-report quantities."""
-
-    rows: list[dict]
-    m: int
-    hp: np.ndarray
-    hb: np.ndarray
-    h_item: np.ndarray
-    rej_by_test: dict
-    depth_min: int
-    depth_max: int
-    floor_bound: bool
-    census: dict
-    pad_rows: list[dict]
-    pad_lanes: set[str]
-    over: list[tuple[str, str]]
-    findings: list[dict]
-    n_findings_total: int
-    n_flag: int
-    n_pad: int
-    passing: list[dict]
-    reversed_: list[dict]
-    fails: list[dict]
-    fails_total: list[dict]
-    fails_partial: list[dict]
-    fails_unexplained: list[dict]
-    zero_vs_zero: list[int]
-    not_significant: list[dict]
-    ceiling: list[dict]
-    n_zero_discordant: int
 
 
 def compute(results_dir: Path = RESULTS_DIR) -> Report:
@@ -797,12 +735,23 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
                 "rate_n": rate_n,
                 "n_common": len(common),
                 "cn": cn,
+                "verdict": (
+                    "COLLAPSE"
+                    if rate_n >= COLLAPSE_THRESHOLD and pad_crossing(rate_i, rate_n)
+                    else (
+                        "collapsed, but not padding-specific"
+                        if rate_n >= COLLAPSE_THRESHOLD
+                        else "contract holds"
+                    )
+                ),
             }
         )
     pad_lanes = {r["model"] for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"])}
     findings = [r for i, r in enumerate(rows) if hp[i] and r["kind"] == "finding"]
     n_findings_total = sum(r["kind"] == "finding" for r in rows)
-    n_flag = sum(bool(collapse_tag(r, census)) for r in findings)
+    for row in rows:
+        row["collapse_tag"] = collapse_tag(row, census)
+    n_flag = sum(bool(r["collapse_tag"]) for r in findings)
     n_pad = sum(
         {r["key_a"][1], r["key_b"][1]} == {"extens", "noise_intens"}
         and r["key_a"][0] in pad_lanes
@@ -838,40 +787,76 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     ]
     ceiling = [r for r in not_significant if min(r["acc_a"], r["acc_b"]) >= 0.95]
     n_zero_discordant = sum(r["b"] + r["c"] == 0 for r in ceiling)
+    n_ladder = sum(r["kind_is_ladder"] for r in rows)
+    n_noise_over_cells = sum(1 for key in over if key[1] == "noise_intens")
+    n_noise_over_lanes = sum(row["rate_n"] >= COLLAPSE_THRESHOLD for row in pad_rows)
+    zero_over = [key for key in over if key[1] == "zero"]
+    total_cells = {
+        key for key, cell in census.items() if cell["rate"] >= TOTAL_COLLAPSE
+    }
+    n_ladder_findings = sum(r["kind_is_ladder"] for r in rows if r["kind"] == "finding")
+    n_info_findings = n_findings_total - n_ladder_findings
+    n_zero_significant = sum(hp[i] for i in zero_vs_zero)
+    partial_rates = [
+        1 - (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"])
+        for r in fails_partial
+        if (r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]) is not None
+    ]
+    if not partial_rates:
+        partial_compliance = "an unmeasured rate"
+    elif len({round(rate, 10) for rate in partial_rates}) == 1:
+        partial_compliance = f"{partial_rates[0]:.1%}"
+    else:
+        partial_compliance = f"{min(partial_rates):.1%}–{max(partial_rates):.1%}"
+    lost = [rows[i] for i in range(m) if h_item[i] and not hp[i]]
+    gained = [rows[i] for i in range(m) if hp[i] and not h_item[i]]
     return Report(
-        rows,
-        m,
-        hp,
-        hb,
-        h_item,
-        rej_by_test,
-        depth_min,
-        depth_max,
-        floor_bound,
-        census,
-        pad_rows,
-        pad_lanes,
-        over,
-        findings,
-        n_findings_total,
-        n_flag,
-        n_pad,
-        passing,
-        reversed_,
-        fails,
-        fails_total,
-        fails_partial,
-        fails_unexplained,
-        zero_vs_zero,
-        not_significant,
-        ceiling,
-        n_zero_discordant,
+        rows=rows,
+        m=m,
+        hp=hp,
+        hb=hb,
+        h_item=h_item,
+        rej_by_test=rej_by_test,
+        depth_min=depth_min,
+        depth_max=depth_max,
+        floor_bound=floor_bound,
+        census=census,
+        pad_rows=pad_rows,
+        pad_lanes=pad_lanes,
+        over=over,
+        findings=findings,
+        n_findings_total=n_findings_total,
+        n_flag=n_flag,
+        n_pad=n_pad,
+        passing=passing,
+        reversed_=reversed_,
+        fails=fails,
+        fails_total=fails_total,
+        fails_partial=fails_partial,
+        fails_unexplained=fails_unexplained,
+        zero_vs_zero=zero_vs_zero,
+        not_significant=not_significant,
+        ceiling=ceiling,
+        n_zero_discordant=n_zero_discordant,
+        lost=lost,
+        gained=gained,
+        n_ladder=n_ladder,
+        n_noise_over_cells=n_noise_over_cells,
+        n_noise_over_lanes=n_noise_over_lanes,
+        zero_over=zero_over,
+        total_cells=total_cells,
+        n_ladder_findings=n_ladder_findings,
+        n_info_findings=n_info_findings,
+        n_zero_significant=n_zero_significant,
+        partial_compliance=partial_compliance,
+        item_min=min(r["n"] for r in rows),
+        item_max=max(r["n"] for r in rows),
+        n_floor=len(floor),
+        n_lost_ladder=sum(r["kind_is_ladder"] for r in lost),
+        hochberg_only=[rows[i] for i in range(m) if hb[i] and not hp[i]],
+        n_ladder_rejections=sum(hp[i] for i in range(m) if rows[i]["kind_is_ladder"]),
+        n_info_rejections=sum(hp[i] for i in range(m) if not rows[i]["kind_is_ladder"]),
     )
-
-
-def render(report: Report) -> None:
-    """Render a computed report."""
-    _legacy_render(report)
 
 
 def main(results_dir: Path = RESULTS_DIR) -> None:

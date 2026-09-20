@@ -1,7 +1,5 @@
 """Contracts for induction-analysis statistical plumbing."""
 
-# isort: skip_file
-
 import contextlib
 import io
 import json
@@ -15,7 +13,6 @@ from types import ModuleType
 from typing import Any
 
 import numpy as np
-import power_analysis as design
 import pytest
 from scipy.stats import binom
 from statsmodels.stats.multitest import multipletests
@@ -24,11 +21,17 @@ from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
 
 # pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis.conftest import SHALLOW_DEPTH  # noqa: F401
-
-from tests.analysis.conftest import (  # isort: skip
+from tests.analysis._trees import (  # noqa: F401
     ANALYSIS_DIR,
+    N_HARMONICS,
+    N_PRIMARY,
+    SHALLOW_DEPTH,
     build_tree,
+    extens_vs_noise,
+    multiplicity_sim,
+    paired_analysis,
+    power_analysis,
+    significance_report,
 )
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
@@ -102,7 +105,9 @@ def test_power_analysis_roster_comes_from_the_study_config(
 def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
     """Yield tie-heavy p-value vectors for correction tests."""
     rng = np.random.default_rng(20260905)
-    pool = np.array([2 / 2**30, 2 / 2**16, 1.0, 0.05, 0.05 / 210, 1e-8, 0.5, 0.02])
+    pool = np.array(
+        [2 / 2**30, 2 / 2**16, 1.0, 0.05, 0.05 / N_PRIMARY, 1e-8, 0.5, 0.02]
+    )
     for i in range(n):
         m = int(rng.integers(2, 80))
         if i % 3 == 0:
@@ -242,7 +247,7 @@ def test_walkers_skip_an_unparsable_replicate_filename(
     assert sorted(correct[cell]) == list(range(SHALLOW_DEPTH))
 
     census = significance_report.compliance_census(loaded)
-    assert census[cell]["n"] == SHALLOW_DEPTH * design.N_HARMONICS
+    assert census[cell]["n"] == SHALLOW_DEPTH * N_HARMONICS
 
 
 def test_paired_report_handles_no_measurable_design_effects(
@@ -283,6 +288,7 @@ def test_paired_report_handles_no_measurable_design_effects(
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     paired_analysis: ModuleType,
     significance_report: ModuleType,
+    power_analysis: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -301,7 +307,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     census = significance_report.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
-    assert n_cells == design.N_LADDER_CONTRASTS
+    assert n_cells == power_analysis.N_LADDER_CONTRASTS
     assert after_load == n_cells * SHALLOW_DEPTH, after_load
     assert len(reads) == after_load, reads[after_load:]
     assert len(census) == n_cells
@@ -330,7 +336,7 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     ):
         extens_vs_noise.main(root)
 
-    assert len(calls) == design.N_PRIMARY, len(calls)
+    assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
 
 def test_monte_carlo_output_lands_in_the_results_dir(
@@ -342,6 +348,46 @@ def test_monte_carlo_output_lands_in_the_results_dir(
     expected = _power_common.results_dir("induction")
     assert multiplicity_sim.OUT_PATH.parent == expected
     assert multiplicity_sim.OUT_PATH.name.endswith(".json")
+
+
+def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
+    multiplicity_sim: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit results directory controls the default checkpoint path."""
+    monkeypatch.setattr(
+        multiplicity_sim,
+        "part1",
+        lambda rng: {"part": 1},
+    )
+    monkeypatch.setattr(
+        multiplicity_sim,
+        "part2",
+        lambda rng, results_dir: {"part": 2},
+    )
+    monkeypatch.setattr(
+        multiplicity_sim,
+        "part3",
+        lambda rng: {"part": 3},
+    )
+    monkeypatch.setattr(
+        multiplicity_sim,
+        "part4",
+        lambda rng: {"part": 4},
+    )
+    monkeypatch.setattr(
+        multiplicity_sim,
+        "part5",
+        lambda rng: {"part": 5},
+    )
+
+    multiplicity_sim.main(results_dir=tmp_path)
+
+    target = tmp_path / multiplicity_sim.OUT_NAME
+    assert target.exists()
+    assert target != multiplicity_sim.OUT_PATH
+    assert json.loads(target.read_text())["part5"] == {"part": 5}
 
 
 def test_dump_creates_its_own_results_directory(
@@ -418,7 +464,7 @@ def test_contrast_row_handles_empty_drop_invalid_pairs(
 def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
     multiplicity_sim: ModuleType,
 ) -> None:
-    """One trend test cannot cost `ALPHA/28` in part 5 and `ALPHA/154` in part 4 of the same family."""
+    """Part 5 and part 4 use the same reduced-family correction denominator."""
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -612,7 +658,7 @@ def test_primary_contrasts_table_reports_the_family_size(
 
 def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) -> None:
     """Grid searches skip unneeded diagnostics to limit memory."""
-    args = (0.95, 0.05, 0.5, 30, 400)
+    args = (0.95, 0.05, 0.5, multiplicity_sim.N_REPLICATES, 400)
     full = multiplicity_sim._paired_powers(*args, np.random.default_rng(11), stats=True)
     fast = multiplicity_sim._paired_powers(
         *args, np.random.default_rng(11), stats=False
@@ -628,7 +674,13 @@ def test_icc_zero_is_the_published_simulation_byte_for_byte(
 
     def draw(**kwargs: Any) -> Any:
         return multiplicity_sim.paired_marks(
-            0.9, 0.8, 0.5, 64, 30, np.random.default_rng(7), **kwargs
+            0.9,
+            0.8,
+            0.5,
+            64,
+            multiplicity_sim.N_REPLICATES,
+            np.random.default_rng(7),
+            **kwargs,
         )
 
     plain_a, plain_b = draw()
@@ -652,7 +704,7 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
     multiplicity_sim: ModuleType,
 ) -> None:
     """A replicate latent preserves marginal arm rates."""
-    args = (0.9, 0.8, 0.5, 400, 30)
+    args = (0.9, 0.8, 0.5, 400, multiplicity_sim.N_REPLICATES)
     flat_a, flat_b = multiplicity_sim.paired_marks(
         *args, np.random.default_rng(11), icc=0.0
     )
@@ -675,7 +727,13 @@ def test_the_replicate_latent_is_arm_specific_not_shared(
 ) -> None:
     """Arm-specific offsets keep independent arms uncorrelated."""
     marks_a, marks_b = multiplicity_sim.paired_marks(
-        0.9, 0.9, 0.0, 400, 30, np.random.default_rng(13), icc=0.4
+        0.9,
+        0.9,
+        0.0,
+        400,
+        multiplicity_sim.N_REPLICATES,
+        np.random.default_rng(13),
+        icc=0.4,
     )
     per_replicate_a = marks_a.mean(axis=2).ravel()
     per_replicate_b = marks_b.mean(axis=2).ravel()
@@ -695,7 +753,7 @@ def test_icc_does_not_attenuate_the_requested_cross_arm_correlation(
             ]
         )
 
-    args = (0.7, 0.7, 0.6, 400, 30)
+    args = (0.7, 0.7, 0.6, 400, multiplicity_sim.N_REPLICATES)
     flat = phi(*multiplicity_sim.paired_marks(*args, np.random.default_rng(17)))
     clustered = phi(
         *multiplicity_sim.paired_marks(*args, np.random.default_rng(19), icc=0.4)
@@ -705,7 +763,12 @@ def test_icc_does_not_attenuate_the_requested_cross_arm_correlation(
     # A dilution to (1 - icc) * rho would move phi by far more than that.
     diluted = phi(
         *multiplicity_sim.paired_marks(
-            0.7, 0.7, 0.36, 400, 30, np.random.default_rng(17)
+            0.7,
+            0.7,
+            0.36,
+            400,
+            multiplicity_sim.N_REPLICATES,
+            np.random.default_rng(17),
         )
     )
     assert flat - diluted > 0.1

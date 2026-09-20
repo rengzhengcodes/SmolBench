@@ -24,12 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
+import paired_analysis
+import power_analysis
 from _power_common import ALPHA, SEED, apply_corrections, results_dir
-from scipy.stats import chi2, norm
-
-from smolbench.evals.results_store import LocalResultsStore
-
-from power_analysis import (  # isort: skip
+from power_analysis import (
     ALPHA_PRIMARY,
     N_FAMILIES,
     N_HARMONICS,
@@ -39,11 +37,16 @@ from power_analysis import (  # isort: skip
     N_PRIMARY,
     N_REPLICATES,
     N_RUNGS,
+    RESULTS_DIR,
+    STUDY,
     cmh_p,
     cmh_stat,
     gcmh_stat,
     mcnemar_exact_p,
 )
+from scipy.stats import chi2, norm
+
+from smolbench.evals.results_store import LocalResultsStore
 
 K_HARM = N_HARMONICS
 ALPHA_BONF = ALPHA_PRIMARY
@@ -79,7 +82,8 @@ ICC_GRID = (0.0, 0.2, 0.4)
 N_REDUCED = N_LADDERS + N_PRIMARY - N_LADDER_CONTRASTS
 ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 # Anchor checkpoints to the study results tree.
-OUT_PATH = results_dir("induction") / "multiplicity_sim_results.json"
+OUT_NAME = "multiplicity_sim_results.json"
+OUT_PATH = RESULTS_DIR / OUT_NAME
 
 
 def dump(out: dict, path: Path, tag: str) -> None:
@@ -471,10 +475,6 @@ def study_design_effect(results_dir: Path) -> float | None:
     Return ``None`` when no study replicate lane exists (a checkpoint JSON alone
     does not count); propagate failures once data is present.
     """
-    # Avoid results-reading import effects during simulation imports.
-    import paired_analysis
-    import power_analysis
-
     store = LocalResultsStore(results_dir)
     if not any(
         store.list_seeds(None, model, info)
@@ -514,9 +514,6 @@ def part2(
     search_sims : int, optional
         Number of simulations at each equivalent-R search rung.
     """
-    # Avoid results-reading import effects during simulation imports.
-    import paired_analysis
-
     measured = study_design_effect(results_dir)
     measured_str = (
         f"{measured:.3f}"
@@ -644,7 +641,7 @@ def part2(
 def build_rate_matrix() -> np.ndarray:
     """Build the stylized true-rate matrix for PART 4.
 
-    30 true effects near ceiling and mid-range; the remaining 180 contrasts are exact nulls.
+    Selected effects span ceiling and mid-range rates; the remaining contrasts are nulls.
     """
     rates = np.zeros((N_FAMILIES, N_RUNGS, N_INFOS))
     flat = [0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62]
@@ -803,13 +800,14 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
 
 
 def main(
-    out_path: Path = OUT_PATH,
-    results_dir: Path = results_dir("induction"),
+    results_dir: Path = RESULTS_DIR,
+    out_path: Path | None = None,
 ) -> None:
     """Run and checkpoint all simulation parts.
 
     Part-number seeds keep reordering from changing draws.
     """
+    out_path = results_dir / OUT_NAME if out_path is None else out_path
     t0 = time.time()
     out: dict[str, dict] = {}
     out["part1"] = part1(np.random.default_rng(SEED + 1))
