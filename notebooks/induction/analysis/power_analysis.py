@@ -9,6 +9,12 @@ independent per-harmonic Bernoulli streams. The PRIMARY inference in
 within-seed dependence a one-replicate pilot cannot estimate; these tables are
 therefore the pre-registration sizing check and a descriptive sensitivity
 analysis, not a power statement about the sign-flip test.
+
+This study is exploratory end to end: it is pilot-sized, its roster was fixed
+post hoc against a pre-registered plan, and it makes no confirmatory claims.
+The Tier-1 omnibus gate and the Holm/BH corrections order the evidence within
+that exploratory frame; a gated ladder finding is a stronger exploratory
+signal, not a confirmed effect.
 """
 
 import functools
@@ -998,7 +1004,7 @@ def render_omnibus_gates(rows: list[tuple[str, float, float]], r_star: int) -> N
         "whether a family's 3 rungs differ at all, stratified by harmonic x "
         f"info (K={N_HARMONICS * len(INFOS)}). alpha = {ALPHA_OMNIBUS:.5f}.\n"
         "A family's omnibus gate must reject before that family's Tier-2 "
-        "ladder contrasts are reported as more than exploratory -- an "
+        "ladder contrasts are reported as gated (rather than ungated) -- an "
         "ungated ladder contrast risks chasing noise the family-level test "
         "says isn't there."
     )
