@@ -1,0 +1,43 @@
+[MASTER]
+# The venv is linting infrastructure, not code.
+ignore-paths = .venv,
+               .*egg-info.*
+
+[MESSAGES CONTROL]
+disable =
+    # pytest idiom: fixtures injected by name shadow the outer fixture.
+    redefined-outer-name,
+    # Repo style logs f-strings; these are not hot paths.
+    logging-fstring-interpolation,
+    # Deliberate lazy imports (optional deps, cost isolation, tests).
+    import-outside-toplevel,
+    # sys.path shims must precede sibling imports in the notebook scripts.
+    wrong-import-position,
+    # black owns line wrapping; long string literals stay readable.
+    line-too-long,
+    too-many-lines,
+    # Design-metric thresholds; refactoring to satisfy them would obscure.
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-public-methods,
+    too-many-nested-blocks,
+    # Tests and same-module collaborators legitimately touch privates.
+    protected-access,
+    # Fixture args exist for ordering/side effect; SDK stubs must keep
+    # AWS keyword names.
+    unused-argument,
+    # Test modules intentionally share fixture-import blocks.
+    duplicate-code,
+    # AWS kwargs (Bucket, MaxKeys, Body) and BaseHTTPRequestHandler hooks
+    # (do_GET/do_POST) are external naming contracts.
+    invalid-name,
+    # Broad catches are deliberate at provisioning/teardown boundaries.
+    broad-exception-caught,
+
+[FORMAT]
+max-line-length = 120

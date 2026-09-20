@@ -54,7 +54,7 @@ def _index() -> dict[str, Premise]:
                     full_name=fn,
                     code=p["code"],
                     start=tuple(p["start"]),  # type: ignore[arg-type]
-                    end=tuple(p["end"]),      # type: ignore[arg-type]
+                    end=tuple(p["end"]),  # type: ignore[arg-type]
                     kind=p["kind"],
                     file_path=rec["path"],
                 )
@@ -69,7 +69,6 @@ def lookup(full_name: str) -> Premise | None:
     Parameters
     ----------
     full_name : str
-        Premise name.
 
     Returns
     -------
@@ -87,7 +86,6 @@ def signature(p: Premise) -> str:
     Parameters
     ----------
     p : Premise
-        Premise to parse.
 
     Returns
     -------
@@ -149,7 +147,6 @@ def _resolve_source(file_path: str) -> Path | None:
     Parameters
     ----------
     file_path : str
-        Corpus-relative path.
 
     Returns
     -------
@@ -164,7 +161,9 @@ def _resolve_source(file_path: str) -> Path | None:
 
 
 @lru_cache(maxsize=8192)
-def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: int = 200) -> str:
+def slice_full_decl(
+    file_path: str, start_line: int, end_line: int, max_lines: int = 200
+) -> str:
     """Slice a declaration and proof from source.
 
     Stop at the next top-level declaration, ``max_lines``, or EOF.
@@ -172,13 +171,11 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
     Parameters
     ----------
     file_path : str
-        Corpus-relative path.
     start_line : int
         1-indexed start line.
     end_line : int
         1-indexed end line.
     max_lines : int, optional
-        Maximum slice length.
 
     Returns
     -------
@@ -206,7 +203,6 @@ def body_with_proof(p: Premise) -> str:
     Parameters
     ----------
     p : Premise
-        Premise to retrieve.
 
     Returns
     -------
@@ -228,7 +224,6 @@ def has_full_source(p: Premise) -> bool:
     Parameters
     ----------
     p : Premise
-        Premise to check.
 
     Returns
     -------
@@ -242,28 +237,114 @@ def has_full_source(p: Premise) -> bool:
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
 
 #: Excluded Lean tokens; frozen because every identifier checks membership.
-_LEAN_NOISE: frozenset[str] = frozenset({
-    "theorem", "lemma", "def", "instance", "structure", "inductive",
-    "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
-    "if", "then", "else", "match", "with", "by", "have", "show", "this",
-    "true", "True", "false", "False", "Type", "Prop", "Sort", "Set",
-    "namespace", "open", "import", "section", "end", "variable", "variables",
-    "where", "macro", "syntax", "elab", "deriving", "attribute", "set_option",
-    "noncomputable", "private", "protected", "partial", "mutual",
-    "rw", "rewrite", "simp", "exact", "apply", "intro", "intros", "rintro",
-    "cases", "rcases", "obtain", "use", "constructor", "refine", "refine'",
-    "split", "and", "or", "not", "iff", "exists", "forall", "all_goals",
-    "any_goals", "tauto", "ring", "field_simp", "linarith", "nlinarith",
-    "omega", "decide", "rfl", "trivial", "assumption", "id", "le", "lt",
-    "ge", "gt", "eq", "ne", "of", "to", "from", "h1", "h2", "h3",
-})
+_LEAN_NOISE: frozenset[str] = frozenset(
+    {
+        "theorem",
+        "lemma",
+        "def",
+        "instance",
+        "structure",
+        "inductive",
+        "axiom",
+        "example",
+        "class",
+        "abbrev",
+        "fun",
+        "let",
+        "in",
+        "do",
+        "if",
+        "then",
+        "else",
+        "match",
+        "with",
+        "by",
+        "have",
+        "show",
+        "this",
+        "true",
+        "True",
+        "false",
+        "False",
+        "Type",
+        "Prop",
+        "Sort",
+        "Set",
+        "namespace",
+        "open",
+        "import",
+        "section",
+        "end",
+        "variable",
+        "variables",
+        "where",
+        "macro",
+        "syntax",
+        "elab",
+        "deriving",
+        "attribute",
+        "set_option",
+        "noncomputable",
+        "private",
+        "protected",
+        "partial",
+        "mutual",
+        "rw",
+        "rewrite",
+        "simp",
+        "exact",
+        "apply",
+        "intro",
+        "intros",
+        "rintro",
+        "cases",
+        "rcases",
+        "obtain",
+        "use",
+        "constructor",
+        "refine",
+        "refine'",
+        "split",
+        "and",
+        "or",
+        "not",
+        "iff",
+        "exists",
+        "forall",
+        "all_goals",
+        "any_goals",
+        "tauto",
+        "ring",
+        "field_simp",
+        "linarith",
+        "nlinarith",
+        "omega",
+        "decide",
+        "rfl",
+        "trivial",
+        "assumption",
+        "id",
+        "le",
+        "lt",
+        "ge",
+        "gt",
+        "eq",
+        "ne",
+        "of",
+        "to",
+        "from",
+        "h1",
+        "h2",
+        "h3",
+    }
+)
 
 
 @lru_cache(maxsize=1)
 def _short_name_index() -> dict[str, list[str]]:
     """Index full names by final segment for bare-name references."""
     out: dict[str, list[str]] = {}
-    for full in _index().keys():
+    for full in _index():
         short = full.rsplit(".", 1)[-1]
         out.setdefault(short, []).append(full)
     return out
@@ -279,7 +360,6 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     Parameters
     ----------
     full_name : str
-        Premise name.
 
     Returns
     -------
@@ -314,7 +394,9 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 
 
 def premise_dep_closure(
-    seeds: list[Premise], depth: int, max_premises: int = 500,
+    seeds: list[Premise],
+    depth: int,
+    max_premises: int = 500,
 ) -> list[Premise]:
     """Return a breadth-first premise closure.
 
@@ -326,9 +408,7 @@ def premise_dep_closure(
     seeds : list[Premise]
         Starting premises, excluded from results.
     depth : int
-        Maximum hop depth.
     max_premises : int, optional
-        Result cap.
 
     Returns
     -------

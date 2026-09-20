@@ -6,6 +6,7 @@ Stdlib-only on purpose: ``notebooks/deduction/analysis/rows_source.py`` runs und
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 #: ``run_study.py --force-rerun`` renames a superseded ``all_rows.jsonl`` to
@@ -19,3 +20,8 @@ def is_retired(path: str | Path) -> bool:
     """True if the BASENAME carries a retirement marker (directories named after an audit are not targets)."""
     name = Path(path).name
     return any(m in name for m in RETIRED_MARKERS)
+
+
+def retired_paths(paths: Iterable[str | Path]) -> list[str]:
+    """Stringified `paths` whose basenames carry a retirement marker."""
+    return [str(p) for p in paths if is_retired(p)]

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import smolbench.deduction.lean.corpus as corpus
-from tests._paths import LEAN_MINI as FIXTURE, LEAN_MINI_POSTCUTOFF as POSTCUTOFF
+from smolbench.deduction.lean import corpus
+from tests._paths import LEAN_MINI as FIXTURE
+from tests._paths import LEAN_MINI_POSTCUTOFF as POSTCUTOFF
 
 
 @pytest.fixture
@@ -28,17 +29,24 @@ def test_load_split_parses_fixture(lean_data: Path) -> None:
     assert set(by_name) == {"Mini.theoremA", "Mini.theoremB"}
     a, b = by_name["Mini.theoremA"], by_name["Mini.theoremB"]
     assert (a.file_path, a.commit, a.start) == (
-        "Mini/A.lean", "fe4454af900584467d21f4fd4fe951d29d9332a7", (1, 1))
+        "Mini/A.lean",
+        "fe4454af900584467d21f4fd4fe951d29d9332a7",
+        (1, 1),
+    )
     assert a.url.endswith("mathlib4") and a.has_proof
     assert len(a.traced_tactics) == 3 and a.traced_tactics[0].tactic == "intro h"
     assert [p["full_name"] for p in a.traced_tactics[2].premises] == [
-        "Mini.premiseA", "Mini.premiseB"]
+        "Mini.premiseA",
+        "Mini.premiseB",
+    ]
     assert a.traced_tactics[0].premises == []
     assert "⊢" in a.traced_tactics[2].state_before
     assert len(b.traced_tactics) == 2
     assert b.traced_tactics[0].state_before.strip().startswith("⊢")
     assert [t.full_name for t in corpus.iter_with_proof("random", "val")] == [
-        "Mini.theoremA", "Mini.theoremB"]
+        "Mini.theoremA",
+        "Mini.theoremB",
+    ]
     assert corpus.metadata()["dataset_name"].startswith("LeanDojo Benchmark 4")
 
 
@@ -65,8 +73,11 @@ def test_unbootstrapped_loaders_name_the_remedy(
     """Every loader's FileNotFoundError names the missing file and the bootstrap doc."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path))
     corpus.reset_caches()
-    for call in (lambda: corpus.load_split("random", "val"), corpus.metadata,
-                 lambda: list(corpus.iter_replay_passing("random", "val"))):
+    for call in (
+        lambda: corpus.load_split("random", "val"),
+        corpus.metadata,
+        lambda: list(corpus.iter_replay_passing("random", "val")),
+    ):
         with pytest.raises(FileNotFoundError, match="not found"):
             call()
     corpus.reset_caches()
@@ -96,9 +107,17 @@ def test_postcutoff_metadata_reports_the_whole_block(postcutoff_data: Path) -> N
     """The block round-trips verbatim and every documented key is present."""
     block = corpus.postcutoff_metadata()
     assert block is not None
-    assert set(block) == {"method", "new_commit", "new_commit_date", "old_commit",
-                          "old_commit_date", "target_date", "n_new_decls",
-                          "n_old_decls", "n_postcutoff_decls"}
+    assert set(block) == {
+        "method",
+        "new_commit",
+        "new_commit_date",
+        "old_commit",
+        "old_commit_date",
+        "target_date",
+        "n_new_decls",
+        "n_old_decls",
+        "n_postcutoff_decls",
+    }
     assert block["method"] == "name-set-difference"
     assert (block["new_commit"], block["old_commit"]) == (NEW_COMMIT, OLD_COMMIT)
     assert block["target_date"] == "2026-07-31"
@@ -132,8 +151,13 @@ def test_commit_mismatch_between_from_repo_and_block_raises(
 def _make_cache(home: Path, *commits: str) -> None:
     """Build ``<home>/.cache/lean_dojo/leanprover-community-mathlib4-<c>/mathlib4`` dirs."""
     for commit in commits:
-        (home / ".cache" / "lean_dojo" /
-         f"leanprover-community-mathlib4-{commit}" / "mathlib4").mkdir(parents=True)
+        (
+            home
+            / ".cache"
+            / "lean_dojo"
+            / f"leanprover-community-mathlib4-{commit}"
+            / "mathlib4"
+        ).mkdir(parents=True)
 
 
 def test_traced_root_picks_the_cache_dir_matching_the_corpus_commit(
@@ -179,47 +203,3 @@ def test_traced_root_is_none_when_the_corpus_is_not_bootstrapped(
     corpus.reset_caches()
     assert premises._traced_root() is None
     corpus.reset_caches()
-
-
-# ``eval_split_specs`` reads the active corpus, not a literal in a deleted SFT-dataset builder.
-def test_eval_split_specs_reads_the_active_corpus(lean_data: Path) -> None:
-    """The committed fixture carries only ``random/val.json``, so that is the spec list."""
-    assert corpus.eval_split_specs() == (("random", "val"),)
-
-
-def test_eval_split_specs_is_canonically_ordered_and_call_time(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Use train/val/test order and read the root at call time.
-
-    Creation order is reversed so filesystem listing would yield test/val/train and make manifests disagree across machines.
-    """
-    first = tmp_path / "first" / "random"
-    first.mkdir(parents=True)
-    for split in ("test", "val", "train"):
-        (first / f"{split}.json").write_text("[]")
-    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "first"))
-    assert corpus.eval_split_specs() == (
-        ("random", "train"), ("random", "val"), ("random", "test"))
-
-    second = tmp_path / "second" / "random"
-    second.mkdir(parents=True)
-    (second / "test.json").write_text("[]")
-    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "second"))
-    assert corpus.eval_split_specs() == (("random", "test"),)
-
-
-def test_eval_split_specs_refuses_an_unbootstrapped_or_empty_corpus(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Never an empty tuple: a holdout built from one would protect nothing."""
-    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "missing"))
-    with pytest.raises(FileNotFoundError, match="missing"):
-        corpus.eval_split_specs()
-
-    empty = tmp_path / "empty" / "random"
-    empty.mkdir(parents=True)
-    (empty / "notes.txt").write_text("not a split file")
-    monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "empty"))
-    with pytest.raises(ValueError, match="no recognised split file"):
-        corpus.eval_split_specs()

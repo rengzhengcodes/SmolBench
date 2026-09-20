@@ -13,11 +13,11 @@ import argparse
 import collections
 import concurrent.futures
 import contextlib
+import fcntl  # POSIX-only; verification hosts are Linux.
 import fnmatch
 import functools
 import importlib.util
 import itertools
-import json
 import logging
 import sys
 import tempfile
@@ -25,8 +25,6 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional
-
-import fcntl  # POSIX-only; verification hosts are Linux.
 
 from smolbench.deduction.lean.corpus import BenchmarkTheorem, load_split
 from smolbench.deduction.lean.runner import (
@@ -62,6 +60,7 @@ _LOCK_FILENAME = ".smolbench_verify.lock"
 
 _CORPUS_SPLITS: tuple[str, ...] = ("train", "val", "test")
 
+
 def run_object_key(key_prefix: str, run: str, filename: str) -> str:
     """Build one run's object key ``f"{key_prefix}/{run}/{filename}"``.
 
@@ -72,9 +71,7 @@ def run_object_key(key_prefix: str, run: str, filename: str) -> str:
     key_prefix : str
         Prefix for the run object.
     run : str
-        Run name.
     filename : str
-        Object filename.
 
     Returns
     -------
@@ -119,7 +116,6 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     Parameters
     ----------
     rows : list[dict]
-        Rows containing candidate proofs.
     indices : list[int]
         Indices of rows to group.
 
@@ -135,7 +131,9 @@ def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[in
     return groups
 
 
-def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, Any]) -> None:
+def fan_out_verdict(
+    rows: list[dict], indices: list[int], result: Mapping[str, Any]
+) -> None:
     """Apply one verification `result` to every row in `indices`, in place.
 
     ``result`` must contain ``verdict``, ``lean_error``, ``final_state_pp``, and
@@ -144,11 +142,9 @@ def fan_out_verdict(rows: list[dict], indices: list[int], result: Mapping[str, A
     Parameters
     ----------
     rows : list[dict]
-        Rows updated in place.
     indices : list[int]
         Indices of rows to update.
     result : Mapping[str, Any]
-        Verification fields.
     """
     for index in indices:
         row = rows[index]
@@ -166,7 +162,6 @@ def _group_cell_rows_by_key(rows: list[dict]) -> dict[tuple[str, int], list[dict
     Parameters
     ----------
     rows : list[dict]
-        Rows containing cell records.
 
     Returns
     -------
@@ -250,7 +245,9 @@ def row_identity(row: dict) -> tuple:
     )
 
 
-def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dict], int]:
+def seed_out_rows(
+    rows: list[dict], verified_rows: list[dict]
+) -> tuple[list[dict], int]:
     """Pair a prior pass's rows onto the current rows, by identity and occurrence order.
 
     Pair by identity and occurrence: positional pairing breaks when rows move,
@@ -261,9 +258,7 @@ def seed_out_rows(rows: list[dict], verified_rows: list[dict]) -> tuple[list[dic
     Parameters
     ----------
     rows : list[dict]
-        Current-pass rows.
     verified_rows : list[dict]
-        Prior verified rows.
 
     Returns
     -------
@@ -355,7 +350,6 @@ def check_workers(requested: int, meminfo_text: str) -> None:
     Parameters
     ----------
     requested : int
-        Requested worker count.
     meminfo_text : str
         Contents of ``/proc/meminfo``.
     """
@@ -391,7 +385,10 @@ def require_mathlib_root() -> None:
 
     Otherwise every session fails, misreporting configuration as 944 bad truths.
     """
-    from smolbench.deduction.lean.replbackend import mathlib_root  # lazy: import-safe module
+    from smolbench.deduction.lean.replbackend import (
+        mathlib_root,  # lazy: import-safe module
+    )
+
     try:
         mathlib_root()
     except RuntimeError as exc:
@@ -404,7 +401,6 @@ def dojo_failure_hint(exc: BaseException) -> str:
     Parameters
     ----------
     exc : BaseException
-        Session-open failure.
 
     Returns
     -------
@@ -449,7 +445,6 @@ def _lookup_theorem(theorem_id: str) -> BenchmarkTheorem:
     Parameters
     ----------
     theorem_id : str
-        Theorem full name.
 
     Returns
     -------
@@ -494,9 +489,7 @@ def list_runs(
     bucket : str
         S3 bucket name.
     key_prefix : str
-        Prefix containing run directories.
     pattern : str, optional
-        Pattern for run names.
 
     Returns
     -------
@@ -508,7 +501,7 @@ def list_runs(
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
         for common in page.get("CommonPrefixes", []):
-            name = common["Prefix"][len(prefix):].rstrip("/")
+            name = common["Prefix"][len(prefix) :].rstrip("/")
             if name and fnmatch.fnmatch(name, pattern):
                 names.append(name)
     return sorted(names)
@@ -526,9 +519,7 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     bucket : str
         S3 bucket name.
     key : str
-        Object key.
     dest : Path
-        Local destination path.
 
     Returns
     -------
@@ -552,7 +543,9 @@ def download_rows(client: Any, bucket: str, key: str, dest: Path) -> list[dict]:
     return read_jsonl_tolerating_torn_tail(dest)
 
 
-def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: Path) -> None:
+def upload_rows(
+    client: Any, rows: list[dict], bucket: str, key: str, workdir: Path
+) -> None:
     """Serialize rows under ``workdir`` and upload them to ``key``.
 
     Rewrite the full scratch file so repeated checkpoints are safe.
@@ -566,9 +559,7 @@ def upload_rows(client: Any, rows: list[dict], bucket: str, key: str, workdir: P
     bucket : str
         S3 bucket name.
     key : str
-        Destination object key.
     workdir : Path
-        Scratch directory.
     """
     workdir.mkdir(parents=True, exist_ok=True)
     scratch = workdir / VERIFIED_FILENAME
@@ -587,7 +578,7 @@ def _dojo_cache_lock() -> Iterator[None]:
     """
     DOJO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     lock_path = DOJO_CACHE_DIR / _LOCK_FILENAME
-    lock_file = open(lock_path, "a+")
+    lock_file = open(lock_path, "a+", encoding="utf-8")
     try:
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -605,7 +596,9 @@ def _dojo_cache_lock() -> Iterator[None]:
         lock_file.close()
 
 
-def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[str, Any], ms: int) -> None:
+def _update_sanity_row(
+    out_rows: list[dict], theorem_id: str, payload: Mapping[str, Any], ms: int
+) -> None:
     """Update `theorem_id`'s sanity row in `out_rows` in place, appending one if absent.
 
     Write payload fields and wall-clock ``ms``. Append missing rows so shared
@@ -618,9 +611,7 @@ def _update_sanity_row(out_rows: list[dict], theorem_id: str, payload: Mapping[s
     theorem_id : str
         Theorem identifier for the sanity row.
     payload : Mapping[str, Any]
-        Sanity fields.
     ms : int
-        Replay milliseconds.
     """
     for row in out_rows:
         if row.get("kind") == "sanity" and row.get("theorem_id") == theorem_id:
@@ -669,23 +660,17 @@ def verify_run(
     bucket : str
         S3 bucket name.
     key_prefix : str
-        Prefix containing the run.
     run : str
-        Run name.
     workers : int
-        Number of verification workers.
     theorem : Optional[str], optional
         Restrict verification to this theorem identifier.
     limit : int, optional
         Maximum number of groups to process.
     workdir : Path
-        Parent scratch directory.
     dry_run : bool, optional
         Preview groups without importing the verifier.
     no_resume : bool, optional
-        Discard prior verification rows.
     verifier : Any, optional
-        Verifier instance.
 
     Returns
     -------
@@ -704,7 +689,9 @@ def verify_run(
         return 1
 
     verified_key = run_object_key(key_prefix, run, VERIFIED_FILENAME)
-    verified_rows = download_rows(client, bucket, verified_key, run_dir / VERIFIED_FILENAME)
+    verified_rows = download_rows(
+        client, bucket, verified_key, run_dir / VERIFIED_FILENAME
+    )
     if no_resume:
         # Resume keys groups, not proofs; regenerated lanes otherwise look done.
         logging.warning(
@@ -729,8 +716,10 @@ def verify_run(
     all_groups = group_unverified(rows)
     pending = {key: indices for key, indices in all_groups.items() if key not in done}
     if theorem is not None:
-        pending = {key: indices for key, indices in pending.items() if key[0] == theorem}
-    if limit > 0 and len(pending) > limit:
+        pending = {
+            key: indices for key, indices in pending.items() if key[0] == theorem
+        }
+    if 0 < limit < len(pending):
         pending = dict(itertools.islice(pending.items(), limit))
 
     n_pending_rows = sum(len(indices) for indices in pending.values())
@@ -808,17 +797,23 @@ def verify_run(
 
         try:
             with verifier.open_at_step(bt, k) as (dojo, state_at_k):
-                for candidate_text, candidate_indices in unique_candidates(out_rows, indices).items():
+                for candidate_text, candidate_indices in unique_candidates(
+                    out_rows, indices
+                ).items():
                     t0 = time.monotonic()
                     try:
-                        result = verifier.try_tail(dojo, state_at_k, candidate_text, theorem_id)
+                        result = verifier.try_tail(
+                            dojo, state_at_k, candidate_text, theorem_id
+                        )
                         payload = {
                             "verdict": result.verdict,
                             "lean_error": result.error,
                             "final_state_pp": result.final_state_pp,
                             "verify_ms": int((time.monotonic() - t0) * 1000),
                         }
-                    except Exception as exc:  # noqa: BLE001 -- recorded on the row, never swallowed
+                    except (
+                        Exception
+                    ) as exc:  # noqa: BLE001 -- recorded on the row, never swallowed
                         payload = {
                             "verdict": "exception",
                             "lean_error": f"{type(exc).__name__}: {exc}",
@@ -827,7 +822,9 @@ def verify_run(
                         }
                     with write_lock:
                         fan_out_verdict(out_rows, candidate_indices, payload)
-        except Exception as exc:  # noqa: BLE001 -- Record open-session failures on rows.
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- Record open-session failures on rows.
             message = str(exc)
             if isinstance(exc, RuntimeError) and message.startswith("prefix tactic "):
                 # Dojo opened but its prefix failed; infrastructure guidance misleads.
@@ -863,7 +860,9 @@ def verify_run(
         theorem_id, k = key
         try:
             _verify_one_group(theorem_id, k, pending[key])
-        except Exception as exc:  # noqa: BLE001 -- Last-resort per-group failure record.
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- Last-resort per-group failure record.
             payload = {
                 "verdict": "exception",
                 "lean_error": f"{type(exc).__name__}: {exc}",
@@ -897,7 +896,8 @@ def verify_run(
     full_pass = limit <= 0 and theorem is None
     if full_pass:
         n_sentinel = sum(
-            1 for row in out_rows
+            1
+            for row in out_rows
             if row.get("kind") == "cell" and row.get("verdict") == "unverified"
         )
         if n_sentinel:
@@ -908,9 +908,9 @@ def verify_run(
                 "have been graded (resume cannot legitimately leave sentinels: "
                 "a done group has none by construction). The output above was "
                 "still uploaded in full (this gate reports, it never discards), "
-                "but every downstream analysis loader scores an \"unverified\" "
-                "cell as a FAILURE: left uncorrected, this run reads as \"the "
-                "model proved nothing,\" a complete, plausible, and wrong result. "
+                'but every downstream analysis loader scores an "unverified" '
+                'cell as a FAILURE: left uncorrected, this run reads as "the '
+                'model proved nothing," a complete, plausible, and wrong result. '
                 "Investigate the verifier before trusting this run's numbers."
             )
             return 2
@@ -962,29 +962,37 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--s3-prefix", default=f"s3://{SPOOL_BUCKET}/{spool_prefix()}",
+        "--s3-prefix",
+        default=f"s3://{SPOOL_BUCKET}/{spool_prefix()}",
         help="s3://bucket/key-prefix under which every run lives (default: %(default)s)",
     )
     parser.add_argument(
-        "--runs", default=DEFAULT_RUNS_GLOB,
+        "--runs",
+        default=DEFAULT_RUNS_GLOB,
         help=f"fnmatch glob over run directory names (default: {DEFAULT_RUNS_GLOB!r})",
     )
     parser.add_argument(
-        "--workers", type=int, default=2,
+        "--workers",
+        type=int,
+        default=2,
         help="parallel worker threads, each owning its own Dojo session per group (default: 2)",
     )
     parser.add_argument(
-        "--theorem", default=None,
+        "--theorem",
+        default=None,
         help="only verify groups for this theorem_id; a group still bundles every "
-             "rung/model/replicate sharing that theorem's (theorem, k) Dojo session",
+        "rung/model/replicate sharing that theorem's (theorem, k) Dojo session",
     )
     parser.add_argument(
-        "--limit", type=int, default=0,
+        "--limit",
+        type=int,
+        default=0,
         help="cap the number of (theorem, k) groups processed per run (0 = no limit); "
-             "a group can bundle many replicates, so this bounds Dojo sessions, not rows",
+        "a group can bundle many replicates, so this bounds Dojo sessions, not rows",
     )
     parser.add_argument(
-        "--workdir", default=None,
+        "--workdir",
+        default=None,
         help="transient scratch directory (default: a fresh tempfile.mkdtemp())",
     )
     parser.add_argument(
@@ -1002,9 +1010,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="list which groups' replicates would be verified for each matching run, "
-             "then exit without opening Lean -- works on any interpreter",
+        "then exit without opening Lean -- works on any interpreter",
     )
     return parser
 
@@ -1018,7 +1027,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     Parameters
     ----------
     argv : Optional[list[str]], optional
-        Command-line arguments.
 
     Returns
     -------
@@ -1033,7 +1041,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         require_lean_interact()
         require_mathlib_root()
 
-    workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
+    workdir = (
+        Path(args.workdir)
+        if args.workdir
+        else Path(tempfile.mkdtemp(prefix="lean_verify_rows_"))
+    )
     workdir.mkdir(parents=True, exist_ok=True)
 
     bucket, key_prefix = parse_s3_uri(s3_prefix)
@@ -1079,7 +1091,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.dry_run:
         return _verify_every_run()
 
-    check_workers(args.workers, Path("/proc/meminfo").read_text())
+    check_workers(args.workers, Path("/proc/meminfo").read_text(encoding="utf-8"))
     with _dojo_cache_lock():
         return _verify_every_run()
 

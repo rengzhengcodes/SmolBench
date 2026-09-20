@@ -5,15 +5,18 @@ Pool a seed's arms to saturate the GPU while preserving their result order.
 
 import functools
 import logging
-import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Callable, Dict, Mapping, Optional, Sequence
 
-from smolbench.evals import Marks, Quiz
-from smolbench.evals import provider
-from smolbench.evals import results_store
-from smolbench.evals.results_store import ReplicateAddress, ResultsStore, resolve_store, utcnow
+from smolbench.evals import Marks, Quiz, provider, results_store
+from smolbench.evals.results_store import (
+    ReplicateAddress,
+    ResultsStore,
+    S3ResultsStore,
+    resolve_store,
+    utcnow,
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +43,9 @@ class ReplicateHarness:
         """Return the cached store for consistent environment resolution."""
         return resolve_store(self.results_dir, self.prefix)
 
-    def _address(self, model: Optional[str], tag: str, info: str, seed: int) -> ReplicateAddress:
+    def _address(
+        self, model: Optional[str], tag: str, info: str, seed: int
+    ) -> ReplicateAddress:
         """Build one replicate address.
 
         ``model=None`` permits tag-only reads.
@@ -48,18 +53,18 @@ class ReplicateHarness:
         Parameters
         ----------
         model : Optional[str]
-            Model name or None.
+            Model name, or None for a tag-only read.
         tag : str
-            Archetype tag.
+            Archetype tag in the store address.
         info : str
-            Information type.
+            Information type in the store address.
         seed : int
-            Replicate seed.
+            Replicate seed in the store address.
 
         Returns
         -------
         ReplicateAddress
-            Replicate address.
+            The store address.
         """
         return ReplicateAddress(tag=tag, info=info, seed=seed, model=model)
 
@@ -71,12 +76,12 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
-            Model to check.
+            Model whose replicate addresses are checked.
 
         Returns
         -------
         bool
-            Whether any replicate needs evaluation.
+            Whether any replicate still needs evaluation.
         """
         forced = self.force_seeds or frozenset()
         if any(seed in forced for seed in self.seeds):
@@ -98,21 +103,20 @@ class ReplicateHarness:
     ) -> None:
         """Run `model`'s outstanding replicates.
 
-        Supersede forced runs before replacement so readers cannot see stale data.
+        Forced seeds write their replacement before retiring the run it supersedes.
 
         Parameters
         ----------
         model : str
-            Model name.
+            Model whose outstanding replicates are collected.
         extra_args : Optional[dict], optional
-            Evaluation arguments.
+            Extra arguments forwarded to ``evaluate()``.
         max_parallel : Optional[int], optional
-            Parallel-request limit.
+            Maximum parallel requests forwarded to ``evaluate()``.
         request_timeout : Optional[int], optional
-            Request timeout; it must cover the longest CoT chain on attempt 1
-            or the request is censored into top-truncated output.
+            Per-request read timeout forwarded to ``evaluate()``.
         server_config : Optional[Mapping], optional
-            Persisted server configuration.
+            Server configuration persisted with each replicate.
         """
         tag: str = self.archetype_tags[model]
         logging.info(f"run_replicates: {model} -> {self.store.describe()}")
@@ -133,11 +137,20 @@ class ReplicateHarness:
             ]
             if not outstanding:
                 continue
+            reason = f"force_seeds: re-collecting seed={seed}"
+            retiring: Dict[str, list] = {}
             if seed in forced:
-                # Retire first so stale forced runs are never readable.
-                reason = f"force_seeds: re-collecting seed={seed}"
                 for info in outstanding:
-                    self.store.supersede_all(self._address(model, tag, info, seed), reason)
+                    addr = self._address(model, tag, info, seed)
+                    if isinstance(self.store, S3ResultsStore):
+                        # S3 runs are immutable and ``exists`` is marker-blind, so
+                        # retiring before a failed recollect would strand the seed:
+                        # the survivors retire only after their replacement lands.
+                        retiring[info] = self.store.list_runs(addr)
+                    else:
+                        # Local ``exists`` is file-based, so a failed recollect
+                        # stays outstanding; the audit marker can move first.
+                        self.store.supersede_all(addr, reason)
             # Timestamp collection start, not serialization completion.
             run_ts = utcnow()
             quizzes = self.make_quizzes(seed, model)
@@ -148,12 +161,17 @@ class ReplicateHarness:
                 n: int = len(quizzes[info])
                 marks = Marks(
                     model=model,
-                    marks=tuple(pooled.marks[start:start + n]),
+                    marks=tuple(pooled.marks[start : start + n]),
                     # Copy so later caller mutations cannot alter stored provenance.
                     server_config=dict(server_config) if server_config else None,
                 )
                 start += n
-                self.store.dump_marks(marks, self._address(model, tag, info, seed), run_ts)
+                addr = self._address(model, tag, info, seed)
+                self.store.dump_marks(marks, addr, run_ts)
+                for stamp in retiring.get(info, ()):  # S3 only
+                    # The S3 supersede signature takes the stamp.
+                    # pylint: disable-next=too-many-function-args
+                    self.store.supersede(addr, stamp, reason)
                 logging.info(
                     f"{tag}/{info} seed={seed}: "
                     f"{marks.correct}/{len(marks.marks)} correct"
@@ -167,12 +185,13 @@ class ReplicateHarness:
         Parameters
         ----------
         model : str
-            Model name.
+            Model whose stored replicates are summarized.
         """
         tag: str = self.archetype_tags[model]
         for info in self.info_types:
             correct = incorrect = invalid = 0
-            seeds = self.store.list_seeds(model, tag, info)
+            owned = set(self.seeds)
+            seeds = [s for s in self.store.list_seeds(model, tag, info) if s in owned]
             for seed in seeds:
                 marks = self.store.load_marks(self._address(model, tag, info, seed))
                 correct += marks.correct
@@ -186,42 +205,11 @@ class ReplicateHarness:
                 f"acc={acc}"
             )
 
-    def cot_chain_lengths(self, tag: str) -> None:
-        """Print CoT word counts.
-
-        Shared tags resolve to their first model because they share storage.
-
-        Parameters
-        ----------
-        tag : str
-            Archetype tag.
-        """
-        model = next((m for m, t in self.archetype_tags.items() if t == tag), None)
-        lengths_by_info: Dict[str, list] = {info: [] for info in self.info_types}
-        for seed in self.seeds:
-            for info in self.info_types:
-                addr = self._address(model, tag, info, seed)
-                if not self.store.exists(addr):
-                    continue
-                for mark in self.store.load_marks(addr).marks:
-                    if mark.reasoning:
-                        lengths_by_info[info].append(len(mark.reasoning.split()))
-        for info in self.info_types:
-            lengths = lengths_by_info[info]
-            if not lengths:
-                print(f"{tag}/{info}: no reasoning chains found")
-                continue
-            print(
-                f"{tag}/{info}: n={len(lengths):4d}  "
-                f"min={min(lengths):5d}  max={max(lengths):5d}  "
-                f"mean={statistics.mean(lengths):6.0f}  "
-                f"median={statistics.median(lengths):6.0f}  "
-                f"words  (~tokens x 1.3)"
-            )
-
     def sync_down(self) -> int:
         """Sync the S3 log into the local layout.
 
         Raises RuntimeError for a non-S3 store and ValueError for an escaping path.
         """
-        return results_store.sync_down(self.results_dir, self.archetype_tags, self.prefix)
+        return results_store.sync_down(
+            self.results_dir, self.archetype_tags, self.prefix
+        )

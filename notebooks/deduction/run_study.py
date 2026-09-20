@@ -18,9 +18,9 @@ from typing import Any
 # These imports must remain before ``setdefault`` and ec2-free; a new import
 # reaching ``providers.ec2`` freezes unseeded EC2_* values without an error.
 from smolbench.evals.experiment import validate_experiment_tag
+from smolbench.evals.retired_markers import is_retired
 from smolbench.evals.spool import spool_prefix
 from smolbench.evals.study_config import load_study_config
-from smolbench.evals.retired_markers import is_retired
 
 logging.basicConfig(level=logging.INFO)
 
@@ -48,7 +48,6 @@ def lane_env_defaults(
     Parameters
     ----------
     key : str
-        Model lane key.
     repo_root : Path
         Repository root anchoring relative state-file paths.
     state_file : str | None, optional
@@ -63,13 +62,17 @@ def lane_env_defaults(
         resolved_state_file = repo_root / f".ec2_state_scaling_{key}.json"
     else:
         candidate = Path(state_file)
-        resolved_state_file = candidate if candidate.is_absolute() else repo_root / candidate
+        resolved_state_file = (
+            candidate if candidate.is_absolute() else repo_root / candidate
+        )
 
     return {
         "EC2_EXPERIMENT_TAG": f"scaling-{key}",
         "EC2_STATE_FILE": str(resolved_state_file),
         "EC2_VLLM_IMAGE": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
-        "SMOLBENCH_LEAN_RESULTS": str(repo_root / "notebooks" / "deduction" / "results"),
+        "SMOLBENCH_LEAN_RESULTS": str(
+            repo_root / "notebooks" / "deduction" / "results"
+        ),
     }
 
 
@@ -79,12 +82,16 @@ _RAW_LEAN_MODEL: str = os.environ.get("LEAN_MODEL", "").strip()
 _RAW_LEAN_STATE_FILE: str | None = os.environ.get("LEAN_STATE_FILE") or None
 
 if _RAW_LEAN_MODEL:
-    for _env_name, _env_value in lane_env_defaults(
-        _RAW_LEAN_MODEL, repo_root=REPO_ROOT, state_file=_RAW_LEAN_STATE_FILE
-    ).items():
-        # Never overwrite a fleet or shell value.
-        os.environ.setdefault(_env_name, _env_value)
-    del _env_name, _env_value
+    # Never overwrite a fleet or shell value.
+    os.environ.update(
+        {
+            k: v
+            for k, v in lane_env_defaults(
+                _RAW_LEAN_MODEL, repo_root=REPO_ROOT, state_file=_RAW_LEAN_STATE_FILE
+            ).items()
+            if k not in os.environ
+        }
+    )
 
     # Tags discover boxes without state files; shared tags silently attribute
     # rows to the wrong model. Validate the bare fleet tag first, because fleet
@@ -125,18 +132,21 @@ _induction_spec = importlib.util.spec_from_file_location(
 _induction = importlib.util.module_from_spec(_induction_spec)
 # Register before exec_module: dataclass resolves its module through sys.modules.
 sys.modules[_induction_spec.name] = _induction
-_induction_spec.loader.exec_module(_induction)  # runs that file's own load_dotenv(...) etc.
+_induction_spec.loader.exec_module(
+    _induction
+)  # runs that file's own load_dotenv(...) etc.
 
 #: Spec key to short analysis tag; imported roster, never redeclare its source of truth.
 MODELS: dict[str, str] = _induction.MODELS
 #: Spec key to per-request CoT-toggle kwargs, total over MODELS; imported settings, never redeclare.
 COT_ARGS: dict[str, dict] = _induction.COT_ARGS
 
-# Late imports require EC2_* defaults and MODELS/COT_ARGS.
-from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.evals import _aws, results_store  # noqa: E402
 from smolbench.deduction.lean import corpus, runner  # noqa: E402
 from smolbench.deduction.lean.nullverify import NullVerifier  # noqa: E402
+from smolbench.evals import _aws, results_store  # noqa: E402
+
+# Late imports require EC2_* defaults and MODELS/COT_ARGS.
+from smolbench.evals.providers import ec2  # noqa: E402
 
 
 def selected_model() -> str:
@@ -152,7 +162,9 @@ def selected_model() -> str:
             f"checkpoint per invocation. Set it to one of: {valid}"
         )
     if key not in MODELS:
-        raise SystemExit(f"LEAN_MODEL={key!r} is not a known spec key. Valid keys: {valid}")
+        raise SystemExit(
+            f"LEAN_MODEL={key!r} is not a known spec key. Valid keys: {valid}"
+        )
     return key
 
 
@@ -221,7 +233,6 @@ def _stamp_path(path: Path) -> str:
     Parameters
     ----------
     path : Path
-        Path to record.
 
     Returns
     -------
@@ -253,9 +264,7 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     Parameters
     ----------
     key : str
-        Lane model key.
     sweep_config_path : Path | None, optional
-        Alternate sweep config.
 
     Returns
     -------
@@ -283,24 +292,31 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
             "point SMOLBENCH_LEAN_DATA at it."
         )
     # ISO YYYY-MM-DD strings sort chronologically.
-    if not (block["target_date"] >= ROSTER_LATEST_RELEASE):
+    if block["target_date"] < ROSTER_LATEST_RELEASE:
         raise SystemExit(
             f"corpus target_date={block['target_date']!r} is earlier than "
             f"ROSTER_LATEST_RELEASE={ROSTER_LATEST_RELEASE!r}: a target date "
             "before the roster's latest release means some checkpoint may "
-            "have already seen the corpus's \"post-cutoff\" theorems during "
+            'have already seen the corpus\'s "post-cutoff" theorems during '
             "training."
         )
 
-    config_path = SWEEP_CONFIG_PATH if sweep_config_path is None else Path(sweep_config_path)
+    config_path = (
+        SWEEP_CONFIG_PATH if sweep_config_path is None else Path(sweep_config_path)
+    )
     loaded, sweep_config_sha256 = runner.load_sweep_config(config_path)
 
     # Check reserved keys first; malformed ``theorems`` contributes no keys.
     loaded_theorems = loaded.get("theorems")
-    loaded_theorem_keys = set(loaded_theorems) if isinstance(loaded_theorems, dict) else set()
+    loaded_theorem_keys = (
+        set(loaded_theorems) if isinstance(loaded_theorems, dict) else set()
+    )
     reserved = sorted(
         {name for name in RESERVED_SWEEP_KEYS if name in loaded}
-        | {f"theorems.{name}" for name in RESERVED_SWEEP_THEOREM_KEYS & loaded_theorem_keys}
+        | {
+            f"theorems.{name}"
+            for name in RESERVED_SWEEP_THEOREM_KEYS & loaded_theorem_keys
+        }
     )
     if reserved:
         raise SystemExit(
@@ -317,7 +333,8 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     missing = sorted(REQUIRED_SWEEP_KEYS - set(loaded))
     if not missing:
         missing = sorted(
-            f"theorems.{name}" for name in REQUIRED_SWEEP_THEOREM_KEYS - loaded_theorem_keys
+            f"theorems.{name}"
+            for name in REQUIRED_SWEEP_THEOREM_KEYS - loaded_theorem_keys
         )
     if missing:
         raise SystemExit(
@@ -332,7 +349,9 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     shard_suffix = ""
     if shard:
         shard_suffix = "_shard" + shard.replace("/", "of")
-    run_name = os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}{shard_suffix}"
+    run_name = (
+        os.environ.get("LEAN_RUN_NAME", "").strip() or f"scaling_{key}{shard_suffix}"
+    )
     seed = resolve_lean_seed()
 
     # Deep-copy nested structures so calls remain private.
@@ -345,7 +364,9 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
     theorems["seed"] = seed
     # Fix the corpus family while allowing the per-run split.
     yaml_split = theorems["split"]
-    theorems["split"] = os.environ.get("LEAN_CORPUS_SPLIT", yaml_split).strip() or yaml_split
+    theorems["split"] = (
+        os.environ.get("LEAN_CORPUS_SPLIT", yaml_split).strip() or yaml_split
+    )
     if shard:
         theorems["shard"] = shard
 
@@ -391,7 +412,9 @@ def select_verifier() -> Any:
         from smolbench.deduction.lean import verify
 
         return verify
-    raise SystemExit(f"LEAN_VERIFY={choice!r} is not valid; expected 'defer' or 'real'.")
+    raise SystemExit(
+        f"LEAN_VERIFY={choice!r} is not valid; expected 'defer' or 'real'."
+    )
 
 
 def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
@@ -407,7 +430,6 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     Parameters
     ----------
     run_dir : Path
-        Local directory.
     key : str
         Model key for the destination prefix, even with LEAN_RUN_NAME.
     client : Any, optional
@@ -424,7 +446,9 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         Upload verification failure before pruning.
     """
     if not run_dir.is_dir():
-        logging.info(f"spool_to_s3[{key}]: no run directory at {run_dir}; nothing to sync.")
+        logging.info(
+            f"spool_to_s3[{key}]: no run directory at {run_dir}; nothing to sync."
+        )
         return 0
 
     if client is None:
@@ -443,7 +467,9 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
         try:
             head = client.head_object(Bucket=SPOOL_BUCKET, Key=dest_key)
             remote_size = head["ContentLength"]
-        except Exception as exc:  # noqa: BLE001 -- re-raised below with actionable context
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- re-raised below with actionable context
             raise RuntimeError(
                 f"spool_to_s3[{key}]: could not verify upload of {dest_key!r} "
                 f"(local size {local_size} bytes; head_object failed: {exc}); "
@@ -460,14 +486,16 @@ def spool_to_s3(run_dir: Path, key: str, *, client: Any = None) -> int:
     manifest_path = run_dir / "manifest.json"
     all_rows_path = run_dir / "all_rows.jsonl"
     for path in files:
-        if path == manifest_path or path == all_rows_path:
+        if path in (manifest_path, all_rows_path):
             continue
         if is_retired(path):
             continue
         path.unlink()
 
     subdirs = sorted(
-        (p for p in run_dir.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True
+        (p for p in run_dir.rglob("*") if p.is_dir()),
+        key=lambda p: len(p.parts),
+        reverse=True,
     )
     for subdir in subdirs:
         try:
@@ -495,7 +523,6 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
     Parameters
     ----------
     config : dict
-        Sweep configuration.
     run_dir : Path
         Run directory; absent rows mean nothing done.
 
@@ -517,7 +544,9 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
         runner.load_cell_whitelist(cell_whitelist_path) if cell_whitelist_path else None
     )
 
-    theorems = runner._select_theorems(config["theorems"], cell_whitelist=cell_whitelist)
+    theorems = runner._select_theorems(
+        config["theorems"], cell_whitelist=cell_whitelist
+    )
     sanity_done = runner._sanity_done(all_rows_path)
     k_strategy = config.get("k", {}).get("strategy", "last")
     rungs: list[str] = list(config.get("rungs", []))
@@ -683,8 +712,12 @@ def main(argv: list[str] | None = None) -> None:
                 run_dir.mkdir(parents=True, exist_ok=True)
                 stamp = results_store.format_run_ts(results_store.utcnow())
                 with (run_dir / "server_config.yaml").open("a") as sink:
-                    yaml.safe_dump([{"captured_utc": stamp, **cfg}],
-                                   sink, default_flow_style=False, indent=4)
+                    yaml.safe_dump(
+                        [{"captured_utc": stamp, **cfg}],
+                        sink,
+                        default_flow_style=False,
+                        indent=4,
+                    )
             if args.force_rerun:
                 # resume=False still appends; archive old rows so superseded
                 # and fresh rows cannot share a file. Keep it for S3 upload.
@@ -703,16 +736,23 @@ def main(argv: list[str] | None = None) -> None:
             )
         logging.info(f"main[{key}]: sweep wrote {n} cell row(s) to {run_dir}")
         if args.no_s3:
-            logging.info(f"main[{key}]: --no-s3 set; leaving replicate rows on local disk.")
+            logging.info(
+                f"main[{key}]: --no-s3 set; leaving replicate rows on local disk."
+            )
         else:
             spool_to_s3(run_dir, key)
     finally:
         # Teardown must run even when the sweep raises.
         if args.teardown:
-            logging.info(f"main[{key}]: --teardown set; shutting down this lane's instance.")
+            logging.info(
+                f"main[{key}]: --teardown set; shutting down this lane's instance."
+            )
             ec2.shutdown_instance()
 
-    print(f"DEDUCTION LANE COMPLETE: {key} ({n} cell row(s)) run_dir={run_dir}", flush=True)
+    print(
+        f"DEDUCTION LANE COMPLETE: {key} ({n} cell row(s)) run_dir={run_dir}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

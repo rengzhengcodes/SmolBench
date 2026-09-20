@@ -20,8 +20,12 @@ BUCKET = "smolbench-results-414266451290"
 @pytest.fixture(autouse=True)
 def _no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The config must not depend on a developer shell's exported variables."""
-    for var in ("SMOLBENCH_RESULTS_S3", "SMOLBENCH_RESULTS_S3_REGION",
-                "EC2_REGIONS", "AWS_REGION"):
+    for var in (
+        "SMOLBENCH_RESULTS_S3",
+        "SMOLBENCH_RESULTS_S3_REGION",
+        "EC2_REGIONS",
+        "AWS_REGION",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -82,9 +86,7 @@ def test_the_config_reads_no_environment(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_ec2_default_regions_are_built_from_the_config() -> None:
     """Build default EC2 regions from config with ``AWS_REGION`` first."""
     regions = sc.load_study_config().fleet.regions
-    assert ec2._DEFAULT_REGIONS == ",".join(
-        dict.fromkeys((ec2.AWS_REGION, *regions))
-    )
+    assert ec2._DEFAULT_REGIONS == ",".join(dict.fromkeys((ec2.AWS_REGION, *regions)))
     for region in regions:
         assert region in ec2.EC2_REGIONS
 
@@ -119,6 +121,7 @@ b = "b_tag"
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
+    """Write a TOML config fixture."""
     path = tmp_path / "study_config.toml"
     path.write_text(text)
     return path
@@ -130,6 +133,16 @@ def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     assert cfg.results.bucket == "b"
     assert cfg.roster.families["fam"] == ("a", "b")
     assert cfg.roster.tags["b"] == "b_tag"
+
+
+def test_a_checkpoint_cannot_appear_in_two_families(tmp_path: Path) -> None:
+    """Reject family overlap even when every checkpoint has a unique tag."""
+    duplicate_families = GOOD_TOML.replace(
+        'fam = ["a", "b"]',
+        'fam = ["a", "b"]\nother = ["b", "c"]',
+    ).replace('b = "b_tag"', 'b = "b_tag"\nc = "c_tag"')
+    with pytest.raises(ValueError, match="more than one"):
+        sc.load_study_config(write_config(tmp_path, duplicate_families))
 
 
 @pytest.mark.parametrize(
@@ -148,7 +161,9 @@ def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     ],
 )
 def test_a_malformed_config_raises_naming_the_defect(
-    tmp_path: Path, mutation: Callable[[str], str], expected: str,
+    tmp_path: Path,
+    mutation: Callable[[str], str],
+    expected: str,
 ) -> None:
     """Name malformed configuration entries."""
     with pytest.raises(ValueError) as exc:
@@ -158,6 +173,7 @@ def test_a_malformed_config_raises_naming_the_defect(
 
 # results_store consumers.
 
+
 def test_the_default_results_uri_is_rendered_from_the_config() -> None:
     """Render the configured canonical URI."""
     from smolbench.evals.results_store import default_results_uri
@@ -166,7 +182,8 @@ def test_the_default_results_uri_is_rendered_from_the_config() -> None:
 
 
 def test_sync_down_names_the_default_uri_when_the_env_is_unset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Name the required URI when sync is unconfigured."""
     from smolbench.evals.results_store import default_results_uri, sync_down

@@ -3,21 +3,21 @@
 Goldens below were checked by hand, not copied from output.
 """
 
+# pylint: disable=missing-function-docstring
+
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-import smolbench.deduction.lean.context as context
-import smolbench.deduction.lean.corpus as corpus
-import smolbench.deduction.lean.premises as premises
-import smolbench.deduction.lean.prompt as prompt
+from smolbench.deduction.lean import context, corpus, premises, prompt
 from tests._paths import LEAN_MINI as FIXTURE
 
 
 @pytest.fixture
-def thms(monkeypatch: pytest.MonkeyPatch,
-         tmp_path: Path) -> Iterator[dict[str, corpus.BenchmarkTheorem]]:
+def thms(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[dict[str, corpus.BenchmarkTheorem]]:
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(FIXTURE))
     # An empty HOME forces fixture code, keeping goldens deterministic despite a traced checkout.
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -33,7 +33,7 @@ def _cl100k_count(text: str) -> int:
 
 
 def _noise_cases(
-        thms: dict[str, corpus.BenchmarkTheorem],
+    thms: dict[str, corpus.BenchmarkTheorem],
 ) -> Iterator[tuple[str, corpus.BenchmarkTheorem, int, int]]:
     """Every (theorem, k, level) noise rung renderable on the fixture."""
     for name in sorted(thms):
@@ -80,20 +80,64 @@ def test_extract_goal_only_passes_through_a_state_with_no_goal_line() -> None:
     assert context.extract_goal_only("weird state") == "weird state"
 
 
-@pytest.mark.parametrize("chain,level,required,forbidden", [
-    ("stepk", 0, ["## Current goal", "⊢ R n"],
-     ["## Full tactic state", "## Proof so far", "## Theorem", "## Premises"]),
-    ("stepk", 1, ["## Current goal", "## Full tactic state", "n : ℕ", "h : P n"],
-     ["## Theorem"]),
-    ("stepk", 2, ["## Proof so far (2 tactics)", "intro h", "simp", "## Theorem",
-                  "Mini.theoremA", "Mini/A.lean"], ["## Premises"]),
-    ("hint", 0, ["## Theorem", "## Premises used in the next tactic",
-                 "- `Mini.premiseA`", "- `Mini.premiseB`"], ["## Premise signatures"]),
-    ("hint", 1, ["## Premise signatures", "theorem Mini.premiseA {n : ℕ} (h : P n) : R n",
-                 "def Mini.premiseB (n : ℕ) : ℕ"], []),
-])
-def test_render_ladder(thms: dict[str, corpus.BenchmarkTheorem], chain: str, level: int,
-                       required: list[str], forbidden: list[str]) -> None:
+@pytest.mark.parametrize(
+    "chain,level,required,forbidden",
+    [
+        (
+            "stepk",
+            0,
+            ["## Current goal", "⊢ R n"],
+            ["## Full tactic state", "## Proof so far", "## Theorem", "## Premises"],
+        ),
+        (
+            "stepk",
+            1,
+            ["## Current goal", "## Full tactic state", "n : ℕ", "h : P n"],
+            ["## Theorem"],
+        ),
+        (
+            "stepk",
+            2,
+            [
+                "## Proof so far (2 tactics)",
+                "intro h",
+                "simp",
+                "## Theorem",
+                "Mini.theoremA",
+                "Mini/A.lean",
+            ],
+            ["## Premises"],
+        ),
+        (
+            "hint",
+            0,
+            [
+                "## Theorem",
+                "## Premises used in the next tactic",
+                "- `Mini.premiseA`",
+                "- `Mini.premiseB`",
+            ],
+            ["## Premise signatures"],
+        ),
+        (
+            "hint",
+            1,
+            [
+                "## Premise signatures",
+                "theorem Mini.premiseA {n : ℕ} (h : P n) : R n",
+                "def Mini.premiseB (n : ℕ) : ℕ",
+            ],
+            [],
+        ),
+    ],
+)
+def test_render_ladder(
+    thms: dict[str, corpus.BenchmarkTheorem],
+    chain: str,
+    level: int,
+    required: list[str],
+    forbidden: list[str],
+) -> None:
     """Each rung adds its own sections and nothing from higher rungs."""
     r = context.render(thms["Mini.theoremA"], 2, chain, level)
     assert r.label == f"{chain}:{level}"
@@ -131,7 +175,7 @@ def test_noise_arm_invariants(thms: dict[str, corpus.BenchmarkTheorem]) -> None:
     for name, t, k, level in _noise_cases(thms):
         noise_rc = context.render(t, k, "noise", level)
         hint_rc = context.render(t, k, "hint", level)
-        noise_text, hint_text = noise_rc.text, hint_rc.text
+        noise_text = noise_rc.text
         base_text = context.render(t, k, "hint", level - 1).text
         n_noise = _cl100k_count(prompt.build_user_prompt(noise_rc))
         n_hint = _cl100k_count(prompt.build_user_prompt(hint_rc))
@@ -139,19 +183,19 @@ def test_noise_arm_invariants(thms: dict[str, corpus.BenchmarkTheorem]) -> None:
             f"{name} k={k} noise:{level} -> {n_noise} PROMPT tokens but "
             f"hint:{level} -> {n_hint} (must be exactly equal)"
         )
-        assert noise_text.startswith(base_text), (
-            f"{name} k={k} noise:{level} does not start with its hint:{level-1} baseline"
-        )
-        pad = noise_text[len(base_text):]
-        assert pad.strip() == "", (
-            f"{name} k={k} noise:{level} pad is not whitespace-only: {pad[:120]!r}"
-        )
+        assert noise_text.startswith(
+            base_text
+        ), f"{name} k={k} noise:{level} does not start with its hint:{level-1} baseline"
+        pad = noise_text[len(base_text) :]
+        assert (
+            pad.strip() == ""
+        ), f"{name} k={k} noise:{level} pad is not whitespace-only: {pad[:120]!r}"
         assert "Lorem ipsum" not in noise_text
         assert "lorem" not in noise_text.lower()
         assert "Filler" not in noise_text
-        assert context.render(t, k, "noise", level).text == noise_text, (
-            f"{name} k={k} noise:{level} render is not deterministic"
-        )
+        assert (
+            context.render(t, k, "noise", level).text == noise_text
+        ), f"{name} k={k} noise:{level} render is not deterministic"
         checked += 1
         padded_seen += bool(pad)
     assert checked >= 6, f"only {checked} noise rungs exercised"
@@ -159,15 +203,19 @@ def test_noise_arm_invariants(thms: dict[str, corpus.BenchmarkTheorem]) -> None:
 
 
 def test_noise_rejects_impossible_targets(
-        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch) -> None:
+    thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A baseline longer than its target, and noise:0, must both raise."""
     pytest.importorskip("tiktoken")
     t = thms["Mini.theoremA"]
     with pytest.raises(ValueError):
         context.render(t, 2, "noise", 0)
-    def fake_hint_parts(theorem: corpus.BenchmarkTheorem, k: int,
-                        level: int) -> list[str]:
+
+    def fake_hint_parts(
+        theorem: corpus.BenchmarkTheorem, k: int, level: int
+    ) -> list[str]:
         return ["X " * 400] if level == 1 else ["short"]
+
     monkeypatch.setattr(context, "_render_hint_parts", fake_hint_parts)
     with pytest.raises(ValueError):
         context.render(t, 2, "noise", 2)
@@ -177,17 +225,19 @@ def test_noise_rejects_impossible_targets(
 
 
 def test_noise_pad_is_matched_on_the_full_prompt(
-        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch) -> None:
+    thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Match full prompts: context matching yields 42 tokens instead of target 43."""
     pytest.importorskip("tiktoken")
     base = "## Current goal\n```\n⊢ Q n\n```"
     target = base + " Q m"
-    assert _cl100k_count(base) == 13 and _cl100k_count(target) == 15, (
-        "the constructed baseline drifted; recompute the table in this docstring"
-    )
+    assert (
+        _cl100k_count(base) == 13 and _cl100k_count(target) == 15
+    ), "the constructed baseline drifted; recompute the table in this docstring"
 
-    def fake_hint_parts(theorem: corpus.BenchmarkTheorem, k: int,
-                        level: int) -> list[str]:
+    def fake_hint_parts(
+        theorem: corpus.BenchmarkTheorem, k: int, level: int
+    ) -> list[str]:
         return [target] if level == 2 else [base]
 
     monkeypatch.setattr(context, "_render_hint_parts", fake_hint_parts)
@@ -200,14 +250,12 @@ def test_noise_pad_is_matched_on_the_full_prompt(
     assert n_noise == n_hint == 43, (n_noise, n_hint)
     # Still a pure whitespace pad -- the fix changes what's measured, not the arm itself.
     assert noise.text.startswith(base)
-    assert noise.text[len(base):].strip() == ""
+    assert noise.text[len(base) :].strip() == ""
 
 
 def test_noise_path_uses_a_real_tokenizer_with_no_char_fallback() -> None:
     """The pad search counts with TiktokenTokenizer, never a char-count fallback -- an approximate count can't satisfy an exact length control; `_count_tokens` keeps its fallback for callers where a rough count is fine (is_trivial_rung's non-noise branches, cli.py, test_s3_archive.py)."""
-    source = (
-        __import__("pathlib").Path(context.__file__).read_text()
-    )
+    source = __import__("pathlib").Path(context.__file__).read_text()
     assert "class _TokenCounter" not in source
     assert "TiktokenTokenizer" in source
     assert "def _count_tokens" in source, "the tolerant budget counter must survive"
@@ -226,7 +274,8 @@ _FIXTURE_COMMIT = "fe4454af900584467d21f4fd4fe951d29d9332a7"
 
 
 def test_hint2_header_says_signature_when_no_traced_source(
-        thms: dict[str, corpus.BenchmarkTheorem]) -> None:
+    thms: dict[str, corpus.BenchmarkTheorem],
+) -> None:
     """Without a traced repo, body_with_proof falls back to the corpus's stored signature; the header must say so instead of claiming full source with proof."""
     assert premises._traced_root() is None, "fixture HOME must have no traced repo"
     text = context.render(thms["Mini.theoremA"], 2, "hint", 2).text
@@ -235,17 +284,27 @@ def test_hint2_header_says_signature_when_no_traced_source(
 
 
 def test_hint2_header_says_full_source_when_the_traced_repo_is_present(
-        thms: dict[str, corpus.BenchmarkTheorem], monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path) -> None:
+    thms: dict[str, corpus.BenchmarkTheorem],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """The other direction: with a real traced slice available, the header must say full source rather than always defaulting to signature."""
-    repo = (tmp_path / "traced" / ".cache" / "lean_dojo"
-            / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}" / "mathlib4")
+    repo = (
+        tmp_path
+        / "traced"
+        / ".cache"
+        / "lean_dojo"
+        / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}"
+        / "mathlib4"
+    )
     (repo / "Mini").mkdir(parents=True)
     # premiseA is recorded at lines 10-11, premiseB at 15; pad so the slice lands on
     # real text, not past EOF.
     lines = [f"-- filler {i}" for i in range(1, 10)]
-    lines += ["theorem Mini.premiseA {n : ℕ} (h : P n) : R n := by",
-              "  exact absurd h  -- REAL PROOF BODY FROM THE TRACED REPO"]
+    lines += [
+        "theorem Mini.premiseA {n : ℕ} (h : P n) : R n := by",
+        "  exact absurd h  -- REAL PROOF BODY FROM THE TRACED REPO",
+    ]
     lines += [f"-- filler {i}" for i in range(12, 15)]
     lines += ["def Mini.premiseB (n : ℕ) : ℕ := n + 1"]
     (repo / "Mini" / "Prem.lean").write_text("\n".join(lines) + "\n")
@@ -283,7 +342,7 @@ def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path: Path) -> No
     import subprocess
     import sys as _sys
 
-    from tests._paths import LEAN_MINI, REPO_ROOT
+    from tests._paths import REPO_ROOT
 
     script = tmp_path / "blocked_render.py"
     script.write_text(
@@ -306,9 +365,16 @@ def test_noise_pad_search_comes_from_the_public_evals_home(tmp_path: Path) -> No
     )
     proc = subprocess.run(
         [_sys.executable, str(script)],
-        capture_output=True, text=True, timeout=300, cwd=str(REPO_ROOT),
-        env={"PATH": "/usr/bin:/bin", "SMOLBENCH_LEAN_DATA": str(LEAN_MINI),
-             "PYTHONPATH": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+        cwd=str(REPO_ROOT),
+        env={
+            "PATH": "/usr/bin:/bin",
+            "SMOLBENCH_LEAN_DATA": str(FIXTURE),
+            "PYTHONPATH": str(REPO_ROOT),
+        },
     )
     assert proc.returncode == 0, f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
     assert "OK" in proc.stdout

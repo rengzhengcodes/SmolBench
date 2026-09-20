@@ -137,10 +137,10 @@ concurrent_gen: false
 skip_trivial: false
 theorem_workers: 1
 models:
-  - provider: primeintellect
+  - provider: ec2
     model: stub-good-model
     display_name: stub-good
-  - provider: openrouter
+  - provider: ec2
     model: stub-bad-model
     display_name: stub-bad
 theorems:
@@ -159,8 +159,7 @@ YAML
         SMOLBENCH_LEAN_DATA="$WORK/corpus" \
         SMOLBENCH_MATHLIB_ROOT="$WORK/lean_project" \
         SMOLBENCH_LEAN_RESULTS="$WORK/results" \
-        PRIME_INTELLECT_BASE_URL="http://127.0.0.1:$PI_PORT/v1" PRIME_INTELLECT_API_KEY=dummy \
-        OPENROUTER_BASE_URL="http://127.0.0.1:$OR_PORT/v1" OPENROUTER_API_KEY=dummy \
+        EC2_INFERENCE_BASE_URL="http://127.0.0.1:$PI_PORT/v1" EC2_VLLM_API_KEY=dummy \
         .venv/bin/python -m smolbench.deduction.lean.cli run-sweep --config "$WORK/sweep.yaml"
     }
     run_sweep

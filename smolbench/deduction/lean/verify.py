@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Iterator, Literal
 
 try:
-    import lean_interact  # noqa: F401
+    import lean_interact  # noqa: F401 -- optional-dependency probe  # pylint: disable=unused-import
 except ImportError as exc:
     # Keep generation and analysis importable without the Lean-only dependency.
     raise ImportError(
@@ -28,7 +28,6 @@ except ImportError as exc:
 from . import replbackend
 from .corpus import BenchmarkTheorem
 
-
 # `ProofResult` has all 7 verdicts; ground-truth replay has 5 because it has
 # neither a candidate tail nor a prefix/tail split. Empty tails are `no_answer`,
 # not `lean_error`, because Lean received no tactic. Timeouts remain `exception`
@@ -40,7 +39,13 @@ from .corpus import BenchmarkTheorem
 # `replay_failed` means `open_at_step` failed to replay tactics 0..k-1 into an
 # open goal, keeping a broken ground-truth prefix distinct from a bad tail.
 Verdict = Literal[
-    "success", "lean_error", "incomplete", "given_up", "no_answer", "exception", "replay_failed",
+    "success",
+    "lean_error",
+    "incomplete",
+    "given_up",
+    "no_answer",
+    "exception",
+    "replay_failed",
 ]
 
 
@@ -74,10 +79,11 @@ def _raise_if_repl_failure(outcome: replbackend.StepOutcome) -> None:
     Parameters
     ----------
     outcome : replbackend.StepOutcome
-        REPL outcome.
     """
     if outcome.kind == "exception":
-        raise replbackend.ReplError(outcome.error or "REPL-level failure with no message")
+        raise replbackend.ReplError(
+            outcome.error or "REPL-level failure with no message"
+        )
 
 
 def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResult:
@@ -88,9 +94,7 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem to replay.
     timeout : int, optional
-        Session timeout.
 
     Returns
     -------
@@ -113,27 +117,43 @@ def replay_ground_truth(bt: BenchmarkTheorem, timeout: int = 600) -> ReplayResul
                 if outcome.kind == "lean_error":
                     # ``i`` excludes the rejected tactic.
                     return ReplayResult(
-                        bt.full_name, "lean_error", i, len(tactics),
+                        bt.full_name,
+                        "lean_error",
+                        i,
+                        len(tactics),
                         error=outcome.error,
                     )
                 if outcome.kind == "given_up":
                     return ReplayResult(
-                        bt.full_name, "given_up", i + 1, len(tactics),
+                        bt.full_name,
+                        "given_up",
+                        i + 1,
+                        len(tactics),
                     )
                 if outcome.kind == "success":
                     return ReplayResult(
-                        bt.full_name, "success", i + 1, len(tactics),
+                        bt.full_name,
+                        "success",
+                        i + 1,
+                        len(tactics),
                     )
                 state = outcome.proof_state
             return ReplayResult(
-                bt.full_name, "incomplete", len(tactics), len(tactics),
+                bt.full_name,
+                "incomplete",
+                len(tactics),
+                len(tactics),
                 final_state_pp=outcome.goals_pp if outcome is not None else None,
             )
         finally:
             session.close()
     except Exception as exc:  # noqa: BLE001
         return ReplayResult(
-            bt.full_name, "exception", 0, len(tactics), error=f"{type(exc).__name__}: {exc}",
+            bt.full_name,
+            "exception",
+            0,
+            len(tactics),
+            error=f"{type(exc).__name__}: {exc}",
         )
 
 
@@ -163,7 +183,6 @@ def _split_tactics(tail: str) -> list[str]:
     Parameters
     ----------
     tail : str
-        Candidate tactic text.
 
     Returns
     -------
@@ -184,13 +203,9 @@ def try_tail(
     Parameters
     ----------
     session : replbackend.ReplSession
-        REPL session.
     state_at_k : int
-        Starting proof state.
     tail : str
-        Candidate tail.
     theorem_name : str
-        Theorem name to record.
 
     Returns
     -------
@@ -206,7 +221,9 @@ def try_tail(
     if not tactics:
         # Empty tails are not errors because Lean received no tactic.
         return ProofResult(
-            theorem_name, "no_answer", tail,
+            theorem_name,
+            "no_answer",
+            tail,
             error="empty tail: the response contained no extractable tactic lines",
         )
 
@@ -219,14 +236,18 @@ def try_tail(
             return ProofResult(theorem_name, "success", tail)
         if outcome.kind == "lean_error":
             return ProofResult(
-                theorem_name, "lean_error", tail,
+                theorem_name,
+                "lean_error",
+                tail,
                 error=f"tail step {i+1}/{len(tactics)} ({tac!r}): {outcome.error}",
             )
         if outcome.kind == "given_up":
             return ProofResult(theorem_name, "given_up", tail)
         state = outcome.proof_state
     return ProofResult(
-        theorem_name, "incomplete", tail,
+        theorem_name,
+        "incomplete",
+        tail,
         final_state_pp=outcome.goals_pp if outcome is not None else None,
     )
 
@@ -241,11 +262,8 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem to replay.
     k : int
-        Checkpoint index.
     timeout : int, optional
-        Session timeout.
 
     Yields
     ------
@@ -259,7 +277,7 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
     RuntimeError
         Prefix did not leave an open goal state; this is not a REPL failure.
     """
-    if not (0 <= k < len(bt.traced_tactics)):
+    if not 0 <= k < len(bt.traced_tactics):
         raise ValueError(f"k={k} out of range [0, {len(bt.traced_tactics)})")
 
     prefix = [tt.tactic for tt in bt.traced_tactics[:k]]
@@ -278,7 +296,9 @@ def open_at_step(bt: BenchmarkTheorem, k: int, timeout: int = 600) -> Iterator[t
         session.close()
 
 
-def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600) -> ProofResult:
+def verify_proof_tail(
+    bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600
+) -> ProofResult:
     """Replay a prefix and verify one tail.
 
     Opens one session per independent `runner.run_cell` call.
@@ -286,13 +306,9 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem to verify.
     k : int
-        Tail checkpoint.
     tail : str
-        Candidate tail.
     timeout : int, optional
-        Session timeout.
 
     Returns
     -------
@@ -300,12 +316,14 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
         Tail verdict, including invalid checkpoint or failed prefix; empty tails
         return before opening a session.
     """
-    if not (0 <= k < len(bt.traced_tactics)):
+    if not 0 <= k < len(bt.traced_tactics):
         return ProofResult(bt.full_name, "exception", tail, error=f"k={k} out of range")
     if not _split_tactics(tail):
         # Empty tails are not errors because Lean received no tactic.
         return ProofResult(
-            bt.full_name, "no_answer", tail,
+            bt.full_name,
+            "no_answer",
+            tail,
             error="empty tail: the response contained no extractable tactic lines",
         )
     try:
@@ -316,5 +334,8 @@ def verify_proof_tail(bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 60
         return ProofResult(bt.full_name, "replay_failed", tail, error=str(exc))
     except Exception as exc:  # noqa: BLE001
         return ProofResult(
-            bt.full_name, "exception", tail, error=f"{type(exc).__name__}: {exc}",
+            bt.full_name,
+            "exception",
+            tail,
+            error=f"{type(exc).__name__}: {exc}",
         )

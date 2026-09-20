@@ -1,8 +1,10 @@
 """Tests for Lean fence extraction and prompt assembly."""
 
+# pylint: disable=missing-function-docstring
+
 import pytest
 
-import smolbench.deduction.lean.prompt as prompt
+from smolbench.deduction.lean import prompt
 from smolbench.deduction.lean.context import RenderedContext
 
 _THINK_NOT_AT_START = "some preamble <think>not a leading tag</think> exact h"
@@ -11,21 +13,24 @@ _THINK_NOT_AT_START = "some preamble <think>not a leading tag</think> exact h"
 @pytest.mark.parametrize(
     "text, expected",
     [
-        ("reasoning\n```lean\nwrong\n```\nmore\n```lean\nexact h\nsimp\n```\ntrailing",
-         "exact h\nsimp"),
+        (
+            "reasoning\n```lean\nwrong\n```\nmore\n```lean\nexact h\nsimp\n```\ntrailing",
+            "exact h\nsimp",
+        ),
         ("```\nrfl\n```", "rfl"),
         ("```lean4\nomega\n```", "omega"),
         ("  exact h\nsimp  ", "exact h\nsimp"),
         ("<think>\nfirst I'll try induction\n</think>\nexact h\nsimp", "exact h\nsimp"),
-        ("<think>reasoning about the goal state</think>\n```lean\nexact h\nsimp\n```",
-         "exact h\nsimp"),
+        (
+            "<think>reasoning about the goal state</think>\n```lean\nexact h\nsimp\n```",
+            "exact h\nsimp",
+        ),
         ("<think>\nstill reasoning and reasoning with no end in sight...", ""),
         (_THINK_NOT_AT_START, _THINK_NOT_AT_START.strip()),
         ("<think></think>tac", "tac"),
         ("```lean\nrfl", "rfl"),  # unclosed fence: header line stripped, body kept
         # Non-Lean fences must not steal the following Lean block.
-        ("```text\nintro h\nsimp\n```\n\n```lean\nintro h\nsimp\n```",
-         "intro h\nsimp"),
+        ("```text\nintro h\nsimp\n```\n\n```lean\nintro h\nsimp\n```", "intro h\nsimp"),
         ("```python\nprint(1)\n```\n\n```lean\nexact h\n```", "exact h"),
         # The last Lean block wins, not merely the last block.
         ("```lean\nexact h\n```\n```text\nblah\n```", "exact h"),

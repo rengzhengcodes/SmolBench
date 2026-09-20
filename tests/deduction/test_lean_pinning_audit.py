@@ -1,19 +1,21 @@
 """Exercise pinned-theorem manifest emission offline."""
 
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import json
 import os
 import subprocess
 import sys
-from types import ModuleType
 from collections.abc import Iterator
+from types import ModuleType
 from typing import Any
 
 import pytest
 
+from tests._paths import LEAN_MINI_POSTCUTOFF as POSTCUTOFF
 from tests._paths import (
-    LEAN_MINI_POSTCUTOFF as POSTCUTOFF,
     REPO_ROOT,
     SCRIPTS,
     load_by_path,
@@ -26,19 +28,39 @@ FIXTURE_NAMES = ("Mini.theoremA", "Mini.theoremB")
 
 
 @pytest.fixture(scope="module")
-def emitted(tmp_path_factory: pytest.TempPathFactory, audit: ModuleType) -> dict[str, Any]:
+def emitted(
+    tmp_path_factory: pytest.TempPathFactory, audit: ModuleType
+) -> dict[str, Any]:
     """Fixture manifest emitted offline by `--emit-manifest`."""
     tmp = tmp_path_factory.mktemp("emit")
     sidecar = tmp / "replay_passing_random_val.jsonl"
-    sidecar.write_text("".join(
-        json.dumps({"full_name": n, "verdict": "success"}) + "\n" for n in FIXTURE_NAMES))
+    sidecar.write_text(
+        "".join(
+            json.dumps({"full_name": n, "verdict": "success"}) + "\n"
+            for n in FIXTURE_NAMES
+        )
+    )
     out = tmp / "reproduced_pin.json"
-    assert audit.main([
-        "--offline", "--emit-manifest", str(out),
-        "--val-json", str(POSTCUTOFF / "random" / "val.json"),
-        "--replay-jsonl", str(sidecar),
-        "--metadata", str(POSTCUTOFF / "metadata.json"),
-        "--limit", "2", "--seed", "0"]) == 0
+    assert (
+        audit.main(
+            [
+                "--offline",
+                "--emit-manifest",
+                str(out),
+                "--val-json",
+                str(POSTCUTOFF / "random" / "val.json"),
+                "--replay-jsonl",
+                str(sidecar),
+                "--metadata",
+                str(POSTCUTOFF / "metadata.json"),
+                "--limit",
+                "2",
+                "--seed",
+                "0",
+            ]
+        )
+        == 0
+    )
     return json.loads(out.read_text())
 
 
@@ -72,7 +94,9 @@ def audit() -> Iterator[ModuleType]:
         sys.modules.pop(name, None)
 
 
-def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType) -> None:
+def test_layer4_counts_a_missing_prompt_artifact_as_divergent(
+    audit: ModuleType,
+) -> None:
     """A cell no lane spooled a prompt for must not certify as byte-identical."""
     lanes = audit.LANES
     shared = {lane: {"thm|stepk-1": "etag-a", "thm|hint-2": "etag-b"} for lane in lanes}
@@ -84,27 +108,51 @@ def test_layer4_counts_a_missing_prompt_artifact_as_divergent(audit: ModuleType)
     assert audit.divergent_prompt_cells({"thm|stepk-1"}, differing) == {"thm|stepk-1"}
 
 
-@pytest.mark.parametrize("path,flag,argv", [
-    ("results/audit_lean_pinning.py", "--expect-theorems",
-     ["--val-json", "x", "--replay-jsonl", "x"]),
-    ("results/audit_lean_pinning.py", "--expect-cells",
-     ["--val-json", "x", "--replay-jsonl", "x"]),
-    ("deduction/merge_lean_shards.py", "--expect-cells", ["k", "--n", "1"]),
-    ("deduction/merge_lean_shards.py", "--expect-sanity", ["k", "--n", "1"]),
-])
+@pytest.mark.parametrize(
+    "path,flag,argv",
+    [
+        (
+            "results/audit_lean_pinning.py",
+            "--expect-theorems",
+            ["--val-json", "x", "--replay-jsonl", "x"],
+        ),
+        (
+            "results/audit_lean_pinning.py",
+            "--expect-cells",
+            ["--val-json", "x", "--replay-jsonl", "x"],
+        ),
+        ("deduction/merge_lean_shards.py", "--expect-cells", ["k", "--n", "1"]),
+        ("deduction/merge_lean_shards.py", "--expect-sanity", ["k", "--n", "1"]),
+    ],
+)
 def test_every_consumer_requires_an_explicit_expected_shape(
-    path: str, flag: str, argv: list[str],
+    path: str,
+    flag: str,
+    argv: list[str],
 ) -> None:
     """Consumers must state pinned shapes; use CLI so import failures surface."""
     script = SCRIPTS / path
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
     proc = subprocess.run(
-        [sys.executable, str(script), "--help"], capture_output=True,
-        text=True, cwd=str(REPO_ROOT), timeout=300, env=env)
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=300,
+        env=env,
+        check=False,
+    )
     assert proc.returncode == 0, proc.stderr
     assert flag in proc.stdout, f"{path} lacks {flag}\n{proc.stdout}"
     bare = subprocess.run(
-        [sys.executable, str(script), *argv], capture_output=True,
-        text=True, cwd=str(REPO_ROOT), timeout=300, env=env)
-    assert bare.returncode == 2 and flag in bare.stderr, (
-        f"{path} {flag} is not required\n{bare.stderr}")
+        [sys.executable, str(script), *argv],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=300,
+        env=env,
+        check=False,
+    )
+    assert (
+        bare.returncode == 2 and flag in bare.stderr
+    ), f"{path} {flag} is not required\n{bare.stderr}"

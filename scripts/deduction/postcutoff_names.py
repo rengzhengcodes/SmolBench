@@ -80,7 +80,9 @@ METHOD: str = "name-set-difference+pr-opened-after-T"
 _SUBDIR: str = "Mathlib"
 
 #: mathlib commit-subject PR numbers only identify this repository.
-_PR_API_URL: str = "https://api.github.com/repos/leanprover-community/mathlib4/pulls/{number}"
+_PR_API_URL: str = (
+    "https://api.github.com/repos/leanprover-community/mathlib4/pulls/{number}"
+)
 
 _API_HEADERS: dict[str, str] = {
     "Accept": "application/vnd.github+json",
@@ -136,7 +138,6 @@ def normalise_line(line: str) -> str:
     Parameters
     ----------
     line : str
-        source line to normalise.
 
     Returns
     -------
@@ -154,9 +155,7 @@ def _strip_comments(line: str, depth: int) -> tuple[str, int]:
     Parameters
     ----------
     line : str
-        source line to process.
     depth : int
-        current nested block-comment depth.
 
     Returns
     -------
@@ -196,9 +195,7 @@ def _consume_attribute(text: str, balance: int) -> tuple[str, int, str]:
     Parameters
     ----------
     text : str
-        attribute-block text to consume.
     balance : int
-        current open-bracket balance.
 
     Returns
     -------
@@ -272,9 +269,7 @@ def _qualify(token: str, prefix: str) -> str:
     Parameters
     ----------
     token : str
-        declared name token.
     prefix : str
-        ambient namespace prefix.
 
     Returns
     -------
@@ -301,7 +296,6 @@ def _alias_targets(text: str, prefix: str) -> tuple[str, ...]:
     text : str
         alias text following its left-hand side.
     prefix : str
-        ambient namespace prefix.
 
     Returns
     -------
@@ -451,7 +445,9 @@ def scan_lean_text(text: str, file_path: str) -> list[Decl]:
             continue
 
         prefix = ".".join(scope for scope in scopes if scope)
-        deprecated = pending_attr is not None and bool(_DEPRECATED_RE.search(pending_attr))
+        deprecated = pending_attr is not None and bool(
+            _DEPRECATED_RE.search(pending_attr)
+        )
         statement = normalise_line(raw_line)
 
         if head == "alias":
@@ -510,7 +506,6 @@ def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
     root : pathlib.Path
         root of the Lean tree.
     subdir : str
-        subdirectory to scan.
 
     Returns
     -------
@@ -523,7 +518,8 @@ def _iter_lean_files(root: pathlib.Path, subdir: str) -> list[pathlib.Path]:
 
 
 def _scan_tree_state(
-    root: pathlib.Path, subdir: str,
+    root: pathlib.Path,
+    subdir: str,
 ) -> tuple[dict[str, Decl], set[str], set[str]]:
     """Collect a Lean tree's declarations, lines, and paths in one pass.
 
@@ -532,7 +528,6 @@ def _scan_tree_state(
     root : pathlib.Path
         Root of the Lean tree.
     subdir : str
-        Subdirectory containing Lean files.
 
     Returns
     -------
@@ -562,7 +557,6 @@ def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
     root : pathlib.Path
         root of the Lean tree.
     subdir : str, optional
-        subdirectory containing Lean files.
 
     Returns
     -------
@@ -570,26 +564,6 @@ def scan_tree(root: pathlib.Path, subdir: str = "Mathlib") -> dict[str, Decl]:
         declarations indexed by full name.
     """
     return _scan_tree_state(root, subdir)[0]
-
-
-def collect_normalised_lines(root: pathlib.Path, subdir: str = "Mathlib") -> set[str]:
-    """Collect non-empty normalized source lines.
-
-    All lines make the move heuristic conservative; about 1.5 million lines consume a few hundred MB to avoid repeated old-tree reads.
-
-    Parameters
-    ----------
-    root : pathlib.Path
-        root of the Lean tree.
-    subdir : str, optional
-        subdirectory containing Lean files.
-
-    Returns
-    -------
-    set[str]
-        non-empty normalised source lines.
-    """
-    return _scan_tree_state(root, subdir)[1]
 
 
 def deprecation_excluded_names(decls: Iterable[Decl]) -> set[str]:
@@ -667,7 +641,9 @@ def select_postcutoff_names(
     diff = {name: decl for name, decl in new_decls.items() if name not in old_decls}
 
     excluded = deprecation_excluded_names(new_decls.values())
-    after_deprecated = {name: decl for name, decl in diff.items() if name not in excluded}
+    after_deprecated = {
+        name: decl for name, decl in diff.items() if name not in excluded
+    }
 
     after_move = {
         name: decl
@@ -691,7 +667,9 @@ def select_postcutoff_names(
 # ---------------------------------------------------------------------------
 
 
-def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
+def _run_git(
+    args: list[str], cwd: pathlib.Path | None = None
+) -> subprocess.CompletedProcess:
     """Run a git command.
 
     Used for exit-status probes and branches; callers otherwise use ``run_git``'s stdout-or-raise contract.
@@ -699,7 +677,6 @@ def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.Com
     Parameters
     ----------
     args : list[str]
-        git command arguments.
     cwd : pathlib.Path | None, optional
         working directory for the command.
 
@@ -709,11 +686,18 @@ def _run_git(args: list[str], cwd: pathlib.Path | None = None) -> subprocess.Com
         completed git process.
     """
     return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=_GIT_TIMEOUT
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT,
+        check=False,
     )
 
 
-def run_git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True) -> str:
+def run_git(
+    args: list[str], cwd: pathlib.Path | None = None, check: bool = True
+) -> str:
     """Run git and return standard output.
 
     ``check=False`` means no answer; timeouts remain infrastructure failures. Tokens never reach git arguments.
@@ -721,7 +705,6 @@ def run_git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True
     Parameters
     ----------
     args : list[str]
-        git command arguments.
     cwd : pathlib.Path | None, optional
         working directory for the command.
     check : bool, optional
@@ -734,14 +717,23 @@ def run_git(args: list[str], cwd: pathlib.Path | None = None, check: bool = True
     """
     proc = _run_git(args, cwd=cwd)
     if check and proc.returncode != 0:
-        tail = " | ".join((proc.stderr or "").strip().splitlines()[-_STDERR_TAIL_LINES:])
-        raise RuntimeError(f"git {' '.join(args)} failed (exit {proc.returncode}): {tail}")
+        tail = " | ".join(
+            (proc.stderr or "").strip().splitlines()[-_STDERR_TAIL_LINES:]
+        )
+        raise RuntimeError(
+            f"git {' '.join(args)} failed (exit {proc.returncode}): {tail}"
+        )
     return proc.stdout
 
 
 def _commit_present(clone: pathlib.Path, commit: str) -> bool:
     """Report whether ``commit`` resolves to a commit object inside ``clone``."""
-    return _run_git(["-C", str(clone), "cat-file", "-e", f"{commit}^{{commit}}"]).returncode == 0
+    return (
+        _run_git(
+            ["-C", str(clone), "cat-file", "-e", f"{commit}^{{commit}}"]
+        ).returncode
+        == 0
+    )
 
 
 def _ensure_commits_present(clone: pathlib.Path, commits: Iterable[str]) -> None:
@@ -787,7 +779,6 @@ def ensure_clone(
     workdir : pathlib.Path
         directory that holds the local clone.
     repo_url : str, optional
-        remote repository URL.
     commits : Iterable[str], optional
         Commit identifiers to ensure are present.
 
@@ -798,11 +789,16 @@ def ensure_clone(
     """
     clone = workdir / "mathlib4"
     preexisting = clone.exists()
-    if preexisting and run_git(["-C", str(clone), "rev-parse", "--git-dir"], check=False).strip():
+    if (
+        preexisting
+        and run_git(["-C", str(clone), "rev-parse", "--git-dir"], check=False).strip()
+    ):
         LOGGER.info("reusing existing clone at %s", clone)
     else:
         workdir.mkdir(parents=True, exist_ok=True)
-        filtered = _run_git(["clone", "--filter=blob:none", "--no-checkout", repo_url, str(clone)])
+        filtered = _run_git(
+            ["clone", "--filter=blob:none", "--no-checkout", repo_url, str(clone)]
+        )
         if filtered.returncode != 0:
             LOGGER.warning(
                 "blobless clone failed (exit %d); retrying without --filter",
@@ -818,7 +814,9 @@ def ensure_clone(
     return clone
 
 
-def ensure_worktree(clone: pathlib.Path, path: pathlib.Path, commit: str) -> pathlib.Path:
+def ensure_worktree(
+    clone: pathlib.Path, path: pathlib.Path, commit: str
+) -> pathlib.Path:
     """Return a worktree checked out at ``commit``.
 
     Separate worktrees keep old scanning and new blame readable together without races.
@@ -828,9 +826,7 @@ def ensure_worktree(clone: pathlib.Path, path: pathlib.Path, commit: str) -> pat
     clone : pathlib.Path
         local clone that owns the worktree.
     path : pathlib.Path
-        desired worktree path.
     commit : str
-        commit to check out.
 
     Returns
     -------
@@ -838,7 +834,9 @@ def ensure_worktree(clone: pathlib.Path, path: pathlib.Path, commit: str) -> pat
         worktree checked out at the commit.
     """
     if not path.exists():
-        run_git(["-C", str(clone), "worktree", "add", "--detach", "-f", str(path), commit])
+        run_git(
+            ["-C", str(clone), "worktree", "add", "--detach", "-f", str(path), commit]
+        )
         return path
     head = run_git(["-C", str(path), "rev-parse", "HEAD"], check=False).strip()
     if head == commit:
@@ -883,8 +881,14 @@ def prefetch_range_objects(
     try:
         listing = run_git(
             [
-                "-C", str(clone), "rev-list", "--objects", "--missing=print",
-                f"{old}..{new}", "--", subdir,
+                "-C",
+                str(clone),
+                "rev-list",
+                "--objects",
+                "--missing=print",
+                f"{old}..{new}",
+                "--",
+                subdir,
             ]
         )
         # ``--missing=print`` marks absent objects with ``?``.
@@ -904,8 +908,14 @@ def prefetch_range_objects(
             chunk = oids[start : start + chunk_size]
             run_git(
                 [
-                    "-C", str(clone), "fetch", "--no-tags", "--no-write-fetch-head",
-                    "--filter=blob:none", "origin", *chunk,
+                    "-C",
+                    str(clone),
+                    "fetch",
+                    "--no-tags",
+                    "--no-write-fetch-head",
+                    "--filter=blob:none",
+                    "origin",
+                    *chunk,
                 ]
             )
             requested += len(chunk)
@@ -919,7 +929,9 @@ def prefetch_range_objects(
     return requested
 
 
-def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> dict[int, str]:
+def blame_lines(
+    worktree: pathlib.Path, old: str, new: str, file_path: str
+) -> dict[int, str]:
     """Attribute file lines to their introducing commits.
 
     Range blame maps older lines to ``old``, whose date fails the cutoff. Failures yield unresolved drops; timeouts remain infrastructure failures.
@@ -929,9 +941,7 @@ def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> d
     worktree : pathlib.Path
         checked-out new tree to blame.
     old : str
-        older commit boundary.
     new : str
-        newer commit boundary.
     file_path : str
         file path relative to the worktree.
 
@@ -941,7 +951,15 @@ def blame_lines(worktree: pathlib.Path, old: str, new: str, file_path: str) -> d
         mapping from line numbers to introducing commits.
     """
     out = run_git(
-        ["-C", str(worktree), "blame", "--line-porcelain", f"{old}..{new}", "--", file_path],
+        [
+            "-C",
+            str(worktree),
+            "blame",
+            "--line-porcelain",
+            f"{old}..{new}",
+            "--",
+            file_path,
+        ],
         check=False,
     )
     blames: dict[int, str] = {}
@@ -960,7 +978,6 @@ def _iso_utc(raw: str) -> str:
     Parameters
     ----------
     raw : str
-        git author timestamp.
 
     Returns
     -------
@@ -979,9 +996,7 @@ def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]
     Parameters
     ----------
     clone : pathlib.Path
-        local clone to query.
     shas : Iterable[str]
-        commit identifiers to inspect.
 
     Returns
     -------
@@ -991,7 +1006,17 @@ def commit_metadata(clone: pathlib.Path, shas: Iterable[str]) -> dict[str, dict]
     unique = sorted({sha for sha in shas if sha})
     if not unique:
         return {}
-    out = run_git(["-C", str(clone), "log", "--no-walk", "-z", "--format=%H%x00%aI%x00%B", *unique])
+    out = run_git(
+        [
+            "-C",
+            str(clone),
+            "log",
+            "--no-walk",
+            "-z",
+            "--format=%H%x00%aI%x00%B",
+            *unique,
+        ]
+    )
     fields = out.split("\0")
     if fields and fields[-1] == "":
         fields.pop()
@@ -1025,16 +1050,16 @@ def _is_rate_limited(headers: object, body: str) -> bool:
     Parameters
     ----------
     headers : object
-        HTTP response headers.
     body : str
-        HTTP response body.
 
     Returns
     -------
     bool
         whether the response indicates rate limiting.
     """
-    remaining = headers.get("X-RateLimit-Remaining") if hasattr(headers, "get") else None
+    remaining = (
+        headers.get("X-RateLimit-Remaining") if hasattr(headers, "get") else None
+    )
     return remaining == "0" or "rate limit" in body.lower()
 
 
@@ -1108,11 +1133,8 @@ def resolve_provenance(
     clone : pathlib.Path
         local clone containing commit history.
     old : str
-        older commit boundary.
     new : str
-        newer commit boundary.
     jobs : int, optional
-        maximum concurrent blame jobs.
 
     Returns
     -------
@@ -1149,7 +1171,9 @@ def resolve_provenance(
             "pr_number": None,
         }
 
-    metadata = commit_metadata(clone, [entry["introduced_commit"] for entry in provenance.values()])
+    metadata = commit_metadata(
+        clone, [entry["introduced_commit"] for entry in provenance.values()]
+    )
     for entry in provenance.values():
         meta = metadata.get(entry["introduced_commit"], {})
         entry["author_date"] = meta.get("author_date")
@@ -1157,7 +1181,10 @@ def resolve_provenance(
 
     if unresolved:
         LOGGER.warning(
-            "%d declaration(s) had no blamed line in %s..%s and were dropped", unresolved, old, new
+            "%d declaration(s) had no blamed line in %s..%s and were dropped",
+            unresolved,
+            old,
+            new,
         )
     return provenance
 
@@ -1177,7 +1204,6 @@ def apply_pr_filter(
     Parameters
     ----------
     provenance : dict[str, dict]
-        provenance records to filter.
     target_date : str
         cutoff date in ISO format.
     token : str | None
@@ -1272,17 +1298,13 @@ def build_artifact(
     Parameters
     ----------
     old : str
-        older commit identifier.
     new : str
-        newer commit identifier.
     target_date : str
         cutoff date in ISO format.
     counts : dict
         funnel counts from declaration selection.
     selected : dict[str, dict]
-        selected provenance records.
     kept : dict[str, Decl]
-        retained declaration records.
 
     Returns
     -------
@@ -1315,23 +1337,40 @@ def build_artifact(
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Define and parse the command line."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--old", required=True, help="commit-ish of the OLD (pre-cutoff) tree")
+    parser.add_argument(
+        "--old", required=True, help="commit-ish of the OLD (pre-cutoff) tree"
+    )
     parser.add_argument("--new", required=True, help="commit-ish of the NEW tree")
     parser.add_argument(
-        "--target-date", required=True,
+        "--target-date",
+        required=True,
         help="cutoff date YYYY-MM-DD; a declaration is kept when its evidence "
         "date is on or after it",
     )
-    parser.add_argument("--out", required=True, help="path of the JSON artifact to write")
-    parser.add_argument("--workdir", required=True, help="scratch dir for the clone, worktrees and PR cache")
-    parser.add_argument("--repo-url", default=DEFAULT_REPO_URL, help="remote to clone (default: %(default)s)")
     parser.add_argument(
-        "--github-token", default=None,
+        "--out", required=True, help="path of the JSON artifact to write"
+    )
+    parser.add_argument(
+        "--workdir",
+        required=True,
+        help="scratch dir for the clone, worktrees and PR cache",
+    )
+    parser.add_argument(
+        "--repo-url",
+        default=DEFAULT_REPO_URL,
+        help="remote to clone (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--github-token",
+        default=None,
         help="GitHub token; falls back to $GITHUB_ACCESS_TOKEN. Never logged or stored",
     )
-    parser.add_argument("--jobs", type=int, default=8, help="parallel blame jobs (default: %(default)s)")
     parser.add_argument(
-        "--no-prefetch", action="store_true",
+        "--jobs", type=int, default=8, help="parallel blame jobs (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--no-prefetch",
+        action="store_true",
         help="skip the bulk object prefetch (slower blame, same result)",
     )
     args = parser.parse_args(argv)
@@ -1378,12 +1417,18 @@ def main(argv: list[str] | None = None) -> int:
     old_decls, old_lines, old_files = _scan_tree_state(wt_old, _SUBDIR)
     # Empty sides make the diff meaningless; an empty old tree makes every name look new.
     if not new_decls:
-        raise SystemExit(f"the new tree at {wt_new} yielded zero declarations -- refusing to diff")
+        raise SystemExit(
+            f"the new tree at {wt_new} yielded zero declarations -- refusing to diff"
+        )
     if not old_decls:
-        raise SystemExit(f"the old tree at {wt_old} yielded zero declarations -- refusing to diff")
+        raise SystemExit(
+            f"the old tree at {wt_old} yielded zero declarations -- refusing to diff"
+        )
 
     kept, counts = select_postcutoff_names(new_decls, old_decls, old_lines, old_files)
-    provenance = resolve_provenance(kept, wt_new, clone, args.old, args.new, jobs=args.jobs)
+    provenance = resolve_provenance(
+        kept, wt_new, clone, args.old, args.new, jobs=args.jobs
+    )
 
     cache: dict = {}
     if cache_path.is_file():
@@ -1394,9 +1439,13 @@ def main(argv: list[str] | None = None) -> int:
         selected = apply_pr_filter(provenance, args.target_date, token, cache, counters)
     finally:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(cache, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        cache_path.write_text(
+            json.dumps(cache, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
-    artifact = build_artifact(args.old, args.new, args.target_date, counts, selected, kept)
+    artifact = build_artifact(
+        args.old, args.new, args.target_date, counts, selected, kept
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as sink:
         json.dump(artifact, sink, indent=2, sort_keys=True)
@@ -1408,7 +1457,9 @@ def main(argv: list[str] | None = None) -> int:
     unresolved = counts["n_after_move"] - len(provenance)
 
     # Print so callers can parse output independently of logging configuration.
-    print(f"postcutoff: old_commit={args.old} new_commit={args.new} target_date={args.target_date}")
+    print(
+        f"postcutoff: old_commit={args.old} new_commit={args.new} target_date={args.target_date}"
+    )
     print(f"postcutoff: n_old_decls={counts['n_old_decls']}")
     print(f"postcutoff: n_new_decls={counts['n_new_decls']}")
     print(f"postcutoff: n_name_diff={counts['n_name_diff']}")

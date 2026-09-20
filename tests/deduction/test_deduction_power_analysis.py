@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from conftest import cell_row, write_jsonl
+
 from tests._paths import NOTEBOOKS, load_by_path
 
 pa = load_by_path(
@@ -29,9 +30,9 @@ def test_earliest_surviving_attempt_wins(tmp_path: Path) -> None:
         cell_row(model="m2", theorem_id="thm.recovered", verdict="lean_error"),
     ]
     _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
-    assert blocks["thm.resampled"][(1, "stepk:1")]["m1"] == 0, (
-        "the later draw must not overwrite the first measurement"
-    )
+    assert (
+        blocks["thm.resampled"][(1, "stepk:1")]["m1"] == 0
+    ), "the later draw must not overwrite the first measurement"
     assert blocks["thm.resampled"][(1, "stepk:1")]["m2"] == 1
     assert blocks["thm.recovered"][(1, "stepk:1")] == {"m1": 1, "m2": 0}
 
@@ -49,12 +50,12 @@ def test_verdict_classification(tmp_path: Path) -> None:
         cell_row(model="m2", theorem_id="thm.ok", verdict="success"),
     ]
     _, blocks, _ = pa.load_joint_cells([_write(tmp_path, rows)], models=("m1", "m2"))
-    assert "thm.infra" not in blocks, (
-        "a cell only one model was measured on cannot be part of a paired block"
-    )
-    assert "thm.unverifiable" not in blocks, (
-        "a cell no model could be tested on must not enter the denominator"
-    )
+    assert (
+        "thm.infra" not in blocks
+    ), "a cell only one model was measured on cannot be part of a paired block"
+    assert (
+        "thm.unverifiable" not in blocks
+    ), "a cell no model could be tested on must not enter the denominator"
     assert blocks["thm.incomplete"][(1, "stepk:1")] == {"m1": 0, "m2": 1}
     assert blocks["thm.ok"][(1, "stepk:1")] == {"m1": 1, "m2": 1}
 

@@ -15,10 +15,11 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal
+from typing import Any, Callable, Iterator, Literal, Protocol
 
 from lean_interact import Command, LeanREPLConfig, LeanServer, LocalProject, ProofStep
 from lean_interact.interface import LeanError
+
 from smolbench.deduction.lean.corpus import BenchmarkTheorem
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,9 @@ def module_name(file_path: str) -> str:
         Empty or non-``.lean`` path, named before an untraceable REPL import error.
     """
     if not file_path or not file_path.endswith(".lean"):
-        raise ValueError(f"not a Lean source path (expected a '.lean' suffix): {file_path!r}")
+        raise ValueError(
+            f"not a Lean source path (expected a '.lean' suffix): {file_path!r}"
+        )
     return file_path[: -len(".lean")].replace("/", ".")
 
 
@@ -153,7 +156,6 @@ def _iter_code_positions(text: str) -> Iterator[int]:
     Parameters
     ----------
     text : str
-        Lean source.
 
     Yields
     ------
@@ -186,7 +188,6 @@ def find_statement_end(text: str) -> int | None:
     Parameters
     ----------
     text : str
-        Declaration source.
 
     Returns
     -------
@@ -216,9 +217,7 @@ def rename_declaration(text: str, target_name: str = TARGET_NAME) -> str:
     Parameters
     ----------
     text : str
-        Declaration source.
     target_name : str, optional
-        Replacement identifier.
 
     Returns
     -------
@@ -232,7 +231,9 @@ def rename_declaration(text: str, target_name: str = TARGET_NAME) -> str:
     """
     n = len(text)
     for i in _iter_code_positions(text):
-        keyword = next((kw for kw in _DECLARATION_KEYWORDS if text.startswith(kw, i)), None)
+        keyword = next(
+            (kw for kw in _DECLARATION_KEYWORDS if text.startswith(kw, i)), None
+        )
         if keyword is None:
             continue
         # Avoid partial keyword matches such as `mytheorem`.
@@ -246,7 +247,9 @@ def rename_declaration(text: str, target_name: str = TARGET_NAME) -> str:
         while start < n and text[start].isspace():
             start += 1
         end = start
-        while end < n and not text[end].isspace() and text[end] not in _IDENT_TERMINATORS:
+        while (
+            end < n and not text[end].isspace() and text[end] not in _IDENT_TERMINATORS
+        ):
             end += 1
         if end == start:
             raise ValueError(
@@ -255,17 +258,40 @@ def rename_declaration(text: str, target_name: str = TARGET_NAME) -> str:
         return text[:start] + target_name + text[end:]
 
     raise ValueError(
-        "no 'theorem'/'lemma' declaration keyword outside a comment in: " f"{text[:120]!r}"
+        "no 'theorem'/'lemma' declaration keyword outside a comment in: "
+        f"{text[:120]!r}"
     )
 
 
 #: Column-0 keywords that end a declaration slice, including scope markers.
 _TOP_LEVEL_KEYWORDS = frozenset(
     {
-        "theorem", "lemma", "def", "instance", "abbrev", "structure", "class",
-        "inductive", "namespace", "end", "section", "open", "variable",
-        "noncomputable", "protected", "private", "nonrec", "universe", "attribute",
-        "example", "macro", "syntax", "notation", "deriving", "alias", "set_option",
+        "theorem",
+        "lemma",
+        "def",
+        "instance",
+        "abbrev",
+        "structure",
+        "class",
+        "inductive",
+        "namespace",
+        "end",
+        "section",
+        "open",
+        "variable",
+        "noncomputable",
+        "protected",
+        "private",
+        "nonrec",
+        "universe",
+        "attribute",
+        "example",
+        "macro",
+        "syntax",
+        "notation",
+        "deriving",
+        "alias",
+        "set_option",
         "import",
     }
 )
@@ -274,14 +300,34 @@ _TOP_LEVEL_KEYWORDS = frozenset(
 #: commands must not arm the stop rule.
 _DECLARATION_OPENERS = frozenset(
     {
-        "theorem", "lemma", "def", "instance", "abbrev", "structure", "class",
-        "inductive", "example", "macro", "syntax", "notation", "alias",
+        "theorem",
+        "lemma",
+        "def",
+        "instance",
+        "abbrev",
+        "structure",
+        "class",
+        "inductive",
+        "example",
+        "macro",
+        "syntax",
+        "notation",
+        "alias",
     }
 )
 
 #: Same-line declaration modifiers.
 _DECLARATION_MODIFIERS = frozenset(
-    {"private", "protected", "noncomputable", "nonrec", "partial", "unsafe", "scoped", "local"}
+    {
+        "private",
+        "protected",
+        "noncomputable",
+        "nonrec",
+        "partial",
+        "unsafe",
+        "scoped",
+        "local",
+    }
 )
 
 _LEADING_ATTRIBUTE = re.compile(r"^@\[[^\]]*\]\s*")
@@ -307,7 +353,6 @@ def _opens_a_declaration(line: str) -> bool:
     Parameters
     ----------
     line : str
-        Source line.
 
     Returns
     -------
@@ -335,9 +380,7 @@ def _advance_comment_state(line: str, in_comment: bool) -> bool:
     Parameters
     ----------
     line : str
-        Source line.
     in_comment : bool
-        Prior block-comment state.
 
     Returns
     -------
@@ -363,7 +406,9 @@ def _advance_comment_state(line: str, in_comment: bool) -> bool:
     return in_comment
 
 
-def declaration_text(root: Path, file_path: str, start_line: int, max_lines: int = 400) -> str:
+def declaration_text(
+    root: Path, file_path: str, start_line: int, max_lines: int = 400
+) -> str:
     """Slice one declaration's source out of ``root / file_path``.
 
     `start_line` is 1-indexed to match `premises.slice_full_decl`; ignore `BenchmarkTheorem.start`'s
@@ -377,7 +422,6 @@ def declaration_text(root: Path, file_path: str, start_line: int, max_lines: int
     root : Path
         Mathlib4 checkout root.
     file_path : str
-        Corpus Lean source path.
     start_line : int
         1-indexed slice start.
     max_lines : int, optional
@@ -435,11 +479,9 @@ def theorem_statement_stub(
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem to stub.
     root : Path | None, optional
         Mathlib4 checkout root.
     target_name : str, optional
-        Replacement identifier.
 
     Returns
     -------
@@ -479,7 +521,6 @@ def classify_step(response: Any) -> StepOutcome:
     Parameters
     ----------
     response : Any
-        `lean_interact` reply.
 
     Returns
     -------
@@ -516,6 +557,16 @@ def classify_step(response: Any) -> StepOutcome:
     return StepOutcome("incomplete", response.proof_state, None, goals_pp)
 
 
+class _ReplServer(Protocol):
+    """Structural server API: run requests, kill the process."""
+
+    def run(self, request: Any, timeout: Any = None) -> Any:
+        """Send `request`, returning the server reply."""
+
+    def kill(self) -> None:
+        """Terminate the REPL process."""
+
+
 @dataclass
 class ReplSession:
     """Live REPL process for one theorem with a request timeout.
@@ -524,7 +575,7 @@ class ReplSession:
     """
 
     #: Server-like object; structural typing permits fake, pooled, or remote backends.
-    server: object
+    server: _ReplServer
     #: Per-request seconds; None disables the timeout.
     timeout: int | None
     #: Theorem name, used only to attribute error messages.
@@ -549,7 +600,9 @@ class ReplSession:
         try:
             return self.server.run(request, timeout=self.timeout)
         except TimeoutError as exc:
-            raise ReplError(f"timeout after {self.timeout}s on {self.theorem}: {exc}") from exc
+            raise ReplError(
+                f"timeout after {self.timeout}s on {self.theorem}: {exc}"
+            ) from exc
         except BrokenPipeError as exc:
             raise ReplError(f"REPL closed on {self.theorem}: {exc}") from exc
 
@@ -576,7 +629,9 @@ class ReplSession:
         ReplError
             Transport or REPL-channel failure, never silently recorded as a Lean verdict.
         """
-        outcome = classify_step(self.run(ProofStep(proof_state=proof_state, tactic=tactic)))
+        outcome = classify_step(
+            self.run(ProofStep(proof_state=proof_state, tactic=tactic))
+        )
         if outcome.kind == "exception":
             raise ReplError(outcome.error or "REPL-level failure with no message")
         return outcome
@@ -630,7 +685,7 @@ def open_session(
     bt: BenchmarkTheorem,
     timeout: int = 600,
     root: str | Path | None = None,
-    server_factory: Callable[[Path], object] | None = None,
+    server_factory: Callable[[Path], _ReplServer] | None = None,
 ) -> tuple[ReplSession, int]:
     """Start a REPL, elaborate `bt`'s statement as a stub, return its proof state.
 
@@ -640,12 +695,10 @@ def open_session(
     Parameters
     ----------
     bt : BenchmarkTheorem
-        Theorem to open.
     timeout : int, optional
-        Per-request seconds.
     root : str | Path | None, optional
         Mathlib4 checkout root.
-    server_factory : Callable[[Path], object] | None, optional
+    server_factory : Callable[[Path], _ReplServer] | None, optional
         Started server factory, defaulting to `_default_server_factory`.
 
     Returns
@@ -708,13 +761,9 @@ def _open_proof_state(
     Parameters
     ----------
     session : ReplSession
-        Active REPL session.
     bt : BenchmarkTheorem
-        Theorem to elaborate.
     module : str
-        Lean module.
     stub : str
-        Statement stub.
 
     Returns
     -------
@@ -730,10 +779,16 @@ def _open_proof_state(
     """
     imported = session.run(Command(cmd=f"import {module}"))
     if isinstance(imported, LeanError) or imported.get_errors():
-        raise ReplError(f"could not import {module} for {bt.full_name}: {_describe(imported)}")
+        raise ReplError(
+            f"could not import {module} for {bt.full_name}: {_describe(imported)}"
+        )
 
     elaborated = session.run(Command(cmd=stub, env=imported.env))
-    if isinstance(elaborated, LeanError) or elaborated.get_errors() or not elaborated.sorries:
+    if (
+        isinstance(elaborated, LeanError)
+        or elaborated.get_errors()
+        or not elaborated.sorries
+    ):
         raise StatementError(
             f"could not elaborate the statement of {bt.full_name} in module {module}: "
             f"{_describe(elaborated) or 'no sorry in the response'}\n--- stub ---\n{stub}"

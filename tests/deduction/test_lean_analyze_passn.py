@@ -8,14 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from smolbench.deduction.lean.cli import cmd_analyze
-from smolbench.deduction.lean import runner
 from conftest import cell_row, write_jsonl
 
+from smolbench.deduction.lean import runner
+from smolbench.deduction.lean.cli import cmd_analyze
 
-def _run_analyze(tmp_path: Path, rows: list[dict],
-                 capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
+
+def _run_analyze(
+    tmp_path: Path, rows: list[dict], capsys: pytest.CaptureFixture[str]
+) -> tuple[int, str]:
     """Write `rows` to all_rows.jsonl, invoke `cmd_analyze` as `cli.main` would."""
     p = tmp_path / "all_rows.jsonl"
     write_jsonl(p, rows)
@@ -56,12 +57,19 @@ def test_analyze_and_cell_key_tolerate_a_minimal_legacy_row(tmp_path: Path) -> N
 
 
 def test_single_replicate_omits_passn_table(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """One replicate per cell: no pass@N tables, and a trunc column of zeros."""
     rows = [
-        cell_row(model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success"),
-        cell_row(model="model-a", rung="stepk:0", theorem_id="T2", k=1, verdict="lean_error"),
-        cell_row(model="model-b", rung="stepk:1", theorem_id="T1", k=2, verdict="incomplete"),
+        cell_row(
+            model="model-a", rung="stepk:0", theorem_id="T1", k=1, verdict="success"
+        ),
+        cell_row(
+            model="model-a", rung="stepk:0", theorem_id="T2", k=1, verdict="lean_error"
+        ),
+        cell_row(
+            model="model-b", rung="stepk:1", theorem_id="T1", k=2, verdict="incomplete"
+        ),
     ]
     rc, out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 0
@@ -107,14 +115,21 @@ def test_pass_at_n_grouping(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 
 
 def test_trunc_column_classification(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """trunc counts unclosed <think> in raw_response/content, plus reasoning-only rows."""
     rows = [
-        cell_row(theorem_id="T1", raw_response="<think>\nreasoning that never finishes"),
+        cell_row(
+            theorem_id="T1", raw_response="<think>\nreasoning that never finishes"
+        ),
         cell_row(theorem_id="T2", raw_response="", content="<think>\nstill going"),
         cell_row(theorem_id="T3", raw_response="", reasoning_content="never finished"),
-        cell_row(theorem_id="T4", raw_response="```lean\nrfl\n```", reasoning_content="done"),
-        cell_row(theorem_id="T5", raw_response="<think>\nok\n</think>\n\n```lean\nrfl\n```"),
+        cell_row(
+            theorem_id="T4", raw_response="```lean\nrfl\n```", reasoning_content="done"
+        ),
+        cell_row(
+            theorem_id="T5", raw_response="<think>\nok\n</think>\n\n```lean\nrfl\n```"
+        ),
         cell_row(theorem_id="T6", raw_response="exact h"),
     ]
     rc, out = _run_analyze(tmp_path, rows, capsys)
@@ -125,7 +140,8 @@ def test_trunc_column_classification(
 
 
 def test_sanity_rows_excluded_from_passn_and_trunc(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Sanity rows are reported separately and never enter cell counts, pass@N or trunc."""
     rows = [
         cell_row(kind="sanity", model="model-a", verdict="lean_error"),
@@ -146,10 +162,12 @@ def test_sanity_rows_excluded_from_passn_and_trunc(
     assert detail_row.split()[-1] == "1"
 
 
-@pytest.mark.parametrize("rows", [[], [cell_row(kind="sanity")]],
-                         ids=["empty", "sanity-only"])
-def test_no_cell_rows_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[str],
-                                rows: list[dict[str, Any]]) -> None:
+@pytest.mark.parametrize(
+    "rows", [[], [cell_row(kind="sanity")]], ids=["empty", "sanity-only"]
+)
+def test_no_cell_rows_returns_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], rows: list[dict[str, Any]]
+) -> None:
     """A file with no cell rows is an error, not an empty report."""
     rc, _out = _run_analyze(tmp_path, rows, capsys)
     assert rc == 1
@@ -166,12 +184,20 @@ def test_cmd_analyze_refuses_a_superseded_rows_file(tmp_path: Path) -> None:
 
 
 def test_analyze_reports_no_answer_in_its_own_column(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """`analyze` separates `noans` from `lerr` with matching table widths."""
     rows = [
-        cell_row(model="model-a", rung="stepk:0", theorem_id="T1", verdict="no_answer",
-             raw_response=""),
-        cell_row(model="model-a", rung="stepk:0", theorem_id="T2", verdict="lean_error"),
+        cell_row(
+            model="model-a",
+            rung="stepk:0",
+            theorem_id="T1",
+            verdict="no_answer",
+            raw_response="",
+        ),
+        cell_row(
+            model="model-a", rung="stepk:0", theorem_id="T2", verdict="lean_error"
+        ),
         cell_row(model="model-a", rung="stepk:0", theorem_id="T3", verdict="success"),
     ]
     rc, out = _run_analyze(tmp_path, rows, capsys)
@@ -189,7 +215,8 @@ def test_analyze_reports_no_answer_in_its_own_column(
 
 
 def test_analyze_collapses_an_exception_then_retry_duplicate(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Dedupe retries before pass@N; one resumed cell is not a 50% N=2 result."""
     rows = [
         cell_row(theorem_id="T1", verdict="exception"),
@@ -207,7 +234,8 @@ def test_analyze_collapses_an_exception_then_retry_duplicate(
 
 
 def test_analyze_keeps_an_exception_only_cell_visible(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Exception-only cells must remain once in `exc` and the denominator."""
     rows = [
         cell_row(theorem_id="T1", verdict="exception"),
@@ -224,7 +252,8 @@ def test_analyze_keeps_an_exception_only_cell_visible(
 
 
 def test_analyze_still_sees_real_replicates(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Dedupe includes `replicate_idx`, so real replicates retain N=2."""
     rows = [
         cell_row(theorem_id="T1", replicate_idx=0, verdict="lean_error"),

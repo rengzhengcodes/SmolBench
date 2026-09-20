@@ -30,15 +30,10 @@ def merge_shards(
     Parameters
     ----------
     key : str
-        Scaling-run key.
     n : int
-        Shard count.
     runs_root : Path
-        Run-directory root.
     expect_cells : int
-        Expected merged cells.
     expect_sanity : int
-        Expected merged sanity rows.
 
     Returns
     -------
@@ -56,9 +51,13 @@ def merge_shards(
     for d in shard_dirs:
         for required in ("all_rows.jsonl", "manifest.json"):
             if not (d / required).is_file():
-                raise SystemExit(f"shard dir {d} is missing {required} -- shard incomplete?")
+                raise SystemExit(
+                    f"shard dir {d} is missing {required} -- shard incomplete?"
+                )
     if (canonical / "all_rows.jsonl").exists():
-        raise SystemExit(f"{canonical / 'all_rows.jsonl'} already exists -- refusing to clobber.")
+        raise SystemExit(
+            f"{canonical / 'all_rows.jsonl'} already exists -- refusing to clobber."
+        )
 
     # Group after reading all shards so duplicate rows can be distinguished from resumes.
     cell_rows: list[dict] = []
@@ -94,11 +93,15 @@ def merge_shards(
             )
     n_resumed = sum(len(rows) > 1 for rows in grouped.values())
     if n_resumed:
-        logging.info("%d cell key(s) keep exception rows plus a resumed retry", n_resumed)
+        logging.info(
+            "%d cell key(s) keep exception rows plus a resumed retry", n_resumed
+        )
     # Count exception+retry once; otherwise a valid resume reads as 945 rows for 944 cells.
     n_cells = len(runner.dedupe_cell_rows(cell_rows))
     if n_cells != expect_cells:
-        raise SystemExit(f"merged distinct cell count {n_cells} != expected {expect_cells}")
+        raise SystemExit(
+            f"merged distinct cell count {n_cells} != expected {expect_cells}"
+        )
     if n_sanity != expect_sanity:
         raise SystemExit(f"merged sanity count {n_sanity} != expected {expect_sanity}")
 
@@ -111,7 +114,9 @@ def merge_shards(
                 if p.is_file():
                     rel = str(p.relative_to(d))
                     if rel in seen_rel:
-                        raise SystemExit(f"theorems/ collision: {rel} in both {seen_rel[rel]} and {d}")
+                        raise SystemExit(
+                            f"theorems/ collision: {rel} in both {seen_rel[rel]} and {d}"
+                        )
                     seen_rel[rel] = d
 
     canonical.mkdir(parents=True, exist_ok=True)
@@ -171,15 +176,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("key", help="spec key of the lane (e.g. ministral-3-14b)")
     parser.add_argument("--n", type=int, required=True, help="number of shards")
     parser.add_argument(
-        "--expect-cells", type=int, required=True,
+        "--expect-cells",
+        type=int,
+        required=True,
         help="expected merged cell count",
     )
     parser.add_argument(
-        "--expect-sanity", type=int, required=True,
+        "--expect-sanity",
+        type=int,
+        required=True,
         help="expected merged sanity-row count",
     )
     parser.add_argument(
-        "--spool", action="store_true",
+        "--spool",
+        action="store_true",
         help="after merging, spool the canonical dir to S3 via the driver's "
         "spool_to_s3 and, on verified success, DELETE the shard run dirs",
     )
@@ -195,6 +205,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Shard analyses are partial, so regenerate.
     from smolbench.deduction.lean import runner
+
     runner.write_run_analysis(canonical)
 
     if args.spool:

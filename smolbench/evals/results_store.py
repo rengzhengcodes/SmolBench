@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 import smolbench
-from smolbench.evals import Marks
-from smolbench.evals import _aws
+from smolbench.evals import Marks, _aws
 from smolbench.evals.study_config import load_study_config
 
 # Retire immutable S3 runs with sibling markers.
@@ -41,21 +40,21 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     Parameters
     ----------
     uri : str
-        URI to parse.
+        S3 URI to parse.
 
     Returns
     -------
     tuple[str, str]
-        Bucket and prefix.
+        Bucket and base prefix.
 
     Raises
     ------
     ValueError
-        For malformed or whitespace-bearing URI segments.
+        On a missing ``"s3://"`` scheme or an empty/whitespace-bearing segment.
     """
     if not uri.startswith("s3://"):
         raise ValueError(f"S3 URI {uri!r} is malformed: must start with 's3://'")
-    rest = uri[len("s3://"):].rstrip("/")
+    rest = uri[len("s3://") :].rstrip("/")
     segments = rest.split("/")
     for i, seg in enumerate(segments):
         kind = "bucket name" if i == 0 else "prefix segment"
@@ -89,19 +88,21 @@ def utcnow() -> datetime:
 def format_run_ts(when: datetime) -> str:
     """Format a UTC timestamp for lexicographically ordered S3 keys.
 
-    ``when`` must already be UTC because the literal ``"Z"`` is not converted.
+    ``when`` must already be UTC because the literal ``"Z"`` is not converted. Microseconds
+    are carried because this stamp is a run's only identity: two writes to one address within
+    a second would otherwise share a key, and ``put_object`` would overwrite rather than log.
 
     Parameters
     ----------
     when : datetime
-        UTC instant.
+        UTC datetime to format.
 
     Returns
     -------
     str
-        Fixed-width timestamp.
+        Formatted UTC timestamp.
     """
-    return when.strftime("%Y%m%dT%H%M%SZ")
+    return when.strftime("%Y%m%dT%H%M%S.%fZ")
 
 
 def experiment_name(results_dir: Path, prefix: str = "") -> str:
@@ -113,14 +114,14 @@ def experiment_name(results_dir: Path, prefix: str = "") -> str:
     Parameters
     ----------
     results_dir : Path
-        Directory under ``repo_root()``.
+        Results directory under ``repo_root()``.
     prefix : str, optional
-        Sub-level; one trailing ``"_"`` is stripped.
+        Optional prefix folded into the experiment directory name.
 
     Returns
     -------
     str
-        S3 experiment segment.
+        Experiment segment for an S3 log key.
     """
     rel = results_dir.resolve().relative_to(repo_root())
     parts = rel.parts
@@ -160,16 +161,18 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to check.
 
         Returns
         -------
         bool
-            Whether a result exists.
+            Whether a replicate result is already stored.
         """
 
     @abc.abstractmethod
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Persist `marks` for `addr`, stamped with `run_ts`.
 
         No existence check; a caller wanting resume-skip calls ``exists`` first.
@@ -177,11 +180,11 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         marks : Marks
-            Result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            Destination address.
+            Destination replicate address.
         run_ts : datetime
-            Collection instant.
+            Collection timestamp recorded for this replicate run.
         """
 
     @abc.abstractmethod
@@ -191,36 +194,39 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            Stored result.
+            The single local file, or on S3 the earliest logged run.
 
         Raises
         ------
         FileNotFoundError
-            If no result is stored.
+            When nothing is stored/logged for `addr` (S3 names the missing prefix).
         """
 
     @abc.abstractmethod
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
-        """List every seed with at least one stored/logged replicate.
+        """List every seed with at least one surviving stored/logged replicate.
+
+        Superseded-only seeds are omitted so a listing is always loadable; ``exists`` is the
+        marker-blind resume check.
 
         Parameters
         ----------
         model : Optional[str]
-            S3 key; ``None`` yields no seeds.
+            The S3 key dimension; None yields [].
         tag : str
-            Local key.
+            The local key dimension.
         info : str
-            Condition information.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            Sorted distinct seeds.
+            A sorted, distinct list (a seed re-collected many times counts once).
         """
 
     @abc.abstractmethod
@@ -232,41 +238,15 @@ class ResultsStore(abc.ABC):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
+            Address whose surviving runs are retired.
         reason : str
-            Operator-facing retirement reason.
+            Freeform operator-facing text naming why the retirement happened.
 
         Returns
         -------
         int
-            Retired run count.
+            How many runs were retired.
         """
-
-    def regrade(
-        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime, *, reason: str
-    ) -> None:
-        """Replace every surviving run at `addr` with a self-describing regrade.
-
-        Supersede before writing: a crash must fail loudly rather than serve the old earliest run.
-
-        Parameters
-        ----------
-        marks : Marks
-            Must name its replaced run via ``regraded_from``.
-        addr : ReplicateAddress
-            Address to replace.
-        run_ts : datetime
-            New run timestamp.
-        reason : str
-            Retirement reason.
-        """
-        if marks.regraded_from is None:
-            raise ValueError(
-                f"ResultsStore.regrade: refusing {addr!r} -- marks.regraded_from "
-                "is None; a regrade must name the run_ts of the run it replaces."
-            )
-        self.supersede_all(addr, reason)
-        self.dump_marks(marks, addr, run_ts)
 
     @abc.abstractmethod
     def describe(self) -> str:
@@ -285,8 +265,12 @@ class LocalResultsStore(ResultsStore):
     def _dirname(self, tag: str, info: str) -> str:
         return f"{self.prefix}{tag}_{info}"
 
-    def _path(self, addr: ReplicateAddress) -> Path:
+    def path(self, addr: ReplicateAddress) -> Path:
+        """Return the replicate file for `addr`."""
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
+
+    def _path(self, addr: ReplicateAddress) -> Path:
+        return self.path(addr)
 
     def exists(self, addr: ReplicateAddress) -> bool:
         """Return whether the local result file exists.
@@ -294,26 +278,28 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to check.
 
         Returns
         -------
         bool
-            Whether the file exists.
+            Whether the local result file exists.
         """
         return self._path(addr).exists()
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Persist marks in the local layout; ``run_ts`` is unused.
 
         Parameters
         ----------
         marks : Marks
-            Result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            Destination address.
+            Destination replicate address.
         run_ts : datetime
-            Ignored collection timestamp.
+            Collection timestamp ignored by the local store.
         """
         path = self._path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,12 +311,12 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            Local result.
+            Deserialized local result.
         """
         return Marks.load(self._path(addr))
 
@@ -342,21 +328,21 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         model : Optional[str]
-            Ignored local-store model key.
+            Ignored by the local store.
         tag : str
-            Local key.
+            Local key dimension.
         info : str
-            Condition information.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            Sorted seed values.
+            Sorted seed values from local replicate filenames.
         """
         dirpath = self.root / self._dirname(tag, info)
         seeds: set[int] = set()
         for path in dirpath.glob("rep_*.yaml"):
-            seed_str = path.stem[len("rep_"):]
+            seed_str = path.stem[len("rep_") :]
             try:
                 seeds.add(int(seed_str))
             except ValueError:
@@ -372,14 +358,14 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Stored-run address.
+            Address of the stored run to retire.
         reason : str
-            Logged retirement reason.
+            Logged only, at INFO level.
 
         Returns
         -------
         Optional[Path]
-            Renamed path, or ``None``.
+            Renamed file's new path.
         """
         path = self._path(addr)
         if not path.exists():
@@ -397,14 +383,14 @@ class LocalResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
+            Address whose local run is retired.
         reason : str
-            Retirement reason.
+            Operator-facing retirement reason.
 
         Returns
         -------
         int
-            Retired run count.
+            Number of retired local runs.
         """
         return 1 if self.supersede(addr, reason) is not None else 0
 
@@ -421,12 +407,12 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     Parameters
     ----------
     rel : str
-        Key remainder.
+        Key remainder with its leading log prefix removed.
 
     Returns
     -------
     Optional[tuple[int, str, str]]
-        Parsed values, or ``None``.
+        Parsed seed, info, and run timestamp, or None.
     """
     parts = rel.split("/")
     if len(parts) != 2:
@@ -435,7 +421,7 @@ def _parse_log_entry(rel: str) -> Optional[tuple[int, str, str]]:
     if not seed_part.startswith("seed=") or not filename.endswith(".yaml"):
         return None
     try:
-        seed = int(seed_part[len("seed="):])
+        seed = int(seed_part[len("seed=") :])
     except ValueError:
         return None
     stem = filename[: -len(".yaml")]
@@ -500,12 +486,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to check.
 
         Returns
         -------
         bool
-            Whether a run exists.
+            Whether any logged run exists.
         """
         if addr.model is None:
             return False
@@ -516,7 +502,9 @@ class S3ResultsStore(ResultsStore):
         )
         return bool(resp.get("Contents"))
 
-    def dump_marks(self, marks: Marks, addr: ReplicateAddress, run_ts: datetime) -> None:
+    def dump_marks(
+        self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
+    ) -> None:
         """Write marks under a timestamped S3 key.
 
         A ``None`` model is refused because immutable logs cannot correct a bad key.
@@ -524,26 +512,28 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         marks : Marks
-            Result to persist.
+            Replicate result to persist.
         addr : ReplicateAddress
-            Destination address.
+            Destination replicate address.
         run_ts : datetime
-            Key timestamp.
+            Timestamp embedded in the logged key.
         """
         if addr.model is None:
+            # model=None is the READ-only tag-lookup shape; the append-only
+            # log cannot correct a bad key.
             raise ValueError(
                 f"S3ResultsStore.dump_marks: refusing to write {addr!r} -- "
-                "the S3 log is keyed by model, and this address carries no "
-                "model. model=None is a READ-only shape (used by tag-keyed "
-                "lookups such as ReplicateHarness.cot_chain_lengths when no "
-                "configured model carries the requested tag, served by "
-                "LocalResultsStore instead, whose layout has no model "
-                "dimension); it must never be written to the append-only "
-                "log, where a bad object cannot later be corrected, only "
-                "deleted by hand."
+                "model=None is a READ-only address shape (see "
+                "ReplicateAddress.model) and the S3 log is keyed by model."
             )
-        key = self._info_prefix(addr.model, addr.seed, addr.info) + format_run_ts(run_ts) + ".yaml"
-        self._client().put_object(Bucket=self.bucket, Key=key, Body=marks.dumps().encode())
+        key = (
+            self._info_prefix(addr.model, addr.seed, addr.info)
+            + format_run_ts(run_ts)
+            + ".yaml"
+        )
+        self._client().put_object(
+            Bucket=self.bucket, Key=key, Body=marks.dumps().encode()
+        )
 
     def _list_run_partition(self, addr: ReplicateAddress) -> "tuple[list[str], int]":
         """List run stamps and supersession markers in one traversal.
@@ -551,12 +541,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address whose run partition is listed.
 
         Returns
         -------
         tuple[list[str], int]
-            Sorted survivors and marker count.
+            ``(survivor_run_ts, marker_count)``: survivors sorted ascending.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         client = self._client()
@@ -565,7 +555,7 @@ class S3ResultsStore(ResultsStore):
         run_stamps: list[str] = []
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             for obj in page.get("Contents", []):
-                rest = obj["Key"][len(prefix):]
+                rest = obj["Key"][len(prefix) :]
                 if rest.endswith(S3_SUPERSEDED_SUFFIX):
                     marker_stamps.add(rest[: -len(S3_SUPERSEDED_SUFFIX)])
                 elif rest.endswith(".yaml"):
@@ -579,12 +569,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address whose surviving runs are listed.
 
         Returns
         -------
         list[str]
-            Sorted surviving timestamps.
+            Surviving run timestamps in ascending order.
         """
         survivors, _marker_count = self._list_run_partition(addr)
         return survivors
@@ -597,12 +587,12 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Replicate address.
+            Replicate address to load.
 
         Returns
         -------
         Marks
-            Earliest surviving result.
+            Deserialized earliest surviving logged result.
         """
         prefix = self._info_prefix(addr.model, addr.seed, addr.info)
         survivors, marker_count = self._list_run_partition(addr)
@@ -613,9 +603,7 @@ class S3ResultsStore(ResultsStore):
                     f"-- {marker_count} logged run(s) there were superseded "
                     "and never replaced"
                 )
-            raise FileNotFoundError(
-                f"no logged run under s3://{self.bucket}/{prefix}"
-            )
+            raise FileNotFoundError(f"no logged run under s3://{self.bucket}/{prefix}")
         earliest_key = prefix + survivors[0] + ".yaml"
         obj = self._client().get_object(Bucket=self.bucket, Key=earliest_key)
         return Marks.loads(obj["Body"].read().decode())
@@ -628,16 +616,16 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Logged-run address.
+            Address of the logged run to retire.
         run_ts : str
-            Run-key timestamp.
+            The fixed-width stamp exactly as it appears in the run's key, not a `datetime`.
         reason : str
-            Marker-body reason.
+            Freeform operator-facing text stored in the marker body.
 
         Returns
         -------
         str
-            Written marker key.
+            Key of the written supersession marker.
         """
         if addr.model is None:
             raise ValueError(
@@ -645,8 +633,14 @@ class S3ResultsStore(ResultsStore):
                 "is a READ-only address shape (see ReplicateAddress.model); "
                 "nothing is ever logged there to supersede."
             )
-        key = self._info_prefix(addr.model, addr.seed, addr.info) + run_ts + S3_SUPERSEDED_SUFFIX
-        body = json.dumps({"superseded_at": utcnow().isoformat(), "reason": reason}).encode()
+        key = (
+            self._info_prefix(addr.model, addr.seed, addr.info)
+            + run_ts
+            + S3_SUPERSEDED_SUFFIX
+        )
+        body = json.dumps(
+            {"superseded_at": utcnow().isoformat(), "reason": reason}
+        ).encode()
         self._client().put_object(Bucket=self.bucket, Key=key, Body=body)
         return key
 
@@ -656,14 +650,14 @@ class S3ResultsStore(ResultsStore):
         Parameters
         ----------
         addr : ReplicateAddress
-            Address to retire.
+            Address whose surviving runs are retired.
         reason : str
-            Retirement reason.
+            Operator-facing retirement reason.
 
         Returns
         -------
         int
-            Retired run count.
+            Number of retired logged runs.
         """
         survivors = self.list_runs(addr)
         for run_ts in survivors:
@@ -671,39 +665,52 @@ class S3ResultsStore(ResultsStore):
         return len(survivors)
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
-        """List S3 seeds for an info value; ``None`` model yields ``[]``.
+        """List S3 seeds whose runs survive; ``None`` model yields ``[]``.
 
-        Marker-blind listings retain retired runs for resume checks.
+        Superseded-only seeds are omitted because every reader of this listing loads the seed
+        next, and ``load_marks`` has nothing to serve there. Resume checks stay marker-blind
+        through ``exists``.
 
         Parameters
         ----------
         model : Optional[str]
-            S3 model key.
+            S3 model key dimension; None returns an empty list.
         tag : str
-            Unused S3 tag.
+            Unused on this backend.
         info : str
-            Condition information.
+            Condition information dimension.
 
         Returns
         -------
         list[int]
-            Sorted seeds.
+            Sorted seed values with logged entries for `info`.
         """
         if model is None:
             return []
         client = self._client()
         paginator = client.get_paginator("list_objects_v2")
         list_prefix = f"{self.log_prefix}/{model}/"
-        seeds: set[int] = set()
+        # Select after traversal so every marker shares the listing snapshot.
+        run_stamps: dict[int, set[str]] = {}
+        marker_stamps: dict[int, set[str]] = {}
         for page in paginator.paginate(Bucket=self.bucket, Prefix=list_prefix):
             for obj in page.get("Contents", []):
-                parsed = _parse_log_entry(obj["Key"][len(list_prefix):])
+                rel = obj["Key"][len(list_prefix) :]
+                stamps = run_stamps
+                if rel.endswith(S3_SUPERSEDED_SUFFIX):
+                    rel = rel[: -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
+                    stamps = marker_stamps
+                parsed = _parse_log_entry(rel)
                 if parsed is None:
                     continue
-                seed, entry_info, _run_ts = parsed
+                seed, entry_info, run_ts = parsed
                 if entry_info == info:
-                    seeds.add(seed)
-        return sorted(seeds)
+                    stamps.setdefault(seed, set()).add(run_ts)
+        return sorted(
+            seed
+            for seed, runs in run_stamps.items()
+            if runs - marker_stamps.get(seed, set())
+        )
 
     def describe(self) -> str:
         """See ``ResultsStore.describe``."""
@@ -720,14 +727,14 @@ def resolve_store(results_dir: Path, prefix: str = "") -> ResultsStore:
     Parameters
     ----------
     results_dir : Path
-        Results directory.
+        Need not exist -- resolved non-strictly.
     prefix : str, optional
-        Local namespace or S3 experiment subpath.
+        Becomes `LocalResultsStore.prefix`, or folds into `S3ResultsStore.experiment`.
 
     Returns
     -------
     ResultsStore
-        Results store.
+        Local or S3 results store for the experiment.
     """
     uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
     if not uri:
@@ -767,12 +774,12 @@ def _etag_md5(etag: Optional[str]) -> Optional[str]:
     Parameters
     ----------
     etag : Optional[str]
-        S3 ETag.
+        S3 ETag value.
 
     Returns
     -------
     Optional[str]
-        Unquoted MD5, or ``None`` for missing or multipart ETags.
+        Unquoted hex digest iff `etag` is a single-part upload's whole-object MD5.
     """
     if not etag:
         return None
@@ -788,21 +795,21 @@ def _resolve_download_path(resolved_dir: Path, rel: str, key: str) -> Path:
     Parameters
     ----------
     resolved_dir : Path
-        Resolved local directory.
+        Resolved local results directory.
     rel : str
-        Relative destination.
+        Destination path relative to `resolved_dir`.
     key : str
-        Source S3 key.
+        S3 key being downloaded.
 
     Returns
     -------
     Path
-        Validated destination.
+        Validated destination path.
 
     Raises
     ------
     ValueError
-        If the destination is outside ``resolved_dir``.
+        Naming `key` when the destination equals or lies outside `resolved_dir`.
     """
     candidate = (resolved_dir / rel).resolve()
     if candidate == resolved_dir or not candidate.is_relative_to(resolved_dir):
@@ -824,33 +831,30 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     Parameters
     ----------
     results_dir : Path
-        Local destination.
+        Local directory receiving downloaded logs.
     tags : Mapping[str, str]
-        Model-to-local-tag mapping.
+        ``{model: tag}`` (an experiment's `archetype_tags`).
     prefix : str, optional
-        Experiment and local-directory prefix.
+        Forwarded to :func:`experiment_name`, and used in each local directory name.
 
     Returns
     -------
     int
-        Downloaded object count.
+        Count of objects actually downloaded, excluding those skipped as identical.
     """
     store = resolve_store(results_dir, prefix)
     if not isinstance(store, S3ResultsStore):
         uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
         if not uri:
             raise RuntimeError(
-                "sync_down: SMOLBENCH_RESULTS_S3 is unset or empty -- there is "
-                f"no S3 log to sync down from. Export it, e.g. "
-                f"SMOLBENCH_RESULTS_S3={default_results_uri()!r}."
+                "sync_down: SMOLBENCH_RESULTS_S3 is unset or empty -- export "
+                f"it, e.g. SMOLBENCH_RESULTS_S3={default_results_uri()!r}."
             )
         raise RuntimeError(
             f"sync_down: {results_dir} is not under repo_root() "
-            f"({repo_root()}), so resolve_store falls back to the local "
-            "store for it (see resolve_store's hermeticity fallback) -- "
-            f"there is no S3 log to sync down from. (SMOLBENCH_RESULTS_S3 is "
-            f"set to {uri!r}; the project's default is "
-            f"{default_results_uri()!r}.)"
+            f"({repo_root()}), so resolve_store uses the local store for it "
+            f"and there is no S3 log to sync down from "
+            f"(SMOLBENCH_RESULTS_S3={uri!r})."
         )
 
     resolved_dir = results_dir.resolve()
@@ -868,7 +872,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             for obj in page.get("Contents", []):
                 key = obj["Key"]
                 if key.endswith(S3_SUPERSEDED_SUFFIX):
-                    rel = key[len(list_prefix): -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
+                    rel = key[len(list_prefix) : -len(S3_SUPERSEDED_SUFFIX)] + ".yaml"
                     parsed = _parse_log_entry(rel)
                     if parsed is None:
                         continue
@@ -877,7 +881,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                     continue
                 if key.endswith("/"):
                     continue
-                parsed = _parse_log_entry(key[len(list_prefix):])
+                parsed = _parse_log_entry(key[len(list_prefix) :])
                 if parsed is None:
                     continue
                 seed, info, run_ts = parsed
@@ -892,6 +896,13 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
             surviving = [row for row in rows if row[0] not in marker_stamps]
             if surviving:
                 earliest[seed_info] = min(surviving, key=lambda row: row[0])
+            elif marker_stamps:
+                # Remove the local copy of a run the log no longer serves.
+                seed, info = seed_info
+                stale = _resolve_download_path(
+                    resolved_dir, f"{prefix}{tag}_{info}/rep_{seed}.yaml", "superseded"
+                )
+                stale.unlink(missing_ok=True)
 
         for (seed, info), (_run_ts, key, etag) in earliest.items():
             local_rel = f"{prefix}{tag}_{info}/rep_{seed}.yaml"
@@ -903,7 +914,9 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
                 and etag_md5 is not None
                 # Cache check, not security; FIPS permits this flag.
                 and etag_md5
-                == hashlib.md5(local_path.read_bytes(), usedforsecurity=False).hexdigest()
+                == hashlib.md5(
+                    local_path.read_bytes(), usedforsecurity=False
+                ).hexdigest()
             ):
                 skipped += 1
                 continue
@@ -922,7 +935,7 @@ def sync_down(results_dir: Path, tags: Mapping[str, str], prefix: str = "") -> i
     return downloaded
 
 
-def main(argv: "Sequence[str] | None" = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Run the S3-to-local sync CLI.
 
     Repeated ``--tag MODEL=TAG`` values split at the first ``"="``; later model entries replace
@@ -931,12 +944,12 @@ def main(argv: "Sequence[str] | None" = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None, optional
-        Command-line arguments.
+        Command-line arguments passed to the parser.
 
     Returns
     -------
     int
-        Exit status.
+        CLI status code.
     """
     import argparse
 

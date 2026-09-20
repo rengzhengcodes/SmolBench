@@ -18,7 +18,6 @@ for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
 import argparse
 import functools
 import hashlib
-import json
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -39,23 +38,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # ``uv run --no-project`` has no installed smolbench, so resolve study_config from source.
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+# pylint: disable-next=import-error  # bare sibling resolved by the sys.path insert above
 from _power_common import (
     ALPHA,
     POWER_TARGETS,
     SEED,
+    apply_corrections,
     fmt_r,
     results_dir,
 )
-
-from smolbench.evals.study_config import families as _study_families
-from smolbench.evals.study_config import roster_keys as _study_roster_keys
-
 from rows_source import (  # noqa: E402
     _banner,
+    banner,
+    read_cell_rows,
     reject_superseded,
     resolve_rows_dir,
     spool_prefix,
 )
+
+from smolbench.evals.study_config import families as _study_families
+from smolbench.evals.study_config import roster_keys as _study_roster_keys
 
 # Roster comes from the committed config; spec keys match JSONL ``model`` values.
 # Family order must be SMALL -> MID -> LARGE: contrast builders pair by ladder position,
@@ -101,7 +103,7 @@ N_SECONDARY = 63
 Q_SECONDARY = 0.05
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
-RESULTS_DIR = results_dir(__file__, up=1)
+RESULTS_DIR = results_dir("deduction")
 
 _Contrast = tuple[str, str, str]  # (label, model_a, model_b)
 
@@ -114,7 +116,6 @@ def _seed_of(name: str) -> int:
     Parameters
     ----------
     name : str
-        Model name.
 
     Returns
     -------
@@ -124,16 +125,14 @@ def _seed_of(name: str) -> int:
     return int.from_bytes(hashlib.sha256(name.encode()).digest()[:4], "little")
 
 
-# Hand-roll closed-form pass_at_n and BH; use declared scipy.stats.binom for McNemar.
+# Hand-roll closed-form pass_at_n; corrections delegate to _power_common.apply_corrections.
 def pass_at_n(p: np.ndarray | float, n: int) -> np.ndarray | float:
     """Return ``1 - (1 - p)**n`` for `n` independent replicates.
 
     Parameters
     ----------
     p : np.ndarray | float
-        Per-replicate success probability.
     n : int
-        Replicate count.
 
     Returns
     -------
@@ -150,9 +149,7 @@ def mcnemar_exact_p(b: int, c: int) -> float:
     Parameters
     ----------
     b : int
-        A-success/B-failure count.
     c : int
-        B-success/A-failure count.
 
     Returns
     -------
@@ -175,9 +172,7 @@ def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
     Parameters
     ----------
     pvalues : np.ndarray
-        P-values in input order.
     q : float
-        False-discovery-rate level.
 
     Returns
     -------
@@ -187,21 +182,9 @@ def benjamini_hochberg(pvalues: np.ndarray, q: float) -> np.ndarray:
     pvalues = np.asarray(pvalues, dtype=float)
     if pvalues.ndim != 1:
         raise ValueError(f"pvalues must be 1-D, got shape {pvalues.shape}")
-    if not (0.0 < q <= 1.0):
+    if not 0.0 < q <= 1.0:
         raise ValueError(f"q must be in (0, 1], got {q}")
-    m = pvalues.size
-    reject = np.zeros(m, dtype=bool)
-    if m == 0:
-        return reject
-    order = np.argsort(pvalues, kind="stable")
-    sorted_p = pvalues[order]
-    thresholds = (np.arange(1, m + 1) / m) * q
-    passed = np.nonzero(sorted_p <= thresholds)[0]
-    if passed.size == 0:
-        return reject
-    cutoff_rank = int(passed.max())  # 0-indexed; largest i (1-indexed) satisfying p_(i) <= i*q/m
-    reject[order[: cutoff_rank + 1]] = True
-    return reject
+    return apply_corrections(np.atleast_2d(pvalues), q)["BH"][0]
 
 
 def _warn_unverified(reasons: list[str]) -> None:
@@ -210,7 +193,6 @@ def _warn_unverified(reasons: list[str]) -> None:
     Parameters
     ----------
     reasons : list[str]
-        Banner lines.
     """
     lines = [f"!!  {reason}" for reason in reasons] + [
         "!!",
@@ -223,11 +205,13 @@ def _warn_unverified(reasons: list[str]) -> None:
         "!!  this.",
         "!!",
         "!!  Run scripts/deduction/lean_verify_rows.py (the deferred verification pass",
-        '!!  that replays candidates against real Lean and writes the sibling',
+        "!!  that replays candidates against real Lean and writes the sibling",
         "!!  verified_rows.jsonl) before trusting ANY number below.",
     ]
-    print(_banner("WARNING: UNVERIFIED LEAN VERDICTS IN LOADED ROWS", lines),
-          file=sys.stderr)
+    print(
+        _banner("WARNING: UNVERIFIED LEAN VERDICTS IN LOADED ROWS", lines),
+        file=sys.stderr,
+    )
 
 
 #: Cells with only these verdicts are excluded, not scored 0. Must equal
@@ -237,7 +221,9 @@ def _warn_unverified(reasons: list[str]) -> None:
 UNMEASURABLE_VERDICTS: frozenset = frozenset({"exception", "replay_failed"})
 
 
-def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, source: str | Path) -> None:
+def reject_unverified_verdicts(
+    rows: Iterable[dict[str, Any]], field: str, source: str | Path
+) -> None:
     """Refuse rows with the ungraded ``"unverified"`` sentinel.
 
     It is not unmeasurable, so grading it as failure would yield a plausible, wrong report.
@@ -249,9 +235,7 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
     rows : Iterable[dict[str, Any]]
         Parsed rows from one source.
     field : str
-        Verdict field.
     source : str | Path
-        Source file.
 
     Raises
     ------
@@ -259,7 +243,8 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
         For an unverified cell row.
     """
     count = sum(
-        1 for row in rows
+        1
+        for row in rows
         if row.get("kind") == "cell" and row.get(field) == "unverified"
     )
     if count == 0:
@@ -267,21 +252,23 @@ def reject_unverified_verdicts(rows: Iterable[dict[str, Any]], field: str, sourc
     raise SystemExit(
         _banner(
             "REFUSING UNVERIFIED ROW(S)",
-            [f"!!  {count} cell row(s) in {source} still carry the",
-             f'!!  generation-time placeholder "unverified" in their '
-             f"{field!r} field.",
-             "!!",
-             "!!  This field is filled in LATER, by a deferred verification",
-             "!!  pass that replays each candidate against real Lean -- a row",
-             "!!  still reading \"unverified\" here means that pass silently",
-             "!!  never reached it, not that the candidate failed. Loading it",
-             "!!  anyway scores a NEVER-MEASURED cell as a real outcome,",
-             "!!  biasing every rate and paired statistic that includes it",
-             "!!  downward, and doing so invisibly: the report comes out",
-             "!!  complete and plausible, not obviously wrong.",
-             "!!",
-             "!!  Run the verification pass to completion for this file",
-             "!!  before loading it for analysis."]
+            [
+                f"!!  {count} cell row(s) in {source} still carry the",
+                f'!!  generation-time placeholder "unverified" in their '
+                f"{field!r} field.",
+                "!!",
+                "!!  This field is filled in LATER, by a deferred verification",
+                "!!  pass that replays each candidate against real Lean -- a row",
+                '!!  still reading "unverified" here means that pass silently',
+                "!!  never reached it, not that the candidate failed. Loading it",
+                "!!  anyway scores a NEVER-MEASURED cell as a real outcome,",
+                "!!  biasing every rate and paired statistic that includes it",
+                "!!  downward, and doing so invisibly: the report comes out",
+                "!!  complete and plausible, not obviously wrong.",
+                "!!",
+                "!!  Run the verification pass to completion for this file",
+                "!!  before loading it for analysis.",
+            ],
         )
     )
 
@@ -297,7 +284,6 @@ def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
     Parameters
     ----------
     verdicts : Iterable[str | None]
-        Verdicts in file order.
 
     Returns
     -------
@@ -312,7 +298,8 @@ def grade_verdicts(verdicts: Iterable[str | None]) -> int | None:
 
 
 def load_joint_cells(
-    row_files: list[Path], models: tuple[str, ...] | None = None,
+    row_files: list[Path],
+    models: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict, list[str]]:
     """Load paired per-cell outcomes from run files.
 
@@ -322,7 +309,6 @@ def load_joint_cells(
     Parameters
     ----------
     row_files : list[Path]
-        Row files.
     models : tuple[str, ...] | None, optional
         Pairing set; cells require every member.
 
@@ -343,15 +329,10 @@ def load_joint_cells(
                 f"{path} is named all_rows.jsonl -- the UNVERIFIED "
                 f"generation-time log, not verified_rows.jsonl."
             )
-        for line in path.read_text().splitlines():
-            if not line:
-                continue
-            row = json.loads(line)
-            if row.get("kind") != "cell":
-                continue
-            if row.get("replicate_idx", 0) != 0:
-                dropped_replicates[path] = dropped_replicates.get(path, 0) + 1
-                continue
+        _parsed, kept, dropped = read_cell_rows(path)
+        if dropped:
+            dropped_replicates[path] = dropped
+        for row in kept:
             if row.get("verdict") == "unverified":
                 unverified_count += 1
             cell_rows.append(row)
@@ -361,9 +342,7 @@ def load_joint_cells(
         )
     if dropped_replicates:
         total_dropped = sum(dropped_replicates.values())
-        detail = "; ".join(
-            f"{path}: {n}" for path, n in dropped_replicates.items()
-        )
+        detail = "; ".join(f"{path}: {n}" for path, n in dropped_replicates.items())
         print(
             f"WARNING: load_joint_cells dropped {total_dropped} row(s) with "
             f"replicate_idx > 0 (this study collects R=1; rows past "
@@ -420,9 +399,7 @@ def marginal_rates(models: list[str], blocks: dict) -> dict[str, float]:
     Parameters
     ----------
     models : list[str]
-        Models.
     blocks : dict
-        Paired cells.
 
     Returns
     -------
@@ -447,9 +424,7 @@ def union_solvable_fraction(models: list[str], blocks: dict) -> float:
     Parameters
     ----------
     models : list[str]
-        Contrast models.
     blocks : dict
-        Paired cells.
 
     Returns
     -------
@@ -472,11 +447,8 @@ def pooled_discordant_counts(blocks: dict, model_a: str, model_b: str) -> tuple:
     Parameters
     ----------
     blocks : dict
-        Paired cells.
     model_a : str
-        First model.
     model_b : str
-        Second model.
 
     Returns
     -------
@@ -555,17 +527,11 @@ def bootstrap_power(
     Parameters
     ----------
     blocks : dict
-        Paired cells.
     model_a : str
-        First model.
     model_b : str
-        Second model.
     n_theorems : int
-        Theorem blocks per simulation.
     alpha : float
-        Significance threshold.
     sims : int
-        Simulation count.
     rng : np.random.Generator
         Seeded generator for byte-identical runs.
 
@@ -577,7 +543,9 @@ def bootstrap_power(
     thm_ids = list(blocks.keys())
     # Flatten first so simulations accumulate integers rather than walk dictionaries.
     per_thm = {
-        t: np.array([(cmap[ck][model_a], cmap[ck][model_b]) for ck in cmap], dtype=np.int8)
+        t: np.array(
+            [(cmap[ck][model_a], cmap[ck][model_b]) for ck in cmap], dtype=np.int8
+        )
         for t, cmap in blocks.items()
     }
     idx = np.arange(len(thm_ids))
@@ -592,7 +560,11 @@ def bootstrap_power(
         if mcnemar_exact_p(disc_b, disc_c) < alpha:
             rejects += 1
         gaps[s] = oa.mean() - ob.mean()
-    return rejects / sims, float(np.quantile(gaps, 0.05)), float(np.quantile(gaps, 0.95))
+    return (
+        rejects / sims,
+        float(np.quantile(gaps, 0.05)),
+        float(np.quantile(gaps, 0.95)),
+    )
 
 
 def passn_power(
@@ -622,19 +594,12 @@ def passn_power(
     frac_solvable : float
         Pairwise solvable fraction; must be ``> 0``.
     n_theorems : int
-        Theorem blocks per simulation.
     n_replicates : int
-        Replicates per cell.
     n_prompt_rungs : int
-        Prompt rungs per theorem.
     alpha : float
-        Significance threshold.
     sims : int
-        Simulation count.
     beta_conc : float
-        Mixture concentration.
     rng : np.random.Generator
-        Random generator.
 
     Returns
     -------
@@ -650,8 +615,12 @@ def passn_power(
     for _ in range(sims):
         solvable = rng.random(n_theorems) < frac_solvable
         solv_cell = np.repeat(solvable[:, None], n_prompt_rungs, axis=1)
-        pa = np.where(solv_cell, rng.beta(ma * beta_conc, (1 - ma) * beta_conc, shape), 0.0)
-        pb = np.where(solv_cell, rng.beta(mb * beta_conc, (1 - mb) * beta_conc, shape), 0.0)
+        pa = np.where(
+            solv_cell, rng.beta(ma * beta_conc, (1 - ma) * beta_conc, shape), 0.0
+        )
+        pb = np.where(
+            solv_cell, rng.beta(mb * beta_conc, (1 - mb) * beta_conc, shape), 0.0
+        )
         sa = pass_at_n(pa, n_replicates)
         sb = pass_at_n(pb, n_replicates)
         oa = rng.random(shape) < sa
@@ -688,23 +657,14 @@ def needed_replicates(
     rate_b : float
         Second pass@1 rate.
     frac_solvable : float
-        Pairwise solvable fraction.
     n_theorems : int
-        Theorem blocks per simulation.
     n_prompt_rungs : int
-        Prompt rungs per theorem.
     alpha : float
-        Significance threshold.
     sims : int
-        Simulation count.
     beta_conc : float
-        Mixture concentration.
     rng : np.random.Generator
-        Random generator.
     grid : tuple, optional
-        Replicate counts.
     target : float, optional
-        Required rejection fraction.
 
     Returns
     -------
@@ -713,8 +673,16 @@ def needed_replicates(
     """
     for n_rep in sorted(grid):
         power = passn_power(
-            rate_a, rate_b, frac_solvable, n_theorems, n_rep, n_prompt_rungs,
-            alpha=alpha, sims=sims, beta_conc=beta_conc, rng=rng,
+            rate_a,
+            rate_b,
+            frac_solvable,
+            n_theorems,
+            n_rep,
+            n_prompt_rungs,
+            alpha=alpha,
+            sims=sims,
+            beta_conc=beta_conc,
+            rng=rng,
         )
         if not np.isnan(power) and power >= target:
             return n_rep
@@ -762,21 +730,15 @@ def compute_contrast_sizing(
     Parameters
     ----------
     blocks : dict
-        Paired cells.
     label : str
-        Contrast label.
     model_a : str
-        First model.
     model_b : str
-        Second model.
     rates : dict
         Observed pass@1 rates.
     prompt_rungs : list
         Rungs; only their count is used.
     alpha : float
-        Significance threshold.
     sims : int
-        Simulations per grid point.
 
     Returns
     -------
@@ -812,8 +774,15 @@ def compute_contrast_sizing(
     if frac_solv > 0:
         rng_rep = np.random.default_rng([SEED, 7, _seed_of(model_a), _seed_of(model_b)])
         needed = needed_replicates(
-            rates[model_a], rates[model_b], frac_solv, n_theorems, len(prompt_rungs),
-            alpha=alpha, sims=sims, beta_conc=BETA_CONC, rng=rng_rep,
+            rates[model_a],
+            rates[model_b],
+            frac_solv,
+            n_theorems,
+            len(prompt_rungs),
+            alpha=alpha,
+            sims=sims,
+            beta_conc=BETA_CONC,
+            rng=rng_rep,
             target=POWER_TARGETS[0],
         )
 
@@ -866,27 +835,28 @@ def _print_tier_report(
     Parameters
     ----------
     tier_label : str
-        Display label.
     contrasts : list
-        Pre-registered contrasts.
     blocks : dict
-        Paired cells.
     rates : dict
         Observed pass@1 rates.
     prompt_rungs : list
-        Paired prompt rungs.
     secondary : bool
         SECONDARY uses sizing alpha and BH q; PRIMARY uses Bonferroni alpha.
     sims : int
-        Simulations per grid point.
     """
     alpha_sizing = ALPHA_SECONDARY if secondary else ALPHA_PRIMARY
     sizings: list[ContrastSizing] = []
     skipped: list[str] = []
     for label, model_a, model_b in contrasts:
         sizing = compute_contrast_sizing(
-            blocks, label, model_a, model_b, rates, prompt_rungs,
-            alpha=alpha_sizing, sims=sims,
+            blocks,
+            label,
+            model_a,
+            model_b,
+            rates,
+            prompt_rungs,
+            alpha=alpha_sizing,
+            sims=sims,
         )
         if sizing is None:
             skipped.append(label)
@@ -894,12 +864,13 @@ def _print_tier_report(
             sizings.append(sizing)
 
     tag = "SECONDARY -- " if secondary else "PRIMARY -- "
-    print(f"\n{'=' * 78}")
     print(
-        f"=== {tag}{tier_label} ({len(contrasts)} pre-registered, "
-        f"{len(sizings)} with paired data, {len(skipped)} skipped) ==="
+        "\n"
+        + banner(
+            f"=== {tag}{tier_label} ({len(contrasts)} pre-registered, "
+            f"{len(sizings)} with paired data, {len(skipped)} skipped) ==="
+        )
     )
-    print("=" * 78)
     if secondary:
         print(
             f"SECONDARY TIER: exploratory, NOT a pre-registered primary result. "
@@ -936,7 +907,9 @@ def _print_tier_report(
     )
 
     pvals = np.array([s.observed_p for s in sizings])
-    reject_mask = benjamini_hochberg(pvals, Q_SECONDARY) if secondary else pvals < ALPHA_PRIMARY
+    reject_mask = (
+        benjamini_hochberg(pvals, Q_SECONDARY) if secondary else pvals < ALPHA_PRIMARY
+    )
 
     for sizing, rejected in zip(sizings, reject_mask):
         print(f"  {sizing.label}")
@@ -947,7 +920,9 @@ def _print_tier_report(
         )
         sig_word = "REJECT null (significant)" if rejected else "not significant"
         corr_name = "BH-adjusted" if secondary else "Bonferroni"
-        print(f"      McNemar exact p = {sizing.observed_p:.4f}  [{corr_name}] -> {sig_word}")
+        print(
+            f"      McNemar exact p = {sizing.observed_p:.4f}  [{corr_name}] -> {sig_word}"
+        )
         print(f"      n_theorems power curve (block bootstrap, {sims} sims):")
         grid_row = "        " + "  ".join(f"{n:>5d}" for n in N_THEOREMS_GRID)
         power_row = "        " + "  ".join(f"{p:5.2f}" for p in sizing.theorem_curve)
@@ -955,7 +930,9 @@ def _print_tier_report(
         print(power_row)
         r80 = fmt_r(sizing.r_theorems[POWER_TARGETS[0]], N_THEOREMS_GRID[-1])
         r90 = fmt_r(sizing.r_theorems[POWER_TARGETS[1]], N_THEOREMS_GRID[-1])
-        print(f"        R({POWER_TARGETS[0]:.0%}) = {r80}   R({POWER_TARGETS[1]:.0%}) = {r90}")
+        print(
+            f"        R({POWER_TARGETS[0]:.0%}) = {r80}   R({POWER_TARGETS[1]:.0%}) = {r90}"
+        )
         needed_str = fmt_r(sizing.needed_replicates, N_REPLICATES_GRID[-1])
         print(
             f"      replicate (pass@N) projection at n_theorems="
@@ -984,7 +961,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=RESULTS_DIR,
         help="local results root containing runs/scaling_*/verified_rows.jsonl "
-             "(default: %(default)s)",
+        "(default: %(default)s)",
     )
     p.add_argument(
         "--s3",
@@ -1019,7 +996,6 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments.
 
     Returns
     -------
@@ -1040,10 +1016,13 @@ def main(argv: list[str] | None = None) -> int:
     prefix = "scaling_*" if local else "*"
     row_files = sorted(rows_dir.glob(f"{prefix}/verified_rows.jsonl"))
     verified_dirs = {path.parent for path in row_files}
-    row_files.extend(sorted(
-        path for path in rows_dir.glob(f"{prefix}/all_rows.jsonl")
-        if path.parent not in verified_dirs
-    ))
+    row_files.extend(
+        sorted(
+            path
+            for path in rows_dir.glob(f"{prefix}/all_rows.jsonl")
+            if path.parent not in verified_dirs
+        )
+    )
 
     if not row_files:
         print(

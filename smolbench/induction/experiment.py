@@ -13,15 +13,3 @@ class InductionExperiment(Experiment):
 
     #: Derive conditions from periodic to prevent duplicate-list drift.
     info_types: Tuple[str, ...] = tuple(periodic.CONDITIONS)
-
-    def cot_chain_lengths(self, tag: str = "cot") -> None:
-        """Print stored CoT word-count stats.
-
-        Default ``tag`` because induction CoT archetypes use ``cot``.
-
-        Parameters
-        ----------
-        tag : str, optional
-            CoT replicate tag.
-        """
-        super().cot_chain_lengths(tag)

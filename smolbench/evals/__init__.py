@@ -5,7 +5,7 @@ import Marks`` keeps working. Layout and rationale:
 ``smolbench/evals/README.md``.
 """
 
-from smolbench.evals.quiz import Answer, QnA, ToF, Numeric, Quiz, Mark, Marks
+from smolbench.evals.quiz import Answer, Mark, Marks, Numeric, QnA, Quiz, ToF
 
 __all__ = [
     "Answer",

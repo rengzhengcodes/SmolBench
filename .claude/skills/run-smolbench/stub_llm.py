@@ -1,8 +1,10 @@
 """Run local OpenAI-compatible stubs for a real Lean sweep.
 
 The good fixture proof must verify and the bogus one must return `lean_error`.
-Port A serves model "stub-good-model" and Port B serves "stub-bad-model"; OS-assigned
-ports print once to stdout as {"pi": <port>, "or": <port>} before serving.
+Both ports dispatch on the request's `model` -- "stub-good-model" earns the good
+proof, "stub-bad-model" the bogus one -- because the ec2 provider reads a single
+`EC2_INFERENCE_BASE_URL` for every model. OS-assigned ports print once to stdout
+as {"pi": <port>, "or": <port>} before serving; either port serves the sweep.
 Reuse `tests.conftest.StubServer` so the stub dialect has one source of truth.
 """
 
@@ -54,44 +56,66 @@ class _LoggingRequestList(list):
         """Record `request` in memory and as one JSON line in the log file."""
         super().append(request)
         line = json.dumps(
-            {"stub": self._stub, "path": request.get("path"), "body": request.get("body")}
+            {
+                "stub": self._stub,
+                "path": request.get("path"),
+                "body": request.get("body"),
+            }
         )
-        with LOG_LOCK, open(self._path, "a") as fh:
+        with LOG_LOCK, open(self._path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
 
-def make_server(stub: str, answer: str) -> StubServer:
-    """Build a logging server with one response for an unknown number of completions.
+def _completion(answer: str) -> dict:
+    body = chat_completion(
+        answer,
+        usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+    )
+    body["choices"][0]["finish_reason"] = "stop"
+    return body
 
-    `default_response` is required because queued responses are FIFO; model fallback keeps `rsp.model` correct.
+
+class _ModelDispatchServer(StubServer):
+    """StubServer that answers per request `model`, not per port."""
+
+    _ANSWERS = {
+        "stub-good-model": _completion(GOOD),
+        "stub-bad-model": _completion(BAD),
+    }
+
+    def next_response(self) -> object:
+        """Return the canned response for the model in the last logged request."""
+        body = self.requests[-1].get("body") if self.requests else None
+        model = (body or {}).get("model")
+        return self._ANSWERS.get(model, self.default_response)
+
+
+def make_server(stub: str) -> StubServer:
+    """Build a logging server for an unknown number of completions.
 
     Parameters
     ----------
     stub : str
-        Logged request label.
-    answer : str
-        Completion response.
 
     Returns
     -------
     StubServer
         Logging server.
     """
-    server = StubServer()
+    server = _ModelDispatchServer()
     server.requests = _LoggingRequestList(stub, REQLOG)
-    body = chat_completion(
-        answer, usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
-    )
-    body["choices"][0]["finish_reason"] = "stop"
-    server.default_response = body
+    server.default_response = _completion(GOOD)
     return server
 
 
-srv_pi = make_server("PI", GOOD)
-srv_or = make_server("OR", BAD)
+srv_pi = make_server("PI")
+srv_or = make_server("OR")
 
 # Print and flush ports before serving so `ports.json` never exposes an unbound port.
-print(json.dumps({"pi": srv_pi.server_address[1], "or": srv_or.server_address[1]}), flush=True)
+print(
+    json.dumps({"pi": srv_pi.server_address[1], "or": srv_or.server_address[1]}),
+    flush=True,
+)
 
 # The main server keeps the process alive until `lean_smoke.sh` kills it.
 threading.Thread(target=srv_pi.serve_forever, daemon=True).start()

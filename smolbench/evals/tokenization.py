@@ -7,11 +7,7 @@ fallback counts would break byte-for-byte regeneration.
 
 import functools
 import logging
-from typing import Any, Callable, Optional, Protocol, Tuple, runtime_checkable
-
-import requests
-
-from smolbench.evals.openai_compat import METADATA_TIMEOUT_S
+from typing import Any, Callable, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 
 @runtime_checkable
@@ -35,9 +31,9 @@ class Tokenizer(Protocol):
         Returns
         -------
         int
-            Token count.
+            Token count of `text`.
         """
-        ...
+        raise NotImplementedError
 
 
 class HFTokenizer:
@@ -49,15 +45,15 @@ class HFTokenizer:
         Parameters
         ----------
         name : str
-            Tokenizer name.
+            Name of the wrapped tokenizer.
         tokenizer : Any
-            Object supporting ``encode(...).ids``.
+            Duck-typed on ``encode(text, add_special_tokens=False).ids``.
         """
         self.name = name
         self._tokenizer = tokenizer
 
     @classmethod
-    def from_repo(cls, repo_id: str) -> "HFTokenizer":
+    def from_repo(cls, repo_id: str, revision: str | None = None) -> "HFTokenizer":
         """Load and cache `repo_id`'s tokenizer.
 
         Disable embedded truncation and padding because they would miscount prompts.
@@ -65,17 +61,19 @@ class HFTokenizer:
         Parameters
         ----------
         repo_id : str
-            Repository containing ``tokenizer.json``.
+            HuggingFace repository containing ``tokenizer.json``.
+        revision : str | None, optional
+            Git revision to fetch; ``None`` uses the repository default.
 
         Returns
         -------
         HFTokenizer
-            Loaded tokenizer.
+            Loaded tokenizer wrapper with truncation and padding disabled.
 
         Raises
         ------
         RuntimeError
-            If loading fails or no ``tokenizer.json`` exists.
+            If the repository does not provide a usable ``tokenizer.json``.
         """
         try:
             from huggingface_hub import hf_hub_download
@@ -86,7 +84,11 @@ class HFTokenizer:
                 f"(pip install smolbench): {exc}"
             ) from exc
         try:
-            path = hf_hub_download(repo_id=repo_id, filename="tokenizer.json")
+            path = hf_hub_download(
+                repo_id=repo_id,
+                filename="tokenizer.json",
+                revision=revision,
+            )
         except Exception as exc:  # noqa: BLE001 -- hub raises a wide family here
             raise RuntimeError(
                 f"could not fetch tokenizer.json from {repo_id!r}: "
@@ -128,57 +130,12 @@ class TiktokenTokenizer:
         return len(self._encoding.encode(text))
 
 
-class VLLMTokenizer:
-    """Count tokens through a vLLM server's ``/tokenize`` endpoint."""
-
-    def __init__(self, base_url: str, model: str, api_key: str) -> None:
-        """Bind to one served model.
-
-        Strip ``/v1`` because vLLM serves ``/tokenize`` at the server root.
-
-        Parameters
-        ----------
-        base_url : str
-            OpenAI-compatible URL.
-        model : str
-            Model name.
-        api_key : str
-            Server bearer token.
-        """
-        root = base_url.rstrip("/")
-        if root.endswith("/v1"):
-            root = root[: -len("/v1")]
-        self.name = f"vllm:{model}@{root}"
-        self._url = f"{root}/tokenize"
-        self._model = model
-        self._api_key = api_key
-
-    def count(self, text: str) -> int:
-        """Count `text` through the live server.
-
-        Parameters
-        ----------
-        text : str
-            Prompt text.
-
-        Returns
-        -------
-        int
-            Server-reported token count.
-
-        Raises
-        ------
-        requests.HTTPError
-            On rejection.
-        """
-        response = requests.post(
-            self._url,
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json={"model": self._model, "prompt": text, "add_special_tokens": False},
-            timeout=METADATA_TIMEOUT_S,
-        )
-        response.raise_for_status()
-        return int(response.json()["count"])
+def _pinned_revision(spec: Mapping[str, Any]) -> str | None:
+    """Return the ``--tokenizer-revision`` a deploy spec serves, if pinned."""
+    args = list(spec.get("vllm_args", ()))
+    if "--tokenizer-revision" in args:
+        return args[args.index("--tokenizer-revision") + 1]
+    return None
 
 
 @functools.lru_cache(maxsize=None)
@@ -190,12 +147,12 @@ def for_model(model: str) -> Tokenizer:
     Parameters
     ----------
     model : str
-        ``ec2.EC2_DEPLOY_SPECS`` key.
+        A key of ``ec2.EC2_DEPLOY_SPECS``.
 
     Returns
     -------
     Tokenizer
-        Served checkpoint tokenizer.
+        The tokenizer for the served checkpoint.
     """
     from smolbench.evals.providers import ec2
 
@@ -206,13 +163,18 @@ def for_model(model: str) -> Tokenizer:
             "Tokenizer explicitly for models outside the spec table"
         )
     repo_id: str = spec.get("tokenizer_hf_id") or spec["hf_model_id"]
-    logging.info(f"tokenization.for_model: {model!r} -> {repo_id}")
-    return HFTokenizer.from_repo(repo_id)
+    revision = _pinned_revision(spec) if repo_id == spec["hf_model_id"] else None
+    logging.info(f"tokenization.for_model: {model!r} -> {repo_id}@{revision or 'HEAD'}")
+    return HFTokenizer.from_repo(repo_id, revision)
 
 
 # Mixed whitespace avoids BPE run merges; candidates are verified empirically.
 WHITESPACE_UNITS: Tuple[str, ...] = (
-    " \t", " \n\t", "\t ", " \n", "\t\n ",
+    " \t",
+    " \n\t",
+    "\t ",
+    " \n",
+    "\t\n ",
     # Last to preserve earlier selections and byte-identical noise prompts.
     "\r",
     "\x0b",
@@ -234,17 +196,17 @@ def choose_whitespace_unit(tokenizer: Tokenizer) -> str:
     Parameters
     ----------
     tokenizer : Tokenizer
-        Tokenizer to probe.
+        Tokenizer whose merge table is probed.
 
     Returns
     -------
     str
-        Qualifying pad atom.
+        The qualifying whitespace pad atom.
 
     Raises
     ------
     ValueError
-        If no candidate qualifies.
+        No candidate whitespace unit passed the tokenization checks.
     """
     for unit in WHITESPACE_UNITS:
         if all(
@@ -274,20 +236,20 @@ def token_matched_noise_prompt(
     Parameters
     ----------
     render : Callable[[str], str]
-        Deterministic context renderer.
+        Called repeatedly, so it must be cheap and deterministic.
     context : str
-        Context to pad.
+        Context to pad with whitespace.
     target_tokens : int
-        Exact rendered token count.
+        Exact token count for the rendered prompt.
     tokenizer : Tokenizer
-        Model tokenizer.
+        Must be the model under test's.
     unit : str | None
-        Pad atom; probes when omitted.
+        Defaults to :func:`choose_whitespace_unit`'s pick.
 
     Returns
     -------
     str
-        Exact-length rendered prompt.
+        Rendered prompt with exact target token count.
     """
     base: str = render(context)
     base_tokens: int = tokenizer.count(base)

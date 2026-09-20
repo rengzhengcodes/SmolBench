@@ -8,7 +8,6 @@ Run: ``.venv/bin/python notebooks/deduction/analysis/hint_vs_noise.py --s3``.
 """
 
 import argparse
-import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -18,9 +17,9 @@ from scipy.stats import binom
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import rows_source  # noqa: E402
-from error_bars import holm  # noqa: E402
-from power_analysis import (  # noqa: E402
+import rows_source  # noqa: E402 -- bare sibling off the sys.path insert; pylint: disable=import-error
+from error_bars import holm  # noqa: E402  # pylint: disable=import-error
+from power_analysis import (  # noqa: E402  # pylint: disable=import-error
     ALPHA,
     MODELS,
     grade_verdicts,
@@ -55,16 +54,10 @@ def load_rungs(path: Path) -> dict:
         Retired or ungraded input; validate before filtering.
     """
     rows_source.reject_superseded([path])
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    rows, cells, dropped_replicates = rows_source.read_cell_rows(path)
     reject_unverified_verdicts(rows, "verdict", path)
     out: dict = defaultdict(dict)
-    dropped_replicates = 0
-    for row in rows:
-        if row.get("kind") != "cell":
-            continue
-        if row.get("replicate_idx", 0) != 0:
-            dropped_replicates += 1
-            continue
+    for row in cells:
         if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
             continue
         # None is not a measurement, so it cannot score the cell.
@@ -93,11 +86,8 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     Parameters
     ----------
     n_disc : int
-        Discordant-pair count.
     k_crit : int
-        Critical pair count.
     target : float, optional
-        Target power.
 
     Returns
     -------
@@ -107,8 +97,9 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
     lo, hi = 0.5, 1.0
     for _ in range(200):
         mid = 0.5 * (lo + hi)
-        power = binom.cdf(k_crit, n_disc, mid) + binom.sf(n_disc - k_crit - 1,
-                                                          n_disc, mid)
+        power = binom.cdf(k_crit, n_disc, mid) + binom.sf(
+            n_disc - k_crit - 1, n_disc, mid
+        )
         if power >= target:
             hi = mid
         else:
@@ -125,7 +116,6 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments.
 
     Returns
     -------
@@ -151,34 +141,50 @@ def main(argv: list[str] | None = None) -> int:
         both = [v for v in pairs.values() if RUNG_INFO in v and RUNG_NOISE in v]
         info = np.array([v[RUNG_INFO] for v in both], dtype=bool)
         noise = np.array([v[RUNG_NOISE] for v in both], dtype=bool)
-        b = int((info & ~noise).sum())   # hint solved, noise not
-        c = int((~info & noise).sum())   # noise solved, hint not
-        rows.append(dict(model=model, n=info.size, acc_i=info.mean(),
-                         acc_n=noise.mean(), b=b, c=c,
-                         p=mcnemar_exact_p(b, c)))
+        b = int((info & ~noise).sum())  # hint solved, noise not
+        c = int((~info & noise).sum())  # noise solved, hint not
+        rows.append(
+            {
+                "model": model,
+                "n": info.size,
+                "acc_i": info.mean(),
+                "acc_n": noise.mean(),
+                "b": b,
+                "c": c,
+                "p": mcnemar_exact_p(b, c),
+            }
+        )
 
     rej = holm(np.array([r["p"] for r in rows]), ALPHA)
 
     print("DEDUCTION: hint:3 vs noise:3, per model")
-    print("The two rungs are byte-identical except for hint:3's trailing 1-HOP "
-          "TRANSITIVE\npremise-closure block, which noise:3 replaces with "
-          "token-matched padding. So this\ntests supplementary background on top "
-          "of an already-complete direct-premise\ncontext -- NOT the same "
-          "manipulation as the induction extens-vs-noise contrast.")
-    print("Paired exact McNemar on cells matched by (theorem, k) within each "
-          "model -- one cell\nper theorem per model, so no cluster correction "
-          "applies here.")
+    print(
+        "The two rungs are byte-identical except for hint:3's trailing 1-HOP "
+        "TRANSITIVE\npremise-closure block, which noise:3 replaces with "
+        "token-matched padding. So this\ntests supplementary background on top "
+        "of an already-complete direct-premise\ncontext -- NOT the same "
+        "manipulation as the induction extens-vs-noise contrast."
+    )
+    print(
+        "Paired exact McNemar on cells matched by (theorem, k) within each "
+        "model -- one cell\nper theorem per model, so no cluster correction "
+        "applies here."
+    )
     print(f"Holm-Bonferroni over m = {len(rows)} models at FWER {ALPHA}.\n")
-    hdr = (f"{'model':30s} {'n':>5s} {'hint:3':>7s} {'noise:3':>8s} {'diff':>7s} "
-           f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}")
+    hdr = (
+        f"{'model':30s} {'n':>5s} {'hint:3':>7s} {'noise:3':>8s} {'diff':>7s} "
+        f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}"
+    )
     print(hdr)
     print("-" * len(hdr))
     if tuple(r["model"] for r in rows) != tuple(MODELS):
         raise ValueError("report rows must follow the configured MODELS order")
     for r, rejected in zip(rows, rej):
-        print(f"{r['model']:30s} {r['n']:5d} {r['acc_i']:7.3f} {r['acc_n']:8.3f} "
-              f"{r['acc_i'] - r['acc_n']:+7.3f} {r['b']:4d}/{r['c']:<4d} "
-              f"{r['p']:10.2e} {' yes ' if rejected else '  .  '}")
+        print(
+            f"{r['model']:30s} {r['n']:5d} {r['acc_i']:7.3f} {r['acc_n']:8.3f} "
+            f"{r['acc_i'] - r['acc_n']:+7.3f} {r['b']:4d}/{r['c']:<4d} "
+            f"{r['p']:10.2e} {' yes ' if rejected else '  .  '}"
+        )
 
     sig = [rows[i] for i in range(len(rows)) if rej[i]]
     up = [r for r in sig if r["acc_i"] > r["acc_n"]]
@@ -187,16 +193,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  noise:3 HIGHER:                    {len(sig) - len(up)}")
 
     # Conditional MDE uses observed discordance; unconditional MDE is larger.
-    print(f"\n{'-' * 78}\nMINIMUM DETECTABLE EFFECT -- what this null actually rules out")
-    print(f"{'-' * 78}")
-    print(f"Both columns are evaluated at each model's OBSERVED discordant "
-          f"total, against\nHolm's strictest step (alpha/{len(rows)} = "
-          f"{ALPHA / len(rows):.2e}), in accuracy points.\n"
-          f"  boundary = smallest effect that would have REACHED significance "
-          f"(~50% power)\n  mde80    = smallest TRUE effect this design catches "
-          f"80% of the time\n")
-    print(f"{'model':30s} {'disc':>5s} {'needed split':>13s} {'boundary':>9s} "
-          f"{'mde80':>7s} {'observed':>9s}")
+    print(
+        "\n"
+        + rows_source.banner(
+            "MINIMUM DETECTABLE EFFECT -- what this null actually rules out",
+            char="-",
+        )
+    )
+    print(
+        f"Both columns are evaluated at each model's OBSERVED discordant "
+        f"total, against\nHolm's strictest step (alpha/{len(rows)} = "
+        f"{ALPHA / len(rows):.2e}), in accuracy points.\n"
+        f"  boundary = smallest effect that would have REACHED significance "
+        f"(~50% power)\n  mde80    = smallest TRUE effect this design catches "
+        f"80% of the time\n"
+    )
+    print(
+        f"{'model':30s} {'disc':>5s} {'needed split':>13s} {'boundary':>9s} "
+        f"{'mde80':>7s} {'observed':>9s}"
+    )
     print("-" * 80)
     boundaries, mde80s = [], []
     thresh = ALPHA / len(rows)
@@ -209,57 +224,86 @@ def main(argv: list[str] | None = None) -> int:
                 need = k
                 break
         if need is None:
-            print(f"{model:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>9s} {'--':>7s} "
-                  f"{r['acc_i'] - r['acc_n']:+9.3f}")
+            print(
+                f"{model:30s} {nd:5d} {'IMPOSSIBLE':>13s} {'--':>9s} {'--':>7s} "
+                f"{r['acc_i'] - r['acc_n']:+9.3f}"
+            )
             continue
         boundary = (nd - 2 * need) / r["n"]
         pi = _power_pi(nd, need, target=0.80)
         mde80 = nd * (2 * pi - 1) / r["n"]
         boundaries.append(boundary)
         mde80s.append(mde80)
-        print(f"{model:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {boundary:9.3f} "
-              f"{mde80:7.3f} {r['acc_i'] - r['acc_n']:+9.3f}")
+        print(
+            f"{model:30s} {nd:5d} {f'{nd - need}/{need}':>13s} {boundary:9.3f} "
+            f"{mde80:7.3f} {r['acc_i'] - r['acc_n']:+9.3f}"
+        )
     if boundaries:
-        print(f"\nMedian significance boundary (~50% power): "
-              f"{np.median(boundaries):.3f} accuracy points.")
-        print(f"Median 80%-power MDE:                      "
-              f"{np.median(mde80s):.3f} accuracy points "
-              f"(range {min(mde80s):.3f}-{max(mde80s):.3f}).")
-        print("  Provenance: mde80 is a deterministic bisection on the CLOSED-FORM binomial power,\n  so it does not move between runs.")
-        print(f"Largest observed |difference|: "
-              f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}.")
+        print(
+            f"\nMedian significance boundary (~50% power): "
+            f"{np.median(boundaries):.3f} accuracy points."
+        )
+        print(
+            f"Median 80%-power MDE:                      "
+            f"{np.median(mde80s):.3f} accuracy points "
+            f"(range {min(mde80s):.3f}-{max(mde80s):.3f})."
+        )
+        print(
+            "  Provenance: mde80 is a deterministic bisection on the CLOSED-FORM binomial power,\n  so it does not move between runs."
+        )
+        print(
+            f"Largest observed |difference|: "
+            f"{max(abs(r['acc_i'] - r['acc_n']) for r in rows):.3f}."
+        )
         # A nonempty `sig` means this is not a null result.
         if not sig:
-            print("So this null rules out LARGE effects of 1-hop transitive "
-                  "premise background,\nnot small ones.")
+            print(
+                "So this null rules out LARGE effects of 1-hop transitive "
+                "premise background,\nnot small ones."
+            )
         else:
-            print(f"{len(sig)} of {len(rows)} model(s) already reached "
-                  f"significance under Holm (see above), so this leg is not a "
-                  f"null\nresult overall -- the MDE numbers above describe the "
-                  f"sensitivity of only the\n{len(rows) - len(sig)} model(s) "
-                  f"that did not reach significance.")
+            print(
+                f"{len(sig)} of {len(rows)} model(s) already reached "
+                f"significance under Holm (see above), so this leg is not a "
+                f"null\nresult overall -- the MDE numbers above describe the "
+                f"sensitivity of only the\n{len(rows) - len(sig)} model(s) "
+                f"that did not reach significance."
+            )
     n_neg = sum(1 for r in rows if r["acc_i"] < r["acc_n"])
     n_pos = sum(1 for r in rows if r["acc_i"] > r["acc_n"])
-    print(f"\nDirection of the point estimates, ignoring significance: "
-          f"{n_pos} favour hint:3,\n  {n_neg} favour noise:3, "
-          f"{len(rows) - n_pos - n_neg} exactly tied.")
+    print(
+        f"\nDirection of the point estimates, ignoring significance: "
+        f"{n_pos} favour hint:3,\n  {n_neg} favour noise:3, "
+        f"{len(rows) - n_pos - n_neg} exactly tied."
+    )
     # `sig` controls this wording: any rejection means a real effect exists.
     if not sig:
-        print("  -- consistent with no effect rather than a real effect this "
-              "design cannot\n  resolve.")
+        print(
+            "  -- consistent with no effect rather than a real effect this "
+            "design cannot\n  resolve."
+        )
     else:
-        majority = ("hint:3" if n_pos > n_neg else
-                    "noise:3" if n_neg > n_pos else "neither rung")
-        print(f"  -- {len(sig)} of {len(rows)} model(s) already reject the "
-              f"null under Holm (see above), so\n  a real effect is present in "
-              f"at least those models; the unsigned split above leans\n  "
-              f"toward {majority}.")
-    print(f"\nNot significant: {len(rows) - len(sig)} -- listed so a null is not "
-          f"mistaken for an untested contrast:")
+        majority = (
+            "hint:3"
+            if n_pos > n_neg
+            else "noise:3" if n_neg > n_pos else "neither rung"
+        )
+        print(
+            f"  -- {len(sig)} of {len(rows)} model(s) already reject the "
+            f"null under Holm (see above), so\n  a real effect is present in "
+            f"at least those models; the unsigned split above leans\n  "
+            f"toward {majority}."
+        )
+    print(
+        f"\nNot significant: {len(rows) - len(sig)} -- listed so a null is not "
+        f"mistaken for an untested contrast:"
+    )
     for i, r in enumerate(rows):
         if not rej[i]:
-            print(f"  {r['model']:30s} {r['acc_i']:.3f} vs {r['acc_n']:.3f}  "
-                  f"p={r['p']:.2e}  (discordant {r['b'] + r['c']})")
+            print(
+                f"  {r['model']:30s} {r['acc_i']:.3f} vs {r['acc_n']:.3f}  "
+                f"p={r['p']:.2e}  (discordant {r['b'] + r['c']})"
+            )
     return 0
 
 

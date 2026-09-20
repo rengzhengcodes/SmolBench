@@ -16,9 +16,17 @@ from pathlib import Path
 
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
-    DEFAULT_DOJO_TIMEOUT, analyze_rows, jsonl_line, load_sweep_config,
-    model_totals, new_run_id, read_jsonl_tolerating_torn_tail, regenerate_run_artifacts,
-    reject_superseded_rows, results_root, run_cell, sweep, write_jsonl,
+    DEFAULT_DOJO_TIMEOUT,
+    analyze_rows,
+    jsonl_line,
+    load_sweep_config,
+    model_totals,
+    new_run_id,
+    reject_superseded_rows,
+    results_root,
+    run_cell,
+    sweep,
+    write_jsonl,
 )
 
 
@@ -28,7 +36,6 @@ def cmd_metadata(_: argparse.Namespace) -> int:
     Parameters
     ----------
     _ : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -52,7 +59,6 @@ def cmd_list(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -74,7 +80,6 @@ def cmd_replay(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -130,7 +135,6 @@ def cmd_filter(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -208,7 +212,6 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -225,6 +228,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     k = len(theorem.traced_tactics) - 1 if args.k == -1 else args.k
 
     from .context import validate as validate_rung
+
     chain_str, _, level_str = args.rung.partition(":")
     try:
         level = int(level_str)
@@ -238,19 +242,21 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
         return 2
 
     out_path = results_root() / "runs" / f"{new_run_id()}.jsonl"
-    rows = list(run_cell(
-        provider=args.provider,
-        model=args.model,
-        theorem=theorem,
-        k=k,
-        chain=chain_str,
-        level=level,
-        n_replicates=args.n_replicates,
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-        dojo_timeout=args.timeout,
-        seed=args.seed,
-    ))
+    rows = list(
+        run_cell(
+            provider=args.provider,
+            model=args.model,
+            theorem=theorem,
+            k=k,
+            chain=chain_str,
+            level=level,
+            n_replicates=args.n_replicates,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            dojo_timeout=args.timeout,
+            seed=args.seed,
+        )
+    )
     n_written = write_jsonl(rows, out_path)
     n_ok = sum(1 for r in rows if r["verdict"] == "success")
     print(f"wrote {n_written} rows -> {out_path}", flush=True)
@@ -273,77 +279,10 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
     return 0 if n_ok == n_written else 1
 
 
-def cmd_prompt_stats(args: argparse.Namespace) -> int:
-    """Render prompts for each (theorem, k=last, rung) and report token stats.
-
-    No Lean toolchain. Use exact ``tiktoken`` counts, unlike
-    ``context._count_tokens``'s character fallback; render failures are skipped.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed arguments.
-
-    Returns
-    -------
-    int
-        1 for an empty pool, else 0.
-
-    Raises
-    ------
-    ImportError
-        Missing ``tiktoken``.
-    """
-    import statistics as stats
-    import tiktoken
-    from .context import IMPLEMENTED_RUNGS, render
-    from .corpus import iter_replay_passing
-
-    enc = tiktoken.get_encoding("cl100k_base")
-    pool = list(iter_replay_passing(args.kind, args.split))
-    if args.max_tactics > 0:
-        pool = [t for t in pool if 1 <= len(t.traced_tactics) <= args.max_tactics]
-    if args.limit > 0 and len(pool) > args.limit:
-        rng = random.Random(args.seed)
-        pool = rng.sample(pool, args.limit)
-    if not pool:
-        print("empty pool", file=sys.stderr)
-        return 1
-
-    if args.rungs:
-        rungs = args.rungs.split(",")
-    else:
-        rungs = [f"{c}:{l}" for c, l in IMPLEMENTED_RUNGS]
-
-    by_rung: dict[str, list[int]] = {r: [] for r in rungs}
-    n_render_err = 0
-    for t in pool:
-        k = len(t.traced_tactics) - 1
-        for rung in rungs:
-            chain, lvl = rung.split(":", 1)
-            try:
-                rc = render(t, k, chain, int(lvl))  # type: ignore[arg-type]
-            except Exception:
-                n_render_err += 1
-                continue
-            by_rung[rung].append(len(enc.encode(rc.text)))
-
-    print(f"# {len(pool)} theorems, k=last_step")
-    if n_render_err:
-        print(f"# {n_render_err} render errors (skipped)")
-    print(f"\n{'rung':<10} {'n':>4} {'min':>6} {'med':>6} {'mean':>7} {'p95':>6} {'max':>6}")
-    print("-" * 50)
-    for rung in rungs:
-        counts = sorted(by_rung[rung])
-        if not counts:
-            print(f"{rung:<10} {0:>4}  (no successful renders)")
-            continue
-        p95 = counts[min(int(0.95 * len(counts)), len(counts) - 1)]
-        print(
-            f"{rung:<10} {len(counts):>4} {counts[0]:>6} {stats.median(counts):>6.0f} "
-            f"{stats.mean(counts):>7.0f} {p95:>6} {counts[-1]:>6}"
-        )
-    return 0
+def _print_table_header(header: str) -> None:
+    """Print a table header followed by its full-width rule."""
+    print(header)
+    print("-" * len(header))
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -357,7 +296,6 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -380,7 +318,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         + (f" / {n_sanity_skipped} deferred" if n_sanity_skipped else "")
     )
     if n_sanity_fail:
-        print(f"!! {n_sanity_fail} sanity-gate failures — investigate before trusting cell rates")
+        print(
+            f"!! {n_sanity_fail} sanity-gate failures — investigate before trusting cell rates"
+        )
     if n_sanity_skipped:
         print(
             f"# {n_sanity_skipped} sanity replays deferred (generation-only sweep); "
@@ -389,7 +329,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print()
 
     from .runner import _rung_sort_key, slug_model
-    sort_key = lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])
+
+    def sort_key(kv):
+        return _rung_sort_key(kv[0][0]), kv[0][1]
 
     models_in_data = sorted({m for (_, m) in cells.keys()})
     rungs_in_data = sorted({r for (r, _) in cells.keys()}, key=_rung_sort_key)
@@ -404,8 +346,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 continue
             rate = c["success"] / c["n"]
             filled = int(round(rate * bar_w))
-            bar = "█" * filled + "░" * (bar_w - filled)
-            print(f"    {rung:<8} {bar} {rate:>5.1%}  ({c['success']}/{c['n']})")
+            meter = "█" * filled + "░" * (bar_w - filled)
+            print(f"    {rung:<8} {meter} {rate:>5.1%}  ({c['success']}/{c['n']})")
 
     print()
     header = (
@@ -414,8 +356,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         f"{'noans':>5} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
-    print(header)
-    print("-" * len(header))
+    _print_table_header(header)
 
     for (rung, model), c in sorted(cells.items(), key=sort_key):
         n = c["n"]
@@ -434,8 +375,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print("\n# per-model totals")
     for model, m in sorted(model_totals(cells).items()):
         rate = m["success"] / m["n"] if m["n"] else 0
-        print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-              f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+        print(
+            f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
+            f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)"
+        )
 
     # Skip pass@N for one replicate because it duplicates success rate; use observed N.
     n_max_replicates = max((len(vs) for vs in groups.values()), default=1)
@@ -449,11 +392,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
         print(f"\n# pass@N per rung × model (N={n_max_replicates})")
         header2 = f"{'rung':<10} {'model':<36} {'pass':>5}/{'grp':<4} {'rate':>6}"
-        print(header2)
-        print("-" * len(header2))
+        _print_table_header(header2)
         for (rung, model), pc in sorted(passn_cells.items(), key=sort_key):
             rate = pc["pass"] / pc["groups"] if pc["groups"] else 0
-            print(f"{rung:<10} {model:<36} {pc['pass']:>5}/{pc['groups']:<4} {rate:>6.1%}")
+            print(
+                f"{rung:<10} {model:<36} {pc['pass']:>5}/{pc['groups']:<4} {rate:>6.1%}"
+            )
 
         print("\n# pass@N per-model totals")
         by_model_passn: dict[str, dict[str, int]] = {}
@@ -477,7 +421,6 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments.
 
     Returns
     -------
@@ -501,187 +444,6 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     return 0 if n >= 0 else 1
 
 
-def cmd_compare(args: argparse.Namespace) -> int:
-    """For one model, compare two rungs cell-by-cell on a run dir.
-
-    No Lean toolchain or writes; compare only ``--replicate``.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed arguments.
-
-    Returns
-    -------
-    int
-        2 if rows are missing, else 0.
-    """
-    run_dir = Path(args.run_dir)
-    all_rows = run_dir / "all_rows.jsonl"
-    if not all_rows.exists():
-        print(f"no all_rows.jsonl under {run_dir}", file=sys.stderr)
-        return 2
-
-    by_thm: dict[str, dict[str, dict]] = {}
-    for r in read_jsonl_tolerating_torn_tail(all_rows, skip_bad=True):
-        if r.get("kind") != "cell":
-            continue
-        if r.get("model") != args.model:
-            continue
-        if r.get("rung") not in (args.rung_a, args.rung_b):
-            continue
-        if r.get("replicate_idx", 0) != args.replicate:
-            continue
-        by_thm.setdefault(r["theorem_id"], {})[r["rung"]] = r
-
-    regressions: list[tuple[str, dict, dict]] = []
-    improvements: list[tuple[str, dict, dict]] = []
-    both_pass = 0
-    both_fail = 0
-    only_a = 0
-    only_b = 0
-    for t, d in by_thm.items():
-        a = d.get(args.rung_a)
-        b = d.get(args.rung_b)
-        if a is None or b is None:
-            if a is None: only_b += 1
-            if b is None: only_a += 1
-            continue
-        a_ok = a.get("verdict") == "success"
-        b_ok = b.get("verdict") == "success"
-        if a_ok and b_ok:
-            both_pass += 1
-        elif a_ok and not b_ok:
-            regressions.append((t, a, b))
-        elif b_ok and not a_ok:
-            improvements.append((t, a, b))
-        else:
-            both_fail += 1
-
-    print(f"# {args.model}  rung {args.rung_a} vs {args.rung_b}  (replicate {args.replicate})")
-    print(f"  both pass:      {both_pass}")
-    print(f"  both fail:      {both_fail}")
-    print(f"  regressions ({args.rung_a} ✓ → {args.rung_b} ✘): {len(regressions)}")
-    print(f"  improvements ({args.rung_a} ✘ → {args.rung_b} ✓): {len(improvements)}")
-    if only_a:
-        print(f"  only-{args.rung_a}-present: {only_a}  (likely trivial-skipped at {args.rung_b})")
-    if only_b:
-        print(f"  only-{args.rung_b}-present: {only_b}  (likely trivial-skipped at {args.rung_a})")
-
-    def _dump(label: str, items: list[tuple[str, dict, dict]]) -> None:
-        """Print one labeled section of ``(theorem_id, row_a, row_b)`` triples.
-
-        Omit empty sections.
-
-        Parameters
-        ----------
-        label : str
-            Section label.
-        items : list[tuple[str, dict, dict]]
-            Row triples.
-        """
-        if not items:
-            return
-        print(f"\n== {label} ==")
-        for t, a, b in items:
-            d_tok = b.get("prompt_tokens", 0) - a.get("prompt_tokens", 0)
-            print(f"\n## {t}   k={a.get('k')}  Δtokens={d_tok:+d}")
-            print(f"   ground-truth tail: {a.get('ground_truth_remaining', '')[:160]}")
-            print(f"\n   {args.rung_a}  →  {a.get('verdict')}")
-            print(f"     candidate: {(a.get('candidate_proof') or '')[:240]}")
-            if a.get("lean_error"):
-                print(f"     lean_error: {a['lean_error'].splitlines()[0][:200]}")
-            print(f"\n   {args.rung_b}  →  {b.get('verdict')}")
-            print(f"     candidate: {(b.get('candidate_proof') or '')[:240]}")
-            if b.get("lean_error"):
-                print(f"     lean_error: {b['lean_error'].splitlines()[0][:200]}")
-
-    _dump(f"REGRESSIONS — context-pollution evidence ({args.rung_a} → {args.rung_b})", regressions)
-    if not args.regressions_only:
-        _dump(f"IMPROVEMENTS — extra context helped ({args.rung_a} → {args.rung_b})", improvements)
-    return 0
-
-
-def cmd_show(args: argparse.Namespace) -> int:
-    """Print a theorem's summary.md, or list theorems with pass counts.
-
-    No Lean toolchain. Listing rescans JSONL, not possibly stale summaries.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed arguments.
-
-    Returns
-    -------
-    int
-        2 for missing theorems, 1 for missing summary, else 0.
-    """
-    from .runner import slug_theorem
-    run_dir = Path(args.run_dir)
-    theorems_dir = run_dir / "theorems"
-    if not theorems_dir.exists():
-        print(f"no theorems dir under {run_dir}", file=sys.stderr)
-        return 2
-
-    if args.theorem:
-        slug = slug_theorem(args.theorem)
-        summary = theorems_dir / slug / "summary.md"
-        if not summary.exists():
-            print(f"not found: {summary}", file=sys.stderr)
-            return 1
-        print(summary.read_text())
-        return 0
-
-    rows: list[tuple[str, int, int]] = []
-    for d in sorted(theorems_dir.iterdir()):
-        if not d.is_dir():
-            continue
-        out_dir = d / "outputs"
-        n_total = 0
-        n_ok = 0
-        if out_dir.exists():
-            jsonl_files = sorted(out_dir.glob("*.jsonl"))
-            reject_superseded_rows(jsonl_files)
-            for f in jsonl_files:
-                for r in read_jsonl_tolerating_torn_tail(f, skip_bad=True):
-                    n_total += 1
-                    if r.get("verdict") == "success":
-                        n_ok += 1
-        rows.append((d.name, n_ok, n_total))
-
-    print(f"# {len(rows)} theorems in {run_dir}\n")
-    for name, n_ok, n_total in rows:
-        rate = f"{n_ok / n_total:>5.1%}" if n_total else "  -  "
-        print(f"  {name:<60}  {n_ok:>3}/{n_total:<3}  {rate}")
-    return 0
-
-
-def cmd_report(args: argparse.Namespace) -> int:
-    """Regenerate analysis.txt + per-theorem summary.md from a run dir's durable artifacts.
-
-    ``runner.regenerate_run_artifacts`` reads durable JSON without Lean and
-    overwrites derived outputs.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed arguments.
-
-    Returns
-    -------
-    int
-        2 if rows are missing, else 0.
-    """
-    run_dir = Path(args.run_dir)
-    if not (run_dir / "all_rows.jsonl").exists():
-        print(f"not a run dir (no all_rows.jsonl): {run_dir}", file=sys.stderr)
-        return 2
-    regenerate_run_artifacts(run_dir)
-    print(f"regenerated artifacts in {run_dir}")
-    return 0
-
-
 def _add_split_args(parser: argparse.ArgumentParser) -> None:
     """Add the shared corpus-family and partition options to `parser`.
 
@@ -690,7 +452,6 @@ def _add_split_args(parser: argparse.ArgumentParser) -> None:
     Parameters
     ----------
     parser : argparse.ArgumentParser
-        Target parser.
 
     Returns
     -------
@@ -717,29 +478,45 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--limit", type=int, default=10)
     p_list.set_defaults(func=cmd_list)
 
-    p_replay = sub.add_parser("replay", help="replay ground-truth tactics via a Lean REPL session")
+    p_replay = sub.add_parser(
+        "replay", help="replay ground-truth tactics via a Lean REPL session"
+    )
     _add_split_args(p_replay)
-    p_replay.add_argument("-n", type=int, default=5, help="number of theorems to replay")
+    p_replay.add_argument(
+        "-n", type=int, default=5, help="number of theorems to replay"
+    )
     p_replay.add_argument("--seed", type=int, default=0)
     p_replay.add_argument("--max-tactics", type=int, default=5)
     # Share 600 with run-cell; names persist in sweep YAML and manifest.json.
     p_replay.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
-    p_replay.add_argument("--full-name", default=None, help="replay this specific theorem")
+    p_replay.add_argument(
+        "--full-name", default=None, help="replay this specific theorem"
+    )
     p_replay.set_defaults(func=cmd_replay)
 
-    p_filter = sub.add_parser("filter", help="replay every traced theorem; persist pass/fail list")
+    p_filter = sub.add_parser(
+        "filter", help="replay every traced theorem; persist pass/fail list"
+    )
     _add_split_args(p_filter)
-    p_filter.add_argument("--limit", type=int, default=0, help="cap number of theorems (0 = no cap)")
+    p_filter.add_argument(
+        "--limit", type=int, default=0, help="cap number of theorems (0 = no cap)"
+    )
     # Filter uses 300, not 600: hundreds of stalled replays magnify worst-case runtime.
     # See `test_dojo_timeout_has_one_default_across_all_three_entry_points`.
     p_filter.add_argument("--timeout", type=int, default=300)
-    p_filter.add_argument("--fresh", action="store_true", help="delete existing JSONL and start over")
+    p_filter.add_argument(
+        "--fresh", action="store_true", help="delete existing JSONL and start over"
+    )
     p_filter.set_defaults(func=cmd_filter)
 
-    p_cell = sub.add_parser("run-cell", help="run one (theorem,k,rung) cell with N replicates")
+    p_cell = sub.add_parser(
+        "run-cell", help="run one (theorem,k,rung) cell with N replicates"
+    )
     p_cell.add_argument("--full-name", required=True)
     _add_split_args(p_cell)
-    p_cell.add_argument("--k", type=int, default=-1, help="step index (default: last step = len-1)")
+    p_cell.add_argument(
+        "--k", type=int, default=-1, help="step index (default: last step = len-1)"
+    )
     p_cell.add_argument(
         "--rung",
         default="stepk:1",
@@ -747,8 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cell.add_argument("--n-replicates", type=int, default=1)
     p_cell.add_argument(
-        "--provider", default="primeintellect",
-        choices=["openrouter", "primeintellect", "aws", "ec2"],
+        "--provider",
+        default="ec2",
+        choices=["aws", "ec2"],
     )
     p_cell.add_argument("--model", default="anthropic/claude-haiku-4.5")
     p_cell.add_argument("--temperature", type=float, default=0.7)
@@ -756,47 +534,33 @@ def build_parser() -> argparse.ArgumentParser:
     # This library fallback stays 600, unlike filter's full-corpus 300.
     p_cell.add_argument("--timeout", type=int, default=DEFAULT_DOJO_TIMEOUT)
     p_cell.add_argument(
-        "--seed", type=int, default=1776,
+        "--seed",
+        type=int,
+        default=1776,
         help="base decoding seed; replicate i uses seed+i",
     )
     p_cell.set_defaults(func=cmd_run_cell)
 
-    p_sweep = sub.add_parser("run-sweep", help="run a YAML-described sweep across (theorem, k, rung, model, replicate)")
+    p_sweep = sub.add_parser(
+        "run-sweep",
+        help="run a YAML-described sweep across (theorem, k, rung, model, replicate)",
+    )
     p_sweep.add_argument("--config", required=True, help="path to sweep YAML")
-    p_sweep.add_argument("--out", default=None, help="output run dir (default: results/runs/<run_name>/)")
-    p_sweep.add_argument("--fresh", action="store_true", help="ignore existing JSONL; start from empty")
+    p_sweep.add_argument(
+        "--out", default=None, help="output run dir (default: results/runs/<run_name>/)"
+    )
+    p_sweep.add_argument(
+        "--fresh", action="store_true", help="ignore existing JSONL; start from empty"
+    )
     p_sweep.set_defaults(func=cmd_run_sweep)
 
-    p_an = sub.add_parser("analyze", help="aggregate a sweep JSONL into a (rung, model) pass-rate table")
-    p_an.add_argument("path", help="path to sweep JSONL (e.g. <run_dir>/all_rows.jsonl)")
+    p_an = sub.add_parser(
+        "analyze", help="aggregate a sweep JSONL into a (rung, model) pass-rate table"
+    )
+    p_an.add_argument(
+        "path", help="path to sweep JSONL (e.g. <run_dir>/all_rows.jsonl)"
+    )
     p_an.set_defaults(func=cmd_analyze)
-
-    p_rep = sub.add_parser("report", help="regenerate analysis.txt + per-theorem summary.md in a run dir")
-    p_rep.add_argument("run_dir", help="path to a run directory")
-    p_rep.set_defaults(func=cmd_report)
-
-    p_show = sub.add_parser("show", help="print a theorem's summary.md, or list theorems with pass counts")
-    p_show.add_argument("run_dir", help="path to a run directory (e.g. results/runs/latest)")
-    p_show.add_argument("theorem", nargs="?", default=None, help="theorem full_name (omit to list all)")
-    p_show.set_defaults(func=cmd_show)
-
-    p_cmp = sub.add_parser("compare", help="diff two rungs for one model: regressions + improvements")
-    p_cmp.add_argument("run_dir", help="path to a run directory")
-    p_cmp.add_argument("model", help="model identifier, e.g. 'anthropic/claude-sonnet-4.6'")
-    p_cmp.add_argument("rung_a", help="baseline rung, e.g. 'hint:1'")
-    p_cmp.add_argument("rung_b", help="comparison rung, e.g. 'hint:2'")
-    p_cmp.add_argument("--replicate", type=int, default=0)
-    p_cmp.add_argument("--regressions-only", action="store_true",
-                       help="show only rung_a ✓ → rung_b ✘ cases")
-    p_cmp.set_defaults(func=cmd_compare)
-
-    p_ps = sub.add_parser("prompt-stats", help="token-count distribution of rendered prompts per rung")
-    _add_split_args(p_ps)
-    p_ps.add_argument("--limit", type=int, default=50)
-    p_ps.add_argument("--max-tactics", type=int, default=5)
-    p_ps.add_argument("--seed", type=int, default=0)
-    p_ps.add_argument("--rungs", default=None, help="comma-separated rungs (default: all implemented)")
-    p_ps.set_defaults(func=cmd_prompt_stats)
 
     return p
 
@@ -809,7 +573,6 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Arguments to parse.
 
     Returns
     -------

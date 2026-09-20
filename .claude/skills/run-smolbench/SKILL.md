@@ -50,9 +50,9 @@ quiz, _, _ = get_periodic_numeric_quiz(
 
 server = StubServer()
 threading.Thread(target=server.serve_forever, daemon=True).start()
-os.environ |= {"INFERENCE_PROVIDER": "openrouter",
-               "OPENROUTER_BASE_URL": server.base_url,
-               "OPENROUTER_API_KEY": "dummy"}
+os.environ |= {"INFERENCE_PROVIDER": "ec2",
+               "EC2_INFERENCE_BASE_URL": server.base_url,
+               "EC2_VLLM_API_KEY": "dummy"}
 server.default_response = chat_completion("2")
 marks = provider.evaluate(quiz, "any-model", seed=7, max_parallel=1, show_progress=False)
 print(f"{marks.correct} correct / {marks.incorrect} incorrect / {marks.invalid} invalid of {len(quiz)}")
@@ -67,8 +67,8 @@ Manual driving from the repository root requires `export SSL_CERT_FILE=/etc/ssl/
 ```bash
 .venv/bin/python -m smolbench.deduction.lean.cli metadata
 .venv/bin/python -m smolbench.deduction.lean.cli list --kind random --split test --limit 5
-.venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl  # + report/show/compare
-# prompt-stats also runs here but needs the replay_passing_*.jsonl sidecar.
+.venv/bin/python -m smolbench.deduction.lean.cli analyze <run_dir>/all_rows.jsonl
+# notebooks/deduction/analysis/* are the reporting surface (power_analysis, error_bars, hint_vs_noise).
 
 export SMOLBENCH_MATHLIB_ROOT=/path/to/mathlib4
 .venv/bin/python -m smolbench.deduction.lean.cli replay -n 1 --seed 0
@@ -85,7 +85,8 @@ non-explicit sweep configs need. No such sidecar is checked in yet. The canonica
 `lean_smoke.sh --e2e` is credential-free: it uses local provider stubs and a
 temporary Lean project, but needs elan. It asserts the good stub succeeds, the bogus tactic
 produces `lean_error`, request and row seeds agree, provider dispatch is per-model, and an identical rerun resume-skips both cells; it needs no provider credentials or external mathlib checkout. Real `run-cell`/`run-sweep` need
-`PRIME_INTELLECT_API_KEY` or `OPENROUTER_API_KEY`, cost money, and require
+a provisioned EC2 inference endpoint (or `EC2_INFERENCE_BASE_URL` /
+`EC2_VLLM_API_KEY`), cost money, and require
 explicit user opt-in.
 
 For direct provider tests, `get_periodic_numeric_quiz` needs an explicit

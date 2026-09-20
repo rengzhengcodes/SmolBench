@@ -3,6 +3,8 @@
 Only GitHub PR lookup is stubbed; scanner, filters, git history, and artifact run for real.
 """
 
+# pylint: disable=missing-function-docstring
+
 import json
 import subprocess
 from pathlib import Path
@@ -35,10 +37,10 @@ def sample_decls() -> dict:
 EXPECTED_SAMPLE_NAMES = {
     "topLevelThm",
     "Alpha.inNamespace",
-    "Alpha.protectedThm",          # protected keeps the namespace
-    "RootLevel.escaped",           # _root_. drops the namespace
+    "Alpha.protectedThm",  # protected keeps the namespace
+    "RootLevel.escaped",  # _root_. drops the namespace
     "Alpha.Beta.nested",
-    "Alpha.Beta.sectionScoped",    # `section Helper` adds no name component
+    "Alpha.Beta.sectionScoped",  # `section Helper` adds no name component
     "Alpha.Beta.afterSectionEnd",  # `end Helper` pops the section, not Beta
     "Alpha.inNoncomputableSection",
     "Alpha.namedInst",
@@ -65,15 +67,23 @@ def test_scanner_yields_exactly_the_expected_names(sample_decls: dict) -> None:
 @pytest.mark.parametrize(
     "absent",
     [
-        "Alpha.privateThm", "privateThm",          # private is excluded
-        "commentedOutBlock", "Alpha.commentedOutBlock",
-        "nestedCommented", "Alpha.nestedCommented",  # nested block comment
-        "docCommented", "Alpha.docCommented",        # /-- doc comment -/
-        "lineCommented", "Alpha.lineCommented",      # -- line comment
-        "Alpha.Struct.theorem", "Alpha.theorem",     # indented structure field
+        "Alpha.privateThm",
+        "privateThm",  # private is excluded
+        "commentedOutBlock",
+        "Alpha.commentedOutBlock",
+        "nestedCommented",
+        "Alpha.nestedCommented",  # nested block comment
+        "docCommented",
+        "Alpha.docCommented",  # /-- doc comment -/
+        "lineCommented",
+        "Alpha.lineCommented",  # -- line comment
+        "Alpha.Struct.theorem",
+        "Alpha.theorem",  # indented structure field
     ],
 )
-def test_scanner_omits_names_it_must_never_emit(sample_decls: dict, absent: str) -> None:
+def test_scanner_omits_names_it_must_never_emit(
+    sample_decls: dict, absent: str
+) -> None:
     assert absent not in sample_decls
 
 
@@ -126,7 +136,9 @@ def test_scanner_records_kind_and_line(
         ("topLevelThm", False),
     ],
 )
-def test_scanner_marks_deprecated_declarations(sample_decls: dict, name: str, expected: bool) -> None:
+def test_scanner_marks_deprecated_declarations(
+    sample_decls: dict, name: str, expected: bool
+) -> None:
     assert sample_decls[name].deprecated is expected
 
 
@@ -145,7 +157,9 @@ def test_alias_targets_carry_both_resolution_candidates(
 
 
 def test_statement_is_the_normalised_source_line(sample_decls: dict) -> None:
-    assert sample_decls["topLevelThm"].statement == "theorem topLevelThm : True := trivial"
+    assert (
+        sample_decls["topLevelThm"].statement == "theorem topLevelThm : True := trivial"
+    )
 
 
 @pytest.mark.parametrize(
@@ -163,8 +177,15 @@ def test_normalise_line_collapses_whitespace(raw: str, expected: str) -> None:
 def test_deprecation_excluded_names_covers_alias_targets(sample_decls: dict) -> None:
     excluded = pcn.deprecation_excluded_names(sample_decls.values())
     # Deprecated declarations and alias targets go.
-    assert {"Alpha.deprecatedThm", "Alpha.oldName", "newName", "Alpha.newName",
-            "Alpha.iffBackward", "someIff", "Alpha.someIff"} <= excluded
+    assert {
+        "Alpha.deprecatedThm",
+        "Alpha.oldName",
+        "newName",
+        "Alpha.newName",
+        "Alpha.iffBackward",
+        "someIff",
+        "Alpha.someIff",
+    } <= excluded
     # A live alias must not exclude its target.
     assert "Alpha.plainAlias" not in excluded
     assert "Alpha.inNamespace" not in excluded
@@ -253,28 +274,32 @@ def _write_tree(root: Path, files: dict) -> None:
 def two_trees(tmp_path: Path) -> tuple[Path, Path]:
     old, new = tmp_path / "old", tmp_path / "new"
     _write_tree(old, {"Mathlib/A.lean": OLD_A})
-    _write_tree(new, {"Mathlib/A.lean": NEW_A, "Mathlib/B.lean": NEW_B,
-                      "Mathlib/C.lean": NEW_C})
+    _write_tree(
+        new, {"Mathlib/A.lean": NEW_A, "Mathlib/B.lean": NEW_B, "Mathlib/C.lean": NEW_C}
+    )
     return old, new
 
 
 def _select(old: Path, new: Path) -> Any:
-    old_decls = pcn.scan_tree(old)
+    old_decls, old_lines = pcn._scan_tree_state(old, "Mathlib")[:2]
     new_decls = pcn.scan_tree(new)
-    old_lines = pcn.collect_normalised_lines(old)
     old_files = {p.relative_to(old).as_posix() for p in old.rglob("*.lean")}
     return pcn.select_postcutoff_names(new_decls, old_decls, old_lines, old_files)
 
 
-def test_selection_keeps_only_genuinely_new_declarations(two_trees: tuple[Path, Path]) -> None:
+def test_selection_keeps_only_genuinely_new_declarations(
+    two_trees: tuple[Path, Path],
+) -> None:
     kept, _ = _select(*two_trees)
     assert set(kept) == {"Dup.moved", "Fresh.genuinelyNew"}
 
 
-def test_selection_drops_a_deprecated_alias_and_its_target(two_trees: tuple[Path, Path]) -> None:
+def test_selection_drops_a_deprecated_alias_and_its_target(
+    two_trees: tuple[Path, Path],
+) -> None:
     kept, _ = _select(*two_trees)
-    assert "Old.renamedOld" not in kept   # the alias itself
-    assert "Old.reallyNew" not in kept    # the rename target: not new mathematics
+    assert "Old.renamedOld" not in kept  # the alias itself
+    assert "Old.reallyNew" not in kept  # the rename target: not new mathematics
 
 
 def test_selection_drops_a_move_into_a_new_file(two_trees: tuple[Path, Path]) -> None:
@@ -284,7 +309,7 @@ def test_selection_drops_a_move_into_a_new_file(two_trees: tuple[Path, Path]) ->
 
 
 def test_selection_keeps_a_duplicate_statement_in_a_pre_existing_file(
-    two_trees: tuple[Path, Path]
+    two_trees: tuple[Path, Path],
 ) -> None:
     """Both conjuncts matter: same text, but A.lean existed at old -> kept."""
     kept, _ = _select(*two_trees)
@@ -292,7 +317,7 @@ def test_selection_keeps_a_duplicate_statement_in_a_pre_existing_file(
 
 
 def test_selection_keeps_a_new_file_whose_text_is_not_at_old(
-    two_trees: tuple[Path, Path]
+    two_trees: tuple[Path, Path],
 ) -> None:
     """The move filter's negative arm: new file, novel statement -> kept."""
     kept, _ = _select(*two_trees)
@@ -301,10 +326,20 @@ def test_selection_keeps_a_new_file_whose_text_is_not_at_old(
 
 def test_selection_counts(two_trees: tuple[Path, Path]) -> None:
     kept, counts = _select(*two_trees)
-    assert list(counts) == ["n_old_decls", "n_new_decls", "n_name_diff",
-                            "n_after_deprecated", "n_after_move"]
-    assert counts == {"n_old_decls": 2, "n_new_decls": 7, "n_name_diff": 5,
-                      "n_after_deprecated": 3, "n_after_move": 2}
+    assert list(counts) == [
+        "n_old_decls",
+        "n_new_decls",
+        "n_name_diff",
+        "n_after_deprecated",
+        "n_after_move",
+    ]
+    assert counts == {
+        "n_old_decls": 2,
+        "n_new_decls": 7,
+        "n_name_diff": 5,
+        "n_after_deprecated": 3,
+        "n_after_move": 2,
+    }
     assert counts["n_after_move"] == len(kept)
 
 
@@ -313,17 +348,12 @@ def test_selection_is_sorted_by_name(two_trees: tuple[Path, Path]) -> None:
     assert list(kept) == sorted(kept)
 
 
-def test_scan_tree_reports_paths_relative_to_the_root(two_trees: tuple[Path, Path]) -> None:
+def test_scan_tree_reports_paths_relative_to_the_root(
+    two_trees: tuple[Path, Path],
+) -> None:
     _, new = two_trees
     decls = pcn.scan_tree(new)
     assert decls["Fresh.genuinelyNew"].file_path == "Mathlib/C.lean"
-
-
-def test_collect_normalised_lines_is_normalised(two_trees: tuple[Path, Path]) -> None:
-    old, _ = two_trees
-    lines = pcn.collect_normalised_lines(old)
-    assert "theorem moved : 1 = 1 := rfl" in lines
-    assert "" not in lines
 
 
 # ---------------------------------------------------------------------------
@@ -360,13 +390,24 @@ STUB_PRS = {200: "2026-06-10T09:00:00Z", 150: "2026-05-20T09:00:00Z"}
 
 
 def _git(repo: Path, *args: str, date: str | None = None) -> str:
-    env = {"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com",
-           "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com",
-           "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(repo)}
+    env = {
+        "GIT_AUTHOR_NAME": "T",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "T",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+        "PATH": "/usr/bin:/bin:/usr/local/bin",
+        "HOME": str(repo),
+    }
     if date:
         env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
-    out = subprocess.run(["git", "-c", "commit.gpgsign=false", *args],
-                         cwd=repo, env=env, capture_output=True, text=True)
+    out = subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", *args],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert out.returncode == 0, f"git {args}: {out.stderr}"
     return out.stdout.strip()
 
@@ -379,22 +420,43 @@ def _commit(repo: Path, files: dict, message: str, date: str) -> str:
 
 
 @pytest.fixture(scope="module")
-def fake_mathlib(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, str]]:
+def fake_mathlib(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, dict[str, str]]:
     """Four-commit local mathlib stand-in, including no-Mathlib root and PR cases."""
     repo = tmp_path_factory.mktemp("fake_mathlib")
     _git(repo, "init", "-q", "-b", "master")
     shas = {}
-    shas["root"] = _commit(repo, {"README.md": "no Mathlib here\n"},
-                           "chore: root (#1)", "2026-04-01T00:00:00+0000")
-    shas["old"] = _commit(repo, {"Mathlib/A.lean": REPO_A_OLD},
-                          "feat: base (#100)", "2026-05-01T00:00:00+0000")
-    shas["pr200"] = _commit(repo, {"Mathlib/B.lean": REPO_B_NEW},
-                            "feat: after cutoff (#200)", "2026-06-10T00:00:00+0000")
-    shas["pr150"] = _commit(repo, {"Mathlib/A.lean": REPO_A_LONG_LIVED},
-                            "feat: long lived (#150)", "2026-06-11T00:00:00+0000")
-    shas["new"] = _commit(repo, {"Mathlib/A.lean": REPO_A_NO_PR},
-                          "wip: no pr number in this subject",
-                          "2026-06-12T00:00:00+0000")
+    shas["root"] = _commit(
+        repo,
+        {"README.md": "no Mathlib here\n"},
+        "chore: root (#1)",
+        "2026-04-01T00:00:00+0000",
+    )
+    shas["old"] = _commit(
+        repo,
+        {"Mathlib/A.lean": REPO_A_OLD},
+        "feat: base (#100)",
+        "2026-05-01T00:00:00+0000",
+    )
+    shas["pr200"] = _commit(
+        repo,
+        {"Mathlib/B.lean": REPO_B_NEW},
+        "feat: after cutoff (#200)",
+        "2026-06-10T00:00:00+0000",
+    )
+    shas["pr150"] = _commit(
+        repo,
+        {"Mathlib/A.lean": REPO_A_LONG_LIVED},
+        "feat: long lived (#150)",
+        "2026-06-11T00:00:00+0000",
+    )
+    shas["new"] = _commit(
+        repo,
+        {"Mathlib/A.lean": REPO_A_NO_PR},
+        "wip: no pr number in this subject",
+        "2026-06-12T00:00:00+0000",
+    )
     return repo, shas
 
 
@@ -420,9 +482,23 @@ def _run(
     extra: tuple[str, ...] = (),
 ) -> tuple[int, Path]:
     out = tmp_path / out_name
-    argv = ["--old", old, "--new", new, "--target-date", TARGET_DATE,
-            "--out", str(out), "--workdir", str(tmp_path / "wd"),
-            "--repo-url", f"file://{repo}", "--jobs", "2", *extra]
+    argv = [
+        "--old",
+        old,
+        "--new",
+        new,
+        "--target-date",
+        TARGET_DATE,
+        "--out",
+        str(out),
+        "--workdir",
+        str(tmp_path / "wd"),
+        "--repo-url",
+        f"file://{repo}",
+        "--jobs",
+        "2",
+        *extra,
+    ]
     rc = pcn.main(argv)
     return rc, out
 
@@ -442,22 +518,30 @@ def artifact(
 
 
 def test_artifact_top_level_shape(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     data, _, shas, _ = artifact
-    assert set(data) == {"new_commit", "old_commit", "target_date", "method",
-                         "n_new_decls", "n_old_decls", "n_postcutoff", "decls"}
+    assert set(data) == {
+        "new_commit",
+        "old_commit",
+        "target_date",
+        "method",
+        "n_new_decls",
+        "n_old_decls",
+        "n_postcutoff",
+        "decls",
+    }
     assert data["old_commit"] == shas["old"]
     assert data["new_commit"] == shas["new"]
     assert data["target_date"] == TARGET_DATE
     assert data["method"] == "name-set-difference+pr-opened-after-T"
-    assert data["n_old_decls"] == 2      # Old.base, Old.moved
-    assert data["n_new_decls"] == 5      # + Old.longLived, Old.noPr, New.afterCutoff
+    assert data["n_old_decls"] == 2  # Old.base, Old.moved
+    assert data["n_new_decls"] == 5  # + Old.longLived, Old.noPr, New.afterCutoff
     assert data["n_postcutoff"] == len(data["decls"])
 
 
 def test_pr_opened_before_the_target_date_is_dropped(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     """#150 was merged after the cutoff but opened before it: not post-cutoff."""
     data, _, _, _ = artifact
@@ -465,7 +549,7 @@ def test_pr_opened_before_the_target_date_is_dropped(
 
 
 def test_declaration_from_a_pr_opened_after_the_target_is_kept(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     data, _, shas, _ = artifact
     entry = data["decls"]["New.afterCutoff"]
@@ -477,7 +561,7 @@ def test_declaration_from_a_pr_opened_after_the_target_is_kept(
 
 
 def test_commit_date_fallback_when_no_pr_number(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     data, _, shas, _ = artifact
     entry = data["decls"]["Old.noPr"]
@@ -488,38 +572,45 @@ def test_commit_date_fallback_when_no_pr_number(
 
 
 def test_kept_set_is_exactly_the_post_cutoff_declarations(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     data, _, _, _ = artifact
     assert set(data["decls"]) == {"New.afterCutoff", "Old.noPr"}
 
 
 def test_every_decl_entry_has_the_documented_keys(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     data, _, _, _ = artifact
     for entry in data["decls"].values():
-        assert set(entry) == {"file_path", "introduced_commit", "pr_number",
-                              "pr_created_at", "reason"}
+        assert set(entry) == {
+            "file_path",
+            "introduced_commit",
+            "pr_number",
+            "pr_created_at",
+            "reason",
+        }
         assert entry["reason"] in {"new-name", "pr-opened-after-T", "commit-date"}
 
 
 def test_summary_reports_counts_at_every_step(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     _, captured, _, _ = artifact
-    for line in ["postcutoff: n_old_decls=2",
-                 "postcutoff: n_new_decls=5",
-                 "postcutoff: n_name_diff=3",
-                 "postcutoff: n_after_deprecated=3",
-                 "postcutoff: n_after_move=3",
-                 "postcutoff: n_with_provenance=3",
-                 "postcutoff: n_postcutoff=2"]:
+    for line in [
+        "postcutoff: n_old_decls=2",
+        "postcutoff: n_new_decls=5",
+        "postcutoff: n_name_diff=3",
+        "postcutoff: n_after_deprecated=3",
+        "postcutoff: n_after_move=3",
+        "postcutoff: n_with_provenance=3",
+        "postcutoff: n_postcutoff=2",
+    ]:
         assert line in captured, captured
 
 
 def test_only_the_stubbed_entry_point_talks_to_github(
-    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]]
+    artifact: tuple[dict[str, Any], str, dict[str, str], list[int]],
 ) -> None:
     _, _, _, calls = artifact
     # A no-PR declaration must cost no API call.
@@ -564,8 +655,14 @@ def test_token_is_never_printed(
 ) -> None:
     repo, shas = fake_mathlib
     secret = "ghp_THIS_MUST_NOT_BE_PRINTED_0123456789"
-    rc, _ = _run(tmp_path, repo, shas["old"], shas["new"], "tok.json",
-                 extra=["--github-token", secret])
+    rc, _ = _run(
+        tmp_path,
+        repo,
+        shas["old"],
+        shas["new"],
+        "tok.json",
+        extra=["--github-token", secret],
+    )
     captured = capsys.readouterr()
     assert rc == 0
     assert secret not in captured.out
@@ -598,7 +695,7 @@ def test_rate_limit_stops_calling_and_still_writes_what_it_had(
 
 
 def test_parse_pr_number_is_what_drives_provenance(
-    fake_mathlib: tuple[Path, dict[str, str]]
+    fake_mathlib: tuple[Path, dict[str, str]],
 ) -> None:
     """The Bors parser and the real commit subjects agree."""
     repo, shas = fake_mathlib

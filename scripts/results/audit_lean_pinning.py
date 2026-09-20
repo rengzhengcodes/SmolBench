@@ -11,6 +11,7 @@ import hashlib
 import json
 import random
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -25,13 +26,17 @@ REGION = _RESULTS.region
 #: Read lane keys from config so a maintained copy cannot silently omit a lane.
 LANES = list(roster_keys())
 
+
 def _read(s3: Any, key: str) -> str:
     return s3.get_object(Bucket=BUCKET, Key=key)["Body"].read().decode()
 
 
 def fetch_manifests(s3: Any, *, run_prefix: str) -> dict[str, dict]:
     """Per-lane as-run ``manifest.json`` (the config actually launched)."""
-    return {k: json.loads(_read(s3, f"{run_prefix}/scaling_{k}/manifest.json")) for k in LANES}
+    return {
+        k: json.loads(_read(s3, f"{run_prefix}/scaling_{k}/manifest.json"))
+        for k in LANES
+    }
 
 
 def fetch_spool_index(
@@ -47,7 +52,6 @@ def fetch_spool_index(
     s3 : Any
         S3 client.
     run_prefix : str
-        Audited run prefix.
 
     Returns
     -------
@@ -60,9 +64,11 @@ def fetch_spool_index(
         pref = f"{run_prefix}/scaling_{lane}/theorems/"
         c: set[str] = set()
         p: dict[str, str] = {}
-        for page in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=pref):
+        for page in s3.get_paginator("list_objects_v2").paginate(
+            Bucket=BUCKET, Prefix=pref
+        ):
             for obj in page.get("Contents", []):
-                parts = obj["Key"][len(pref):].split("/")
+                parts = obj["Key"][len(pref) :].split("/")
                 if len(parts) != 3:
                     continue
                 thm, kind, leaf = parts
@@ -82,7 +88,6 @@ def divergent_prompt_cells(
     Parameters
     ----------
     cell_keys : set[str]
-        Cell keys.
     prompts : dict[str, dict[str, str]]
         Prompt ETags by lane and cell.
 
@@ -99,6 +104,17 @@ def divergent_prompt_cells(
     return out
 
 
+def _set_parity(
+    sets: Iterable[set], expected: int, label: str, failures: list[str]
+) -> tuple[set, set]:
+    """Check all `sets` are equal with `expected` members; return (intersection, union)."""
+    sets = list(sets)
+    inter, union = set.intersection(*sets), set.union(*sets)
+    if not len(inter) == len(union) == expected:
+        failures.append(f"{label} differ: intersection={len(inter)} union={len(union)}")
+    return inter, union
+
+
 def reproduce_pin(
     val_json: Path, replay_jsonl: Path, *, limit: int, seed: int
 ) -> tuple[list[str], int]:
@@ -111,13 +127,9 @@ def reproduce_pin(
     Parameters
     ----------
     val_json : Path
-        Validation JSON.
     replay_jsonl : Path
-        Replay JSONL.
     limit : int
-        Maximum passing theorems.
     seed : int
-        Sampling seed.
 
     Returns
     -------
@@ -125,57 +137,82 @@ def reproduce_pin(
         Names and pre-sampling pool size.
     """
     val = json.loads(val_json.read_text())
-    rows = (json.loads(line) for line in replay_jsonl.read_text().splitlines() if line.strip())
+    rows = (
+        json.loads(line)
+        for line in replay_jsonl.read_text().splitlines()
+        if line.strip()
+    )
     passing = {row["full_name"] for row in rows if row.get("verdict") == "success"}
     pool = [t for t in val if t["full_name"] in passing]
     pool_size = len(pool)
-    selected = random.Random(seed).sample(pool, limit) if 0 < limit < pool_size else pool
+    selected = (
+        random.Random(seed).sample(pool, limit) if 0 < limit < pool_size else pool
+    )
     return [t["full_name"] for t in selected], pool_size
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the configured S3 pinning audit and optional reproduction."""
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--reproduce", action="store_true",
-                    help="also re-derive the pin from corpus data (needs --val-json/--replay-jsonl)")
+    ap = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
+    ap.add_argument(
+        "--reproduce",
+        action="store_true",
+        help="also re-derive the pin from corpus data (needs --val-json/--replay-jsonl)",
+    )
     ap.add_argument("--val-json", type=Path, default=None)
     ap.add_argument("--replay-jsonl", type=Path, default=None)
     ap.add_argument(
-        "--metadata", type=Path, default=None,
+        "--metadata",
+        type=Path,
+        default=None,
         help="corpus metadata.json to embed verbatim in the emitted manifest's "
-             "'corpus' block (default: <val-json's split dir>/../metadata.json "
-             "-- the corpus root is the split file's grandparent)",
+        "'corpus' block (default: <val-json's split dir>/../metadata.json "
+        "-- the corpus root is the split file's grandparent)",
     )
-    ap.add_argument("--emit-manifest", type=Path, default=None,
-                    help="write the reproduced pin JSON to this path")
     ap.add_argument(
-        "--limit", type=int, default=None,
+        "--emit-manifest",
+        type=Path,
+        default=None,
+        help="write the reproduced pin JSON to this path",
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
         help="theorems to sample (required with --reproduce/--emit-manifest)",
     )
     ap.add_argument(
-        "--seed", type=int, default=0,
+        "--seed",
+        type=int,
+        default=0,
         help="random.Random seed for --reproduce/--emit-manifest's sample (default: %(default)s)",
     )
     ap.add_argument(
-        "--offline", action="store_true",
+        "--offline",
+        action="store_true",
         help="skip the four S3 audit layers entirely -- no boto3 client is "
-             "constructed and no AWS call is made. Only meaningful with "
-             "--emit-manifest/--reproduce, which then also skip the "
-             "'reproduced pin == spooled set' comparison (there is no spool "
-             "to compare against).",
+        "constructed and no AWS call is made. Only meaningful with "
+        "--emit-manifest/--reproduce, which then also skip the "
+        "'reproduced pin == spooled set' comparison (there is no spool "
+        "to compare against).",
     )
     ap.add_argument(
-        "--expect-theorems", type=int, default=None,
+        "--expect-theorems",
+        type=int,
+        default=None,
         help="expected theorem-set size for layer [2/5] (required without --offline)",
     )
     ap.add_argument(
-        "--expect-cells", type=int, default=None,
+        "--expect-cells",
+        type=int,
+        default=None,
         help="expected cell-set size for layer [3/5] (required without --offline)",
     )
     ap.add_argument(
-        "--spool-prefix", default=None,
+        "--spool-prefix",
+        default=None,
         help="S3 key prefix the 21 lanes spooled under (default: the re-collection "
-             "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
+        "prefix -- LEAN_SPOOL_PREFIX, or deduction_postcutoff/runs if unset).",
     )
     args = ap.parse_args(argv)
     # Require each mode's expected shape; inherited values could audit the wrong run.
@@ -186,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     if (args.reproduce or args.emit_manifest) and (
         args.val_json is None or args.replay_jsonl is None
     ):
-        ap.error("--val-json and --replay-jsonl are required with --reproduce/--emit-manifest")
+        ap.error(
+            "--val-json and --replay-jsonl are required with --reproduce/--emit-manifest"
+        )
 
     # Resolve after parsing so explicit `--metadata` wins.
     if args.metadata is None and args.val_json is not None:
@@ -196,95 +235,126 @@ def main(argv: list[str] | None = None) -> int:
     inter: set[str] | None = None
 
     if args.offline:
-        print("[offline] --offline set: skipping all four S3 audit layers "
-              "(no boto3 client constructed, no AWS call made)")
+        print(
+            "[offline] --offline set: skipping all four S3 audit layers "
+            "(no boto3 client constructed, no AWS call made)"
+        )
     else:
         run_prefix = args.spool_prefix or spool_prefix()
         s3 = fresh_client("s3", REGION)
 
         # As-run config.
         mans = fetch_manifests(s3, run_prefix=run_prefix)
-        blocks = {k: json.dumps(m["config"]["theorems"], sort_keys=True) for k, m in mans.items()}
+        blocks = {
+            k: json.dumps(m["config"]["theorems"], sort_keys=True)
+            for k, m in mans.items()
+        }
         seeds = {k: m["config"]["seed"] for k, m in mans.items()}
         if len(set(blocks.values())) != 1:
-            failures.append(f"theorems blocks differ across lanes: {sorted(set(blocks.values()))}")
+            failures.append(
+                f"theorems blocks differ across lanes: {sorted(set(blocks.values()))}"
+            )
         if len(set(seeds.values())) != 1:
-            failures.append(f"base seeds differ across lanes: {sorted(set(seeds.values()))}")
-        print(f"[1/4] config      : {len(set(blocks.values()))} distinct theorems block, "
-              f"{len(set(seeds.values()))} distinct seed  -> {next(iter(blocks.values()))}")
+            failures.append(
+                f"base seeds differ across lanes: {sorted(set(seeds.values()))}"
+            )
+        print(
+            f"[1/4] config      : {len(set(blocks.values()))} distinct theorems block, "
+            f"{len(set(seeds.values()))} distinct seed  -> {next(iter(blocks.values()))}"
+        )
 
         # What landed in the spool.
         cells, prompts = fetch_spool_index(s3, run_prefix=run_prefix)
         thm_sets = {k: {c.split("|")[0] for c in v} for k, v in cells.items()}
-        inter, union = set.intersection(*thm_sets.values()), set.union(*thm_sets.values())
-        if not (len(inter) == len(union) == args.expect_theorems):
-            failures.append(f"theorem sets differ: intersection={len(inter)} union={len(union)}")
-        print(f"[2/4] theorem sets: intersection={len(inter)} union={len(union)} "
-              f"(expected {args.expect_theorems} == {args.expect_theorems})")
+        inter, union = _set_parity(
+            thm_sets.values(), args.expect_theorems, "theorem sets", failures
+        )
+        print(
+            f"[2/4] theorem sets: intersection={len(inter)} union={len(union)} "
+            f"(expected {args.expect_theorems} == {args.expect_theorems})"
+        )
 
-        cinter, cunion = set.intersection(*cells.values()), set.union(*cells.values())
-        if not (len(cinter) == len(cunion) == args.expect_cells):
-            failures.append(f"cell key sets differ: intersection={len(cinter)} union={len(cunion)}")
-        print(f"[3/4] cell keys   : intersection={len(cinter)} union={len(cunion)} "
-              f"(expected {args.expect_cells} == {args.expect_cells})")
+        cinter, cunion = _set_parity(
+            cells.values(), args.expect_cells, "cell key sets", failures
+        )
+        print(
+            f"[3/4] cell keys   : intersection={len(cinter)} union={len(cunion)} "
+            f"(expected {args.expect_cells} == {args.expect_cells})"
+        )
 
         divergent = divergent_prompt_cells(cunion, prompts)
         if divergent:
-            failures.append(f"{len(divergent)} cells have model-dependent or missing "
-                            f"prompt bytes: {sorted(divergent)[:5]}")
-        print(f"[4/4] prompt bytes: {len(cunion) - len(divergent)}/{len(cunion)} cells "
-              f"byte-identical across all {len(LANES)} lanes")
+            failures.append(
+                f"{len(divergent)} cells have model-dependent or missing "
+                f"prompt bytes: {sorted(divergent)[:5]}"
+            )
+        print(
+            f"[4/4] prompt bytes: {len(cunion) - len(divergent)}/{len(cunion)} cells "
+            f"byte-identical across all {len(LANES)} lanes"
+        )
 
     # Optional pin reproduction.
     if args.reproduce or args.emit_manifest:
         names, pool_size = reproduce_pin(
-            args.val_json, args.replay_jsonl, limit=args.limit, seed=args.seed)
+            args.val_json, args.replay_jsonl, limit=args.limit, seed=args.seed
+        )
         digest = hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()
         if args.offline:
-            print("[+  ] reproduce   : --offline set, skipping the reproduced-pin-vs-"
-                  f"spooled-set comparison (no spool to compare against); sha256={digest[:16]}")
+            print(
+                "[+  ] reproduce   : --offline set, skipping the reproduced-pin-vs-"
+                f"spooled-set comparison (no spool to compare against); sha256={digest[:16]}"
+            )
         else:
             # Use the production slug to compare like-for-like artifacts.
             from smolbench.deduction.lean import runner
 
             slugged = {runner.slug_theorem(n) for n in names}
             if slugged != inter:
-                failures.append(f"reproduced pin != spooled set "
-                                f"(missing {len(inter - slugged)}, extra {len(slugged - inter)})")
-            print(f"[+  ] reproduce   : seeded sample matches spool={slugged == inter} sha256={digest[:16]}")
+                failures.append(
+                    f"reproduced pin != spooled set "
+                    f"(missing {len(inter - slugged)}, extra {len(slugged - inter)})"
+                )
+            print(
+                f"[+  ] reproduce   : seeded sample matches spool={slugged == inter} sha256={digest[:16]}"
+            )
         if args.emit_manifest:
             kind, split = args.val_json.parent.name, args.val_json.stem
             sampled = 0 < args.limit < pool_size
             recipe = (
                 f"random.Random({args.seed}).sample(list(corpus.iter_replay_passing"
                 f"({kind!r},{split!r})), {args.limit})"
-                if sampled else
-                f"list(corpus.iter_replay_passing({kind!r},{split!r}))"
+                if sampled
+                else f"list(corpus.iter_replay_passing({kind!r},{split!r}))"
                 f"  # limit={args.limit} did not shrink the {pool_size}-theorem pool"
             )
             corpus = json.loads(args.metadata.read_text())
-            args.emit_manifest.write_text(json.dumps({
-                "_comment": (
-                    "Pinned theorem set for a deduction study lane. Every lane sharing "
-                    "this manifest was evaluated on exactly these theorems. Generated "
-                    "by scripts/results/audit_lean_pinning.py --emit-manifest; "
-                    "re-derive with the same --val-json/--replay-jsonl/--limit/--seed "
-                    "(and, online, verify against the as-run S3 spool via --reproduce)."
-                ),
-                "corpus": corpus,
-                "derivation": {
-                    "source": "replay_passing",
-                    "kind": kind,
-                    "split": split,
-                    "pool_size": pool_size,
-                    "limit": args.limit,
-                    "seed": args.seed,
-                    "recipe": recipe,
-                },
-                "sha256_of_sorted_full_names": digest,
-                "count": len(names),
-                "full_names": sorted(names),
-            }, indent=2))
+            args.emit_manifest.write_text(
+                json.dumps(
+                    {
+                        "_comment": (
+                            "Pinned theorem set for a deduction study lane. Every lane sharing "
+                            "this manifest was evaluated on exactly these theorems. Generated "
+                            "by scripts/results/audit_lean_pinning.py --emit-manifest; "
+                            "re-derive with the same --val-json/--replay-jsonl/--limit/--seed "
+                            "(and, online, verify against the as-run S3 spool via --reproduce)."
+                        ),
+                        "corpus": corpus,
+                        "derivation": {
+                            "source": "replay_passing",
+                            "kind": kind,
+                            "split": split,
+                            "pool_size": pool_size,
+                            "limit": args.limit,
+                            "seed": args.seed,
+                            "recipe": recipe,
+                        },
+                        "sha256_of_sorted_full_names": digest,
+                        "count": len(names),
+                        "full_names": sorted(names),
+                    },
+                    indent=2,
+                )
+            )
             print(f"        wrote {args.emit_manifest}")
 
     print()
@@ -294,11 +364,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {f}")
         return 1
     if args.offline:
-        print("OFFLINE RUN: S3 audit layers were skipped (--offline); "
-              "only --reproduce/--emit-manifest ran, if requested.")
+        print(
+            "OFFLINE RUN: S3 audit layers were skipped (--offline); "
+            "only --reproduce/--emit-manifest ran, if requested."
+        )
     else:
-        print(f"PINNING AUDIT PASSED: all {len(LANES)} lanes ran the identical "
-              f"{args.expect_theorems} theorems / {args.expect_cells} cells, byte-identical prompts.")
+        print(
+            f"PINNING AUDIT PASSED: all {len(LANES)} lanes ran the identical "
+            f"{args.expect_theorems} theorems / {args.expect_cells} cells, byte-identical prompts."
+        )
     return 0
 
 

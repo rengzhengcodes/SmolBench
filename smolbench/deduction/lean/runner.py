@@ -26,10 +26,11 @@ from typing import Any, TextIO
 
 import smolbench
 from smolbench.evals.provider import provider_module
-from smolbench.evals.retired_markers import is_retired
+from smolbench.evals.retired_markers import retired_paths
 
 from . import lean3
-from .context import Chain, is_trivial_rung, render, validate as validate_rung
+from .context import Chain, is_trivial_rung, render
+from .context import validate as validate_rung
 from .corpus import (
     BenchmarkTheorem,
     data_root,
@@ -58,7 +59,12 @@ def results_root() -> Path:
     override = os.getenv("SMOLBENCH_LEAN_RESULTS")
     if override:
         return Path(override)
-    return Path(smolbench.__file__).resolve().parents[1] / "notebooks" / "deduction" / "results"
+    return (
+        Path(smolbench.__file__).resolve().parents[1]
+        / "notebooks"
+        / "deduction"
+        / "results"
+    )
 
 
 def _default_verifier() -> Any:
@@ -69,6 +75,7 @@ def _default_verifier() -> Any:
     sweeps use `NullVerifier`.
     """
     from smolbench.deduction.lean import verify
+
     return verify
 
 
@@ -131,25 +138,17 @@ def run_cell(
     k : int
         Index of the tactic step.
     chain : Chain
-        Prompt chain.
     level : int
-        Rung level.
     n_replicates : int
-        Replicates to generate.
     temperature : float, optional
-        Sampling temperature.
     max_tokens : int, optional
-        Maximum completion tokens.
     dojo_timeout : int, optional
         Name shared by `run_cell`, `sweep`, and `cli` defaults.
     seed : int, optional
         Replicate `i` uses `seed + i` for cross-model pairing.
     request_timeout : int, optional
-        Request timeout in seconds.
     max_retries : int, optional
-        Retry limit.
     verifier : Any, optional
-        `None` resolves `_default_verifier()`.
 
     Yields
     ------
@@ -168,14 +167,19 @@ def run_cell(
     except Exception as exc:  # noqa: BLE001
         # Lookup failure must not abort this cell.
         ctx_len = 10**9
-        print(f"warning: context-length lookup failed for {model} on {provider}: {exc}", flush=True)
+        print(
+            f"warning: context-length lookup failed for {model} on {provider}: {exc}",
+            flush=True,
+        )
 
     for replicate_idx in range(n_replicates):
         replicate_seed = seed + replicate_idx
         t0 = time.monotonic()
         # Only `sweep` writes exception rows.
         rsp = mod.complete(
-            user_prompt, model, replicate_seed,
+            user_prompt,
+            model,
+            replicate_seed,
             system=SYSTEM,
             context_length=ctx_len,
             extra_args={"temperature": temperature, "max_tokens": max_tokens},
@@ -187,7 +191,9 @@ def run_cell(
         candidate = extract_tactic_block(rsp.content)
 
         t1 = time.monotonic()
-        verdict = verifier.verify_proof_tail(theorem, k, candidate, timeout=dojo_timeout)
+        verdict = verifier.verify_proof_tail(
+            theorem, k, candidate, timeout=dojo_timeout
+        )
         verify_ms = int((time.monotonic() - t1) * 1000)
 
         ground_truth_remaining = "\n".join(
@@ -260,7 +266,6 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
     Parameters
     ----------
     pool : list[BenchmarkTheorem]
-        Theorems to validate.
     """
     bad = [t.full_name for t in pool if not t.postcutoff]
     if not bad:
@@ -281,7 +286,6 @@ def _select_theorems(
     Parameters
     ----------
     spec : dict
-        `theorems` configuration.
     cell_whitelist : frozenset[tuple] | None, optional
         Theorems owning an allowed cell; loaded once from `LEAN_CELL_WHITELIST`.
 
@@ -329,7 +333,7 @@ def _select_theorems(
     if max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= max_tactics]
 
-    if limit > 0 and len(pool) > limit:
+    if 0 < limit < len(pool):
         rng = random.Random(seed)
         pool = rng.sample(pool, limit)
 
@@ -343,7 +347,7 @@ def _select_theorems(
         except ValueError:
             # `-1, 0` fails the shared range check.
             idx, n = -1, 0
-        if not sep or not (0 <= idx < n):
+        if not sep or not 0 <= idx < n:
             raise ValueError(f"theorems.shard {shard!r} must be 'i/n' with 0 <= i < n")
         pool = pool[idx::n]
 
@@ -384,7 +388,6 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     Parameters
     ----------
     path_str : str
-        JSON file path.
 
     Returns
     -------
@@ -398,7 +401,7 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
     """
     path = Path(path_str)
     try:
-        raw = path.read_text()
+        raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(
             f"LEAN_CELL_WHITELIST={path_str!r} could not be read: "
@@ -425,7 +428,9 @@ def load_cell_whitelist(path_str: str) -> frozenset[tuple]:
                 f"got {item!r}"
             )
         model, theorem, k, rung, replicate_idx = item
-        keys.add(_row_key(str(model), str(theorem), int(k), str(rung), int(replicate_idx)))
+        keys.add(
+            _row_key(str(model), str(theorem), int(k), str(rung), int(replicate_idx))
+        )
     return frozenset(keys)
 
 
@@ -438,16 +443,13 @@ def hash_cell_keys(keys: Iterable[tuple]) -> str:
     Parameters
     ----------
     keys : Iterable[tuple]
-        Cell keys.
 
     Returns
     -------
     str
         SHA-256 fingerprint.
     """
-    canonical = json.dumps(
-        sorted(list(key) for key in keys), separators=(",", ":")
-    )
+    canonical = json.dumps(sorted(list(key) for key in keys), separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -471,7 +473,6 @@ def load_sweep_config(path: str | Path) -> tuple[dict, str]:
     Parameters
     ----------
     path : str | Path
-        YAML configuration path.
 
     Returns
     -------
@@ -504,7 +505,6 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
     Parameters
     ----------
     jsonl_path : Path
-        JSONL file.
 
     Returns
     -------
@@ -536,12 +536,15 @@ def _repair_torn_tail(jsonl_path: Path) -> int:
         logging.warning(
             "%s: discarded %d torn/unparseable byte(s) from the final line(s) "
             "on resume -- the row(s) they held will be regenerated",
-            jsonl_path, discarded,
+            jsonl_path,
+            discarded,
         )
     return discarded
 
 
-def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> list[dict]:
+def read_jsonl_tolerating_torn_tail(
+    path: Path, *, skip_bad: bool = False
+) -> list[dict]:
     """Parse rows, optionally skipping corrupt records.
 
     Only a SIGKILL-torn final line is dropped with a warning; interior
@@ -550,7 +553,6 @@ def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> li
     Parameters
     ----------
     path : Path
-        JSONL file.
     skip_bad : bool, optional
         Skip undecodable records for read-only reporting.
 
@@ -580,7 +582,8 @@ def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> li
                 ) from exc
             logging.warning(
                 "%s: torn (truncated) final line dropped -- the append-only "
-                "writer regenerates it on resume", path,
+                "writer regenerates it on resume",
+                path,
             )
     return rows
 
@@ -588,8 +591,11 @@ def read_jsonl_tolerating_torn_tail(path: Path, *, skip_bad: bool = False) -> li
 def _cell_key(r: dict) -> tuple:
     """Return the tolerant row key used by resume."""
     return _row_key(
-        r.get("model", ""), r.get("theorem_id", ""), int(r.get("k", -1)),
-        r.get("rung", ""), int(r.get("replicate_idx", -1)),
+        r.get("model", ""),
+        r.get("theorem_id", ""),
+        int(r.get("k", -1)),
+        r.get("rung", ""),
+        int(r.get("replicate_idx", -1)),
     )
 
 
@@ -605,8 +611,10 @@ def _accounts_for_cell(r: dict) -> bool:
     """Return whether this row prevents its cell from rerunning."""
     if r.get("verdict") == "exception":
         return False
-    return (bool((r.get("candidate_proof") or "").strip())
-            or int(r.get("prompt_tokens") or 0) > 0)
+    return (
+        bool((r.get("candidate_proof") or "").strip())
+        or int(r.get("prompt_tokens") or 0) > 0
+    )
 
 
 def _existing_keys(jsonl_path: Path) -> set[tuple]:
@@ -619,18 +627,23 @@ def _existing_keys(jsonl_path: Path) -> set[tuple]:
     Parameters
     ----------
     jsonl_path : Path
-        Existing-row JSONL file.
 
     Returns
     -------
     set[tuple]
         Keys that must not rerun.
     """
-    cell_rows = [r for r in read_jsonl_tolerating_torn_tail(jsonl_path)
-                 if r.get("kind") == "cell"]
+    cell_rows = [
+        r
+        for r in read_jsonl_tolerating_torn_tail(jsonl_path)
+        if r.get("kind") == "cell"
+    ]
     rows_by_key = group_cell_rows(cell_rows, _cell_key)
-    return {key for key, rows in rows_by_key.items()
-            if any(_accounts_for_cell(r) for r in rows)}
+    return {
+        key
+        for key, rows in rows_by_key.items()
+        if any(_accounts_for_cell(r) for r in rows)
+    }
 
 
 def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
@@ -642,7 +655,6 @@ def dedupe_cell_rows(rows: Iterable[dict]) -> list[dict]:
     Parameters
     ----------
     rows : Iterable[dict]
-        Cell rows.
 
     Returns
     -------
@@ -666,16 +678,17 @@ def _sanity_done(jsonl_path: Path) -> dict[str, str]:
     Parameters
     ----------
     jsonl_path : Path
-        Sanity-row JSONL file.
 
     Returns
     -------
     dict[str, str]
         Names mapped to verdicts.
     """
-    return {r.get("theorem_id", ""): r.get("verdict", "")
-            for r in read_jsonl_tolerating_torn_tail(jsonl_path)
-            if r.get("kind") == "sanity"}
+    return {
+        r.get("theorem_id", ""): r.get("verdict", "")
+        for r in read_jsonl_tolerating_torn_tail(jsonl_path)
+        if r.get("kind") == "sanity"
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -698,16 +711,18 @@ def _write_meta(theorem: BenchmarkTheorem, k: int, theorem_dir: Path) -> None:
         "commit": theorem.commit,
         "n_total_tactics": len(theorem.traced_tactics),
         "k": k,
-        "ground_truth_full_proof": "\n".join(tt.tactic for tt in theorem.traced_tactics),
+        "ground_truth_full_proof": "\n".join(
+            tt.tactic for tt in theorem.traced_tactics
+        ),
         "ground_truth_remaining_from_k": (
             "\n".join(tt.tactic for tt in theorem.traced_tactics[k:])
         ),
-        "true_premises_at_k": [
-            p["full_name"] for p in tt_k.premises
-        ] if tt_k else [],
+        "true_premises_at_k": [p["full_name"] for p in tt_k.premises] if tt_k else [],
         "state_before_k": tt_k.state_before if tt_k else None,
     }
-    (theorem_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    (theorem_dir / "meta.json").write_text(
+        json.dumps(meta, indent=2, ensure_ascii=False)
+    )
 
 
 def _write_prompt(rung: str, rendered_text: str, theorem_dir: Path) -> None:
@@ -734,25 +749,27 @@ def _append_output(row: dict, theorem_dir: Path) -> None:
 #: exceptions and deferred skips pass through; replay cannot return `no_answer`.
 VERDICTS: dict[str, tuple[str, bool, bool]] = {
     #                glyph  sanity_failure  never_measured
-    "success":      ("✓",   False,          False),
-    "lean_error":   ("✘",   True,           False),
-    "incomplete":   ("·",   True,           False),
-    "given_up":     ("?",   True,           False),
+    "success": ("✓", False, False),
+    "lean_error": ("✘", True, False),
+    "incomplete": ("·", True, False),
+    "given_up": ("?", True, False),
     # Distinct glyph: incomplete/given-up answered, while no_answer answered nothing.
-    "no_answer":    ("∅",   False,          False),
-    "replay_failed": ("!",  True,           True),
-    "exception":    ("X",   False,          True),
+    "no_answer": ("∅", False, False),
+    "replay_failed": ("!", True, True),
+    "exception": ("X", False, True),
     # Generation-only sweeps: cells awaiting deferred verification.
-    "unverified":   ("~",   False,          False),
-    "skipped":      ("-",   False,          False),
+    "unverified": ("~", False, False),
+    "skipped": ("-", False, False),
 }
 
 _VERDICT_GLYPH = {v: row[0] for v, row in VERDICTS.items()}
 SANITY_FAILURE_VERDICTS: frozenset[str] = frozenset(
-    v for v, row in VERDICTS.items() if row[1])
+    v for v, row in VERDICTS.items() if row[1]
+)
 #: Verdicts where Lean never ran; `lean_verify_rows.py` reads these as unresolved.
 NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset(
-    v for v, row in VERDICTS.items() if row[2])
+    v for v, row in VERDICTS.items() if row[2]
+)
 
 _CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
 
@@ -769,18 +786,15 @@ def reject_superseded_rows(paths: Iterable[str | Path]) -> None:
     Parameters
     ----------
     paths : Iterable[str | Path]
-        Row-file paths.
 
     Raises
     ------
     ValueError
         Retired paths: silently skipping valid files would create a plausible wrong summary.
     """
-    bad = [str(p) for p in paths if is_retired(p)]
+    bad = retired_paths(paths)
     if bad:
-        logging.error(
-            "refusing SUPERSEDED row file(s): %s", ", ".join(bad)
-        )
+        logging.error("refusing SUPERSEDED row file(s): %s", ", ".join(bad))
         raise ValueError(
             "refusing SUPERSEDED row file(s) -- these are retired artifacts "
             "kept as an audit trail (see run_study.py --force-rerun), not "
@@ -822,12 +836,20 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     models = sorted({m for _, m in cells.keys()})
 
     lines: list[str] = []
-    lines.append(f"# {meta['full_name']}   (k={meta['k']}, {meta['n_total_tactics']} tactics total)\n")
+    lines.append(
+        f"# {meta['full_name']}   (k={meta['k']}, {meta['n_total_tactics']} tactics total)\n"
+    )
     lines.append(f"file: `{meta['file_path']}`  \n")
     lines.append("**Ground-truth tail (from k):**")
-    lines.append("```lean\n" + (meta["ground_truth_remaining_from_k"] or "(empty)") + "\n```\n")
+    lines.append(
+        "```lean\n" + (meta["ground_truth_remaining_from_k"] or "(empty)") + "\n```\n"
+    )
     if meta["true_premises_at_k"]:
-        lines.append("**True premises at k:** " + ", ".join(f"`{p}`" for p in meta["true_premises_at_k"]) + "\n")
+        lines.append(
+            "**True premises at k:** "
+            + ", ".join(f"`{p}`" for p in meta["true_premises_at_k"])
+            + "\n"
+        )
     else:
         lines.append("**True premises at k:** _(none recorded)_\n")
 
@@ -856,7 +878,9 @@ def write_theorem_summary(theorem_dir: Path) -> None:
                     f"(gen {r.get('gen_ms', 0)/1000:.1f}s, verify {r.get('verify_ms', 0)/1000:.1f}s, "
                     f"in={r.get('prompt_tokens', 0)}, out={r.get('completion_tokens', 0)})\n"
                 )
-                lines.append(f"prompt: [`prompts/{slug_rung(rung)}.md`](prompts/{slug_rung(rung)}.md)\n")
+                lines.append(
+                    f"prompt: [`prompts/{slug_rung(rung)}.md`](prompts/{slug_rung(rung)}.md)\n"
+                )
                 lines.append("**candidate:**")
                 cand = r.get("candidate_proof", "") or "(empty)"
                 lines.append("```lean\n" + cand + "\n```\n")
@@ -866,7 +890,12 @@ def write_theorem_summary(theorem_dir: Path) -> None:
                 if r.get("final_state_pp"):
                     pp = r["final_state_pp"].splitlines()
                     lines.append("**final state (truncated):**")
-                    lines.append("```\n" + "\n".join(pp[:6]) + ("\n..." if len(pp) > 6 else "") + "\n```\n")
+                    lines.append(
+                        "```\n"
+                        + "\n".join(pp[:6])
+                        + ("\n..." if len(pp) > 6 else "")
+                        + "\n```\n"
+                    )
 
     (theorem_dir / "summary.md").write_text("\n".join(lines))
 
@@ -885,7 +914,6 @@ def analyze_rows(
     Parameters
     ----------
     path : Path
-        JSONL file.
 
     Returns
     -------
@@ -894,10 +922,20 @@ def analyze_rows(
     """
     cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
-            "no_answer": 0, "unverified": 0, "tok_in": 0, "tok_out": 0,
-            "ms": 0, "trunc": 0, "l3": 0,
+            "n": 0,
+            "success": 0,
+            "lean_error": 0,
+            "incomplete": 0,
+            "given_up": 0,
+            "replay_failed": 0,
+            "exception": 0,
+            "no_answer": 0,
+            "unverified": 0,
+            "tok_in": 0,
+            "tok_out": 0,
+            "ms": 0,
+            "trunc": 0,
+            "l3": 0,
         }
     )
     # pass@N needs exact (theorem, k) identity unavailable in rung/model totals.
@@ -927,23 +965,31 @@ def analyze_rows(
         # Count cut-off reasoning separately from proof dead ends; vLLM can
         # put it in `reasoning_content` with empty `raw_response`.
         raw = row.get("raw_response", "") or row.get("content", "")
-        if (("<think>" in raw and "</think>" not in raw)
-                or (row.get("reasoning_content") and not (row.get("raw_response") or "").strip())):
+        if ("<think>" in raw and "</think>" not in raw) or (
+            row.get("reasoning_content") and not (row.get("raw_response") or "").strip()
+        ):
             counter["trunc"] += 1
         if lean3.find_relics(row.get("candidate_proof") or ""):
             counter["l3"] += 1
-        groups[(row.get("model", "?"), row.get("rung", "?"),
-                row.get("theorem_id", "?"), row.get("k", -1))].append(verdict)
+        groups[
+            (
+                row.get("model", "?"),
+                row.get("rung", "?"),
+                row.get("theorem_id", "?"),
+                row.get("k", -1),
+            )
+        ].append(verdict)
     return dict(cells), dict(groups), (sanity[0], sanity[1], sanity[2])
 
 
-def model_totals(cells: dict[tuple[str, str], dict[str, int]]) -> dict[str, dict[str, int]]:
+def model_totals(
+    cells: dict[tuple[str, str], dict[str, int]],
+) -> dict[str, dict[str, int]]:
     """Roll rung counters into model totals.
 
     Parameters
     ----------
     cells : dict[tuple[str, str], dict[str, int]]
-        `analyze_rows` counters.
 
     Returns
     -------
@@ -968,7 +1014,6 @@ def write_run_analysis(run_dir: Path) -> None:
     Parameters
     ----------
     run_dir : Path
-        Run directory.
     """
     all_rows = run_dir / "all_rows.jsonl"
     if not all_rows.exists():
@@ -985,7 +1030,9 @@ def write_run_analysis(run_dir: Path) -> None:
         + "\n"
     )
     if n_sanity_fail:
-        out.append(f"!! {n_sanity_fail} sanity-gate failures — pipeline may have rotted\n")
+        out.append(
+            f"!! {n_sanity_fail} sanity-gate failures — pipeline may have rotted\n"
+        )
     if n_sanity_skipped:
         out.append(
             f"# {n_sanity_skipped} sanity replays deferred (generation-only sweep); "
@@ -1003,7 +1050,9 @@ def write_run_analysis(run_dir: Path) -> None:
     )
     out.append(header)
     out.append("-" * len(header))
-    for (rung, model), c in sorted(cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])):
+    for (rung, model), c in sorted(
+        cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])
+    ):
         n = c["n"]
         rate = c["success"] / n if n else 0
         avg_in = c["tok_in"] / n if n else 0
@@ -1020,20 +1069,12 @@ def write_run_analysis(run_dir: Path) -> None:
     out.append("\n# per-model totals")
     for model, m in sorted(model_totals(cells).items()):
         rate = m["success"] / m["n"] if m["n"] else 0
-        out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "
-                   f"l3(parse-level)={m['l3']}")
+        out.append(
+            f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
+            f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "
+            f"l3(parse-level)={m['l3']}"
+        )
     (run_dir / "analysis.txt").write_text("\n".join(out) + "\n")
-
-
-def regenerate_run_artifacts(run_dir: Path) -> None:
-    """Rebuild analysis and theorem summaries from durable artifacts."""
-    write_run_analysis(run_dir)
-    theorems_dir = run_dir / "theorems"
-    if theorems_dir.exists():
-        for d in sorted(theorems_dir.iterdir()):
-            if d.is_dir():
-                write_theorem_summary(d)
 
 
 # ---------------------------------------------------------------------------
@@ -1076,51 +1117,29 @@ def _run_cells_at_step_concurrent(
     Parameters
     ----------
     all_rows : TextIO
-        JSONL output stream.
     theorem : BenchmarkTheorem
-        Evaluated theorem.
     k : int
-        Step index.
     rungs : list[str]
-        Evaluation rungs.
     rendered_by_rung : dict
-        Rung-keyed prompts.
     models_cfg : list[dict]
-        Model configurations.
     n_replicates : int
-        Replicates per cell.
     temperature : float
-        Sampling temperature.
     max_tokens : int
-        Generation token limit.
     provider_factory : Callable[[dict], tuple[Any, int]]
         Resolves a provider and context length.
     base_seed : int
-        Replicate base seed.
     request_timeout : int
-        Request timeout.
     max_retries : int
-        Request retry limit.
     done_keys : set
-        Completed keys.
     tdir : Path
-        Theorem output directory.
     dojo_timeout : int
-        Lean REPL timeout.
     verifier : Any
-        Proof-tail verifier.
     max_workers : int, optional
-        Generation worker limit.
     write_lock : threading.Lock | None, optional
-        Output-write lock.
     print_lock : threading.Lock | None, optional
-        Status-output lock.
     model_semaphores : dict[str, threading.Semaphore] | None, optional
-        Per-model semaphores.
     cell_whitelist : frozenset[tuple] | None, optional
-        Allowed keys.
     written_keys : set[tuple] | None, optional
-        Receives resumable written keys.
 
     Returns
     -------
@@ -1146,18 +1165,24 @@ def _run_cells_at_step_concurrent(
                 ):
                     n_skipped += 1
                     continue
-                pending.append({
-                    "key": key,
-                    "rung": rung, "rendered": rendered,
-                    "chain": chain, "level": level,
-                    "user_prompt": user_prompt,
-                    "mc": mc, "model": mc["model"], "provider": mc["provider"],
-                    "replicate_idx": replicate_idx,
-                    # Replicate-only seeds keep cross-model cells paired.
-                    "seed": base_seed + replicate_idx,
-                    "display_name": display_name,
-                    "extra_params": mc.get("extra_params"),
-                })
+                pending.append(
+                    {
+                        "key": key,
+                        "rung": rung,
+                        "rendered": rendered,
+                        "chain": chain,
+                        "level": level,
+                        "user_prompt": user_prompt,
+                        "mc": mc,
+                        "model": mc["model"],
+                        "provider": mc["provider"],
+                        "replicate_idx": replicate_idx,
+                        # Replicate-only seeds keep cross-model cells paired.
+                        "seed": base_seed + replicate_idx,
+                        "display_name": display_name,
+                        "extra_params": mc.get("extra_params"),
+                    }
+                )
 
     if not pending:
         return n_written, n_ok, n_skipped
@@ -1179,16 +1204,19 @@ def _run_cells_at_step_concurrent(
         return ("thinking" in name) or ("speciale" in name)
 
     if max_workers > 1:
-        pending.sort(key=lambda p: (
-            rung_order[p["rung"]],
-            0 if _is_reasoning(p["mc"]) else 1,
-            model_order[id(p["mc"])],
-            p["replicate_idx"],
-        ))
+        pending.sort(
+            key=lambda p: (
+                rung_order[p["rung"]],
+                0 if _is_reasoning(p["mc"]) else 1,
+                model_order[id(p["mc"])],
+                p["replicate_idx"],
+            )
+        )
 
     with verifier.open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
         executor = ThreadPoolExecutor(max_workers=min(max_workers, len(pending)))
         try:
+
             def _gated_complete(
                 p: dict,
                 mod: Any,
@@ -1211,11 +1239,18 @@ def _run_cells_at_step_concurrent(
                 p["t_gen_start"] = time.monotonic()
                 sem = (model_semaphores or {}).get(p["display_name"])
                 fut = executor.submit(
-                    _gated_complete, p, mod, sem, p["user_prompt"], p["model"], p["seed"],
+                    _gated_complete,
+                    p,
+                    mod,
+                    sem,
+                    p["user_prompt"],
+                    p["model"],
+                    p["seed"],
                     system=SYSTEM,
                     context_length=ctx_len,
                     extra_args={
-                        "temperature": temperature, "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
                         **(p["extra_params"] or {}),
                     },
                     request_timeout=request_timeout,
@@ -1224,8 +1259,11 @@ def _run_cells_at_step_concurrent(
                 future_to_pending[fut] = p
 
             # One worker preserves submission order; `as_completed` does not.
-            arrivals = (list(future_to_pending) if max_workers == 1
-                        else as_completed(future_to_pending))
+            arrivals = (
+                list(future_to_pending)
+                if max_workers == 1
+                else as_completed(future_to_pending)
+            )
             for fut in arrivals:
                 p = future_to_pending[fut]
 
@@ -1235,7 +1273,9 @@ def _run_cells_at_step_concurrent(
                     "file_path": theorem.file_path,
                     "k": k,
                     "n_total_tactics": len(theorem.traced_tactics),
-                    "chain": p["chain"], "level": p["level"], "rung": p["rung"],
+                    "chain": p["chain"],
+                    "level": p["level"],
+                    "rung": p["rung"],
                     "replicate_idx": p["replicate_idx"],
                     "seed": p["seed"],
                     "model": p["display_name"],
@@ -1254,12 +1294,16 @@ def _run_cells_at_step_concurrent(
                     gen_ms = int((time.monotonic() - p["t_gen_start"]) * 1000)
                     row = {
                         **base_row,
-                        "prompt_tokens": 0, "completion_tokens": 0,
-                        "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "cache_read_tokens": 0,
+                        "cache_creation_tokens": 0,
                         # Keep the key so every row has `finish_reason`.
                         "finish_reason": None,
-                        "gen_ms": gen_ms, "verify_ms": 0,
-                        "candidate_proof": "", "raw_response": "",
+                        "gen_ms": gen_ms,
+                        "verify_ms": 0,
+                        "candidate_proof": "",
+                        "raw_response": "",
                         "reasoning_content": None,
                         "verdict": "exception",
                         "lean_error": f"{type(exc).__name__}: {exc}",
@@ -1270,10 +1314,14 @@ def _run_cells_at_step_concurrent(
                     candidate = extract_tactic_block(rsp.content)
                     t_ver = time.monotonic()
                     try:
-                        verdict = verifier.try_tail(dojo, state_at_k, candidate, theorem.full_name)
+                        verdict = verifier.try_tail(
+                            dojo, state_at_k, candidate, theorem.full_name
+                        )
                     except Exception as exc:  # noqa: BLE001
                         verdict = verifier.ProofResult(
-                            theorem.full_name, "exception", candidate,
+                            theorem.full_name,
+                            "exception",
+                            candidate,
                             error=f"{type(exc).__name__}: {exc}",
                         )
                     verify_ms = int((time.monotonic() - t_ver) * 1000)
@@ -1285,8 +1333,10 @@ def _run_cells_at_step_concurrent(
                         "cache_read_tokens": rsp.cached_prompt_tokens,
                         "cache_creation_tokens": 0,  # no provider reports cache-creation
                         "finish_reason": rsp.finish_reason,
-                        "gen_ms": gen_ms, "verify_ms": verify_ms,
-                        "candidate_proof": candidate, "raw_response": rsp.content,
+                        "gen_ms": gen_ms,
+                        "verify_ms": verify_ms,
+                        "candidate_proof": candidate,
+                        "raw_response": rsp.content,
                         "reasoning_content": rsp.reasoning,
                         "verdict": verdict.verdict,
                         "lean_error": verdict.error,
@@ -1329,7 +1379,6 @@ def _provider_for(mc: dict) -> Any:
     Parameters
     ----------
     mc : dict
-        Model configuration.
 
     Returns
     -------
@@ -1348,9 +1397,7 @@ def _ctx_len_for(mc: dict, mod: Any) -> int:
     Parameters
     ----------
     mc : dict
-        Model configuration.
     mod : Any
-        Provider module.
 
     Returns
     -------
@@ -1368,7 +1415,9 @@ def _ctx_len_for(mc: dict, mod: Any) -> int:
         return 10**9
 
 
-def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = None) -> int:
+def sweep(
+    config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = None
+) -> int:
     """Run a configured sweep and write per-theorem output.
 
     One REPL serves each (theorem, k); another replays ground truth for its
@@ -1381,13 +1430,9 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     Parameters
     ----------
     config : dict
-        Sweep configuration.
     run_dir : Path
-        Run artifact directory.
     resume : bool, optional
-        Skip resumable `all_rows.jsonl` cells.
     verifier : Any, optional
-        Sanity and proof-tail verifier.
 
     Returns
     -------
@@ -1432,6 +1477,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     # A traced checkout lets `is_trivial_rung` judge full premises; import
     # lazily to avoid `context`'s otherwise absent eager dependency.
     from . import premises
+
     traced_root_present = premises._traced_root() is not None
     if skip_trivial and not traced_root_present:
         logging.warning(
@@ -1478,6 +1524,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
     # Cache per (provider, model): context length is model-specific and must
     # not leak into another model's token guard.
     provider_cache: dict[tuple, tuple] = {}
+
     def _provider_and_ctx_for(mc: dict) -> tuple:
         key = (mc["provider"], mc["model"])
         if key not in provider_cache:
@@ -1599,18 +1646,25 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True, verifier: Any = N
                 try:
                     written_here, ok_here, skipped_here = _run_cells_at_step_concurrent(
                         all_rows=all_rows,
-                        theorem=theorem, k=k,
-                        rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
-                        models_cfg=models_cfg, n_replicates=n_replicates,
-                        temperature=temperature, max_tokens=max_tokens,
+                        theorem=theorem,
+                        k=k,
+                        rungs=effective_rungs,
+                        rendered_by_rung=rendered_by_rung,
+                        models_cfg=models_cfg,
+                        n_replicates=n_replicates,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                         provider_factory=_provider_and_ctx_for,
-                        base_seed=base_seed, request_timeout=request_timeout,
+                        base_seed=base_seed,
+                        request_timeout=request_timeout,
                         max_retries=max_retries,
                         done_keys=done_keys,
-                        tdir=tdir, dojo_timeout=dojo_timeout,
+                        tdir=tdir,
+                        dojo_timeout=dojo_timeout,
                         verifier=verifier,
                         max_workers=max_concurrency if concurrent_gen else 1,
-                        write_lock=write_lock, print_lock=print_lock,
+                        write_lock=write_lock,
+                        print_lock=print_lock,
                         model_semaphores=model_semaphores,
                         cell_whitelist=cell_whitelist,
                         written_keys=written_keys,

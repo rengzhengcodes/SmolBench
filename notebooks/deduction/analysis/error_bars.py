@@ -16,16 +16,16 @@ from typing import Any
 
 import numpy as np
 from scipy.stats import norm
-from statsmodels.stats.multitest import multipletests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import rows_source  # noqa: E402
-from power_analysis import (  # noqa: E402
+from power_analysis import (  # noqa: E402; noqa: E402  # pylint: disable=import-error
     ALPHA,
     FAMILIES,
     MODELS,
     Q_SECONDARY,
+    apply_corrections,
     benjamini_hochberg,
     build_cross_family_contrasts,
     build_within_family_contrasts,
@@ -34,6 +34,9 @@ from power_analysis import (  # noqa: E402
     pooled_discordant_counts,
     reject_unverified_verdicts,
 )
+
+# apply_corrections lives in _power_common but reaches here via power_analysis,
+# whose import inserts ``notebooks/`` into sys.path.
 
 #: 1/(B+1) is below Holm's 0.05/21 step, so the resolution floor decides no rejection.
 B_SIGNFLIP = 1_000_000
@@ -63,26 +66,20 @@ def _fmt(value: float | None, width: int) -> str:
 def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Compute Holm step-down rejections.
 
-    Valid for the 21 dependent contrasts. Ties at the 1/(B+1) floor do not affect
-    Holm because its stopping rule depends on sorted values, not tied indices.
-    `statsmodels` stays here because `power_analysis.py` runs under `uv run --no-project`.
+    Delegates to ``_power_common.apply_corrections``; ties at the 1/(B+1) floor
+    do not affect Holm because its stopping rule depends on sorted values.
 
     Parameters
     ----------
     pvals : np.ndarray
-        P-values.
     alpha : float, optional
-        Familywise level.
 
     Returns
     -------
     np.ndarray
         Rejection mask in input order.
     """
-    reject, _pvals_corrected, _alpha_sidak, _alpha_bonf = multipletests(
-        pvals, alpha=alpha, method="holm"
-    )
-    return reject
+    return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), alpha)["Holm"][0]
 
 
 def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -91,9 +88,7 @@ def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarra
     Parameters
     ----------
     models : list[str]
-        Column-order models.
     blocks : dict
-        Theorem blocks.
 
     Returns
     -------
@@ -111,28 +106,25 @@ def block_matrix(models: list[str], blocks: dict) -> tuple[np.ndarray, np.ndarra
     return succ, size
 
 
-def _bca_bounds(theta_star: np.ndarray, theta_hat: float, jack: np.ndarray,
-                alpha: float) -> tuple[float, float, bool]:
+def _bca_bounds(
+    theta_star: np.ndarray, theta_hat: float, jack: np.ndarray, alpha: float
+) -> tuple[float, float, bool]:
     """Compute BCa interval endpoints.
 
     Parameters
     ----------
     theta_star : np.ndarray
-        Bootstrap values.
     theta_hat : float
-        Full-sample value.
     jack : np.ndarray
         One value per theorem block.
     alpha : float
-        Two-sided error rate.
 
     Returns
     -------
     tuple[float, float, bool]
         Lower, upper, and percentile-fallback flag for undefined z0.
     """
-    lo_pct, hi_pct = np.percentile(theta_star, [100 * alpha / 2,
-                                                100 * (1 - alpha / 2)])
+    lo_pct, hi_pct = np.percentile(theta_star, [100 * alpha / 2, 100 * (1 - alpha / 2)])
     prop = float(np.mean(theta_star < theta_hat))
     if prop <= 0.0 or prop >= 1.0:
         return float(lo_pct), float(hi_pct), True  # z0 undefined -> percentile
@@ -148,8 +140,9 @@ def _bca_bounds(theta_star: np.ndarray, theta_hat: float, jack: np.ndarray,
     return out[0], out[1], False
 
 
-def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
-                    alpha: float = 0.05) -> dict:
+def bootstrap_stats(
+    succ: np.ndarray, size: np.ndarray, B: int, seed: int, alpha: float = 0.05
+) -> dict:
     """Compute block-bootstrap marginal rates and BCa intervals.
 
     Each resample is a ratio estimator because its cell count varies with the block draw.
@@ -157,15 +150,10 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     Parameters
     ----------
     succ : np.ndarray
-        Per-theorem success counts.
     size : np.ndarray
-        Per-theorem cell counts.
     B : int
-        Bootstrap resamples.
     seed : int
-        RNG seed.
     alpha : float, optional
-        Two-sided error rate.
 
     Returns
     -------
@@ -181,7 +169,7 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     while done < B:
         chunk = min(CHUNK, B - done)
         idx = rng.integers(0, n_thm, size=(chunk, n_thm))
-        star_rate[done:done + chunk] = (
+        star_rate[done : done + chunk] = (
             succ[idx].sum(axis=1) / size[idx].sum(axis=1)[:, None]
         )
         done += chunk
@@ -193,15 +181,28 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     theta_hat = tot_succ / tot_size
     marg = {}
     for j in range(n_mod):
-        lo, hi, fb = _bca_bounds(star_rate[:, j], float(theta_hat[j]),
-                                 jack[:, j], alpha)
-        p_lo, p_hi = np.percentile(star_rate[:, j],
-                                   [100 * alpha / 2, 100 * (1 - alpha / 2)])
-        marg[j] = dict(rate=float(theta_hat[j]), lo=lo, hi=hi,
-                       pct_lo=float(p_lo), pct_hi=float(p_hi),
-                       se=float(star_rate[:, j].std(ddof=1)), fallback=fb)
-    return dict(star_rate=star_rate, jack=jack, theta_hat=theta_hat,
-                marginal=marg, alpha=alpha)
+        lo, hi, fb = _bca_bounds(
+            star_rate[:, j], float(theta_hat[j]), jack[:, j], alpha
+        )
+        p_lo, p_hi = np.percentile(
+            star_rate[:, j], [100 * alpha / 2, 100 * (1 - alpha / 2)]
+        )
+        marg[j] = {
+            "rate": float(theta_hat[j]),
+            "lo": lo,
+            "hi": hi,
+            "pct_lo": float(p_lo),
+            "pct_hi": float(p_hi),
+            "se": float(star_rate[:, j].std(ddof=1)),
+            "fallback": fb,
+        }
+    return {
+        "star_rate": star_rate,
+        "jack": jack,
+        "theta_hat": theta_hat,
+        "marginal": marg,
+        "alpha": alpha,
+    }
 
 
 def diff_ci(bs: dict, ja: int, jb: int) -> dict:
@@ -212,11 +213,8 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
     Parameters
     ----------
     bs : dict
-        Bootstrap statistics.
     ja : int
-        Baseline column.
     jb : int
-        Comparison column.
 
     Returns
     -------
@@ -227,7 +225,13 @@ def diff_ci(bs: dict, ja: int, jb: int) -> dict:
     hat = float(bs["theta_hat"][jb] - bs["theta_hat"][ja])
     jack = bs["jack"][:, jb] - bs["jack"][:, ja]
     lo, hi, fb = _bca_bounds(star, hat, jack, bs["alpha"])
-    return dict(diff=hat, lo=lo, hi=hi, se=float(star.std(ddof=1)), fallback=fb)
+    return {
+        "diff": hat,
+        "lo": lo,
+        "hi": hi,
+        "se": float(star.std(ddof=1)),
+        "fallback": fb,
+    }
 
 
 def paired_mcnemar(blocks: dict, a: str, b: str) -> tuple:
@@ -240,9 +244,7 @@ def paired_mcnemar(blocks: dict, a: str, b: str) -> tuple:
     blocks : dict
         Paired cell verdicts by theorem.
     a : str
-        Baseline model.
     b : str
-        Comparison model.
 
     Returns
     -------
@@ -253,9 +255,14 @@ def paired_mcnemar(blocks: dict, a: str, b: str) -> tuple:
     return nb, nc, mcnemar_exact_p(nb, nc)
 
 
-def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
-                     B: int = B_SIGNFLIP, seed: int = SIGNFLIP_SEED,
-                     chunk: int = 2_000) -> np.ndarray:
+def block_signflip_p(
+    succ: np.ndarray,
+    models: list[str],
+    contrasts: list,
+    B: int = B_SIGNFLIP,
+    seed: int = SIGNFLIP_SEED,
+    chunk: int = 2_000,
+) -> np.ndarray:
     """Compute one block sign-flip p-value per contrast.
 
     The +1 correction keeps the permutation p-value valid at finite B.
@@ -263,17 +270,12 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
     Parameters
     ----------
     succ : np.ndarray
-        Per-theorem success counts.
     models : list[str]
-        Column-order model names.
     contrasts : list
         ``(label, a, b)`` triples sharing sign draws to retain family dependence.
     B : int, optional
-        Sign-flip permutations.
     seed : int, optional
-        RNG seed.
     chunk : int, optional
-        Batch size.
 
     Returns
     -------
@@ -299,8 +301,11 @@ def block_signflip_p(succ: np.ndarray, models: list[str], contrasts: list,
 
 
 @functools.lru_cache(maxsize=None)
-def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
-                  ) -> tuple[dict, set]:
+def lane_outcomes(
+    rows_dir: Path,
+    model: str,
+    recovery_dir: Path | None = None,
+) -> tuple[dict, set]:
     """Grade one lane and collect no-survivor cells.
 
     Recovery rows fill holes and never override measured cells. Screen each source on
@@ -310,11 +315,8 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
     Parameters
     ----------
     rows_dir : Path
-        Verified-row root.
     model : str
-        Lane model.
     recovery_dir : Path | None, optional
-        Recovery-row root.
 
     Returns
     -------
@@ -329,16 +331,10 @@ def lane_outcomes(rows_dir: Path, model: str, recovery_dir: Path | None = None,
         )
     rows_source.reject_superseded(path for path, _field in sources)
     for path, field in sources:
-        parsed = [json.loads(line) for line in path.read_text().splitlines() if line]
         # Each source needs its own field so recovery verdicts are screened too.
+        parsed, cells, dropped_replicates = rows_source.read_cell_rows(path)
         reject_unverified_verdicts(parsed, field, path)
-        dropped_replicates = 0
-        for row in parsed:
-            if row.get("kind") != "cell":
-                continue
-            if row.get("replicate_idx", 0) != 0:
-                dropped_replicates += 1
-                continue
+        for row in cells:
             key = (row["theorem_id"], row["k"], row["rung"])
             rows.setdefault(key, []).append(row.get(field))
         if dropped_replicates:
@@ -364,16 +360,15 @@ def _rate(hits: int, n: int) -> float | None:
     return hits / n if n else None
 
 
-def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
-               count_as_failure: bool = True) -> tuple:
+def build_pool(
+    rows_dir: Path, recovery_dir: Path | None = None, count_as_failure: bool = True
+) -> tuple:
     """Build the paired 21-way pool.
 
     Parameters
     ----------
     rows_dir : Path
-        Verified-row root.
     recovery_dir : Path | None, optional
-        Recovery-row root.
     count_as_failure : bool, optional
         Score model-dependent no-survivors 0 instead of dropping them.
 
@@ -418,24 +413,29 @@ def build_pool(rows_dir: Path, recovery_dir: Path | None = None,
             n_rung = sum(1 for key in graded[model] if key[2] == rung)
             hit_rung = sum(v for key, v in graded[model].items() if key[2] == rung)
             # An all-added denominator is undefined: report None, never 0.
-            cost.append(dict(
-                model=model, rung=rung, n_added=len(in_rung),
-                theorems=[f"{thm}@k{k}" for thm, k in in_rung],
-                pooled_caf=hit_lane / n_lane,
-                pooled_drop=_rate(hit_lane, n_lane - len(added[model])),
-                rung_caf=hit_rung / n_rung,
-                rung_drop=_rate(hit_rung, n_rung - len(in_rung)),
-                n_lane=n_lane, n_rung=n_rung,
-            ))
-    meta = dict(
-        count_as_failure=count_as_failure,
-        recovery=recovery_dir is not None,
-        added={m: sorted(v) for m, v in added.items() if v},
-        rule_cost=cost,
-        n_unresolved={m: len(nosurv[m] - measurable_somewhere) for m in MODELS},
-        own_denominator={m: len(graded[m]) for m in MODELS},
-        own_rate={m: sum(graded[m].values()) / len(graded[m]) for m in MODELS},
-    )
+            cost.append(
+                {
+                    "model": model,
+                    "rung": rung,
+                    "n_added": len(in_rung),
+                    "theorems": [f"{thm}@k{k}" for thm, k in in_rung],
+                    "pooled_caf": hit_lane / n_lane,
+                    "pooled_drop": _rate(hit_lane, n_lane - len(added[model])),
+                    "rung_caf": hit_rung / n_rung,
+                    "rung_drop": _rate(hit_rung, n_rung - len(in_rung)),
+                    "n_lane": n_lane,
+                    "n_rung": n_rung,
+                }
+            )
+    meta = {
+        "count_as_failure": count_as_failure,
+        "recovery": recovery_dir is not None,
+        "added": {m: sorted(v) for m, v in added.items() if v},
+        "rule_cost": cost,
+        "n_unresolved": {m: len(nosurv[m] - measurable_somewhere) for m in MODELS},
+        "own_denominator": {m: len(graded[m]) for m in MODELS},
+        "own_rate": {m: sum(graded[m].values()) / len(graded[m]) for m in MODELS},
+    }
     return sorted(MODELS), blocks, prompt_rungs, meta
 
 
@@ -447,24 +447,31 @@ def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
     Parameters
     ----------
     succ : np.ndarray
-        Per-theorem success counts.
     size : np.ndarray
-        Per-theorem cell counts.
     models : list[str]
-        Column labels.
     """
-    print(f"Resample-count sweep -- {succ.shape[0]} theorem blocks, "
-          f"{int(size.sum())} cells, {len(models)} models")
-    print("Each B runs on an INDEPENDENT RNG stream; drift = max |endpoint "
-          "change| vs the\nnext larger B, over all 21 marginal BCa intervals.\n")
-    print(f"{'B':>8s} {'max drift (pts)':>16s} {'median drift':>14s} "
-          f"{'worst lane':>28s}")
+    print(
+        f"Resample-count sweep -- {succ.shape[0]} theorem blocks, "
+        f"{int(size.sum())} cells, {len(models)} models"
+    )
+    print(
+        "Each B runs on an INDEPENDENT RNG stream; drift = max |endpoint "
+        "change| vs the\nnext larger B, over all 21 marginal BCa intervals.\n"
+    )
+    print(
+        f"{'B':>8s} {'max drift (pts)':>16s} {'median drift':>14s} "
+        f"{'worst lane':>28s}"
+    )
     print("-" * 72)
     prev = None
     for k, B in enumerate(B_GRID):
         bs = bootstrap_stats(succ, size, B, seed=1000 + k)
-        cur = np.array([[bs["marginal"][j]["lo"], bs["marginal"][j]["hi"]]
-                        for j in range(len(models))])
+        cur = np.array(
+            [
+                [bs["marginal"][j]["lo"], bs["marginal"][j]["hi"]]
+                for j in range(len(models))
+            ]
+        )
         if prev is not None:
             d = np.abs(cur - prev)
             worst = models[int(np.argmax(d.max(axis=1)))]
@@ -472,13 +479,23 @@ def mode_sweep(succ: np.ndarray, size: np.ndarray, models: list[str]) -> None:
         else:
             print(f"{B:8d} {'(baseline)':>16s} {'':>14s} {'':>28s}")
         prev = cur
-    print(f"\nTolerance: {DRIFT_TOL} pts (rates are reported to 3 decimals, so "
-          f"drift below\nhalf a thousandth cannot change a printed figure).")
+    print(
+        f"\nTolerance: {DRIFT_TOL} pts (rates are reported to 3 decimals, so "
+        f"drift below\nhalf a thousandth cannot change a printed figure)."
+    )
 
 
-def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: dict,
-                per_lane: dict[str, float], B: int, out_json: Path | None,
-                meta: dict[str, Any] | None = None, sensitivity: list[tuple] | None = None) -> None:
+def mode_report(
+    succ: np.ndarray,
+    size: np.ndarray,
+    models: list[str],
+    blocks: dict,
+    per_lane: dict[str, float],
+    B: int,
+    out_json: Path | None,
+    meta: dict[str, Any] | None = None,
+    sensitivity: list[tuple] | None = None,
+) -> None:
     """Print the report and optionally write JSON.
 
     Includes marginal BCa intervals, paired contrasts, design effect, and sensitivity.
@@ -487,23 +504,16 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
     Parameters
     ----------
     succ : np.ndarray
-        Per-theorem success counts.
     size : np.ndarray
-        Per-theorem cell counts.
     models : list[str]
-        Column labels.
     blocks : dict
         Paired outcomes by theorem and cell.
     per_lane : dict[str, float]
         Rates over each lane's own measurable denominator.
     B : int
-        Bootstrap resamples.
     out_json : Path | None
-        JSON destination.
     meta : dict[str, Any] | None, optional
-        Denominator-rule metadata.
     sensitivity : list[tuple] | None, optional
-        Alternate-pool summaries.
     """
     bs = bootstrap_stats(succ, size, B, seed=20260816)
     n_thm = succ.shape[0]
@@ -513,44 +523,67 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
     print("=" * 92)
     print("DEDUCTION LEG -- pass@1 with block-bootstrap 95% CIs")
     print("=" * 92)
-    print(f"Resampling unit: THEOREM BLOCK. n = {n_thm} blocks "
-          f"({n_cells} cells, {n_cells / n_thm:.1f} cells per block).")
+    print(
+        f"Resampling unit: THEOREM BLOCK. n = {n_thm} blocks "
+        f"({n_cells} cells, {n_cells / n_thm:.1f} cells per block)."
+    )
     print(f"B = {B:,} resamples, BCa intervals (percentile shown for contrast).")
-    print(f"The effective sample size is {n_thm} THEOREMS, not {n_cells} cells "
-          f"-- see the module docstring.")
+    print(
+        f"The effective sample size is {n_thm} THEOREMS, not {n_cells} cells "
+        f"-- see the module docstring."
+    )
     if meta:
         n_added = sum(len(v) for v in meta["added"].values())
         print("Denominator rule: COUNT-AS-FAILURE (default).", end=" ")
         if meta["count_as_failure"]:
-            print(f"{n_added} model-dependent no-survivor cell(s) scored 0, in "
-                  f"{len(meta['added'])} lane(s).")
+            print(
+                f"{n_added} model-dependent no-survivor cell(s) scored 0, in "
+                f"{len(meta['added'])} lane(s)."
+            )
             # Costs are reductions versus dropping, never signed deltas.
-            print(f"  {'lane':28s} {'rung':9s} {'+cells':>6s}  "
-                  f"{'pooled pt':>10s} {'rung pt':>8s}  theorem(s)")
-            for c in sorted(meta["rule_cost"],
-                            key=lambda c: -(_cost(c, "rung_drop") or 0.0)):
-                print(f"  {c['model']:28s} {c['rung']:9s} {c['n_added']:6d}  "
-                      f"{_fmt(_cost(c, 'pooled_drop'), 10)} "
-                      f"{_fmt(_cost(c, 'rung_drop'), 8)}  "
-                      f"{', '.join(c['theorems'])}")
-            costs_p = [v for v in (_cost(c, "pooled_drop") for c in meta["rule_cost"])
-                       if v is not None]
-            costs_r = [v for v in (_cost(c, "rung_drop") for c in meta["rule_cost"])
-                       if v is not None]
+            print(
+                f"  {'lane':28s} {'rung':9s} {'+cells':>6s}  "
+                f"{'pooled pt':>10s} {'rung pt':>8s}  theorem(s)"
+            )
+            for c in sorted(
+                meta["rule_cost"], key=lambda c: -(_cost(c, "rung_drop") or 0.0)
+            ):
+                print(
+                    f"  {c['model']:28s} {c['rung']:9s} {c['n_added']:6d}  "
+                    f"{_fmt(_cost(c, 'pooled_drop'), 10)} "
+                    f"{_fmt(_cost(c, 'rung_drop'), 8)}  "
+                    f"{', '.join(c['theorems'])}"
+                )
+            costs_p = [
+                v
+                for v in (_cost(c, "pooled_drop") for c in meta["rule_cost"])
+                if v is not None
+            ]
+            costs_r = [
+                v
+                for v in (_cost(c, "rung_drop") for c in meta["rule_cost"])
+                if v is not None
+            ]
             if costs_p and costs_r:
                 worst_p, worst_r = max(costs_p) / 100, max(costs_r) / 100
-                print(f"  Cost of the rule: it lowers a lane's rate by at most "
-                      f"{100 * worst_p:.3f} accuracy\n  points pooled, and by at "
-                      f"most {100 * worst_r:.3f} within a single prompt rung. "
-                      f"Successes are\n  unchanged; only the denominator moves, "
-                      f"and it moves to the SAME value in all 21 lanes.")
+                print(
+                    f"  Cost of the rule: it lowers a lane's rate by at most "
+                    f"{100 * worst_p:.3f} accuracy\n  points pooled, and by at "
+                    f"most {100 * worst_r:.3f} within a single prompt rung. "
+                    f"Successes are\n  unchanged; only the denominator moves, "
+                    f"and it moves to the SAME value in all 21 lanes."
+                )
         if meta["recovery"]:
-            print("  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
-                  "configuration. The headline\n  figures are Mathlib-only.")
+            print(
+                "  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
+                "configuration. The headline\n  figures are Mathlib-only."
+            )
     print()
 
-    print(f"{'model':30s} {'pass@1':>7s} {'95% BCa':>17s} {'width':>7s} "
-          f"{'percentile':>17s} {'own-lane':>9s}")
+    print(
+        f"{'model':30s} {'pass@1':>7s} {'95% BCa':>17s} {'width':>7s} "
+        f"{'percentile':>17s} {'own-lane':>9s}"
+    )
     print("-" * 92)
     order = [m for fam in FAMILIES.values() for m in fam]
     jmap = {model: j for j, model in enumerate(models)}
@@ -558,37 +591,55 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
         j = jmap[m]
         r = bs["marginal"][j]
         flag = " *pct" if r["fallback"] else ""
-        print(f"{m:30s} {r['rate']:7.3f} [{r['lo']:.3f}, {r['hi']:.3f}] "
-              f"{r['hi'] - r['lo']:7.3f} [{r['pct_lo']:.3f}, {r['pct_hi']:.3f}] "
-              f"{per_lane.get(m, float('nan')):9.3f}{flag}")
+        print(
+            f"{m:30s} {r['rate']:7.3f} [{r['lo']:.3f}, {r['hi']:.3f}] "
+            f"{r['hi'] - r['lo']:7.3f} [{r['pct_lo']:.3f}, {r['pct_hi']:.3f}] "
+            f"{per_lane.get(m, float('nan')):9.3f}{flag}"
+        )
     if meta:
-        gaps = {m: abs(per_lane[m] - bs["marginal"][jmap[m]]["rate"])
-                for m in order if m in per_lane}
+        gaps = {
+            m: abs(per_lane[m] - bs["marginal"][jmap[m]]["rate"])
+            for m in order
+            if m in per_lane
+        }
         worst = max(gaps, key=gaps.get)
         denoms = sorted({meta["own_denominator"][m] for m in order})
-        print(f"\nown-lane = each lane's rate over its OWN measurable "
-              f"denominator ("
-              f"{'/'.join(str(d) for d in denoms)} cells).\n  Max |own-lane - "
-              f"paired| = {gaps[worst]:.4f} ({worst}); at the 3 decimals "
-              f"printed that reads as\n  {gaps[worst]:.3f}.")
+        print(
+            f"\nown-lane = each lane's rate over its OWN measurable "
+            f"denominator ("
+            f"{'/'.join(str(d) for d in denoms)} cells).\n  Max |own-lane - "
+            f"paired| = {gaps[worst]:.4f} ({worst}); at the 3 decimals "
+            f"printed that reads as\n  {gaps[worst]:.3f}."
+        )
 
     naive = np.sqrt(bs["theta_hat"] * (1 - bs["theta_hat"]) / n_cells) * 1.96 * 2
-    boot_w = np.array([bs["marginal"][j]["hi"] - bs["marginal"][j]["lo"]
-                       for j in range(len(models))])
-    print(f"\nDesign effect: block-bootstrap intervals are "
-          f"{np.median(boot_w / naive):.2f}x (median) the width a naive binomial "
-          f"on {n_cells}\n  independent cells would give -- range "
-          f"{np.min(boot_w / naive):.2f}x to {np.max(boot_w / naive):.2f}x. "
-          f"Treating cells as independent\n  would overstate precision by that "
-          f"factor.")
+    boot_w = np.array(
+        [bs["marginal"][j]["hi"] - bs["marginal"][j]["lo"] for j in range(len(models))]
+    )
+    print(
+        f"\nDesign effect: block-bootstrap intervals are "
+        f"{np.median(boot_w / naive):.2f}x (median) the width a naive binomial "
+        f"on {n_cells}\n  independent cells would give -- range "
+        f"{np.min(boot_w / naive):.2f}x to {np.max(boot_w / naive):.2f}x. "
+        f"Treating cells as independent\n  would overstate precision by that "
+        f"factor."
+    )
 
-    results = {"n_theorem_blocks": n_thm, "n_cells": n_cells, "B": B,
-               "marginals": {m: bs["marginal"][jmap[m]] for m in models},
-               "contrasts": {}}
+    results = {
+        "n_theorem_blocks": n_thm,
+        "n_cells": n_cells,
+        "B": B,
+        "marginals": {m: bs["marginal"][jmap[m]] for m in models},
+        "contrasts": {},
+    }
 
     for tier, contrasts, corrected in (
         ("PRIMARY -- within-family ladder", build_within_family_contrasts(), True),
-        ("SECONDARY -- cross-family, size-matched", build_cross_family_contrasts(), False),
+        (
+            "SECONDARY -- cross-family, size-matched",
+            build_cross_family_contrasts(),
+            False,
+        ),
     ):
         p_block = block_signflip_p(succ, models, contrasts)
         rows = []
@@ -596,97 +647,145 @@ def mode_report(succ: np.ndarray, size: np.ndarray, models: list[str], blocks: d
             ci = diff_ci(bs, jmap[a], jmap[b])
             nb, nc, p_cell = paired_mcnemar(blocks, a, b)
             rows.append((label, a, b, ci, nb, nc, float(p_block[i]), p_cell))
-        pv = np.array([r[6] for r in rows])          # PRIMARY inference
-        pv_cell = np.array([r[7] for r in rows])     # descriptive
+        pv = np.array([r[6] for r in rows])  # PRIMARY inference
+        pv_cell = np.array([r[7] for r in rows])  # descriptive
         # PRIMARY uses Holm for dependent FWER; exploratory SECONDARY uses preregistered BH q=0.05.
         rej = holm(pv) if corrected else benjamini_hochberg(pv, Q_SECONDARY)
-        rej_cell = holm(pv_cell) if corrected else benjamini_hochberg(pv_cell,
-                                                                     Q_SECONDARY)
+        rej_cell = (
+            holm(pv_cell) if corrected else benjamini_hochberg(pv_cell, Q_SECONDARY)
+        )
 
         proc = "Holm" if corrected else "BH"
-        print(f"\n{'=' * 92}\n{tier}: {len(rows)} contrasts\n{'=' * 92}")
-        print(f"PRIMARY p = BLOCK SIGN-FLIP permutation over the {n_thm} theorem "
-              f"blocks,\n  B = {B_SIGNFLIP:,} draws, fixed seed "
-              f"{SIGNFLIP_SEED} (resolution floor {1 / (B_SIGNFLIP + 1):.1e}). "
-              f"Cell-level\n  exact McNemar is shown beside it as a DESCRIPTIVE "
-              f"figure -- it assumes the "
-              f"{n_cells}\n  cells are independent, which is the assumption "
-              f"every interval on this page rejects.")
+        print("\n" + rows_source.banner(f"{tier}: {len(rows)} contrasts", width=92))
+        print(
+            f"PRIMARY p = BLOCK SIGN-FLIP permutation over the {n_thm} theorem "
+            f"blocks,\n  B = {B_SIGNFLIP:,} draws, fixed seed "
+            f"{SIGNFLIP_SEED} (resolution floor {1 / (B_SIGNFLIP + 1):.1e}). "
+            f"Cell-level\n  exact McNemar is shown beside it as a DESCRIPTIVE "
+            f"figure -- it assumes the "
+            f"{n_cells}\n  cells are independent, which is the assumption "
+            f"every interval on this page rejects."
+        )
         if corrected:
-            print("Holm-Bonferroni at FWER 0.05 over these 21 (arbitrary "
-                  "dependence).\n")
+            print(
+                "Holm-Bonferroni at FWER 0.05 over these 21 (arbitrary "
+                "dependence).\n"
+            )
         else:
-            print(f"Benjamini-Hochberg FDR at q = {Q_SECONDARY} over these "
-                  f"{len(rows)} (pre-registered:\nexploratory tier, so FDR "
-                  f"rather than FWER).\n")
-        print(f"{'contrast':46s} {'diff':>7s} {'95% BCa':>17s} {'b/c':>10s} "
-              f"{'p_block':>9s} {'p_cell':>9s} {proc:>5s}")
+            print(
+                f"Benjamini-Hochberg FDR at q = {Q_SECONDARY} over these "
+                f"{len(rows)} (pre-registered:\nexploratory tier, so FDR "
+                f"rather than FWER).\n"
+            )
+        print(
+            f"{'contrast':46s} {'diff':>7s} {'95% BCa':>17s} {'b/c':>10s} "
+            f"{'p_block':>9s} {'p_cell':>9s} {proc:>5s}"
+        )
         print("-" * 110)
         for (label, a, b, ci, nb, nc, p, p_cell), ok in zip(rows, rej):
             mark = " yes " if ok else "  .  "
             crosses = "" if (ci["lo"] > 0 or ci["hi"] < 0) else "  (CI spans 0)"
             short = label if len(label) <= 46 else label[:43] + "..."
-            print(f"{short:46s} {ci['diff']:+7.3f} [{ci['lo']:+.3f}, "
-                  f"{ci['hi']:+.3f}] {nb:4d}/{nc:<5d} {p:9.2e} {p_cell:9.2e} "
-                  f"{mark}{crosses}")
-            results["contrasts"][label] = dict(
-                model_a=a, model_b=b, **ci, b=nb, c=nc, p=p, p_cell=p_cell,
-                holm=bool(ok))
+            print(
+                f"{short:46s} {ci['diff']:+7.3f} [{ci['lo']:+.3f}, "
+                f"{ci['hi']:+.3f}] {nb:4d}/{nc:<5d} {p:9.2e} {p_cell:9.2e} "
+                f"{mark}{crosses}"
+            )
+            results["contrasts"][label] = {
+                "model_a": a,
+                "model_b": b,
+                **ci,
+                "b": nb,
+                "c": nc,
+                "p": p,
+                "p_cell": p_cell,
+                "holm": bool(ok),
+            }
 
-        agree = sum(1 for (_, _, _, ci, _, _, _, _), ok in zip(rows, rej)
-                    if ok == (ci["lo"] > 0 or ci["hi"] < 0))
-        print(f"\n{proc} rejects {int(rej.sum())} of {len(rows)}; "
-              f"uncorrected p<{ALPHA} would be {int((pv < ALPHA).sum())}; "
-              f"CIs excluding 0: "
-              f"{sum(1 for r in rows if r[3]['lo'] > 0 or r[3]['hi'] < 0)}.")
-        print(f"  On the SAME cells, cell-level McNemar + {proc} would reject "
-              f"{int(rej_cell.sum())}. The\n  difference is entirely "
-              f"clustering: cells inside a theorem share a ground truth and\n"
-              f"  a proof prefix, so treating them as independent overstates the "
-              f"evidence.")
+        agree = sum(
+            1
+            for (_, _, _, ci, _, _, _, _), ok in zip(rows, rej)
+            if ok == (ci["lo"] > 0 or ci["hi"] < 0)
+        )
+        print(
+            f"\n{proc} rejects {int(rej.sum())} of {len(rows)}; "
+            f"uncorrected p<{ALPHA} would be {int((pv < ALPHA).sum())}; "
+            f"CIs excluding 0: "
+            f"{sum(1 for r in rows if r[3]['lo'] > 0 or r[3]['hi'] < 0)}."
+        )
+        print(
+            f"  On the SAME cells, cell-level McNemar + {proc} would reject "
+            f"{int(rej_cell.sum())}. The\n  difference is entirely "
+            f"clustering: cells inside a theorem share a ground truth and\n"
+            f"  a proof prefix, so treating them as independent overstates the "
+            f"evidence."
+        )
         lost = [rows[i][0] for i in range(len(rows)) if rej_cell[i] and not rej[i]]
         for label in lost:
             print(f"    only under the cell-level test: {label}")
-        print(f"  {proc} and the uncorrected CI agree on {agree}/{len(rows)}. "
-              f"They are DIFFERENT questions: the CI is\n  uncorrected and "
-              f"two-sided per contrast; {proc} controls error over the whole "
-              f"tier.")
+        print(
+            f"  {proc} and the uncorrected CI agree on {agree}/{len(rows)}. "
+            f"They are DIFFERENT questions: the CI is\n  uncorrected and "
+            f"two-sided per contrast; {proc} controls error over the whole "
+            f"tier."
+        )
 
         if corrected:
-            print("\nPer-family ladder verdict (a family 'scales cleanly' only "
-                  "if all three\nrung-pairs are positive AND significant):")
+            print(
+                "\nPer-family ladder verdict (a family 'scales cleanly' only "
+                "if all three\nrung-pairs are positive AND significant):"
+            )
             for family, ladder in FAMILIES.items():
-                idx = [i for i, r in enumerate(rows)
-                       if r[1] in ladder and r[2] in ladder]
+                idx = [
+                    i for i, r in enumerate(rows) if r[1] in ladder and r[2] in ladder
+                ]
                 n_sig = sum(1 for i in idx if rej[i])
                 n_pos = sum(1 for i in idx if rows[i][3]["diff"] > 0)
                 clean = "CLEAN" if (n_sig == 3 and n_pos == 3) else "no"
-                print(f"  {family:12s} {n_sig}/3 significant, {n_pos}/3 "
-                      f"positive  -> {clean}")
+                print(
+                    f"  {family:12s} {n_sig}/3 significant, {n_pos}/3 "
+                    f"positive  -> {clean}"
+                )
 
     if sensitivity:
-        print(f"\n{'=' * 92}\nSENSITIVITY -- the same PRIMARY test under other "
-              f"denominator rules\n{'=' * 92}")
-        print("Each row re-pools the cells and re-runs the block sign-flip test "
-              "from scratch.\nRe-pooling the DojoInit recovery rows is a "
-              "sensitivity only: the headline figures\nare Mathlib-only.\n")
-        print(f"{'pool':46s} {'cells':>7s} {'blocks':>7s} {'Holm':>6s} "
-              f"{'max own-vs-paired':>18s}")
+        print(
+            "\n"
+            + rows_source.banner(
+                (
+                    "SENSITIVITY -- the same PRIMARY test under other "
+                    "denominator rules"
+                ),
+                width=92,
+            )
+        )
+        print(
+            "Each row re-pools the cells and re-runs the block sign-flip test "
+            "from scratch.\nRe-pooling the DojoInit recovery rows is a "
+            "sensitivity only: the headline figures\nare Mathlib-only.\n"
+        )
+        print(
+            f"{'pool':46s} {'cells':>7s} {'blocks':>7s} {'Holm':>6s} "
+            f"{'max own-vs-paired':>18s}"
+        )
         print("-" * 90)
         for label, n_c, n_b, n_rej, gap in sensitivity:
             if n_c == 0:
                 continue
             print(f"{label:46s} {n_c:7d} {n_b:7d} {n_rej:5d}/21 {gap:18.4f}")
-        print("\nmax own-vs-paired = largest gap between a lane's rate over its "
-              "own denominator and\n  its rate on the 21-way paired pool. It is "
-              "exactly 0 under count-as-failure,\n  because that rule gives "
-              "every lane the same denominator as the pool.")
+        print(
+            "\nmax own-vs-paired = largest gap between a lane's rate over its "
+            "own denominator and\n  its rate on the 21-way paired pool. It is "
+            "exactly 0 under count-as-failure,\n  because that rule gives "
+            "every lane the same denominator as the pool."
+        )
         for label, n_c, _n_b, _n_rej, _gap in sensitivity:
             if n_c == 0:
                 print(f"\n{label}")
 
     if out_json:
-        Path(out_json).write_text(json.dumps(results, indent=2, default=float))
+        Path(out_json).write_text(
+            json.dumps(results, indent=2, default=float), encoding="utf-8"
+        )
         print(f"\nwrote {out_json}")
 
 
@@ -698,7 +797,6 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments.
 
     Returns
     -------
@@ -715,15 +813,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mode", choices=("sweep", "report"), default="report")
     ap.add_argument("-B", type=int, default=20_000)
     ap.add_argument("--out-json", type=Path, default=None)
-    ap.add_argument("--recovery-dir", type=Path, default=None,
-                    help="LOCAL directory of <model>/recovered_rows.jsonl "
-                         "(DojoInit recovery). These rows ARE archived, under "
-                         "their own dojoinit_recovery_<date>/<lane>/ tree, but "
-                         "that tree is neither scaling_* nor "
-                         "verified_rows.jsonl, so --s3 does not reach it and "
-                         "no --s3 form of this option is implemented. Pooled "
-                         "into the SENSITIVITY rows, never into the headline "
-                         "pool.")
+    ap.add_argument(
+        "--recovery-dir",
+        type=Path,
+        default=None,
+        help="LOCAL directory of <model>/recovered_rows.jsonl "
+        "(DojoInit recovery). These rows ARE archived, under "
+        "their own dojoinit_recovery_<date>/<lane>/ tree, but "
+        "that tree is neither scaling_* nor "
+        "verified_rows.jsonl, so --s3 does not reach it and "
+        "no --s3 form of this option is implemented. Pooled "
+        "into the SENSITIVITY rows, never into the headline "
+        "pool.",
+    )
     args = ap.parse_args(argv)
 
     rows_dir = rows_source.resolve_from_args(args)
@@ -733,7 +835,7 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         raise SystemExit(f"missing row files: {[str(f) for f in missing]}")
 
-    models, blocks, rungs, meta = build_pool(rows_dir)
+    models, blocks, _rungs, meta = build_pool(rows_dir)
     succ, size = block_matrix(models, blocks)
     per_lane = dict(meta["own_rate"])
 
@@ -744,29 +846,48 @@ def main(argv: list[str] | None = None) -> int:
     # Sensitivity reruns PRIMARY under other rules so changes are attributable.
     sensitivity = []
     for caf in (True, False):
-        for rec in ([None] + ([args.recovery_dir] if args.recovery_dir else [])):
+        for rec in [None] + ([args.recovery_dir] if args.recovery_dir else []):
             if caf and rec is None:
                 continue
-            _m, _b, _r, _meta = build_pool(rows_dir, recovery_dir=rec,
-                                           count_as_failure=caf)
+            _m, _b, _r, _meta = build_pool(
+                rows_dir, recovery_dir=rec, count_as_failure=caf
+            )
             _succ, _size = block_matrix(_m, _b)
             p = block_signflip_p(_succ, _m, build_within_family_contrasts())
             paired = _succ.sum(axis=0) / _size.sum()
-            gap = max(abs(paired[_m.index(mm)] - _meta["own_rate"][mm])
-                      for mm in MODELS)
-            label = ("count-as-failure" if caf else "drop no-survivor")
+            gap = max(
+                abs(paired[_m.index(mm)] - _meta["own_rate"][mm]) for mm in MODELS
+            )
+            label = "count-as-failure" if caf else "drop no-survivor"
             label += " + DojoInit recovery" if rec else " (Mathlib only)"
-            sensitivity.append((label, int(_size.sum()), _succ.shape[0],
-                                int(holm(p).sum()), gap))
+            sensitivity.append(
+                (label, int(_size.sum()), _succ.shape[0], int(holm(p).sum()), gap)
+            )
     if args.recovery_dir is None:
-        sensitivity.append((
-            "Post-recovery pools are NOT shown: pass --recovery-dir "
-            "<dir-of-<model>/recovered_rows.jsonl>\n(e.g. "
-            "notebooks/deduction/results/dojoinit_recovery_2026-08-18) to add "
-            "them.", 0, 0, 0, 0.0))
+        sensitivity.append(
+            (
+                "Post-recovery pools are NOT shown: pass --recovery-dir "
+                "<dir-of-<model>/recovered_rows.jsonl>\n(e.g. "
+                "notebooks/deduction/results/dojoinit_recovery_2026-08-18) to add "
+                "them.",
+                0,
+                0,
+                0,
+                0.0,
+            )
+        )
 
-    mode_report(succ, size, models, blocks, per_lane, args.B, args.out_json,
-                meta=meta, sensitivity=sensitivity)
+    mode_report(
+        succ,
+        size,
+        models,
+        blocks,
+        per_lane,
+        args.B,
+        args.out_json,
+        meta=meta,
+        sensitivity=sensitivity,
+    )
     return 0
 
 

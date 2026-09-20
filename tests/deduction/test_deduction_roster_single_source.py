@@ -3,18 +3,18 @@
 Equality alone misses a stale hand-typed copy, so consumers must not spell the old literals.
 """
 
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 
 import pytest
 
 from smolbench.evals.study_config import families, load_study_config, roster_keys
-from tests._paths import NOTEBOOKS, SCRIPTS, load_by_path
+from tests._paths import NOTEBOOKS, SCRIPTS
+from tests.deduction._helpers import load_env_isolated
 
 INDUCTION_DRIVER = NOTEBOOKS / "induction" / "run_study.py"
 POWER_ANALYSIS = NOTEBOOKS / "deduction" / "analysis" / "power_analysis.py"
@@ -25,13 +25,7 @@ DEDUCTION_DRIVER = NOTEBOOKS / "deduction" / "run_study.py"
 
 def _load(path: Path, name: str) -> ModuleType:
     """Load a module with restored environment; `sys.modules` enables dataclass annotations."""
-    saved = dict(os.environ)
-    try:
-        return load_by_path(path, name)
-    finally:
-        sys.modules.pop(name, None)
-        os.environ.clear()
-        os.environ.update(saved)
+    return load_env_isolated(path, name, forget_module=True)
 
 
 @pytest.fixture(scope="module")
@@ -98,8 +92,10 @@ def test_bucket_and_region_literals_are_gone_from_consumers(path: Path) -> None:
         f"{path.name} still spells the results bucket literally; read it from "
         "smolbench.evals.study_config instead"
     )
-    for quoted in (f'"{load_study_config().results.region}"',
-                   f"'{load_study_config().results.region}'"):
+    for quoted in (
+        f'"{load_study_config().results.region}"',
+        f"'{load_study_config().results.region}'",
+    ):
         assert quoted not in source, (
             f"{path.name} still spells the results region as a quoted literal "
             f"({quoted}); read it from smolbench.evals.study_config instead"

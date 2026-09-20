@@ -12,8 +12,8 @@ import json
 import posixpath
 import sys
 import tarfile
-from pathlib import Path
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -64,7 +64,9 @@ def _verify_on_s3(archive: Any, manifest_dir: str, em: Any) -> list[str]:
     failures: list[str] = []
     raw_entries = data.get("entries")
     assert isinstance(raw_entries, list) and raw_entries, manifest_dir
-    valid = [e for i, e in enumerate(raw_entries) if em._check_entry_schema(i, e, failures)]
+    valid = [
+        e for i, e in enumerate(raw_entries) if em._check_entry_schema(i, e, failures)
+    ]
     allowlist = em._check_allowlist_schema(data.get("allowlist", []), failures)
     candidates = [c for e in valid for c in em._candidates(e["relpath"])]
     allowed = {a["name"] for a in allowlist}
@@ -76,7 +78,9 @@ def _verify_on_s3(archive: Any, manifest_dir: str, em: Any) -> list[str]:
             failures.append(f"{relpath}: unresolvable on S3: {exc}")
             continue
         if actual != entry["sha256"]:
-            failures.append(f"{relpath}: sha256 mismatch: manifest={entry['sha256']} actual={actual}")
+            failures.append(
+                f"{relpath}: sha256 mismatch: manifest={entry['sha256']} actual={actual}"
+            )
         if entry["role"] != "writeup":
             continue
         path, member = em._split_reference(relpath)
@@ -94,29 +98,39 @@ def _verify_on_s3(archive: Any, manifest_dir: str, em: Any) -> list[str]:
 
 
 def test_every_tracked_writeup_has_a_verified_manifest(
-    tracked: set[str], s3_archive: Any, em: Any,
+    tracked: set[str],
+    s3_archive: Any,
+    em: Any,
 ) -> None:
     """Every .md/.txt under results/ sits in a manifested dir and is listed."""
-    writeups = sorted(p for p in tracked
-                      if Path(p).suffix in em.WRITEUP_SUFFIXES
-                      and Path(p).name != em.MANIFEST_NAME)
+    writeups = sorted(
+        p
+        for p in tracked
+        if Path(p).suffix in em.WRITEUP_SUFFIXES and Path(p).name != em.MANIFEST_NAME
+    )
     assert len(writeups) >= 4, writeups
     for rel in writeups:
         d = posixpath.dirname(rel)
         mf = f"{d}/{em.MANIFEST_NAME}"
         assert mf in tracked, f"{rel}: no {em.MANIFEST_NAME} in {d}"
         manifest = json.loads(s3_archive.text(mf))
-        listed = [e for e in manifest["entries"]
-                  if not e["relpath"].startswith("tarball:")
-                  and posixpath.normpath(posixpath.join(d, e["relpath"])) == rel]
+        listed = [
+            e
+            for e in manifest["entries"]
+            if not e["relpath"].startswith("tarball:")
+            and posixpath.normpath(posixpath.join(d, e["relpath"])) == rel
+        ]
         assert listed, f"{rel}: not listed in {mf}"
         if rel.endswith(".md"):
-            assert listed[0]["role"] == "writeup", \
-                f"{rel}: listed as {listed[0]['role']!r}, must be 'writeup' to be scanned"
+            assert (
+                listed[0]["role"] == "writeup"
+            ), f"{rel}: listed as {listed[0]['role']!r}, must be 'writeup' to be scanned"
 
 
 def test_every_tracked_manifest_verifies(
-    tracked: set[str], s3_archive: Any, em: Any,
+    tracked: set[str],
+    s3_archive: Any,
+    em: Any,
 ) -> None:
     """Every EVIDENCE.json in the archive verifies against its objects."""
     manifests = sorted(p for p in tracked if Path(p).name == em.MANIFEST_NAME)

@@ -7,6 +7,7 @@ References may cross via ``..``.
 When loading by path, register in ``sys.modules`` before ``exec_module`` so
 dataclass annotations resolve.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,12 +25,31 @@ MANIFEST_NAME = "EVIDENCE.json"
 SCHEMA = "smolbench-evidence-manifest/1"
 
 #: Closed vocabulary makes role typos fail.
-ROLES = ("writeup", "analysis_input", "raw", "estimator", "preregistration",
-         "config", "gate", "teardown", "log", "other")
+ROLES = (
+    "writeup",
+    "analysis_input",
+    "raw",
+    "estimator",
+    "preregistration",
+    "config",
+    "gate",
+    "teardown",
+    "log",
+    "other",
+)
 
 #: Narrow suffixes avoid needless allowlist entries.
-CITED_SUFFIXES = (".json", ".jsonl", ".gz", ".yaml", ".yml", ".txt", ".md",
-                  ".sh", ".py")
+CITED_SUFFIXES = (
+    ".json",
+    ".jsonl",
+    ".gz",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".md",
+    ".sh",
+    ".py",
+)
 
 #: Suffixes the repo gate treats as writeups (tests import this).
 WRITEUP_SUFFIXES = (".md", ".txt")
@@ -56,6 +76,7 @@ class ResolutionError(FileNotFoundError):
 
 # -- reference grammar --
 
+
 def _split_reference(relpath: str) -> tuple[str, str | None]:
     """Split a manifest ``relpath`` into its on-disk path and optional tarball member.
 
@@ -72,12 +93,13 @@ def _split_reference(relpath: str) -> tuple[str, str | None]:
     """
     if not relpath.startswith(TARBALL_PREFIX):
         return relpath, None
-    body = relpath[len(TARBALL_PREFIX):]
+    body = relpath[len(TARBALL_PREFIX) :]
     tar_relpath, sep, member = body.partition("!")
     if not sep or not tar_relpath or not member:
         raise ValueError(
             f"malformed tarball reference (want "
-            f"'{TARBALL_PREFIX}<tarball>!<member>'): {relpath!r}")
+            f"'{TARBALL_PREFIX}<tarball>!<member>'): {relpath!r}"
+        )
     return tar_relpath, member
 
 
@@ -107,9 +129,7 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
     Parameters
     ----------
     manifest_dir : Path
-        Manifest and artifact directory.
     relpath : str
-        Reference to open.
 
     Yields
     ------
@@ -121,8 +141,11 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
 
     if member is None:
         if not target.is_file():
-            detail = ("missing file (not a regular file)" if target.exists()
-                      else "missing file")
+            detail = (
+                "missing file (not a regular file)"
+                if target.exists()
+                else "missing file"
+            )
             raise ResolutionError(f"{relpath}: {detail}: {tar_relpath}")
         with target.open("rb") as handle:
             yield handle
@@ -135,12 +158,13 @@ def _open_reference(manifest_dir: Path, relpath: str) -> Iterator[IO[bytes]]:
             info = archive.getmember(member)
         except KeyError:
             raise ResolutionError(
-                f"{relpath}: missing tarball member: {member}") from None
+                f"{relpath}: missing tarball member: {member}"
+            ) from None
         stream = archive.extractfile(info) if info.isfile() else None
         if stream is None:
             raise ResolutionError(
-                f"{relpath}: missing tarball member (not a regular file): "
-                f"{member}")
+                f"{relpath}: missing tarball member (not a regular file): " f"{member}"
+            )
         with stream:
             yield stream
 
@@ -153,9 +177,7 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
     Parameters
     ----------
     manifest_dir : Path
-        Manifest and artifact directory.
     relpath : str
-        Reference to hash.
 
     Returns
     -------
@@ -176,6 +198,7 @@ def _sha256_of_reference(manifest_dir: Path, relpath: str) -> str:
 
 # -- the scanner --
 
+
 def cited_artifacts(text: str) -> list[str]:
     """Extract the artifact filenames a writeup cites in backticks.
 
@@ -185,7 +208,6 @@ def cited_artifacts(text: str) -> list[str]:
     Parameters
     ----------
     text : str
-        Writeup text.
 
     Returns
     -------
@@ -210,9 +232,7 @@ def covers(cited: str, entry_path: str) -> bool:
     Parameters
     ----------
     cited : str
-        Citation path.
     entry_path : str
-        Candidate manifest path.
 
     Returns
     -------
@@ -223,17 +243,20 @@ def covers(cited: str, entry_path: str) -> bool:
     entry_parts = entry_path.split("/")
     if len(cited_parts) > len(entry_parts):
         return False
-    return entry_parts[len(entry_parts) - len(cited_parts):] == cited_parts
+    return entry_parts[len(entry_parts) - len(cited_parts) :] == cited_parts
 
 
 # -- build --
 
-def build(manifest_dir: str | Path,
-          entries: Iterable[Mapping[str, Any]],
-          allowlist: Iterable[Mapping[str, Any]] = (),
-          *,
-          note: str | None = None,
-          write: bool = True) -> dict[str, Any]:
+
+def build(
+    manifest_dir: str | Path,
+    entries: Iterable[Mapping[str, Any]],
+    allowlist: Iterable[Mapping[str, Any]] = (),
+    *,
+    note: str | None = None,
+    write: bool = True,
+) -> dict[str, Any]:
     """Hash every listed artifact and write the directory's ``EVIDENCE.json``.
 
     Preserve order and omit timestamps so rebuilds are byte-identical.
@@ -242,15 +265,10 @@ def build(manifest_dir: str | Path,
     Parameters
     ----------
     manifest_dir : str | Path
-        Manifest directory.
     entries : Iterable[Mapping[str, Any]]
-        Artifact entries.
     allowlist : Iterable[Mapping[str, Any]], optional
-        Citation exceptions.
     note : str | None, optional
-        Manifest note.
     write : bool, optional
-        Write the manifest.
 
     Returns
     -------
@@ -272,7 +290,8 @@ def build(manifest_dir: str | Path,
         if not isinstance(reason, str) or not reason:
             raise ValueError(
                 f"allowlist {i}: reason is missing or empty for {name!r} -- an "
-                "allowlist entry with no reason is an undocumented hole")
+                "allowlist entry with no reason is an undocumented hole"
+            )
         checked_allowlist.append({"name": name, "reason": reason})
 
     # Validate fields before hashing so bad roles fail cheaply.
@@ -285,7 +304,8 @@ def build(manifest_dir: str | Path,
         if role not in ROLES:
             raise ValueError(
                 f"entry {i} ({relpath}): bad role: {role!r} -- expected one of "
-                f"{', '.join(ROLES)}")
+                f"{', '.join(ROLES)}"
+            )
         entry_note = raw.get("note")
         if entry_note is not None and not isinstance(entry_note, str):
             raise ValueError(f"entry {i} ({relpath}): note must be a string")
@@ -296,10 +316,10 @@ def build(manifest_dir: str | Path,
         if supplied is not None and supplied != digest:
             raise ValueError(
                 f"entry {i} ({relpath}): supplied sha256 {supplied} disagrees "
-                f"with computed {digest} -- refusing to bless a stale hash")
+                f"with computed {digest} -- refusing to bless a stale hash"
+            )
 
-        entry: dict[str, Any] = {"relpath": relpath, "sha256": digest,
-                                 "role": role}
+        entry: dict[str, Any] = {"relpath": relpath, "sha256": digest, "role": role}
         if entry_note is not None:
             entry["note"] = entry_note
         checked_entries.append(entry)
@@ -314,11 +334,14 @@ def build(manifest_dir: str | Path,
         # Explicit newlines make the written manifest deterministic.
         (mdir / MANIFEST_NAME).write_text(
             json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8", newline="\n")
+            encoding="utf-8",
+            newline="\n",
+        )
     return manifest
 
 
 # -- verify --
+
 
 @dataclass
 class VerifyResult:
@@ -336,6 +359,24 @@ class VerifyResult:
     failures: list[str]
 
 
+def _require_nonempty_str(
+    item: Any, field: str, label: str, failures: list[str], detail: str | None = None
+) -> bool:
+    """Append a defect unless ``item[field]`` is a non-empty string.
+
+    `detail` overrides the default ``: <value repr>`` suffix, used where a
+    sibling field identifies the defect better than the empty value.
+    """
+    value = item.get(field) if isinstance(item, Mapping) else None
+    if isinstance(value, str) and value:
+        return True
+    failures.append(
+        f"{label}: {field} is missing or empty"
+        + (f" ({detail})" if detail is not None else f": {value!r}")
+    )
+    return False
+
+
 def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     """Validate one raw manifest entry, appending any defects to ``failures``.
 
@@ -344,11 +385,8 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     Parameters
     ----------
     index : int
-        Manifest position.
     entry : Any
-        Raw entry.
     failures : list[str]
-        Defect accumulator.
 
     Returns
     -------
@@ -361,27 +399,27 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
 
     ok = True
     relpath = entry.get("relpath")
-    if not isinstance(relpath, str) or not relpath:
-        failures.append(f"entry {index}: relpath is missing or empty: "
-                        f"{relpath!r}")
+    if not _require_nonempty_str(entry, "relpath", f"entry {index}", failures):
         ok = False
 
     role = entry.get("role")
     if role not in ROLES:
-        failures.append(f"entry {index}: bad role: {role!r} "
-                        f"(relpath={relpath!r})")
+        failures.append(f"entry {index}: bad role: {role!r} " f"(relpath={relpath!r})")
         ok = False
 
     digest = entry.get("sha256")
     if not isinstance(digest, str) or not _HEX64.match(digest):
-        failures.append(f"entry {index}: sha256 is not 64 lowercase hex: "
-                        f"{digest!r} (relpath={relpath!r})")
+        failures.append(
+            f"entry {index}: sha256 is not 64 lowercase hex: "
+            f"{digest!r} (relpath={relpath!r})"
+        )
         ok = False
 
     note = entry.get("note")
     if note is not None and not isinstance(note, str):
-        failures.append(f"entry {index}: note is not a string: {note!r} "
-                        f"(relpath={relpath!r})")
+        failures.append(
+            f"entry {index}: note is not a string: {note!r} " f"(relpath={relpath!r})"
+        )
         ok = False
 
     if ok:
@@ -393,8 +431,7 @@ def _check_entry_schema(index: int, entry: Any, failures: list[str]) -> bool:
     return ok
 
 
-def _check_allowlist_schema(raw_allowlist: Any,
-                            failures: list[str]) -> list[dict]:
+def _check_allowlist_schema(raw_allowlist: Any, failures: list[str]) -> list[dict]:
     """Validate the manifest's allowlist, returning its usable entries.
 
     Drop missing reasons so deleted justifications cannot pass coverage.
@@ -402,9 +439,7 @@ def _check_allowlist_schema(raw_allowlist: Any,
     Parameters
     ----------
     raw_allowlist : Any
-        Raw allowlist.
     failures : list[str]
-        Defect accumulator.
 
     Returns
     -------
@@ -423,12 +458,11 @@ def _check_allowlist_schema(raw_allowlist: Any,
         name = item.get("name")
         reason = item.get("reason")
         ok = True
-        if not isinstance(name, str) or not name:
-            failures.append(f"allowlist {i}: name is missing or empty: {name!r}")
+        if not _require_nonempty_str(item, "name", f"allowlist {i}", failures):
             ok = False
-        if not isinstance(reason, str) or not reason:
-            failures.append(f"allowlist {i}: reason is missing or empty "
-                            f"(name={name!r})")
+        if not _require_nonempty_str(
+            item, "reason", f"allowlist {i}", failures, detail=f"name={name!r}"
+        ):
             ok = False
         if ok:
             usable.append({"name": name, "reason": reason})
@@ -445,7 +479,6 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
     Parameters
     ----------
     manifest_dir : str | Path
-        Manifest directory.
 
     Returns
     -------
@@ -464,8 +497,9 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
     if not isinstance(raw_entries, list):
         failures.append(f"entries: not a list: {raw_entries!r}")
         raw_entries = []
-    valid = [e for i, e in enumerate(raw_entries)
-             if _check_entry_schema(i, e, failures)]
+    valid = [
+        e for i, e in enumerate(raw_entries) if _check_entry_schema(i, e, failures)
+    ]
     allowlist = _check_allowlist_schema(data.get("allowlist", []), failures)
 
     # Include unresolved entries so broken tarballs do not misreport coverage.
@@ -489,8 +523,10 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
             failures.append(f"{relpath}: unreadable: {exc}")
             continue
         if actual != entry["sha256"]:
-            failures.append(f"{relpath}: sha256 mismatch: "
-                            f"manifest={entry['sha256']} actual={actual}")
+            failures.append(
+                f"{relpath}: sha256 mismatch: "
+                f"manifest={entry['sha256']} actual={actual}"
+            )
 
         if entry["role"] != "writeup":
             continue
@@ -510,10 +546,15 @@ def verify(manifest_dir: str | Path) -> VerifyResult:
                 continue
             failures.append(f"{relpath}: cited artifact not covered: {name}")
 
-    return VerifyResult(ok=not failures, manifest_dir=mdir,
-                        n_entries=len(raw_entries), roles=roles,
-                        allowlist=allowlist, citations=citations,
-                        failures=failures)
+    return VerifyResult(
+        ok=not failures,
+        manifest_dir=mdir,
+        n_entries=len(raw_entries),
+        roles=roles,
+        allowlist=allowlist,
+        citations=citations,
+        failures=failures,
+    )
 
 
 def find_manifests(root: Path | None = None) -> list[Path]:
@@ -524,7 +565,6 @@ def find_manifests(root: Path | None = None) -> list[Path]:
     Parameters
     ----------
     root : Path | None, optional
-        Root to search.
 
     Returns
     -------
@@ -536,6 +576,7 @@ def find_manifests(root: Path | None = None) -> list[Path]:
 
 
 # -- CLI --
+
 
 def _display_dir(path: Path) -> str:
     """Render a directory relative to :data:`REPO` when it lies inside it."""
@@ -553,7 +594,6 @@ def _census_lines(result: VerifyResult) -> list[str]:
     Parameters
     ----------
     result : VerifyResult
-        Verification outcome.
 
     Returns
     -------
@@ -563,14 +603,19 @@ def _census_lines(result: VerifyResult) -> list[str]:
     lines = [f"{_display_dir(result.manifest_dir)}: {result.n_entries} entries"]
     if result.roles:
         # Role order keeps package censuses diffable.
-        lines.append("  roles: " + ", ".join(
-            f"{role}={result.roles[role]}" for role in ROLES
-            if role in result.roles))
+        lines.append(
+            "  roles: "
+            + ", ".join(
+                f"{role}={result.roles[role]}" for role in ROLES if role in result.roles
+            )
+        )
     for item in result.allowlist:
         lines.append(f"  allowlist: {item['name']} -- {item['reason']}")
     for relpath in sorted(result.citations):
-        lines.append(f"  writeup {relpath}: "
-                     f"{len(result.citations[relpath])} cited artifacts checked")
+        lines.append(
+            f"  writeup {relpath}: "
+            f"{len(result.citations[relpath])} cited artifacts checked"
+        )
     return lines
 
 
@@ -580,18 +625,15 @@ def _cmd_verify(dirs: Sequence[str]) -> int:
     Parameters
     ----------
     dirs : Sequence[str]
-        manifest directories to verify
 
     Returns
     -------
     int
         0 if all manifests verify, else 1.
     """
-    targets = ([Path(d) for d in dirs] if dirs
-               else [p.parent for p in find_manifests()])
+    targets = [Path(d) for d in dirs] if dirs else [p.parent for p in find_manifests()]
     if not targets:
-        print(f"nothing to verify: no {MANIFEST_NAME} under "
-              "notebooks/*/results/")
+        print(f"nothing to verify: no {MANIFEST_NAME} under " "notebooks/*/results/")
         print("OK (0 manifests)")
         return 0
 
@@ -626,9 +668,7 @@ def _cmd_build(manifest_dir: str, spec_path: str) -> int:
     Parameters
     ----------
     manifest_dir : str
-        Manifest directory.
     spec_path : str
-        JSON build specification.
 
     Returns
     -------
@@ -636,37 +676,53 @@ def _cmd_build(manifest_dir: str, spec_path: str) -> int:
         Exit status.
     """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
-    manifest = build(manifest_dir,
-                     spec.get("entries", []),
-                     spec.get("allowlist", []),
-                     note=spec.get("note"))
+    manifest = build(
+        manifest_dir,
+        spec.get("entries", []),
+        spec.get("allowlist", []),
+        note=spec.get("note"),
+    )
     out = Path(manifest_dir) / MANIFEST_NAME
-    print(f"wrote {out}: {len(manifest['entries'])} entries, "
-          f"{len(manifest['allowlist'])} allowlist")
+    print(
+        f"wrote {out}: {len(manifest['entries'])} entries, "
+        f"{len(manifest['allowlist'])} allowlist"
+    )
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """Command-line entry point; returns 0, or 1 if any manifest failed to verify."""
     parser = argparse.ArgumentParser(
-        description="Pin and verify the evidence behind a results writeup.")
+        description="Pin and verify the evidence behind a results writeup."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_verify = sub.add_parser(
-        "verify",
-        help="re-hash pinned evidence and check citation coverage")
+        "verify", help="re-hash pinned evidence and check citation coverage"
+    )
     p_verify.add_argument(
-        "dirs", nargs="*", metavar="dir",
-        help=(f"directories holding an {MANIFEST_NAME}; default: every one "
-              "under notebooks/*/results/"))
+        "dirs",
+        nargs="*",
+        metavar="dir",
+        help=(
+            f"directories holding an {MANIFEST_NAME}; default: every one "
+            "under notebooks/*/results/"
+        ),
+    )
 
     p_build = sub.add_parser(
-        "build", help=f"write the {MANIFEST_NAME} for a results directory")
-    p_build.add_argument("manifest_dir",
-                         help=f"directory to write {MANIFEST_NAME} into")
-    p_build.add_argument("--spec", required=True, metavar="spec.json",
-                         help="JSON spec: entries (relpath/role/note), "
-                              "allowlist (name/reason), optional note")
+        "build", help=f"write the {MANIFEST_NAME} for a results directory"
+    )
+    p_build.add_argument(
+        "manifest_dir", help=f"directory to write {MANIFEST_NAME} into"
+    )
+    p_build.add_argument(
+        "--spec",
+        required=True,
+        metavar="spec.json",
+        help="JSON spec: entries (relpath/role/note), "
+        "allowlist (name/reason), optional note",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "verify":

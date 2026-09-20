@@ -12,18 +12,32 @@ from smolbench.evals.quiz import COMPLIANT
 
 
 def mark(compliance: str = COMPLIANT, **kwargs: Any) -> Mark:
-    return Mark(query="q", answer=1, response="1", score=1,
-                compliance=compliance, **kwargs)
+    """Build a test mark with the requested score."""
+    return Mark(
+        query="q", answer=1, response="1", score=1, compliance=compliance, **kwargs
+    )
 
 
 def _sample_marks() -> Marks:
+    """Build a deterministic sample result."""
     return Marks(
         model="stub-model",
         marks=(
-            Mark(query="q1", answer=7, response="7", score=1,
-                 compliance=COMPLIANT, reasoning="think\nlines"),
-            Mark(query="q2", answer=True, response="banana", score=None,
-                 compliance="empty"),
+            Mark(
+                query="q1",
+                answer=7,
+                response="7",
+                score=1,
+                compliance=COMPLIANT,
+                reasoning="think\nlines",
+            ),
+            Mark(
+                query="q2",
+                answer=True,
+                response="banana",
+                score=None,
+                compliance="empty",
+            ),
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
@@ -45,7 +59,12 @@ def test_dump_dumps_load_loads_round_trip(tmp_path: Path) -> None:
     assert marks.server_config is None
     assert Marks.loads(text).server_config is None
     stamped = dataclasses.replace(
-        marks, server_config={"instance_type": "p6-b200.48xlarge", "gpu": "8x B200 180GB", "tp": 8}
+        marks,
+        server_config={
+            "instance_type": "p6-b200.48xlarge",
+            "gpu": "8x B200 180GB",
+            "tp": 8,
+        },
     )
     loaded = Marks.loads(stamped.dumps())
     assert loaded.server_config == stamped.server_config
@@ -56,10 +75,12 @@ def test_dump_dumps_load_loads_round_trip(tmp_path: Path) -> None:
 # COMPLIANT is an explicit label, not an overloaded None
 # ---------------------------------------------------------------------------
 
+
 def test_compliant_is_a_written_label(tmp_path: Path) -> None:
     """The string is what lands in the YAML, so a stored row says what it means."""
-    marks = Marks(model="m", marks=(mark(),),
-                  date=datetime(2026, 7, 1, tzinfo=timezone.utc))
+    marks = Marks(
+        model="m", marks=(mark(),), date=datetime(2026, 7, 1, tzinfo=timezone.utc)
+    )
     text = marks.dumps()
     assert "compliance: compliant" in text
     assert Marks.loads(text).marks[0].compliance == COMPLIANT

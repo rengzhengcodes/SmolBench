@@ -1,8 +1,20 @@
 """Run the family-ladder scaling induction study.
 
-Each lane needs a distinct state file and tag to prevent EC2 reattachment from
-switching its served model. Completion budgets reserve template overhead and
-timeouts scale with them to avoid censoring long CoT responses.
+Tag, shard suffix and state file are resolved by the ``Experiment`` facade;
+this driver only appends the model-lane suffix so concurrent lanes never
+reattach to each other's instance. Completion budgets reserve template
+overhead and timeouts scale with them to avoid censoring long CoT responses.
+
+Environment knobs (``keys.env`` or the fleet's per-lane export):
+
+- ``INDUCTION_MODELS``: comma-separated spec keys; unset runs the roster.
+- ``INDUCTION_SHARD``: ``index/count`` seed stride for one of several processes.
+- ``INDUCTION_STATE_FILE``: EC2 state-file override; defaults from the tag.
+- ``INDUCTION_FORCE_RERUN``: ``all`` or ``a-b`` seeds to re-collect.
+- ``EC2_EXPERIMENT_TAG``: fleet-exported base tag; defaults to the study's
+  ``standalone_tag``.
+
+Replacing these knobs with a config file logged per replication is issue #62.
 """
 
 import argparse
@@ -11,6 +23,7 @@ import os
 import string
 from math import ceil
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -22,67 +35,78 @@ logging.basicConfig(level=logging.INFO)
 load_dotenv(Path(__file__).resolve().parent / "keys.env", verbose=True)
 
 
-def _parse_shard(var: str) -> "tuple[int, int] | None":
-    """Parse environment variable `var` as ``"index/count"``; ``None`` if unset/empty.
+def _parse_shard(var: str) -> Optional[tuple[int, int]]:
+    """Read the shard from the environment variable named `var`.
+
+    The value is ``"index/count"`` (``INDUCTION_SHARD=0/3`` is process 0 of 3);
+    only the pair is parsed here. The ``-s<index>of<count>`` tag suffix and the
+    per-shard state file are derived from it by the ``Experiment`` facade.
 
     Parameters
     ----------
     var : str
-        Environment variable name.
+        Environment variable name to read.
 
     Returns
     -------
-    tuple[int, int] | None
-        Shard index and count, or ``None``.
+    Optional[tuple[int, int]]
+        Shard index and process count, or ``None`` when unset or empty.
 
     Raises
     ------
     SystemExit
-        Invalid shard syntax or bounds.
+        On an unparseable value or a violated ``count >= 1`` / ``0 <= index < count``.
     """
     raw = os.environ.get(var, "").strip()
     if not raw:
         return None
     try:
         index, count = (int(part) for part in raw.split("/", 1))
-    except ValueError:
-        raise SystemExit(f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3")
-    if count < 1 or not (0 <= index < count):
+    except ValueError as exc:
+        raise SystemExit(
+            f"{var}={raw!r}: expected 'index/count', e.g. {var}=0/3"
+        ) from exc
+    if count < 1 or not 0 <= index < count:
         raise SystemExit(f"{var}={raw!r}: need count >= 1 and 0 <= index < count")
     return index, count
 
 
-def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
+#: Sentinel for every seed; a word, so it cannot be mistaken for a seed number.
+FORCE_RERUN_ALL: str = "all"
+
+
+def _parse_force_seeds(raw: str, full_range: range) -> Optional[frozenset[int]]:
     """Parse ``INDUCTION_FORCE_RERUN`` into the set of seeds to re-collect.
 
     Parameters
     ----------
     raw : str
-        Rerun setting.
+        Raw ``INDUCTION_FORCE_RERUN`` value.
     full_range : range
-        Valid seeds.
+        Full range of valid seeds.
 
     Returns
     -------
-    frozenset[int] | None
-        Rerun seeds, or ``None``.
+    Optional[frozenset[int]]
+        Seeds to re-collect, or ``None`` when reruns are disabled.
 
     Raises
     ------
     SystemExit
-        Invalid rerun setting or bounds.
+        On an unparseable value or an out-of-range subrange, never a silent no-op.
     """
     raw = raw.strip()
     if not raw:
         return None
-    if raw == "1":
+    if raw == FORCE_RERUN_ALL:
         return frozenset(full_range)
     try:
         lo, hi = (int(part) for part in raw.split("-", 1))
-    except ValueError:
+    except ValueError as exc:
         raise SystemExit(
-            f"INDUCTION_FORCE_RERUN={raw!r}: expected '1' or 'a-b' (e.g. '0-11')"
-        )
+            f"INDUCTION_FORCE_RERUN={raw!r}: expected {FORCE_RERUN_ALL!r} or "
+            "'a-b' (e.g. '0-11')"
+        ) from exc
     if lo > hi or lo < full_range.start or hi >= full_range.stop:
         raise SystemExit(
             f"INDUCTION_FORCE_RERUN={raw!r}: subrange must lie inside "
@@ -93,9 +117,33 @@ def _parse_force_seeds(raw: str, full_range: range) -> "frozenset[int] | None":
 
 SHARD = _parse_shard("INDUCTION_SHARD")
 
-# Use the canonical roster to prevent duplicate-map drift.
-from smolbench.evals.study_config import load_study_config, roster_keys, tag_for  # noqa: E402
+# ec2 freezes EC2_* constants at import, so imports follow load_dotenv.
+# pylint: disable=wrong-import-position
+from smolbench.evals import Numeric
+from smolbench.evals.experiment import validate_experiment_tag
+from smolbench.evals.providers import ec2
+from smolbench.evals.study_config import (
+    load_study_config,
+    roster_keys,
+    tag_for,
+)
+from smolbench.evals.tokenization import for_model
+from smolbench.induction._common import (
+    Prompter,
+    RenderedQuery,
+    quizzes_from_prompts,
+)
+from smolbench.induction.experiment import InductionExperiment
+from smolbench.induction.periodic import (
+    CONDITIONS,
+    PeriodicConfig,
+    get_periodic_prompts,
+    numeric_count_query_gen,
+)
 
+# pylint: enable=wrong-import-position
+
+# Use the canonical roster to prevent duplicate-map drift.
 MODELS: dict[str, str] = {key: tag_for(key) for key in roster_keys()}
 
 # Shards need distinct tags and state files to prevent model swaps.
@@ -107,85 +155,79 @@ if SHARD is not None:
         for key in os.environ.get("INDUCTION_MODELS", "").split(",")
         if key.strip()
     ]
+    # Unknown keys are rejected by ``selected_models`` before anything runs.
     _chosen = set(_requested)
     _lane_models = [model for model in MODELS if model in _chosen]
-    _lane_models += [key for key in dict.fromkeys(_requested) if key not in MODELS]
-    _LANE = ("-" + "-".join(_lane_models) if _lane_models else "") + "-s{}of{}".format(
-        *SHARD
+    _LANE = "-" + "-".join(_lane_models) if _lane_models else ""
+
+
+def base_experiment_tag() -> str:
+    """Resolve the fleet-exported (or standalone) base tag, rejecting a bare prefix.
+
+    This is a runtime guard on the process's configuration, not a test: the
+    facade validates the full tag, but a fleet supervisor that exports only its
+    ``scaling-`` prefix would pass once the lane suffix is appended, so the base
+    is validated on its own before the suffix can hide it.
+
+    Returns
+    -------
+    str
+        ``EC2_EXPERIMENT_TAG`` if set, else the study's ``standalone_tag``.
+
+    Raises
+    ------
+    SystemExit
+        If the base tag is not itself a valid experiment tag.
+    """
+    tag = (
+        os.environ.get("EC2_EXPERIMENT_TAG") or load_study_config().fleet.standalone_tag
     )
-
-# Preserve a fleet-provided tag.
-os.environ.setdefault("EC2_EXPERIMENT_TAG", load_study_config().fleet.standalone_tag)
-if _LANE:
-    os.environ["EC2_EXPERIMENT_TAG"] += _LANE
-
-# Validate before EC2 imports freeze the environment.
-from smolbench.evals.experiment import validate_experiment_tag  # noqa: E402
-
-_RESOLVED_TAG = os.environ["EC2_EXPERIMENT_TAG"]
-try:
-    validate_experiment_tag(_RESOLVED_TAG, _LANE)
-except ValueError as exc:
-    raise SystemExit(str(exc)) from exc
-
-_DEFAULT_STATE_FILE = f".ec2_state_induction{_LANE}.json"
-
-from smolbench.evals.providers import ec2  # noqa: E402
-from smolbench.evals import Numeric  # noqa: E402
-from smolbench.evals.tokenization import for_model  # noqa: E402
-from smolbench.induction._common import Prompter, RenderedQuery, quizzes_from_prompts  # noqa: E402
-from smolbench.induction.experiment import InductionExperiment  # noqa: E402
-from smolbench.induction.periodic import (  # noqa: E402
-    CONDITIONS,
-    PeriodicConfig,
-    get_periodic_prompts,
-    numeric_count_query_gen,
-)
+    try:
+        validate_experiment_tag(tag, None)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return tag
 
 
-def derive_context_limit(lengths: "dict[str, int]") -> int:
+def find_shared_context_limit(lengths: dict[str, int]) -> int:
     """Return the single context window that every model in `lengths` shares.
 
     Parameters
     ----------
     lengths : dict[str, int]
-        Model context lengths.
+        Mapping of model keys to served context-window lengths.
 
     Returns
     -------
     int
-        Shared context length.
+        The shared context-window length.
 
     Raises
     ------
     SystemExit
-        Empty or non-uniform lengths; varying context confounds model scaling.
+        If `lengths` is empty or holds more than one distinct value.
     """
     if not lengths:
         raise SystemExit(
-            "derive_context_limit: got an empty {model: context_length} mapping, "
-            "so there is no context window to derive. Check that MODELS is "
-            "non-empty."
+            "find_shared_context_limit: empty {model: context_length} mapping"
         )
     distinct = sorted(set(lengths.values()))
     if len(distinct) > 1:
+        # A family's ceiling must differ from its siblings' by parameter
+        # count, not by the vendor's served context budget.
         detail = "; ".join(
             f"{length} -> {sorted(k for k, v in lengths.items() if v == length)}"
             for length in distinct
         )
         raise SystemExit(
-            f"This study's roster is served with {len(distinct)} different context "
-            f"lengths ({detail}). A scaling study cannot let context vary with the "
-            "vendor's own YaRN generosity: a family's ceiling would be confounded "
-            "with its context budget rather than its parameter count. Align the "
-            "max_model_len of every EC2_DEPLOY_SPECS entry in MODELS, or drop the "
-            "outlier from the roster."
+            f"roster is served with {len(distinct)} different context lengths "
+            f"({detail}); align EC2_DEPLOY_SPECS max_model_len or drop the outlier."
         )
     return distinct[0]
 
 
 #: Derived from specs so model context cannot confound scaling.
-CONTEXT_LIMIT: int = derive_context_limit(
+CONTEXT_LIMIT: int = find_shared_context_limit(
     {key: ec2.get_model_context_length(key) for key in MODELS}
 )
 
@@ -237,13 +279,6 @@ template = string.Template(
 #: Kept separate so a changed template cannot silently leak its range.
 RANGE_CLAUSE: str = " 1 through $seq_len"
 
-if RANGE_CLAUSE not in template.template:
-    # ``replace`` would otherwise silently retain the range.
-    raise RuntimeError(
-        f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.template; "
-        "the study template's range clause was edited without updating "
-        "RANGE_CLAUSE, which would silently make the zero arm leak seq_len."
-    )
 
 def _zero_template(base: string.Template) -> string.Template:
     """Derive the zero condition's range-free question from `base`.
@@ -253,58 +288,44 @@ def _zero_template(base: string.Template) -> string.Template:
     Parameters
     ----------
     base : string.Template
-        Template to make range-free.
+        Template whose range clause is removed.
 
     Returns
     -------
     string.Template
-        Range-free template.
+        The range-free question template.
+
+    Raises
+    ------
+    ValueError
+        If `base` lacks ``RANGE_CLAUSE``, since ``replace`` would silently
+        retain the range.
     """
+    if RANGE_CLAUSE not in base.template:
+        raise ValueError(f"RANGE_CLAUSE {RANGE_CLAUSE!r} not found in template.")
     return string.Template(base.template.replace(RANGE_CLAUSE, ""))
 
 
-# Explicit per-model entries prevent incorrect family-prefix inference.
-# Gemma-4-* and EXAONE-4.0-32B default thinking OFF, so their True is
-# load-bearing; DeepSeek uses ``thinking``, not ``enable_thinking``.
+# Derived from the roster so omissions cannot reach a billing box. Detecting
+# the toggle from each model's Hugging Face chat template instead is issue #65.
+# Ministral needs no toggle; DeepSeek spells it ``thinking``; the rest take
+# ``enable_thinking`` -- Gemma-4-* and EXAONE default thinking OFF, so their
+# True is load-bearing.
 COT_ARGS: dict[str, dict] = {
-    "qwen3.5-27b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "qwen3.5-122b-a10b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "qwen3.5-397b-a17b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-nano-4b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-nano-30b-a3b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "nemotron-3-super-120b-a12b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-e2b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-12b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "gemma-4-31b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.7-flash": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.5-air": {"chat_template_kwargs": {"enable_thinking": True}},
-    "glm-4.7": {"chat_template_kwargs": {"enable_thinking": True}},
-    "ministral-3-3b": {},
-    "ministral-3-8b": {},
-    "ministral-3-14b": {},
-    "exaone-4.0-32b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "exaone-4.5-33b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "k-exaone-236b-a23b": {"chat_template_kwargs": {"enable_thinking": True}},
-    "deepseek-v4-flash": {"chat_template_kwargs": {"thinking": True}},
-    "deepseek-v3.1": {"chat_template_kwargs": {"thinking": True}},
-    "deepseek-v4-pro": {"chat_template_kwargs": {"thinking": True}},
+    key: (
+        {}
+        if key.startswith("ministral")
+        else {
+            "chat_template_kwargs": {
+                "thinking" if key.startswith("deepseek") else "enable_thinking": True
+            }
+        }
+    )
+    for key in roster_keys()
 }
 
-# Raise rather than assert: optimization must not remove this billing gate.
-if tuple(COT_ARGS) != roster_keys():
-    _cot_args_roster_diff = sorted(set(COT_ARGS) ^ set(roster_keys()))
-    raise RuntimeError(
-        "COT_ARGS must match study_config.roster_keys(), key-for-key and in "
-        "the same ladder order. "
-        + (
-            f"Keys in exactly one of them: {_cot_args_roster_diff}"
-            if _cot_args_roster_diff
-            else "Same keys, but in a different order."
-        )
-    )
 
-
-def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
+def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
     """Render one replicate's queries, all four ``CONDITIONS`` arms of each.
 
     The quiz is fixed so the model is the independent variable.
@@ -314,23 +335,25 @@ def rendered_queries(seed: int, model: str) -> "list[RenderedQuery]":
     seed : int
         Replicate seed.
     model : str
-        Tokenizer model for the padded arm.
+        Needed because ``noise_intens`` is padded under this model's tokenizer.
 
     Returns
     -------
     list[RenderedQuery]
-        Rendered replicate queries.
+        Queries for all four ``CONDITIONS`` arms of the replicate.
     """
     cfg = PeriodicConfig(n=9, labels=9, seed=seed)
     prompter = Prompter(
         template, numeric_count_query_gen, range_free_template=_zero_template(template)
     )
     return list(
-        get_periodic_prompts(cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS)
+        get_periodic_prompts(
+            cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS
+        )
     )
 
 
-def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
+def make_quizzes(seed: int, model: str) -> dict[str, tuple]:
     """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
 
     Parameters
@@ -338,17 +361,17 @@ def make_quizzes(seed: int, model: str) -> "dict[str, tuple]":
     seed : int
         Replicate seed.
     model : str
-        Rendering model.
+        Model for query rendering.
 
     Returns
     -------
     dict[str, tuple]
-        Quizzes by information type.
+        Four quizzes keyed by ``INFO_TYPES`` in that order.
     """
     return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
 
 
-def probe_seeds(seeds: range) -> "list[int]":
+def probe_seeds(seeds: range) -> list[int]:
     """Return the ``PROBE_SEEDS`` evenly spaced seeds to probe, sorted and deduplicated.
 
     Includes both endpoints; ``PROBE_SEEDS`` must be at least 2.
@@ -356,12 +379,12 @@ def probe_seeds(seeds: range) -> "list[int]":
     Parameters
     ----------
     seeds : range
-        Non-empty seed range.
+        Non-empty range from which evenly spaced seeds are selected.
 
     Returns
     -------
     list[int]
-        Sorted unique probe seeds.
+        Evenly spaced seeds in ascending order without duplicates.
     """
     return sorted(
         {seeds[i * (len(seeds) - 1) // (PROBE_SEEDS - 1)] for i in range(PROBE_SEEDS)}
@@ -376,33 +399,30 @@ def completion_budget(model: str, seeds: range) -> int:
     Parameters
     ----------
     model : str
-        Model to budget.
+        Model whose completion budget is derived.
     seeds : range
-        Seed range for probes.
+        Seed range from which prompt-length probes are selected.
 
     Returns
     -------
     int
-        Per-model budget; a per-family cap would confound accuracy with room
-        to reason.
+        One number per model.
 
     Raises
     ------
     SystemExit
-        Budget below the viable CoT floor.
+        Below ``MIN_VIABLE_BUDGET``, which would truncate CoT and collect empties.
     """
     worst = 0
     for seed in probe_seeds(seeds):
         for query in rendered_queries(seed, model):
-            worst = max(worst, max(query.token_counts.values()))
+            worst = max(worst, *query.token_counts.values())
     budget = CONTEXT_LIMIT - worst - TEMPLATE_RESERVE
     if budget < MIN_VIABLE_BUDGET:
         raise SystemExit(
-            f"{model}: worst prompt is {worst:,} tokens, leaving only {budget:,} for "
-            f"completion against a {CONTEXT_LIMIT:,} context. That is below the "
-            f"{MIN_VIABLE_BUDGET:,} floor and would collect empties, not data. "
-            "Shorten the period set or investigate why this checkpoint's prompts "
-            "are unusually large."
+            f"{model}: worst prompt {worst:,} tokens leaves {budget:,} for "
+            f"completion against a {CONTEXT_LIMIT:,} context -- below the "
+            f"{MIN_VIABLE_BUDGET:,} floor."
         )
     logging.info(
         f"{model}: worst prompt {worst:,} tok (+{TEMPLATE_RESERVE:,} reserve) "
@@ -419,12 +439,12 @@ def request_timeout_seconds(budget: int) -> int:
     Parameters
     ----------
     budget : int
-        Completion budget.
+        Completion-token budget for the request.
 
     Returns
     -------
     int
-        Read timeout in seconds.
+        Per-request read timeout in seconds.
     """
     return max(REQUEST_TIMEOUT_FLOOR_SECONDS, ceil(budget / MIN_DECODE_TOK_S))
 
@@ -437,7 +457,8 @@ EXPERIMENT = InductionExperiment(
     info_types=INFO_TYPES,
     n_replicates=N_REPLICATES,
     base_seed=BASE_SEED,
-    state_file=os.environ.get("INDUCTION_STATE_FILE", _DEFAULT_STATE_FILE),
+    state_file=os.environ.get("INDUCTION_STATE_FILE") or None,
+    experiment_tag=base_experiment_tag() + _LANE,
     shard=SHARD,
     # Sharding limits forced reruns to owned seeds.
     force_seeds=_parse_force_seeds(
@@ -447,7 +468,7 @@ EXPERIMENT = InductionExperiment(
 )
 
 
-def selected_models() -> "tuple[str, ...]":
+def selected_models() -> tuple[str, ...]:
     """Return the spec keys to run: ``INDUCTION_MODELS``, or all of ``MODELS``.
 
     Canonical order keeps lane selection deterministic; invalid selections fail.
@@ -458,9 +479,8 @@ def selected_models() -> "tuple[str, ...]":
     keys = [k.strip() for k in wanted.split(",") if k.strip()]
     if not keys:
         raise SystemExit(
-            f"INDUCTION_MODELS={wanted!r}: named no models (only commas/"
-            "whitespace after splitting). Leave it unset to select all 21, "
-            "or name at least one spec key."
+            f"INDUCTION_MODELS={wanted!r}: named no models; leave unset to "
+            "select all."
         )
     unknown = [k for k in keys if k not in MODELS]
     if unknown:
@@ -471,15 +491,15 @@ def selected_models() -> "tuple[str, ...]":
     return tuple(m for m in MODELS if m in chosen)
 
 
-def main(argv: "list[str] | None" = None) -> None:
+def main(argv: Optional[list[str]] = None) -> None:
     """Warm tokenizers, derive budgets, provision, run, and summarize: the entry point.
 
     Provisions only when selected models have outstanding replicates.
 
     Parameters
     ----------
-    argv : list[str] | None, optional
-        Optional command-line arguments.
+    argv : Optional[list[str]], optional
+        A parameter so a test or notebook cell can call this without a subprocess.
     """
     parser = argparse.ArgumentParser(
         description="Family-ladder scaling induction study driver."
@@ -488,11 +508,8 @@ def main(argv: "list[str] | None" = None) -> None:
         "--teardown",
         action="store_true",
         help=(
-            "Terminate this experiment's EC2 instance and exit immediately. "
-            "STANDALONE USE ONLY: under the fleet, the supervisor owns "
-            "instance lifecycle and tears down after the deduction phase "
-            "has also finished with the box -- do not invoke this flag from "
-            "fleet-driven automation."
+            "Terminate this experiment's EC2 instance and exit. Standalone "
+            "use only: under the fleet the supervisor owns lifecycle."
         ),
     )
     args = parser.parse_args(argv)
@@ -529,8 +546,10 @@ def main(argv: "list[str] | None" = None) -> None:
         )
         EXPERIMENT.summarize(model)
     # The fleet may reuse this instance for deduction.
-    print(f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
-          flush=True)
+    print(
+        f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

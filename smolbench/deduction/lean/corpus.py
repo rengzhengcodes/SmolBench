@@ -93,7 +93,6 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
     Parameters
     ----------
     rec : dict
-        Split-file record.
 
     Returns
     -------
@@ -124,7 +123,9 @@ def _from_json(rec: dict) -> BenchmarkTheorem:
 
 
 @lru_cache(maxsize=8)
-def load_split(kind: SplitKind = "random", split: Split = "val") -> list[BenchmarkTheorem]:
+def load_split(
+    kind: SplitKind = "random", split: Split = "val"
+) -> list[BenchmarkTheorem]:
     """Load a split in file order.
 
     The cache excludes `data_root()`, so call `reset_caches` after repointing
@@ -133,9 +134,7 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
     Parameters
     ----------
     kind : SplitKind, optional
-        Split family.
     split : Split, optional
-        Partition.
 
     Returns
     -------
@@ -151,21 +150,21 @@ def load_split(kind: SplitKind = "random", split: Split = "val") -> list[Benchma
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found — the LeanDojo Benchmark 4 dataset is not "
-            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
+            'bootstrapped; see notebooks/deduction/README.md\'s "Data bootstrap"'
         )
     raw = json.loads(path.read_text())
     return [_from_json(r) for r in raw]
 
 
-def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
+def iter_with_proof(
+    kind: SplitKind = "random", split: Split = "val"
+) -> Iterator[BenchmarkTheorem]:
     """Yield traced theorems in file order.
 
     Parameters
     ----------
     kind : SplitKind, optional
-        Split family.
     split : Split, optional
-        Partition.
 
     Yields
     ------
@@ -178,41 +177,6 @@ def iter_with_proof(kind: SplitKind = "random", split: Split = "val") -> Iterato
 
 
 #: Fixed order keeps holdout indexes machine-independent.
-_SPLIT_ORDER: tuple[Split, ...] = ("train", "val", "test")
-
-#: Active study family; no compatibility family is emitted.
-_EVAL_SPLIT_KIND: SplitKind = "random"
-
-
-def eval_split_specs() -> tuple[tuple[SplitKind, Split], ...]:
-    """Return active ``(kind, split)`` pairs in fixed order.
-
-    Do not cache: callers repoint ``SMOLBENCH_LEAN_DATA``. An empty directory
-    raises because an empty holdout would silently report success.
-    """
-    root = data_root()
-    kind_dir = root / _EVAL_SPLIT_KIND
-    if not kind_dir.is_dir():
-        raise FileNotFoundError(
-            f"{kind_dir} not found — the corpus at data_root()={root} is not "
-            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
-        )
-    specs = tuple(
-        (_EVAL_SPLIT_KIND, split)
-        for split in _SPLIT_ORDER
-        if (kind_dir / f"{split}.json").is_file()
-    )
-    if not specs:
-        expected = ", ".join(f"{split}.json" for split in _SPLIT_ORDER)
-        raise ValueError(
-            f"{kind_dir} holds no recognised split file (expected at least one of "
-            f"{expected}) — an eval holdout built from an empty spec list "
-            "protects nothing; re-bootstrap the corpus (see "
-            "notebooks/deduction/README.md's \"Data bootstrap\")"
-        )
-    return specs
-
-
 def metadata() -> dict:
     """Load ``metadata.json`` keys ``dataset_name``, ``creation_time``, ``from_repo``
     (``{url, commit}``), and ``leandojo_version``; raise `FileNotFoundError` if absent.
@@ -221,7 +185,7 @@ def metadata() -> dict:
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found — the LeanDojo Benchmark 4 dataset is not "
-            "bootstrapped; see notebooks/deduction/README.md's \"Data bootstrap\""
+            'bootstrapped; see notebooks/deduction/README.md\'s "Data bootstrap"'
         )
     return json.loads(path.read_text())
 
@@ -264,9 +228,7 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     Parameters
     ----------
     kind : SplitKind
-        Split family.
     split : Split
-        Partition.
 
     Returns
     -------
@@ -276,15 +238,15 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
 
-def iter_replay_passing(kind: SplitKind = "random", split: Split = "val") -> Iterator[BenchmarkTheorem]:
+def iter_replay_passing(
+    kind: SplitKind = "random", split: Split = "val"
+) -> Iterator[BenchmarkTheorem]:
     """Yield replay-success theorems in split-file order.
 
     Parameters
     ----------
     kind : SplitKind, optional
-        Split family.
     split : Split, optional
-        Partition.
 
     Yields
     ------
@@ -318,7 +280,7 @@ def reset_caches() -> None:
     load_split.cache_clear()
 
     # Avoid the corpus <-> premises import cycle.
-    from . import premises
+    from . import premises  # lazy to keep corpus cheap; pylint: disable=cyclic-import
 
     premises._index.cache_clear()
     premises._traced_root.cache_clear()

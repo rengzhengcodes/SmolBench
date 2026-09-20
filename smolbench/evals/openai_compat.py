@@ -15,14 +15,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 from joblib import Parallel, delayed
 
-from smolbench.evals import Quiz, Mark, Marks
+from smolbench.evals import Mark, Marks, Quiz
 from smolbench.evals.quiz import COMPLIANT
 
 #: Metadata calls are small; completions need separate long read timeouts.
 METADATA_TIMEOUT_S: int = 120
 
 
-def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float = METADATA_TIMEOUT_S) -> Any:
+def metadata_get(url: str, api_key: str, *, check_status: bool) -> Any:
     """Fetch a bearer-authenticated metadata JSON body.
 
     Parameters
@@ -32,10 +32,7 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     api_key : str
         Bearer token for the request.
     check_status : bool
-        Raise before parsing; False parses error bodies. Keyword-only with no
-        default so the split cannot be silently unified.
-    timeout : float, optional
-        Request timeout in seconds.
+        True raises before parsing (``list_models``: AWS, EC2).
 
     Returns
     -------
@@ -45,16 +42,16 @@ def metadata_get(url: str, api_key: str, *, check_status: bool, timeout: float =
     Raises
     ------
     requests.exceptions.HTTPError
-        4xx/5xx when ``check_status`` is True.
+        4xx/5xx, when ``check_status`` is True.
     requests.exceptions.RequestException
-        Connection failure.
+        Connection-level failure, either way.
     requests.exceptions.JSONDecodeError
-        Non-JSON response.
+        Non-JSON body, even on a 2xx.
     """
     response = requests.get(
         url=url,
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=timeout,
+        timeout=METADATA_TIMEOUT_S,
     )
     if check_status:
         response.raise_for_status()
@@ -69,12 +66,12 @@ def is_retryable_request_error(err: requests.exceptions.RequestException) -> boo
     Parameters
     ----------
     err : requests.exceptions.RequestException
-        Request failure.
+        Request failure to classify.
 
     Returns
     -------
     bool
-        Retry eligibility.
+        Whether the request should be retried.
     """
     if isinstance(err, requests.exceptions.HTTPError):
         response = err.response
@@ -92,17 +89,17 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     Parameters
     ----------
     response : requests.Response
-        Open streaming response.
+        An open ``requests.post(..., stream=True)`` response.
 
     Returns
     -------
     dict
-        Non-streamed-compatible body; usage is empty when absent.
+        Parsed stream containing choices and token usage.
 
     Raises
     ------
     requests.exceptions.ChunkedEncodingError
-        Malformed or truncated stream.
+        A malformed SSE chunk.
     """
     content_parts: List[str] = []
     reasoning_parts: List[str] = []
@@ -118,7 +115,7 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
             continue
         if not line.startswith("data:"):
             continue  # SSE comment/keepalive line
-        payload = line[len("data:"):].strip()
+        payload = line[len("data:") :].strip()
         if payload == "[DONE]":
             saw_done = True
             break
@@ -152,7 +149,9 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
         )
 
     # None matches vLLM's reasoning-only non-streamed response.
-    message: Dict[str, Any] = {"content": "".join(content_parts) if saw_content else None}
+    message: Dict[str, Any] = {
+        "content": "".join(content_parts) if saw_content else None
+    }
     if saw_reasoning:
         message["reasoning_content"] = "".join(reasoning_parts)
     return {
@@ -177,8 +176,12 @@ def _no_extra_headers(model: str) -> Dict[str, str]:
     return {}
 
 
-def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
-          log_invalid: bool = False) -> Marks:
+def grade(
+    quiz: Quiz,
+    responses: List[Tuple[str, Optional[str]]],
+    model: str,
+    log_invalid: bool = False,
+) -> Marks:
     """Grade ``(content, reasoning)`` responses in quiz order.
 
     Preserve compliance independently of score so malformed correct answers remain visible.
@@ -186,18 +189,18 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
     Parameters
     ----------
     quiz : Quiz
-        Questions.
+        Questions whose responses are graded.
     responses : List[Tuple[str, Optional[str]]]
-        Responses in quiz order.
+        Content and reasoning responses in quiz order.
     model : str
-        Parser model.
+        Model whose response parser is selected.
     log_invalid : bool
-        Log invalid responses.
+        Log unparseable responses at INFO.
 
     Returns
     -------
     Marks
-        Quiz marks.
+        Marks for the quiz responses.
     """
     from smolbench.evals.parsing import parse_for
 
@@ -210,47 +213,69 @@ def grade(quiz: Quiz, responses: List[Tuple[str, Optional[str]]], model: str,
                 f"grade: parser raised on a response, marking invalid: "
                 f"{type(exc).__name__}: {exc}"
             )
-            mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
-                                  reasoning=reasoning, score=None,
-                                  compliance="parser-error"))
+            mark_list.append(
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response=raw,
+                    reasoning=reasoning,
+                    score=None,
+                    compliance="parser-error",
+                )
+            )
             continue
         if parsed.value is None:
             if log_invalid:
                 logging.info(
                     f"unparseable response ({parsed.violation}): {raw[:120]!r}"
                 )
-            mark_list.append(Mark(query=q.prompt, answer=q.answer,
-                                  response=raw, reasoning=reasoning, score=None,
-                                  compliance=parsed.violation))
+            mark_list.append(
+                Mark(
+                    query=q.prompt,
+                    answer=q.answer,
+                    response=raw,
+                    reasoning=reasoning,
+                    score=None,
+                    compliance=parsed.violation,
+                )
+            )
             continue
         # Avoid treating a future falsy violation label as compliant.
         compliance = COMPLIANT if parsed.violation is None else parsed.violation
-        mark_list.append(Mark(query=q.prompt, answer=q.answer, response=raw,
-                              reasoning=reasoning,
-                              score=int(q.score(parsed.value)),
-                              compliance=compliance))
+        mark_list.append(
+            Mark(
+                query=q.prompt,
+                answer=q.answer,
+                response=raw,
+                reasoning=reasoning,
+                score=int(q.score(parsed.value)),
+                compliance=compliance,
+            )
+        )
     return Marks(model=model, marks=tuple(mark_list))
 
 
-def _render_progress(done: int, total: int, model: str, width: int = 30) -> None:
+def _render_progress(done: int, total: int, model: str) -> None:
     """Render the completion progress bar.
 
     Parameters
     ----------
     done : int
-        Completed prompts.
+        Number of completed prompts.
     total : int
-        Total prompts.
+        Total prompts being evaluated.
     model : str
-        Displayed model.
-    width : int, optional
-        Character width.
+        Model name shown in the bar.
     """
-    filled: int = width if total == 0 else int(width * done / total)
-    bar: str = "#" * filled + "-" * (width - filled)
+    filled: int = 30 if total == 0 else int(30 * done / total)
+    filled_bar: str = "#" * filled + "-" * (30 - filled)
     pct: float = 100.0 if total == 0 else 100.0 * done / total
     end: str = "\n" if done >= total else ""
-    print(f"\r{model}: [{bar}] {done}/{total} prompted ({pct:3.0f}%)", end=end, flush=True)
+    print(
+        f"\r{model}: [{filled_bar}] {done}/{total} prompted ({pct:3.0f}%)",
+        end=end,
+        flush=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -314,12 +339,12 @@ class ChatClient:
         Parameters
         ----------
         suffix : str
-            Environment-variable suffix.
+            Suffix appended to ``env_prefix`` to form the environment-variable name.
 
         Returns
         -------
         bool
-            Parsed flag.
+            The parsed flag value.
         """
         var = f"{self.env_prefix}_{suffix}"
         raw = os.getenv(var, "0").strip().lower()
@@ -353,34 +378,33 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
-            User prompt.
+            User prompt to send.
         model : str
-            Model id.
+            Model to query.
         seed : int
-            Required decoding seed.
+            Decoding seed, sent with every request.
         system : str, optional
-            Extra system message after the provider prompt.
+            Extra system message.
         context_length : int, optional
-            Post-hoc token guard; overruns still return for grading.
+            Token budget used to warn when responses approach the limit.
         extra_args : dict, optional
-            Request-body additions.
+            Extra request fields merged before protected seed and stream keys.
         request_timeout : int, optional
-            Read-timeout override.
+            Per-request read timeout in seconds, overriding ``read_timeout_s``.
         max_retries : int, optional
-            Retryable-failure cap; None retries indefinitely. ``on_unreachable``
-            still fires first on a connection-level failure.
+            Cap on retryable failures (HTTP 429/5xx or connection-level).
 
         Returns
         -------
         ChatResult
-            Complete response.
+            Full chat-completion result.
 
         Raises
         ------
         requests.exceptions.RequestException
-            Non-retryable or exhausted request failure.
+            A non-retryable HTTP error (4xx other than 429).
         RuntimeError
-            Connection-failure cap reached.
+            ``max_connection_failures`` consecutive connection-level failures tripped first.
         """
         sys_prompt = self.system_prompt(model)
         messages: List[Dict[str, str]] = []
@@ -407,7 +431,8 @@ class ChatClient:
                 with requests.post(
                     url=url,
                     # Client auth/content type win on collisions.
-                    headers=self.extra_headers(model) | {
+                    headers=self.extra_headers(model)
+                    | {
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
                     },
@@ -416,8 +441,11 @@ class ChatClient:
                         | (extra_args if extra_args else {})
                         # Preserve seed and streamed usage over caller additions.
                         | {"seed": seed}
-                        | ({"stream": True, "stream_options": {"include_usage": True}}
-                           if stream else {})
+                        | (
+                            {"stream": True, "stream_options": {"include_usage": True}}
+                            if stream
+                            else {}
+                        )
                     ),
                     timeout=(
                         self.connect_timeout_s,
@@ -485,7 +513,9 @@ class ChatClient:
                         f"Response:\n{body}\n was {total_tokens} > {context_length}"
                     )
                 elif self._flag("INFO"):
-                    logging.info(f"Response:\n{body}\n was {total_tokens} <= {context_length}")
+                    logging.info(
+                        f"Response:\n{body}\n was {total_tokens} <= {context_length}"
+                    )
                 return ChatResult(
                     content=content,
                     reasoning=reasoning,
@@ -545,21 +575,21 @@ class ChatClient:
         Parameters
         ----------
         prompt : str
-            User prompt.
+            User prompt sent to the model.
         model : str
-            Model id.
+            Model to query.
         seed : int
             Decoding seed.
         context_length : int, optional
-            Token guard.
+            Token-budget guard passed to ``complete()``.
         extra_args : Optional[Dict[str, Any]], optional
-            Request-body additions.
+            Extra request-body arguments passed to ``complete()``.
         request_timeout : Optional[int], optional
-            Read-timeout override.
+            Per-request read timeout passed to ``complete()``.
         system : Optional[str], optional
-            Extra system message.
+            Extra system message passed to ``complete()``.
         max_retries : Optional[int], optional
-            Retry cap.
+            Retry cap passed to ``complete()``.
 
         Returns
         -------
@@ -578,7 +608,9 @@ class ChatClient:
         )
         return result.content, result.reasoning
 
-    def _indexed_query(self, index: int, *args: Any, **kwargs: Any) -> Tuple[int, Tuple[str, Optional[str]]]:
+    def _indexed_query(
+        self, index: int, *args: Any, **kwargs: Any
+    ) -> Tuple[int, Tuple[str, Optional[str]]]:
         """Tag a query result with its quiz position.
 
         The index restores order from unordered parallel results.
@@ -586,16 +618,16 @@ class ChatClient:
         Parameters
         ----------
         index : int
-            Quiz position.
+            Question's quiz position.
         *args : Any
-            Query positional arguments.
+            Positional arguments forwarded to ``query()``.
         **kwargs : Any
-            Query keyword arguments.
+            Keyword arguments forwarded to ``query()``.
 
         Returns
         -------
         Tuple[int, Tuple[str, Optional[str]]]
-            Quiz position and result.
+            The quiz position and ``query()`` result.
         """
         return index, self.query(*args, **kwargs)
 
@@ -614,39 +646,47 @@ class ChatClient:
         Parameters
         ----------
         quiz : Quiz
-            Questions.
+            Questions to evaluate.
         model : str
-            Model id.
+            Model to query and grade.
         seed : int
             Shared decoding seed.
         extra_args : dict, optional
-            Request-body additions.
+            Forwarded to every ``query``, as is ``request_timeout``.
         max_parallel : int, optional
-            Thread fan-out; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS``
-            (8). Lower it for CoT or contention censors the length distribution.
+            Thread fan-out; defaults to ``{env_prefix}_MAX_PARALLEL_REQUESTS`` (8).
         request_timeout : Optional[int], optional
-            Read-timeout override.
+            Per-request timeout forwarded to ``query``.
         show_progress : bool
-            Show progress.
+            Print a live "N/total prompted" bar (default True).
 
         Returns
         -------
         Marks
-            Quiz marks.
+            Marks for every quiz question.
         """
         ctx_len: int = self.context_length(model)
         total: int = len(quiz)
-        max_workers: int = max(1, min(total, max_parallel or self._default_max_parallel()))
+        max_workers: int = max(
+            1, min(total, max_parallel or self._default_max_parallel())
+        )
 
         # Preserve quiz order after unordered completion.
         results_by_index: Dict[int, Tuple[str, Optional[str]]] = {}
         completed: int = 0
         if show_progress:
             _render_progress(completed, total, model)
-        stream = Parallel(n_jobs=max_workers, prefer="threads", return_as="generator_unordered")(
+        stream = Parallel(
+            n_jobs=max_workers, prefer="threads", return_as="generator_unordered"
+        )(
             delayed(self._indexed_query)(
-                i, q.prompt, model, seed, ctx_len,
-                extra_args=extra_args, request_timeout=request_timeout,
+                i,
+                q.prompt,
+                model,
+                seed,
+                ctx_len,
+                extra_args=extra_args,
+                request_timeout=request_timeout,
             )
             for i, q in enumerate(quiz)
         )
@@ -655,6 +695,8 @@ class ChatClient:
             completed += 1
             if show_progress:
                 _render_progress(completed, total, model)
-        responses: List[Tuple[str, Optional[str]]] = [results_by_index[i] for i in range(total)]
+        responses: List[Tuple[str, Optional[str]]] = [
+            results_by_index[i] for i in range(total)
+        ]
 
         return grade(quiz, responses, model, log_invalid=self._flag("INFO"))

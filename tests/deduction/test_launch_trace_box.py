@@ -31,11 +31,11 @@ def fake_aws(tmp_path: Path) -> Iterator[tuple[Path, Path]]:
     stub.write_text(
         "#!/bin/bash\n"
         f'echo "$2" >> {log}\n'
-        f'n=$(wc -l < {log})\n'
+        f"n=$(wc -l < {log})\n"
         f'printf "%s\\0" "$@" > {tmp_path}/argv.$n\n'
         'if [ "$2" = "describe-instances" ]; then echo None; exit 0; fi\n'
         'if [ "$2" = "run-instances" ]; then echo i-fake0123; exit 0; fi\n'
-        'echo ami-fake0123\n'
+        "echo ami-fake0123\n"
     )
     stub.chmod(0o755)
     yield tmp_path, bindir
@@ -48,8 +48,14 @@ def _run(
     env["PATH"] = f"{bindir}:{env['PATH']}"
     env["GITHUB_ACCESS_TOKEN"] = SENTINEL
     env.update(env_extra or {})
-    return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True,
-                          text=True, timeout=120, env=env)
+    return subprocess.run(
+        ["bash", str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=env,
+    )
 
 
 def _user_data(workdir: Path) -> str:
@@ -64,16 +70,30 @@ def _user_data(workdir: Path) -> str:
 def test_script_parses() -> None:
     """`bash -n` on both the launcher and the runbook it ships."""
     for path in (SCRIPT, SCRIPTS / "deduction" / "trace_mathlib_ec2.sh"):
-        proc = subprocess.run(["bash", "-n", str(path)], capture_output=True, text=True)
+        proc = subprocess.run(
+            ["bash", "-n", str(path)], capture_output=True, text=True, check=False
+        )
         assert proc.returncode == 0, f"{path.name}: {proc.stderr}"
 
 
 def test_dry_run_needs_no_aws_at_all(tmp_path: Path) -> None:
     """Dry run must need neither AWS nor credentials, making its plan reviewable."""
     proc = subprocess.run(
-        ["env", "-i", "PATH=/usr/bin:/bin", f"HOME={tmp_path}",
-         f"GITHUB_ACCESS_TOKEN={SENTINEL}", "bash", str(SCRIPT), "--dry-run"],
-        capture_output=True, text=True, timeout=120)
+        [
+            "env",
+            "-i",
+            "PATH=/usr/bin:/bin",
+            f"HOME={tmp_path}",
+            f"GITHUB_ACCESS_TOKEN={SENTINEL}",
+            "bash",
+            str(SCRIPT),
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
     assert proc.returncode == 0, proc.stderr
     assert "region=us-west-2" in proc.stdout
     assert "ssm_param=/smolbench/deduction/github_access_token" in proc.stdout
@@ -94,7 +114,9 @@ def test_token_value_never_reaches_the_user_data(fake_aws: tuple[Path, Path]) ->
     assert "--with-decryption" in user_data
     assert "/smolbench/deduction/github_access_token" in user_data
     # `su` argv must not carry the secret.
-    su_lines = [ln for ln in user_data.splitlines() if ln.lstrip().startswith("su ubuntu")]
+    su_lines = [
+        ln for ln in user_data.splitlines() if ln.lstrip().startswith("su ubuntu")
+    ]
     assert len(su_lines) == 1, su_lines
     assert "GITHUB_ACCESS_TOKEN" not in su_lines[0], su_lines[0]
     assert "trace_mathlib_ec2.sh" in su_lines[0]
@@ -104,12 +126,18 @@ def test_token_value_never_reaches_the_user_data(fake_aws: tuple[Path, Path]) ->
 
 def test_launcher_env_token_is_not_required(fake_aws: tuple[Path, Path]) -> None:
     """Only the instance needs the token after moving resolution to SSM."""
-    workdir, bindir = fake_aws
+    _workdir, bindir = fake_aws
     env = dict(os.environ)
     env["PATH"] = f"{bindir}:{env['PATH']}"
     env.pop("GITHUB_ACCESS_TOKEN", None)
-    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True,
-                          timeout=120, env=env)
+    proc = subprocess.run(
+        ["bash", str(SCRIPT)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        check=False,
+    )
     assert proc.returncode == 0, proc.stderr
     assert "i-fake0123" in proc.stdout
 
@@ -123,10 +151,15 @@ def test_describe_instances_guards_run_instances(fake_aws: tuple[Path, Path]) ->
     assert "describe-instances" in calls and "run-instances" in calls
     assert calls.index("describe-instances") < calls.index("run-instances")
 
-    describe = next(p.read_text().split("\0") for p in sorted(workdir.glob("argv.*"))
-                    if "describe-instances" in p.read_text().split("\0"))
+    describe = next(
+        p.read_text().split("\0")
+        for p in sorted(workdir.glob("argv.*"))
+        if "describe-instances" in p.read_text().split("\0")
+    )
     filters = [a for a in describe if a.startswith("Name=")]
-    assert any(a.startswith("Name=tag:Name,Values=smolbench-trace-") for a in filters), filters
+    assert any(
+        a.startswith("Name=tag:Name,Values=smolbench-trace-") for a in filters
+    ), filters
     assert "Name=instance-state-name,Values=pending,running" in filters, filters
 
 
@@ -149,7 +182,7 @@ def test_an_in_flight_instance_stops_the_launch(
         "#!/bin/bash\n"
         f'echo "$2" >> {workdir}/calls.log\n'
         'if [ "$2" = "describe-instances" ]; then echo i-already-running; exit 0; fi\n'
-        'echo ami-fake0123\n'
+        "echo ami-fake0123\n"
     )
     (bindir / "aws").chmod(0o755)
     proc = _run(bindir)

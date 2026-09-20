@@ -48,7 +48,9 @@ class NullVerifier:
     #: Class attributes are not descriptors, so `runner` can call `verifier.ProofResult(...)`.
     ProofResult = NullProofResult
 
-    def replay_ground_truth(self, bt: BenchmarkTheorem, timeout: int = 600) -> NullReplayResult:
+    def replay_ground_truth(
+        self, bt: BenchmarkTheorem, timeout: int = 600
+    ) -> NullReplayResult:
         """Report that the ground-truth sanity replay was not attempted."""
         return NullReplayResult(
             theorem=bt.full_name,
@@ -84,7 +86,9 @@ class NullVerifier:
         self, dojo: Any, state_at_k: Any, tail: str, theorem_name: str
     ) -> NullProofResult:
         """Report the candidate tail as ``verdict="unverified"``, recording it verbatim."""
-        return NullProofResult(theorem=theorem_name, verdict="unverified", tail_tried=tail)
+        return NullProofResult(
+            theorem=theorem_name, verdict="unverified", tail_tried=tail
+        )
 
     def verify_proof_tail(
         self, bt: BenchmarkTheorem, k: int, tail: str, timeout: int = 600
@@ -107,4 +111,6 @@ class NullVerifier:
         NullProofResult
             Unverified result.
         """
-        return NullProofResult(theorem=bt.full_name, verdict="unverified", tail_tried=tail)
+        return NullProofResult(
+            theorem=bt.full_name, verdict="unverified", tail_tried=tail
+        )

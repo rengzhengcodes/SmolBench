@@ -20,7 +20,6 @@ Chain = Literal["stepk", "hint", "noise"]
 _MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
 
 
-
 def split_state(state_pp: str) -> tuple[str, str]:
     """Return `(hypotheses, goals)` from a Lean tactic-state pretty-print.
 
@@ -29,7 +28,6 @@ def split_state(state_pp: str) -> tuple[str, str]:
     Parameters
     ----------
     state_pp : str
-        Lean state.
 
     Returns
     -------
@@ -42,7 +40,10 @@ def split_state(state_pp: str) -> tuple[str, str]:
             goal_start = i
             while goal_start > 0 and lines[goal_start - 1].lstrip().startswith("case "):
                 goal_start -= 1
-            return "\n".join(lines[:goal_start]).rstrip(), "\n".join(lines[goal_start:]).rstrip()
+            return (
+                "\n".join(lines[:goal_start]).rstrip(),
+                "\n".join(lines[goal_start:]).rstrip(),
+            )
     return state_pp.rstrip(), ""
 
 
@@ -55,7 +56,6 @@ def extract_goal_only(state_pp: str) -> str:
     Parameters
     ----------
     state_pp : str
-        Lean state.
 
     Returns
     -------
@@ -86,7 +86,6 @@ def extract_goal_only(state_pp: str) -> str:
     return "\n".join(kept).rstrip()
 
 
-
 @dataclass(frozen=True)
 class RenderedContext:
     """One rendered (chain, level) context rung.
@@ -108,7 +107,6 @@ class RenderedContext:
         return f"{self.chain}:{self.level}"
 
 
-
 def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
     """Cumulative `stepk:0..level`, for `level` in {0,1,2}."""
     tt = theorem.traced_tactics[k]
@@ -127,14 +125,11 @@ def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
             parts.append(
                 "## Proof so far\n_(no tactics applied yet — this is the start of the proof)_"
             )
-        parts.append(
-            f"## Theorem\n`{theorem.full_name}` in `{theorem.file_path}`"
-        )
+        parts.append(f"## Theorem\n`{theorem.full_name}` in `{theorem.file_path}`")
     return parts
 
 
 _HINT2_3_TOKEN_CAP = 50_000  # bounds transitive-closure rendering.
-
 
 
 def _count_tokens(s: str) -> int:
@@ -146,7 +141,6 @@ def _count_tokens(s: str) -> int:
     Parameters
     ----------
     s : str
-        Text.
 
     Returns
     -------
@@ -155,6 +149,7 @@ def _count_tokens(s: str) -> int:
     """
     try:
         import tiktoken
+
         return len(tiktoken.get_encoding("cl100k_base").encode(s))
     except Exception:  # noqa: BLE001
         return len(s) // 4
@@ -170,17 +165,20 @@ def _as_full_prompt(level: int, text: str) -> str:
     Parameters
     ----------
     level : int
-        Noise level.
     text : str
-        Context text.
 
     Returns
     -------
     str
         User prompt.
     """
-    from . import prompt as _prompt
-    return _prompt.build_user_prompt(RenderedContext(chain="noise", level=level, text=text))
+    from . import (
+        prompt as _prompt,  # RenderedContext cycle; pylint: disable=cyclic-import
+    )
+
+    return _prompt.build_user_prompt(
+        RenderedContext(chain="noise", level=level, text=text)
+    )
 
 
 def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -197,11 +195,8 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     Parameters
     ----------
     theorem : BenchmarkTheorem
-        Theorem.
     k : int
-        Tactic-step index.
     level : int
-        Noise level.
 
     Returns
     -------
@@ -266,7 +261,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
 
     # Derive the suffix length to avoid drift from prompt.py.
     suffix_len = len(base_prompt) - len(base_text)
-    pad = padded_prompt[len(base_text): len(padded_prompt) - suffix_len]
+    pad = padded_prompt[len(base_text) : len(padded_prompt) - suffix_len]
 
     # Re-rendering detects a future prompt prefix that would mis-locate padding.
     reconstructed = _as_full_prompt(level, base_text + pad)
@@ -295,23 +290,27 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
         parts.append("## Premises used in the next tactic\n_(none recorded)_")
 
     if level >= 1:
-        from .premises import lookup, signature
+        from .premises import lookup, signature  # pylint: disable=cyclic-import
+
         sigs: list[str] = []
         for n in names:
             p = lookup(n)
             if p is None:
                 sigs.append(f"### `{n}`\n_(not found in premise corpus)_")
             else:
-                sigs.append(
-                    f"### `{n}` ({p.kind})\n```lean\n{signature(p)}\n```"
-                )
+                sigs.append(f"### `{n}` ({p.kind})\n```lean\n{signature(p)}\n```")
         if sigs:
             parts.append("## Premise signatures\n" + "\n\n".join(sigs))
 
     if level >= 2:
         # ``body_with_proof`` falls back without ``_traced_root()``; label it so
         # source availability is not misrepresented.
-        from .premises import lookup, body_with_proof, has_full_source
+        from .premises import (  # pylint: disable=cyclic-import
+            body_with_proof,
+            has_full_source,
+            lookup,
+        )
+
         resolved = [(n, lookup(n)) for n in names]
         full_source: dict[str, bool] = {
             n: has_full_source(p) for n, p in resolved if p is not None
@@ -335,7 +334,12 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
             parts.append(f"{heading}\n" + "\n\n".join(bodies))
 
     if level >= 3:
-        from .premises import body_with_proof, lookup, premise_dep_closure
+        from .premises import (  # pylint: disable=cyclic-import
+            body_with_proof,
+            lookup,
+            premise_dep_closure,
+        )
+
         depth = level - 2  # hint:3 = 1-hop, hint:4 = 2-hop, hint:5 = 3-hop, ...
         seeds: list = []
         for n in names:
@@ -367,7 +371,6 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
     return parts
 
 
-
 def validate(chain: Chain, level: int) -> None:
     """Check that `(chain, level)` names an in-range rung.
 
@@ -376,9 +379,7 @@ def validate(chain: Chain, level: int) -> None:
     Parameters
     ----------
     chain : Chain
-        Rung chain.
     level : int
-        Rung level.
     """
     if chain not in _MAX_LEVEL:
         raise ValueError(f"unknown chain: {chain!r}")
@@ -387,7 +388,9 @@ def validate(chain: Chain, level: int) -> None:
         raise ValueError(f"{chain} level must be 0..{hi}; got {level}")
 
 
-def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> RenderedContext:
+def render(
+    theorem: BenchmarkTheorem, k: int, chain: Chain, level: int
+) -> RenderedContext:
     """Render context at proof step `k` of `theorem` for the given (chain, level).
 
     ``k`` is the 0-indexed step to prove; context describes the preceding state.
@@ -395,13 +398,9 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     Parameters
     ----------
     theorem : BenchmarkTheorem
-        Theorem.
     k : int
-        Tactic-step index.
     chain : Chain
-        Context chain.
     level : int
-        Rung level.
 
     Returns
     -------
@@ -433,14 +432,22 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
 # Default rungs stop at hint:3; validation permits hint:9, whose mathlib fan-out
 # reaches the 50k cap around depth 5–6.
 IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
-    ("stepk", 0), ("stepk", 1), ("stepk", 2),
-    ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3),
-    ("noise", 1), ("noise", 2), ("noise", 3),
+    ("stepk", 0),
+    ("stepk", 1),
+    ("stepk", 2),
+    ("hint", 0),
+    ("hint", 1),
+    ("hint", 2),
+    ("hint", 3),
+    ("noise", 1),
+    ("noise", 2),
+    ("noise", 3),
 )
 
 
-
-def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> bool:
+def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=too-many-return-statements
+    theorem: BenchmarkTheorem, k: int, chain: Chain, level: int
+) -> bool:
     """True iff this rung adds no informational content beyond the previous rung.
 
     Skip trivial cells so counted cells all add context; called by
@@ -449,13 +456,9 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
     Parameters
     ----------
     theorem : BenchmarkTheorem
-        Theorem.
     k : int
-        Tactic-step index.
     chain : Chain
-        Rung chain.
     level : int
-        Rung level.
 
     Returns
     -------
@@ -488,7 +491,12 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
             return True
         if level == 0:
             return False
-        from .premises import body_with_proof, lookup, signature
+        from .premises import (  # pylint: disable=cyclic-import
+            body_with_proof,
+            lookup,
+            signature,
+        )
+
         premises = [lookup(p["full_name"]) for p in tt.premises]
         if level == 1:
             return all(p is None for p in premises)
@@ -498,7 +506,8 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
                     return False
             return True
         if level >= 3:
-            from .premises import premise_dep_closure
+            from .premises import premise_dep_closure  # pylint: disable=cyclic-import
+
             seeds = [p for p in premises if p is not None]
             return not premise_dep_closure(seeds, level - 2)
         return False
@@ -508,6 +517,7 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
         # Must use full-prompt tokens like noise rendering; this also subsumes the
         # structural hint test, or padding diverges silently.
         from smolbench.evals.tokenization import TiktokenTokenizer
+
         tokenizer = TiktokenTokenizer()
         base_parts = _render_hint_parts(theorem, k, level - 1)
         target_parts = _render_hint_parts(theorem, k, level)

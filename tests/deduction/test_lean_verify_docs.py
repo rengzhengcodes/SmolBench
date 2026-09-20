@@ -3,6 +3,8 @@
 They run without `lean_interact` so a missing package cannot skip its guard.
 """
 
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import re
@@ -47,9 +49,13 @@ def test_readme_keeps_the_traced_cache_claim_narrow() -> None:
     text = (NOTEBOOKS / "deduction" / "README.md").read_text()
     assert "~/.cache/lean_dojo/" in text
     idx = text.index("That cache is NOT obsolete")
-    paragraph = text[idx:text.index("\n\n", idx)]
-    for token in ("premises", "_traced_root", "hint/noise",
-                  "Only VERIFICATION has stopped depending on it."):
+    paragraph = text[idx : text.index("\n\n", idx)]
+    for token in (
+        "premises",
+        "_traced_root",
+        "hint/noise",
+        "Only VERIFICATION has stopped depending on it.",
+    ):
         assert token in paragraph, (
             f"{token!r} missing from the traced-cache narrowing paragraph; the "
             "claim must stay scoped to verification"
@@ -64,12 +70,16 @@ def test_smoke_skill_documents_the_lean_interact_backend() -> None:
 
 def test_smoke_skill_tier0_check_cannot_pass_vacuously() -> None:
     """Tier 0 must inspect `sys.modules`, not merely import `runner`."""
-    script = (REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh").read_text()
+    script = (
+        REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh"
+    ).read_text()
     assert "sys.modules" in script
     assert "'lean_interact' not in sys.modules" in script
 
 
 def test_smoke_skill_replay_tier_refuses_without_a_mathlib_root() -> None:
-    script = (REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh").read_text()
+    script = (
+        REPO_ROOT / ".claude" / "skills" / "run-smolbench" / "lean_smoke.sh"
+    ).read_text()
     assert "SMOLBENCH_MATHLIB_ROOT" in script
     assert "need_mathlib_root" in script

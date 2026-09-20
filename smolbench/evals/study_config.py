@@ -57,23 +57,21 @@ def _require(mapping: dict, name: str, within: str = "") -> Any:
     Parameters
     ----------
     mapping : dict
-        Mapping to search.
+        Mapping containing the required key.
     name : str
-        Key or TOML table.
+        Key to retrieve, optionally spelled as a TOML table.
     within : str, optional
-        TOML section.
+        TOML section suffix included in an error message.
 
     Returns
     -------
     Any
-        Required value.
+        Value associated with `name`.
     """
     key = name.strip("[]")
     if key not in mapping:
         label = name if name.startswith("[") else repr(name)
-        raise ValueError(
-            f"study_config.toml{within} is missing the required {label}"
-        )
+        raise ValueError(f"study_config.toml{within} is missing the required {label}")
     return mapping[key]
 
 
@@ -85,12 +83,12 @@ def _parse_study_config(data: dict) -> StudyConfig:
     Parameters
     ----------
     data : dict
-        Parsed TOML.
+        Parsed TOML document.
 
     Returns
     -------
     StudyConfig
-        Validated configuration.
+        Validated study configuration.
     """
     # Report missing keys at the configuration boundary.
     results_raw = _require(data, "[results]")
@@ -116,6 +114,13 @@ def _parse_study_config(data: dict) -> StudyConfig:
     tags = dict(tags_raw)
 
     all_members = [key for rungs in families.values() for key in rungs]
+
+    dupes = sorted({key for key in all_members if all_members.count(key) > 1})
+    if dupes:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists {dupes} in more than one "
+            "family; families must partition the roster"
+        )
 
     for key in all_members:
         if key not in tags:
@@ -161,12 +166,12 @@ def _load_cached(resolved_path: Path) -> StudyConfig:
     Parameters
     ----------
     resolved_path : Path
-        TOML path.
+        Resolved TOML config path.
 
     Returns
     -------
     StudyConfig
-        Parsed configuration.
+        Parsed and validated study configuration.
     """
     with resolved_path.open("rb") as fh:
         data = tomllib.load(fh)
@@ -181,12 +186,12 @@ def load_study_config(path: "Optional[Path]" = None) -> StudyConfig:
     Parameters
     ----------
     path : Optional[Path], optional
-        Configuration path.
+        Config path to load.
 
     Returns
     -------
     StudyConfig
-        Loaded configuration.
+        Loaded and validated study configuration.
     """
     resolved = (path if path is not None else _DEFAULT_CONFIG_PATH).resolve()
     return _load_cached(resolved)
@@ -210,16 +215,16 @@ def tag_for(key: str) -> str:
     Parameters
     ----------
     key : str
-        Checkpoint key.
+        Roster checkpoint spec key.
 
     Returns
     -------
     str
-        Short analysis tag.
+        Short analysis tag for `key`.
 
     Raises
     ------
     KeyError
-        Unknown key.
+        If `key` is not in the roster.
     """
     return load_study_config().roster.tags[key]

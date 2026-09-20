@@ -46,7 +46,6 @@ def validate_export(export: Path) -> list[str]:
     Parameters
     ----------
     export : Path
-        Export directory.
 
     Returns
     -------
@@ -56,7 +55,9 @@ def validate_export(export: Path) -> list[str]:
     for name in REQUIRED_EXPORT_FILES:
         path = export / name
         if not path.is_file():
-            raise SystemExit(f"export is missing {path} -- not a LeanDojo-v2 export directory?")
+            raise SystemExit(
+                f"export is missing {path} -- not a LeanDojo-v2 export directory?"
+            )
 
     present = [rel for rel in SOURCE_ORDER if (export / rel).is_file()]
     if not present:
@@ -74,9 +75,7 @@ def load_names(path: Path, export_commit: str) -> dict:
     Parameters
     ----------
     path : Path
-        Names JSON.
     export_commit : str
-        Traced export commit.
 
     Returns
     -------
@@ -93,15 +92,15 @@ def load_names(path: Path, export_commit: str) -> dict:
     return names
 
 
-def read_source_rows(export: Path, present: list[str]) -> tuple[list[dict], dict[str, int]]:
+def read_source_rows(
+    export: Path, present: list[str]
+) -> tuple[list[dict], dict[str, int]]:
     """Read theorem rows in source order.
 
     Parameters
     ----------
     export : Path
-        Export directory.
     present : list[str]
-        Existing split paths.
 
     Returns
     -------
@@ -125,7 +124,6 @@ def assign_split(full_name: str) -> str:
     Parameters
     ----------
     full_name : str
-        Declaration name.
 
     Returns
     -------
@@ -149,9 +147,7 @@ def build_provenance(full_name: str, decl: dict) -> dict:
     Parameters
     ----------
     full_name : str
-        Declaration name.
     decl : dict
-        Names provenance record.
 
     Returns
     -------
@@ -186,11 +182,8 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
     Parameters
     ----------
     rows : list[dict]
-        Export rows.
     names : dict
-        Name-set data.
     repo_url : str
-        Canonical repository URL.
 
     Returns
     -------
@@ -210,7 +203,9 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
                 f"theorem {row['full_name']!r} carries commit {row['commit']!r}, not the "
                 f"export's {new_commit!r} -- this pool mixes traces and cannot be used"
             )
-        provenance = build_provenance(row["full_name"], names["decls"][row["full_name"]])
+        provenance = build_provenance(
+            row["full_name"], names["decls"][row["full_name"]]
+        )
         new_row = dict(row)
         new_row["url"] = repo_url
         new_row["postcutoff"] = True
@@ -219,7 +214,9 @@ def build_rows(rows: list[dict], names: dict, repo_url: str) -> list[dict]:
     return out
 
 
-def build_metadata(export_metadata: dict, names: dict, args: argparse.Namespace) -> dict:
+def build_metadata(
+    export_metadata: dict, names: dict, args: argparse.Namespace
+) -> dict:
     """Copy metadata and add post-cutoff fields.
 
     Keep ``from_repo.commit`` because `corpus.postcutoff_metadata` requires it
@@ -228,11 +225,8 @@ def build_metadata(export_metadata: dict, names: dict, args: argparse.Namespace)
     Parameters
     ----------
     export_metadata : dict
-        Export metadata.
     names : dict
-        Name-set data.
     args : argparse.Namespace
-        Command-line arguments.
 
     Returns
     -------
@@ -268,13 +262,9 @@ def write_corpus(
     Parameters
     ----------
     out_root : Path
-        Output root.
     export : Path
-        Export directory.
     rows : list[dict]
-        Corpus rows.
     metadata : dict
-        Corpus metadata.
 
     Returns
     -------
@@ -298,7 +288,9 @@ def write_corpus(
             json.dumps(per_split[split], indent=1, ensure_ascii=False)
         )
 
-    (dest / "metadata.json").write_text(json.dumps(metadata, indent=1, ensure_ascii=False))
+    (dest / "metadata.json").write_text(
+        json.dumps(metadata, indent=1, ensure_ascii=False)
+    )
     for name in ("corpus.jsonl", "traced_files.jsonl"):
         shutil.copyfile(export / name, dest / name)
 
@@ -314,7 +306,6 @@ def main(argv: list[str] | None = None) -> int:
     Parameters
     ----------
     argv : list[str] | None, optional
-        Command-line arguments.
 
     Returns
     -------
@@ -322,20 +313,43 @@ def main(argv: list[str] | None = None) -> int:
         Exit code.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--export", type=Path, required=True,
-                        help="LeanDojo-v2 generate_benchmark export directory")
-    parser.add_argument("--names", type=Path, required=True,
-                        help="postcutoff_names.json from postcutoff_names.py")
-    parser.add_argument("--out", type=Path, required=True,
-                        help="output root; the corpus lands in <out>/leandojo_benchmark_4")
+    parser.add_argument(
+        "--export",
+        type=Path,
+        required=True,
+        help="LeanDojo-v2 generate_benchmark export directory",
+    )
+    parser.add_argument(
+        "--names",
+        type=Path,
+        required=True,
+        help="postcutoff_names.json from postcutoff_names.py",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="output root; the corpus lands in <out>/leandojo_benchmark_4",
+    )
     # Dates are CLI inputs because postcutoff_names.py uses SHAs and a target date, not author dates.
-    parser.add_argument("--new-commit-date", required=True, help="YYYY-MM-DD of the new commit")
-    parser.add_argument("--old-commit-date", required=True, help="YYYY-MM-DD of the old commit")
-    parser.add_argument("--repo-url", default=DEFAULT_REPO_URL,
-                        help="canonical URL replacing the export's local checkout path")
+    parser.add_argument(
+        "--new-commit-date", required=True, help="YYYY-MM-DD of the new commit"
+    )
+    parser.add_argument(
+        "--old-commit-date", required=True, help="YYYY-MM-DD of the old commit"
+    )
+    parser.add_argument(
+        "--repo-url",
+        default=DEFAULT_REPO_URL,
+        help="canonical URL replacing the export's local checkout path",
+    )
     parser.add_argument("--dataset-name", default=DEFAULT_DATASET_NAME)
-    parser.add_argument("--min-tactics", type=int, default=DEFAULT_MIN_TACTICS,
-                        help="drop theorems with fewer traced tactics (default 2)")
+    parser.add_argument(
+        "--min-tactics",
+        type=int,
+        default=DEFAULT_MIN_TACTICS,
+        help="drop theorems with fewer traced tactics (default 2)",
+    )
     args = parser.parse_args(argv)
 
     present = validate_export(args.export)
@@ -346,7 +360,9 @@ def main(argv: list[str] | None = None) -> int:
     decls = names["decls"]
     postcutoff_named = [row for row in rows if row["full_name"] in decls]
     with_min_tactics = [
-        row for row in postcutoff_named if len(row["traced_tactics"]) >= args.min_tactics
+        row
+        for row in postcutoff_named
+        if len(row["traced_tactics"]) >= args.min_tactics
     ]
 
     if not with_min_tactics:
@@ -356,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(rows)} theorems in the export"
             if not postcutoff_named
             else f"the --min-tactics {args.min_tactics} floor dropped all "
-                 f"{len(postcutoff_named)} post-cutoff theorems"
+            f"{len(postcutoff_named)} post-cutoff theorems"
         )
         raise SystemExit(f"refusing to write an empty corpus: {culprit}")
 

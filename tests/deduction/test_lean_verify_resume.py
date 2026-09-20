@@ -1,19 +1,22 @@
 """Tests for `lean_verify_rows.py`."""
 
+# pylint: disable=missing-function-docstring
+
 from __future__ import annotations
 
 import contextlib
 import io
 import itertools
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
 from botocore.exceptions import ClientError
-
 from conftest import cell_row
+
 from tests._paths import SCRIPTS, load_by_path
 
 lvr = load_by_path(
@@ -24,11 +27,27 @@ _IDENTITY = ("kind", "model", "theorem_id", "k", "rung", "replicate_idx")
 _WORKDIRS = itertools.count()
 
 
-def _cell(theorem: str, k: int = 1, *, rung: str = "stepk:1", rep: int = 0,
-          model: str = "m", verdict: str = "unverified", proof: str = "tac",
-          **extra: Any) -> dict[str, Any]:
-    return cell_row(model=model, theorem_id=theorem, k=k, rung=rung,
-                    replicate_idx=rep, verdict=verdict, candidate_proof=proof, **extra)
+def _cell(
+    theorem: str,
+    k: int = 1,
+    *,
+    rung: str = "stepk:1",
+    rep: int = 0,
+    model: str = "m",
+    verdict: str = "unverified",
+    proof: str = "tac",
+    **extra: Any,
+) -> dict[str, Any]:
+    return cell_row(
+        model=model,
+        theorem_id=theorem,
+        k=k,
+        rung=rung,
+        replicate_idx=rep,
+        verdict=verdict,
+        candidate_proof=proof,
+        **extra,
+    )
 
 
 def _dump(rows: list[dict[str, Any]]) -> bytes:
@@ -43,7 +62,11 @@ def _proj(rows: list[dict[str, Any]], *fields: str) -> list[tuple[Any, ...]]:
     return [tuple(r.get(f) for f in fields) for r in rows]
 
 
-def _ids(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:  # identity tuples, spelled out independently of the module under test
+def _ids(
+    rows: list[dict[str, Any]],
+) -> list[
+    tuple[Any, ...]
+]:  # identity tuples, spelled out independently of the module under test
     return _proj(rows, *_IDENTITY)
 
 
@@ -56,7 +79,9 @@ class _Fake:
 
     def get_object(self, Bucket: str, Key: str) -> dict[str, io.BytesIO]:
         if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject")
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "no"}}, "GetObject"
+            )
         return {"Body": io.BytesIO(self.objects[Key])}
 
     def upload_file(self, filename: str | Path, bucket: str, key: str) -> None:
@@ -67,89 +92,162 @@ class _Fake:
     def open_at_step(self, bt: Any, k: int) -> Iterator[tuple[str, str]]:
         yield ("dojo", f"state@{k}")
 
-    def try_tail(self, dojo: str, state_at_k: str, candidate_text: str,
-                 theorem_id: str) -> SimpleNamespace:
+    def try_tail(
+        self, dojo: str, state_at_k: str, candidate_text: str, theorem_id: str
+    ) -> SimpleNamespace:
         self.tried.append((theorem_id, candidate_text))
         return SimpleNamespace(verdict=self.verdict, error=None, final_state_pp=None)
 
     def replay_ground_truth(self, bt: Any) -> SimpleNamespace:
-        return SimpleNamespace(verdict="success", tactics_applied=5, tactics_total=5, error=None)
+        return SimpleNamespace(
+            verdict="success", tactics_applied=5, tactics_total=5, error=None
+        )
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-         all_rows: list[dict[str, Any]], prior: list[dict[str, Any]] | None = None,
-         *, fake: _Fake | None = None,
-         **kw: Any) -> tuple[int, list[dict[str, Any]] | None]:
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    all_rows: list[dict[str, Any]],
+    prior: list[dict[str, Any]] | None = None,
+    *,
+    fake: _Fake | None = None,
+    **kw: Any,
+) -> tuple[int, list[dict[str, Any]] | None]:
     """Drive `verify_run` end-to-end against the fake; return (rc, uploaded rows or None)."""
-    monkeypatch.setattr(lvr, "_lookup_theorem", lambda tid: SimpleNamespace(full_name=tid))
+    monkeypatch.setattr(
+        lvr, "_lookup_theorem", lambda tid: SimpleNamespace(full_name=tid)
+    )
     fake = fake or _Fake()
     key = lvr.run_object_key("", "r", lvr.VERIFIED_FILENAME)
     fake.objects[lvr.run_object_key("", "r", lvr.ROWS_FILENAME)] = _dump(all_rows)
     if prior is not None:
         fake.objects[key] = _dump(prior)
-    rc = lvr.verify_run(client=fake, bucket="b", key_prefix="", run="r", workers=1,
-                        workdir=tmp_path / f"wd{next(_WORKDIRS)}", verifier=fake, **kw)
+    rc = lvr.verify_run(
+        client=fake,
+        bucket="b",
+        key_prefix="",
+        run="r",
+        workers=1,
+        workdir=tmp_path / f"wd{next(_WORKDIRS)}",
+        verifier=fake,
+        **kw,
+    )
     # Read back only what this run UPLOADED: a pass that did no work must not look right.
     body = fake.objects.get(key) if fake.n_uploads else None
-    return rc, ([json.loads(l) for l in body.decode().splitlines() if l.strip()] if body else None)
+    return rc, (
+        [json.loads(l) for l in body.decode().splitlines() if l.strip()]
+        if body
+        else None
+    )
 
 
 def test_second_pass_pairs_by_identity_and_verifies_only_pending_cells(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Graded cells and prior sanity verdicts survive verbatim; new and REGROWN groups verify."""
-    all_rows = [cell_row(kind="sanity", theorem_id="t1"),
-                _cell("t1", 1, rung="stepk:1"), _cell("t1", 1, rung="hint:2"),
-                _cell("t2", 2, rung="stepk:1"), _cell("t2", 2, rung="hint:2"), cell_row(kind="sanity", theorem_id="t2"),
-                _cell("t3", 3, rung="stepk:1", proof="NEW"),
-                _cell("t3", 3, rung="hint:2", proof="NEW"),
-                *[_cell("t4", 4, _seq=f"fresh{i}") for i in (1, 2, 3)],
-                cell_row(kind="sanity", theorem_id="t4")]
-    prior = [cell_row(kind="sanity", theorem_id="t1", verdict="success",
-                      tactics_applied=5, tactics_total=5, ms=42, error=None),
-             _cell("t1", 1, rung="hint:2", verdict="lean_error", verify_ms=222),
-             _cell("t3", 3, rung="stepk:1", verdict="success", proof="OLD"),
-             _cell("t1", 1, rung="stepk:1", verdict="success", verify_ms=111),
-             cell_row(kind="sanity", theorem_id="t9", verdict="success",
-                      tactics_applied=3, ms=9, error=None),
-             _cell("t4", 4, verdict="exception", _seq="prior1"),
-             _cell("t4", 4, verdict="lean_error", _seq="prior2")]
+    all_rows = [
+        cell_row(kind="sanity", theorem_id="t1"),
+        _cell("t1", 1, rung="stepk:1"),
+        _cell("t1", 1, rung="hint:2"),
+        _cell("t2", 2, rung="stepk:1"),
+        _cell("t2", 2, rung="hint:2"),
+        cell_row(kind="sanity", theorem_id="t2"),
+        _cell("t3", 3, rung="stepk:1", proof="NEW"),
+        _cell("t3", 3, rung="hint:2", proof="NEW"),
+        *[_cell("t4", 4, _seq=f"fresh{i}") for i in (1, 2, 3)],
+        cell_row(kind="sanity", theorem_id="t4"),
+    ]
+    prior = [
+        cell_row(
+            kind="sanity",
+            theorem_id="t1",
+            verdict="success",
+            tactics_applied=5,
+            tactics_total=5,
+            ms=42,
+            error=None,
+        ),
+        _cell("t1", 1, rung="hint:2", verdict="lean_error", verify_ms=222),
+        _cell("t3", 3, rung="stepk:1", verdict="success", proof="OLD"),
+        _cell("t1", 1, rung="stepk:1", verdict="success", verify_ms=111),
+        cell_row(
+            kind="sanity",
+            theorem_id="t9",
+            verdict="success",
+            tactics_applied=3,
+            ms=9,
+            error=None,
+        ),
+        _cell("t4", 4, verdict="exception", _seq="prior1"),
+        _cell("t4", 4, verdict="lean_error", _seq="prior2"),
+    ]
     fake = _Fake(verdict="incomplete")
     rc, out = _run(monkeypatch, tmp_path, all_rows, prior, fake=fake)
     assert rc == 0
     assert _ids(out[:12]) == _ids(all_rows)
-    assert sorted(_proj(out[12:], "kind", "theorem_id", "verdict", "tactics_applied")) == [
-        ("sanity", "t3", "success", 5), ("sanity", "t9", "success", 3)]
+    assert sorted(
+        _proj(out[12:], "kind", "theorem_id", "verdict", "tactics_applied")
+    ) == [("sanity", "t3", "success", 5), ("sanity", "t9", "success", 3)]
     assert [r["_seq"] for r in _cells(out) if r["theorem_id"] == "t4"] == [
-        "prior1", "prior2", "fresh3"]
+        "prior1",
+        "prior2",
+        "fresh3",
+    ]
     assert _proj(_cells(out), "theorem_id", "rung", "verdict") == [
-        ("t1", "stepk:1", "success"), ("t1", "hint:2", "lean_error"),
-        ("t2", "stepk:1", "incomplete"), ("t2", "hint:2", "incomplete"),
-        ("t3", "stepk:1", "incomplete"), ("t3", "hint:2", "incomplete"),
-        *[("t4", "stepk:1", "incomplete")] * 3]
+        ("t1", "stepk:1", "success"),
+        ("t1", "hint:2", "lean_error"),
+        ("t2", "stepk:1", "incomplete"),
+        ("t2", "hint:2", "incomplete"),
+        ("t3", "stepk:1", "incomplete"),
+        ("t3", "hint:2", "incomplete"),
+        *[("t4", "stepk:1", "incomplete")] * 3,
+    ]
     assert _proj(out[1:3], "verify_ms") == [(111,), (222,)]
     assert _proj([out[0], out[5]], "verdict", "tactics_applied") == [("success", 5)] * 2
-    assert out[0]["ms"] == 42  # a prior replay is not reverted to the all_rows placeholder
+    assert (
+        out[0]["ms"] == 42
+    )  # a prior replay is not reverted to the all_rows placeholder
     # t1 skips, t2 deduplicates, and t3 keeps the prior row wholesale, so OLD text replays too.
-    assert sorted(fake.tried) == [("t2", "tac"), ("t3", "NEW"), ("t3", "OLD"), ("t4", "tac")]
+    assert sorted(fake.tried) == [
+        ("t2", "tac"),
+        ("t3", "NEW"),
+        ("t3", "OLD"),
+        ("t4", "tac"),
+    ]
 
 
 @pytest.mark.parametrize(
     "kwargs, verdict, prior, expected_rc",
-    [({}, "unverified", None, 2), ({}, "success", None, 0),
-     ({"limit": 1}, "unverified", None, 0), ({"theorem": "t1"}, "unverified", None, 0),
-     ({"dry_run": True}, "unverified", None, 0), ({}, "unverified", "done_t1", 2),
-     ({}, "success", "orphan", 2)],
+    [
+        ({}, "unverified", None, 2),
+        ({}, "success", None, 0),
+        ({"limit": 1}, "unverified", None, 0),
+        ({"theorem": "t1"}, "unverified", None, 0),
+        ({"dry_run": True}, "unverified", None, 0),
+        ({}, "unverified", "done_t1", 2),
+        ({}, "success", "orphan", 2),
+    ],
 )
-def test_full_pass_sentinel_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-                                 kwargs: dict[str, Any], verdict: str, prior: str | None,
-                                 expected_rc: int) -> None:
+def test_full_pass_sentinel_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    kwargs: dict[str, Any],
+    verdict: str,
+    prior: str | None,
+    expected_rc: int,
+) -> None:
     """A limit-free pass that leaves a sentinel exits non-zero; requested partials do not."""
     prior_rows = None if prior is None else [_cell("t1", 1, verdict="success")]
     if prior == "orphan":
         prior_rows.append(_cell("t9", 7, verdict="unverified"))
-    rc, out = _run(monkeypatch, tmp_path, [_cell("t1", 1), _cell("t2", 2)], prior_rows,
-                   fake=_Fake(verdict=verdict), **kwargs)
+    rc, out = _run(
+        monkeypatch,
+        tmp_path,
+        [_cell("t1", 1), _cell("t2", 2)],
+        prior_rows,
+        fake=_Fake(verdict=verdict),
+        **kwargs,
+    )
     assert rc == expected_rc
     if not kwargs:
         assert out is not None and len(_cells(out)) >= 2
@@ -163,37 +261,59 @@ def test_full_pass_sentinel_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
 def test_resume_done_groups_all_cells_rule() -> None:
     """A half-graded group is not done; sanity rows never complete one."""
-    prior = [_cell("t1", 1, rung="stepk:1", verdict="success"),
-             _cell("t1", 1, rung="hint:2", verdict="unverified"),
-             _cell("t2", 1, rung="stepk:1", verdict="lean_error"),
-             _cell("t2", 1, rung="hint:2", verdict="success")]
+    prior = [
+        _cell("t1", 1, rung="stepk:1", verdict="success"),
+        _cell("t1", 1, rung="hint:2", verdict="unverified"),
+        _cell("t2", 1, rung="stepk:1", verdict="lean_error"),
+        _cell("t2", 1, rung="hint:2", verdict="success"),
+    ]
     assert lvr.resume_done_groups(prior) == {("t2", 1)}
-    assert lvr.resume_done_groups([
-        cell_row(kind="sanity", theorem_id="t9", verdict="success")]) == set()
+    assert (
+        lvr.resume_done_groups(
+            [cell_row(kind="sanity", theorem_id="t9", verdict="success")]
+        )
+        == set()
+    )
     assert lvr.resume_done_groups(
-        [cell_row(kind="sanity", theorem_id="t1", verdict="success"),
-         _cell("t1", 1, verdict="success")]) == {("t1", 1)}
+        [
+            cell_row(kind="sanity", theorem_id="t1", verdict="success"),
+            _cell("t1", 1, verdict="success"),
+        ]
+    ) == {("t1", 1)}
 
 
 def test_group_unverified_dedups_and_fans_out() -> None:
     """Only unverified cells group by (theorem, k); identical candidates replay once."""
-    rows = [_cell("T.a", 1, rung="stepk:1", proof="simp"),
-            _cell("T.a", 1, rung="hint:2", proof="ring"),
-            _cell("T.a", 2, rung="stepk:1", proof="simp"),
-            _cell("T.b", 0, rung="stepk:1", proof="rfl"),
-            _cell("T.a", 1, rung="hint:3", verdict="success", proof="aesop"),
-            cell_row(kind="sanity", theorem_id="T.a"),
-            _cell("T.a", 1, rung="hint:4", proof="simp")]
+    rows = [
+        _cell("T.a", 1, rung="stepk:1", proof="simp"),
+        _cell("T.a", 1, rung="hint:2", proof="ring"),
+        _cell("T.a", 2, rung="stepk:1", proof="simp"),
+        _cell("T.b", 0, rung="stepk:1", proof="rfl"),
+        _cell("T.a", 1, rung="hint:3", verdict="success", proof="aesop"),
+        cell_row(kind="sanity", theorem_id="T.a"),
+        _cell("T.a", 1, rung="hint:4", proof="simp"),
+    ]
     groups = lvr.group_unverified(rows)
     assert groups == {("T.a", 1): [0, 1, 6], ("T.a", 2): [2], ("T.b", 0): [3]}
     assert list(groups) == [("T.a", 1), ("T.a", 2), ("T.b", 0)]
     uniq = lvr.unique_candidates(rows, groups[("T.a", 1)])
     assert uniq == {"simp": [0, 6], "ring": [1]}
     assert list(uniq) == ["simp", "ring"]
-    lvr.fan_out_verdict(rows, uniq["simp"], {"verdict": "success", "lean_error": None,
-                                             "final_state_pp": None, "verify_ms": 12})
+    lvr.fan_out_verdict(
+        rows,
+        uniq["simp"],
+        {
+            "verdict": "success",
+            "lean_error": None,
+            "final_state_pp": None,
+            "verify_ms": 12,
+        },
+    )
     assert _proj([rows[0], rows[6], rows[1]], "verdict", "verify_ms") == [
-        ("success", 12), ("success", 12), ("unverified", 0)]
+        ("success", 12),
+        ("success", 12),
+        ("unverified", 0),
+    ]
     assert rows[0]["seed"] == 0 and rows[0]["rung"] == "stepk:1"
     row = _cell("T.a", 1)
     row.pop("candidate_proof")
@@ -202,7 +322,9 @@ def test_group_unverified_dedups_and_fans_out() -> None:
 
 def test_ram_cap_and_s3_path_mapping() -> None:
     """RAM/worker budget reads a supplied meminfo; the run key layout is a fleet contract."""
-    meminfo = "MemTotal:       65788432 kB\nMemAvailable:   12582912 kB\nSwapFree: 0 kB\n"
+    meminfo = (
+        "MemTotal:       65788432 kB\nMemAvailable:   12582912 kB\nSwapFree: 0 kB\n"
+    )
     assert lvr.available_ram_gb(meminfo) == pytest.approx(12.0)
     assert lvr.max_workers_allowed(meminfo) == 2
     with pytest.raises(ValueError):
@@ -228,35 +350,42 @@ def test_default_s3_prefix_resolves_to_the_recollection_keys(
     # Exercise `main()` so the call-time default is tested.
     seen = {}
 
-    def _list_runs(client: Any, bucket: str, key_prefix: str, pattern: str) -> list[str]:
+    def _list_runs(
+        client: Any, bucket: str, key_prefix: str, pattern: str
+    ) -> list[str]:
         seen.update(bucket=bucket, key_prefix=key_prefix)
         return []
 
-    monkeypatch.setattr(lvr, "_build_s3_client", lambda: object())
+    monkeypatch.setattr(lvr, "_build_s3_client", object)
     monkeypatch.setattr(lvr, "list_runs", _list_runs)
     assert lvr.main(["--dry-run", "--workdir", str(tmp_path)]) == 0
     assert seen == {"bucket": lvr.SPOOL_BUCKET, "key_prefix": DEDUCTION_SPOOL_PREFIX}
 
-    key = lvr.run_object_key(seen["key_prefix"], "scaling_glm-4.7", lvr.VERIFIED_FILENAME)
+    key = lvr.run_object_key(
+        seen["key_prefix"], "scaling_glm-4.7", lvr.VERIFIED_FILENAME
+    )
     assert key == f"{DEDUCTION_SPOOL_PREFIX}/scaling_glm-4.7/verified_rows.jsonl"
     assert "//" not in key and not key.startswith("/")
 
     other = lvr._build_arg_parser().parse_args(
-        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/somewhere/else"])
+        ["--s3-prefix", f"s3://{lvr.SPOOL_BUCKET}/somewhere/else"]
+    )
     assert lvr.parse_s3_uri(other.s3_prefix) == (lvr.SPOOL_BUCKET, "somewhere/else")
 
 
 def test_resume_treats_an_all_replay_failed_group_as_pending() -> None:
     """All `replay_failed`/`exception` groups must stay pending as unmeasured."""
-    unmeasured = [_cell("T", rung="stepk:1", verdict="replay_failed"),
-                  _cell("T", rung="hint:2", verdict="exception")]
-    assert lvr.resume_done_groups(unmeasured) == set(), (
-        "a group whose every cell is replay_failed/exception was never measured"
-    )
+    unmeasured = [
+        _cell("T", rung="stepk:1", verdict="replay_failed"),
+        _cell("T", rung="hint:2", verdict="exception"),
+    ]
+    assert (
+        lvr.resume_done_groups(unmeasured) == set()
+    ), "a group whose every cell is replay_failed/exception was never measured"
     mixed = unmeasured + [_cell("T", rung="hint:3", verdict="lean_error")]
-    assert lvr.resume_done_groups(mixed) == {("T", 1)}, (
-        "one real verdict is a measurement; do not retry the whole group"
-    )
+    assert lvr.resume_done_groups(mixed) == {
+        ("T", 1)
+    }, "one real verdict is a measurement; do not retry the whole group"
     graded = [_cell("U", rung="stepk:1", verdict="success")]
     assert lvr.resume_done_groups(graded) == {("U", 1)}
     pending_sentinel = [_cell("V", rung="stepk:1", verdict="unverified")]
@@ -301,13 +430,52 @@ def test_one_run_failing_does_not_abort_the_others(
             raise RuntimeError("REPL exploded on this lane")
         return 0
 
-    monkeypatch.setattr(lvr, "_build_s3_client", lambda: object())
-    monkeypatch.setattr(lvr, "list_runs",
-                        lambda *a, **k: ["scaling_a", "scaling_bad", "scaling_c"])
+    monkeypatch.setattr(lvr, "_build_s3_client", object)
+    monkeypatch.setattr(
+        lvr, "list_runs", lambda *a, **k: ["scaling_a", "scaling_bad", "scaling_c"]
+    )
     monkeypatch.setattr(lvr, "verify_run", _verify_run)
 
     rc = lvr.main(["--dry-run", "--workdir", str(tmp_path)])
-    assert seen == ["scaling_a", "scaling_bad", "scaling_c"], (
-        f"the pass stopped at the failing lane: {seen}"
-    )
+    assert seen == [
+        "scaling_a",
+        "scaling_bad",
+        "scaling_c",
+    ], f"the pass stopped at the failing lane: {seen}"
     assert rc != 0, "a lane that raised must be reported as failed, not as success"
+
+
+def test_verify_rows_script_guard_requires_lean_interact() -> None:
+    """`require_lean_interact` must run; test_lean_verify_docs pins the wording."""
+    module = load_by_path(SCRIPTS / "deduction" / "lean_verify_rows.py", "lvr_seam")
+    try:
+        module.require_lean_interact()
+    finally:
+        sys.modules.pop("lvr_seam", None)
+
+
+def test_verify_rows_script_guard_requires_mathlib_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Unset SMOLBENCH_MATHLIB_ROOT exits before any work; a real checkout passes."""
+    module = load_by_path(
+        SCRIPTS / "deduction" / "lean_verify_rows.py", "lvr_root_seam"
+    )
+    try:
+        monkeypatch.delenv("SMOLBENCH_MATHLIB_ROOT", raising=False)
+        with pytest.raises(SystemExit, match="SMOLBENCH_MATHLIB_ROOT"):
+            module.require_mathlib_root()
+        root = tmp_path / "mathlib4"
+        (root / ".lake").mkdir(parents=True)
+        (root / "lakefile.lean").write_text("import Lake\n")
+        (root / "lean-toolchain").write_text("leanprover/lean4:v4.34.0-rc2\n")
+        monkeypatch.setenv("SMOLBENCH_MATHLIB_ROOT", str(root))
+        try:
+            module.require_mathlib_root()
+        except (
+            SystemExit
+        ) as exc:  # the backend may demand more than a bare dir; say what
+            pytest.skip(f"mathlib_root wants more than a skeleton checkout: {exc}")
+    finally:
+        sys.modules.pop("lvr_root_seam", None)

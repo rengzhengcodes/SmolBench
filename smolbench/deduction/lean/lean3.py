@@ -39,7 +39,6 @@ def _bracket_delta(ch: str) -> int:
     Parameters
     ----------
     ch : str
-        Character.
 
     Returns
     -------
@@ -59,7 +58,6 @@ def _is_head_position(line_prefix: str) -> bool:
     Parameters
     ----------
     line_prefix : str
-        Preceding text.
 
     Returns
     -------
@@ -76,7 +74,6 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
     Parameters
     ----------
     text : str
-        Text.
     start : int
         Position after ``fun`` or ``λ``.
 
@@ -93,7 +90,7 @@ def _binder_forward_scan(text: str, start: int) -> tuple[str, int, int] | None:
             return "comma", i, i + 1
         if ch == "↦":
             return "arrow", i, i + 1
-        if text[i:i + 2] == "=>":
+        if text[i : i + 2] == "=>":
             return "arrow", i, i + 2
         depth += _bracket_delta(ch)
         i += 1
@@ -106,7 +103,6 @@ def find_relics(text: str) -> list[Relic]:
     Parameters
     ----------
     text : str
-        Lean text.
 
     Returns
     -------
@@ -134,7 +130,7 @@ def find_relics(text: str) -> list[Relic]:
         if stripped in ("begin", "end") or stripped.startswith("begin "):
             emit("begin-end", stripped, None, lineno)
         for match in _REFL_RE.finditer(line):
-            if _is_head_position(line[:match.start()]):
+            if _is_head_position(line[: match.start()]):
                 emit("refl", "refl", "rfl", lineno)
         if _EXISTSI_RE.search(line):
             emit("existsi", "existsi", "use", lineno)
@@ -146,6 +142,6 @@ def find_relics(text: str) -> list[Relic]:
         if found is not None and found[0] == "comma":
             _, _comma_start, comma_end = found
             lineno = text.count("\n", 0, match.start())
-            emit("binder-comma", text[match.start():comma_end], None, lineno)
+            emit("binder-comma", text[match.start() : comma_end], None, lineno)
 
     return relics

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from .context import RenderedContext
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .context import RenderedContext
 
 SYSTEM = """You are an expert in the Lean 4 theorem prover and the Mathlib4 library.
 
@@ -14,8 +17,10 @@ exactly as they would appear in a Lean source file.
 Do not include the theorem statement, the `by` keyword, or any tactics that
 have already been applied — output only the tactics that remain.""".strip()
 
-INSTRUCTION = """Produce the remaining Lean 4 tactics that close all goals from the current
+INSTRUCTION = (
+    """Produce the remaining Lean 4 tactics that close all goals from the current
 state. Output only the tactic lines, nothing else.""".strip()
+)
 
 
 # Answer-fence tags; other fences must not supply tactics.
@@ -28,7 +33,6 @@ def _find_closed_fenced_blocks(s: str) -> list[tuple[str, str]]:
     Parameters
     ----------
     s : str
-        Text.
 
     Returns
     -------
@@ -62,7 +66,6 @@ def extract_tactic_block(text: str) -> str:
     Parameters
     ----------
     text : str
-        LLM response.
 
     Returns
     -------
@@ -77,7 +80,9 @@ def extract_tactic_block(text: str) -> str:
             return ""
         s = s[close_idx + len("</think>") :].lstrip()
     blocks = _find_closed_fenced_blocks(s)
-    candidates = [body for fence_tag, body in blocks if fence_tag in _LEANISH_FENCE_TAGS]
+    candidates = [
+        body for fence_tag, body in blocks if fence_tag in _LEANISH_FENCE_TAGS
+    ]
     if candidates:
         # An empty Lean fence is still an answer, not a parse failure.
         return candidates[-1].strip()
