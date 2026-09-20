@@ -112,10 +112,8 @@ def aligned(
 
     Parameters
     ----------
-    correct : dict
-        Per-cell correct-mark mappings.
-    valid : dict
-        Per-cell valid-mark mappings.
+    marks : CellMarks
+        Parsed marks from `load_marks`.
     key_a : tuple[str, str]
         First cell key.
     key_b : tuple[str, str]
@@ -333,8 +331,8 @@ def contrast_row(
 
     Parameters
     ----------
-    correct, valid : dict
-        Per-cell mark views from `load_marks`.
+    marks : CellMarks
+        Parsed marks from `load_marks`.
     key_a, key_b : tuple[str, str]
         The two ``(model, info)`` cells being compared.
     drop_invalid : bool, optional

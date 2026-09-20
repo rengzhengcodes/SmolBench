@@ -43,7 +43,10 @@ MODELS = power_analysis.MODELS
 FAMILIES = power_analysis.FAMILIES
 INFOS = power_analysis.INFOS
 
-Cell = tuple[float, float | Callable[[int], float], str, Sequence[int]]
+Cell = (
+    tuple[float, float | Callable[[int], float], str, Sequence[int]]
+    | tuple[float, float | Callable[[int], float], str, Sequence[int], float]
+)
 
 
 def run_captured(fn: Callable[[], object]) -> str:
@@ -95,11 +98,16 @@ def profile_for(
 
 
 def _marks_for(
-    rate: float, noncompliance: float, mode: str, rng: np.random.Generator
+    rate: float,
+    noncompliance: float,
+    mode: str,
+    rng: np.random.Generator,
+    invalid: float = 0.0,
 ) -> Marks:
-    """Build one replicate with independent score and compliance axes."""
+    """Build one replicate with independent score, validity, and compliance axes."""
     scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
     bad = rng.random(N_HARMONICS) < noncompliance
+    null = rng.random(N_HARMONICS) < invalid
     return Marks(
         model="stub-model",
         marks=tuple(
@@ -107,10 +115,10 @@ def _marks_for(
                 query=f"q{i}",
                 answer=i,
                 response=str(i),
-                score=int(s),
+                score=None if nl else int(s),
                 compliance=(mode if b else COMPLIANT),
             )
-            for i, (s, b) in enumerate(zip(scores, bad))
+            for i, (s, b, nl) in enumerate(zip(scores, bad, null))
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
@@ -124,7 +132,8 @@ def build_tree(
     """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root` for every study cell."""
     for model in MODELS:
         for info in INFOS:
-            rate, noncompliance, mode, seeds = profile(model, info)
+            rate, noncompliance, mode, seeds, *rest = profile(model, info)
+            invalid = rest[0] if rest else 0.0
             rate_of = (
                 noncompliance
                 if callable(noncompliance)
@@ -138,7 +147,7 @@ def build_tree(
                     f"{model}/{info}/{seed}".encode(), digest_size=4
                 ).digest()
                 rng = np.random.default_rng(int.from_bytes(digest, "big"))
-                _marks_for(rate, rate_of(seed), mode, rng).dump(
+                _marks_for(rate, rate_of(seed), mode, rng, invalid=invalid).dump(
                     cdir / f"rep_{seed}.yaml"
                 )
     for dst, src in (copies or {}).items():

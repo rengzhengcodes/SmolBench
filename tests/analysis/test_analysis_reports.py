@@ -174,6 +174,29 @@ def test_omnibus_gates_do_not_reject_flat_family(
         assert not gate["reject"]
 
 
+def test_omnibus_gate_permutation_isolated_by_family(
+    ladder_tree: Path,
+    significance_report: ModuleType,
+    power_analysis: ModuleType,
+    paired_analysis: ModuleType,
+) -> None:
+    """A family gate's permutation p-value ignores unrelated family cells."""
+    marks = significance_report.load_marks(ladder_tree)
+    full = significance_report.omnibus_gates(marks)
+    family, rungs = list(power_analysis.FAMILIES.items())[-1]
+    filtered = paired_analysis.CellMarks(
+        {k: v for k, v in marks.correct.items() if k[0] in rungs},
+        marks.valid,
+        marks.compliance,
+    )
+    partial = significance_report.omnibus_gates(filtered)
+
+    assert partial[family]["p_perm"] == full[family]["p_perm"]
+    for other, gate in partial.items():
+        if other != family:
+            assert gate == significance_report.GATE_NO_DATA
+
+
 def test_omnibus_gate_uses_only_common_seeds(
     tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
 ) -> None:
@@ -600,6 +623,32 @@ def test_replicate_depth_gate_uses_the_shallowest_lane(
     out = run_captured(lambda: paired_analysis.main(root))
     assert "WARNING" in out
     assert str(SHALLOW_DEPTH) in out
+
+
+def test_reports_handle_invalid_marks(
+    tmp_path: Path,
+    paired_analysis: ModuleType,
+    power_analysis: ModuleType,
+    significance_report: ModuleType,
+) -> None:
+    """Invalid marks are excluded from paired comparisons without breaking reports."""
+    profile = lambda _model, info: (
+        0.10 if info == "zero" else 0.90,
+        0.0,
+        "empty",
+        range(DEEP_DEPTH),
+        0.25,
+    )
+    build_tree(tmp_path, profile)
+    assert run_captured(lambda: significance_report.main(tmp_path))
+    out = run_captured(lambda: paired_analysis.main(tmp_path))
+    marks = paired_analysis.load_marks(tmp_path)
+    contrasts = power_analysis.build_primary_contrasts()
+
+    assert sum(
+        r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, True)
+    ) < sum(r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, False))
+    assert "DROP-INVALID pairs" in out
 
 
 def test_extra_replicate_seed_is_rejected(

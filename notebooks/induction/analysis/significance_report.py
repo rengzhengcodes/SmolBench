@@ -148,9 +148,8 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         Family name -> ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate``,
         ``reject``.
     """
-    rng = np.random.default_rng(GATE_PERM_SEED)
     gates: dict[str, dict] = {}
-    for family, rungs in FAMILIES.items():
+    for i, (family, rungs) in enumerate(FAMILIES.items()):
         cells = [(rung, info) for rung in rungs for info in INFOS]
         seeds = (
             sorted(set.intersection(*(set(marks.correct[cell]) for cell in cells)))
@@ -177,6 +176,7 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         succ = marks_tensor.sum(axis=0)[None]
         stat = float(gcmh_stat(succ, len(seeds))[0])
         p = float(chi2.sf(stat, df=2))
+        rng = np.random.default_rng([GATE_PERM_SEED, i])
         gates[family] = _gate_row(
             len(seeds), stat, p, permutation_omnibus_p(marks_tensor, stat, rng)
         )

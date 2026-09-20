@@ -480,7 +480,9 @@ def part2(
     Compare simulated `design_effect` at each `icc` with the study
     estimate. ``eq_R`` is searched only when paired power exceeds unpaired
     by more than `EQ_R_TOL`; smaller gaps are within Monte-Carlo error and
-    reported unsearched at `N_REPLICATES`.
+    reported unsearched at `N_REPLICATES`. Along the search, unpaired power
+    within `EQ_R_TOL` of paired counts as matching; a match on the first
+    grid rung is likewise reported unsearched.
 
     Parameters
     ----------
@@ -501,9 +503,9 @@ def part2(
         "\n=== PART 2: pairing gain (matched items) ===\n"
         f"  study's own measured design effect: {measured_str} -- compare "
         f"against each icc block's design_effect_simulated below\n"
-        f"  eq_R: smallest grid R whose unpaired power reaches paired power; "
-        f"gaps <= {EQ_R_TOL} are within Monte-Carlo error and reported "
-        f"unsearched at R={N_REPLICATES}",
+        f"  eq_R: smallest grid R whose unpaired power reaches paired power "
+        f"(within {EQ_R_TOL}); gaps <= {EQ_R_TOL} are within Monte-Carlo error "
+        f"and reported unsearched at R={N_REPLICATES}",
         flush=True,
     )
     grid_r = list(EQ_R_GRID)
@@ -535,8 +537,9 @@ def part2(
                                 stats=False,
                                 icc=icc,
                             )[0]
-                            if u2 >= pair:
+                            if u2 >= pair - EQ_R_TOL:
                                 eq_r = rr
+                                searched = rr != N_REPLICATES
                                 break
                     else:
                         eq_r = N_REPLICATES
