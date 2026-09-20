@@ -15,18 +15,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (  # noqa: E402
-    build_primary_contrasts,
-    contrast_row,
-    holm,
-    load_marks,
-)
+from paired_analysis import holm, labeled_rows, load_marks  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
     MODELS,
     N_HARMONICS,
     N_PRIMARY,
     RESULTS_DIR,
+    build_primary_contrasts,
 )
 from significance_report import (  # noqa: E402
     COLLAPSE_THRESHOLD,
@@ -69,18 +65,6 @@ def direction(acc_e: float, acc_n: float) -> str:
     """Label the higher-scoring arm or an exact tie.
 
     Ties need their own branch so tallies do not award them to ``extens``.
-
-    Parameters
-    ----------
-    acc_e : float
-        Accuracy for the extens arm.
-    acc_n : float
-        Accuracy for the noise arm.
-
-    Returns
-    -------
-    str
-        Label for the higher-scoring arm or an exact tie.
     """
     if acc_n > acc_e:
         return "noise HIGHER"
@@ -115,10 +99,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     census = compliance_census(marks)
 
     # Keep the full family: the displayed subset is selected after measurement.
-    full = [
-        {"label": label, **contrast_row(marks, key_a, key_b)}
-        for label, key_a, key_b in build_primary_contrasts()
-    ]
+    full = labeled_rows(marks, build_primary_contrasts())
     holm_full = holm(np.array([r["p_cluster"] for r in full]), ALPHA)
     holm_full_item = holm(np.array([r["p_item"] for r in full]), ALPHA)
     full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
@@ -156,33 +137,26 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     h_sub, hb_sub = holm(p_sub, ALPHA), hochberg(p_sub, ALPHA)
     p_sub_item = np.array([r["p_item"] for r in rows])
 
-    print("EXTENSIONAL vs NOISE-PADDED INTENSIONAL, per model")
-    print("Both arms token-matched; the contrast isolates INFORMATION from LENGTH")
-    print(
-        "-- WHERE THE NOISE ARM IS A WORKING CONTROL. Where the padding broke "
-        "the output\ncontract instead, the same row is a padding-robustness "
-        "result; the `mechanism`\ncolumn says which, from measured "
-        "non-compliance on both arms over the seeds the\ntwo arms share. It "
-        "annotates compliance only; the direction of every row is the\n"
-        "measured one."
-    )
-    print(
-        f"PRIMARY p = exact seed-level sign-flip over "
-        f"{min(r['n_seeds'] for r in rows)} replicates (the independent "
-        f"unit;\n  the {N_HARMONICS} harmonics inside a seed share one answer "
-        "vector). "
-        f"Item-level exact\n  McNemar on "
-        f"{min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} matched "
-        f"marks is shown beside it as a DESCRIPTIVE figure.\n"
-    )
     hdr = (
         f"{'model':13s} {'extens':>7s} {'noise':>7s} {'disc':>6s} {'b/c':>9s} "
         f"{'p_seed':>10s} {'p_item':>10s} {f'H{N_PRIMARY}':>5s} "
         f"{f'H{len(MODELS)}':>4s} "
         f"{f'Hoch{len(MODELS)}':>7s}  mechanism / non-compliance"
     )
-    print(hdr)
-    print("-" * len(hdr))
+    print(
+        "EXTENSIONAL vs NOISE-PADDED INTENSIONAL, per model\n"
+        "Both arms token-matched; the contrast isolates INFORMATION from LENGTH\n"
+        "-- WHERE THE NOISE ARM IS A WORKING CONTROL. Where the padding broke the output\n"
+        "contract instead, the same row is a padding-robustness result; the `mechanism`\n"
+        "column says which, from measured non-compliance on both arms over the seeds the\n"
+        "two arms share. It annotates compliance only; the direction of every row is the\n"
+        "measured one.\n"
+        f"PRIMARY p = exact seed-level sign-flip over {min(r['n_seeds'] for r in rows)} "
+        f"replicates (the independent unit;\n  the {N_HARMONICS} harmonics inside a seed "
+        f"share one answer vector). Item-level exact\n  McNemar on "
+        f"{min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} matched marks is "
+        f"shown beside it as a DESCRIPTIVE figure.\n\n{hdr}\n" + "-" * len(hdr)
+    )
 
     for i, r in enumerate(rows):
         flags = [r["mech"]]
@@ -197,41 +171,30 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             f"{star(hb_sub[i]):>7s}  {'; '.join(flags)}"
         )
 
+    n_models = len(MODELS)
+    sig = [r for r in rows if r["holm_full"]]
     print(
-        f"\nH{N_PRIMARY} = Holm over the pre-registered "
-        f"{N_PRIMARY}-contrast family, on the SEED-LEVEL p\n  (PRIMARY "
-        f"inference). H{len(MODELS)} / Hoch{len(MODELS)} = Holm / Hochberg "
-        f"over these {len(MODELS)} only --\n  SENSITIVITY ONLY; re-sizing the "
-        "family to a "
-        "subset chosen after seeing the data\n  is not a valid primary "
-        "analysis."
-    )
-    print(
-        f"  agreement: H{N_PRIMARY} {sum(r['holm_full'] for r in rows)}, "
-        f"H{len(MODELS)} {int(h_sub.sum())}, Hoch{len(MODELS)} "
-        f"{int(hb_sub.sum())} of {len(rows)}"
-    )
-    print(
-        f"  the same family under the DESCRIPTIVE item-level p: "
-        f"H{N_PRIMARY} "
-        f"{sum(r['holm_full_item'] for r in rows)}, H{len(MODELS)} "
-        f"{int(holm(p_sub_item, ALPHA).sum())}, Hoch{len(MODELS)} "
+        f"\nH{N_PRIMARY} = Holm over the pre-registered {N_PRIMARY}-contrast family, "
+        f"on the SEED-LEVEL p\n  (PRIMARY inference). H{n_models} / Hoch{n_models} = "
+        f"Holm / Hochberg over these {n_models} only --\n  SENSITIVITY ONLY; re-sizing "
+        "the family to a subset chosen after seeing the data\n  is not a valid primary "
+        "analysis.\n"
+        f"  agreement: H{N_PRIMARY} {len(sig)}, H{n_models} {int(h_sub.sum())}, "
+        f"Hoch{n_models} {int(hb_sub.sum())} of {len(rows)}\n"
+        f"  the same family under the DESCRIPTIVE item-level p: H{N_PRIMARY} "
+        f"{sum(r['holm_full_item'] for r in rows)}, H{n_models} "
+        f"{int(holm(p_sub_item, ALPHA).sum())}, Hoch{n_models} "
         f"{int(hochberg(p_sub_item, ALPHA).sum())} -- the clustering\n  "
         f"correction changes "
         f"{sum(1 for r in rows if r['holm_full'] != r['holm_full_item'])} of "
-        f"these {len(MODELS)} primary decisions."
-    )
-
-    sig = [r for r in rows if r["holm_full"]]
-    print(
+        f"these {n_models} primary decisions.\n"
         f"\nSIGNIFICANT under the primary (m={N_PRIMARY}, seed-level) "
         f"correction: {len(sig)} of {len(rows)}"
     )
     for r in sorted(sig, key=lambda r: r["p_cluster"]):
-        d = r["dir"]
         print(
             f"  {r['model']:13s} {r['acc_e']:.3f} vs {r['acc_n']:.3f}   "
-            f"{d:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}"
+            f"{r['dir']:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}"
         )
 
     print(f"\n{'=' * 78}\nTHE TWO MECHANISMS\n{'=' * 78}")
@@ -275,17 +238,13 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         sel_sig = [r for r in sel if r["holm_full"]]
         print(
             f"\n-- {title}: {len(sel)} lane{'' if len(sel) == 1 else 's'}, "
-            f"{len(sel_sig)} significant"
+            f"{len(sel_sig)} significant\n  {gloss}."
         )
-        print(f"  {gloss}.")
         for r in sorted(sel, key=lambda r: r["p_cluster"]):
-            d = r["dir"]
-            mark = "SIG " if r["holm_full"] else "  . "
             print(
-                f"  {mark}{r['model']:13s} {r['acc_e']:.3f} vs "
-                f"{r['acc_n']:.3f}   {d:13s} "
-                f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   "
-                f"p={r['p_cluster']:.2e}"
+                f"  {'SIG ' if r['holm_full'] else '  . '}{r['model']:13s} "
+                f"{r['acc_e']:.3f} vs {r['acc_n']:.3f}   {r['dir']:13s} "
+                f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   p={r['p_cluster']:.2e}"
             )
         if sel_sig:
             sig_dirs = collections.Counter(r["dir"] for r in sel_sig)
@@ -298,26 +257,20 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             )
 
     dirs = collections.Counter(r["dir"] for r in rows)
-    up_all = dirs["noise HIGHER"]
-    down_all = dirs["extens HIGHER"]
-    coll = [r for r in rows if r["mech"] != Mechanism.INFORMATION]
-    coll_dirs = collections.Counter(r["dir"] for r in coll)
-    coll_down = coll_dirs["extens HIGHER"]
-    coll_up = coll_dirs["noise HIGHER"]
+    up_all, down_all = dirs["noise HIGHER"], dirs["extens HIGHER"]
+    coll_dirs = collections.Counter(
+        r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION
+    )
     print(
         f"\n{'=' * 78}\nRAW DIRECTION, ALL {len(rows)} LANES, NO SIGNIFICANCE "
-        f"FILTER\n{'=' * 78}"
-    )
-    print(
+        f"FILTER\n{'=' * 78}\n"
         f"  {up_all} noise-higher, {down_all} extens-higher, "
-        f"{len(rows) - up_all - down_all} exactly tied."
-    )
-    print(
-        f"  {coll_down} of the {down_all} extens-higher and {coll_up} of the "
-        f"{up_all} noise-higher lanes have at least one\n  arm over the "
-        f"{COLLAPSE_THRESHOLD:.0%} non-compliance threshold. Those lanes are "
-        f"kept and annotated rather\n  than removed: dropping them would "
-        f"select on a covariate of the outcome."
+        f"{len(rows) - up_all - down_all} exactly tied.\n"
+        f"  {coll_dirs['extens HIGHER']} of the {down_all} extens-higher and "
+        f"{coll_dirs['noise HIGHER']} of the {up_all} noise-higher lanes have at least "
+        f"one\n  arm over the {COLLAPSE_THRESHOLD:.0%} non-compliance threshold. Those "
+        "lanes are kept and annotated rather\n  than removed: dropping them would "
+        "select on a covariate of the outcome."
     )
     clean_down = [
         r

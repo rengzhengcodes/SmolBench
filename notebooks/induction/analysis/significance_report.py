@@ -15,8 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import apply_corrections  # noqa: E402
-from paired_analysis import CellMarks, contrast_row, holm, load_marks  # noqa: E402
+from paired_analysis import (  # noqa: E402
+    CellMarks,
+    holm,
+    labeled_rows,
+    load_marks,
+    rejection_mask,
+)
 from power_analysis import (  # noqa: E402
     ALPHA,
     ALPHA_OMNIBUS,
@@ -93,8 +98,7 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
 
 def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     """Return the Hochberg step-up rejection mask at familywise level ``alpha``."""
-    pv = np.atleast_2d(np.asarray(pvals, float))
-    return apply_corrections(pv, alpha)["Hochberg"][0]
+    return rejection_mask(pvals, alpha, "Hochberg")
 
 
 def compliance_census(marks: CellMarks) -> dict:
@@ -635,22 +639,18 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     census = compliance_census(marks)
     gates = omnibus_gates(marks)
     family_of = {rung: family for family, rungs in FAMILIES.items() for rung in rungs}
-    rows = []
-    for label, key_a, key_b in build_primary_contrasts():
-        row = contrast_row(marks, key_a, key_b)
+    rows = labeled_rows(marks, build_primary_contrasts())
+    for row in rows:
+        key_a, key_b = row["key_a"], row["key_b"]
         is_ladder = key_a[0] != key_b[0]
         family = family_of.get(key_a[0]) if is_ladder else None
-        rows.append(
-            {
-                "label": label,
-                **row,
-                "rate_a": _compared_rate(census, key_a, row["seeds"]),
-                "rate_b": _compared_rate(census, key_b, row["seeds"]),
-                "kind": classify(key_a, key_b),
-                "kind_is_ladder": is_ladder,
-                "family": family,
-                "gated": gates[family]["reject"] if is_ladder else False,
-            }
+        row.update(
+            rate_a=_compared_rate(census, key_a, row["seeds"]),
+            rate_b=_compared_rate(census, key_b, row["seeds"]),
+            kind=classify(key_a, key_b),
+            kind_is_ladder=is_ladder,
+            family=family,
+            gated=gates[family]["reject"] if is_ladder else False,
         )
     p_cl = np.array([r["p_cluster"] for r in rows])
     p_item = np.array([r["p_item"] for r in rows])
