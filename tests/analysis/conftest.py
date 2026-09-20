@@ -1,8 +1,4 @@
-"""Synthetic result trees for analysis-report tests.
-
-Not ``conftest.py``: pytest would collide with the bare ``conftest`` module.
-Depth controls whether ``2 / 2**S`` clears Holm's ``0.05 / 210`` threshold.
-"""
+"""Provide synthetic result trees and imported analysis-module fixtures."""
 
 import hashlib
 import importlib.util
@@ -20,15 +16,39 @@ from smolbench.evals import Mark, Marks
 from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS
 
+_ROOT_CONFTEST = Path(__file__).parents[1] / "conftest.py"
+_ROOT_SPEC = importlib.util.spec_from_file_location(
+    "_smolbench_root_conftest", _ROOT_CONFTEST
+)
+if _ROOT_SPEC is None or _ROOT_SPEC.loader is None:
+    raise ImportError(f"Cannot load {_ROOT_CONFTEST}")
+_ROOT_MODULE = importlib.util.module_from_spec(_ROOT_SPEC)
+_ROOT_SPEC.loader.exec_module(_ROOT_MODULE)
+for _name in (
+    "MergeEverythingTokenizer",
+    "StubServer",
+    "StubTokenizer",
+    "TruncatingTokenizer",
+    "_StubHandler",
+    "chat_completion",
+    "import_run_study",
+):
+    globals()[_name] = getattr(_ROOT_MODULE, _name)
+
 ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
+sys.path.extend(str(path) for path in (NOTEBOOKS, ANALYSIS_DIR))
+import extens_vs_noise
+import multiplicity_sim
+import paired_analysis
+import power_analysis
+import significance_report
 
 #: Sign-flip floor 2/2**6 = 0.031 >> 0.05/210: nothing is rejectable.
 SHALLOW_DEPTH = 6
 #: 2/2**16 = 3.05e-5 < 0.05/210 = 2.381e-4: the normal path is reachable.
 DEEP_DEPTH = 16
 
-#: Must match ``power_analysis.N_HARMONICS`` or marks are treated as partial.
-N_HARMONICS = 9
+N_HARMONICS = power_analysis.N_HARMONICS
 
 
 def _marks_for(
@@ -89,68 +109,31 @@ def build_tree(
         shutil.copytree(src_dir, dst_dir)
 
 
-def load_analysis(name: str) -> ModuleType:
-    """Import an analysis script under its bare module name.
-
-    Registration prevents sibling imports from creating a second ``RESULTS_DIR``.
-    """
-    if name in sys.modules:
-        return sys.modules[name]
-    sys.path.insert(0, str(ANALYSIS_DIR))
-    sys.path.insert(0, str(NOTEBOOKS))
-    spec = importlib.util.spec_from_file_location(name, ANALYSIS_DIR / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.fixture(scope="session")
 def power_analysis() -> ModuleType:
-    """The root of the analysis import chain; owns MODELS/INFOS/RESULTS_DIR."""
-    return load_analysis("power_analysis")
+    """Return the power-analysis module."""
+    return sys.modules["power_analysis"]
 
 
 @pytest.fixture(scope="session")
-def multiplicity_sim(power_analysis: ModuleType) -> ModuleType:
-    """The standalone Monte Carlo module."""
-    return load_analysis("multiplicity_sim")
+def multiplicity_sim() -> ModuleType:
+    """Return the multiplicity-simulation module."""
+    return sys.modules["multiplicity_sim"]
 
 
 @pytest.fixture(scope="session")
-def paired_analysis(power_analysis: ModuleType) -> ModuleType:
-    """The paired re-analysis module (imports ``power_analysis``)."""
-    return load_analysis("paired_analysis")
+def paired_analysis() -> ModuleType:
+    """Return the paired-analysis module."""
+    return sys.modules["paired_analysis"]
 
 
 @pytest.fixture(scope="session")
-def significance_report(paired_analysis: ModuleType) -> ModuleType:
-    """The Holm/Hochberg report module (imports both of the above)."""
-    return load_analysis("significance_report")
+def significance_report() -> ModuleType:
+    """Return the significance-report module."""
+    return sys.modules["significance_report"]
 
 
 @pytest.fixture(scope="session")
-def extens_vs_noise(significance_report: ModuleType) -> ModuleType:
-    """The focused extens-vs-noise report module (imports all three)."""
-    return load_analysis("extens_vs_noise")
-
-
-@pytest.fixture
-def repoint(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
-    """Return a callable that repoints every loaded analysis module.
-
-    Siblings import ``RESULTS_DIR`` by value.
-    """
-
-    def _repoint(root: Path) -> None:
-        for name in (
-            "power_analysis",
-            "paired_analysis",
-            "significance_report",
-            "extens_vs_noise",
-        ):
-            module = sys.modules.get(name)
-            if module is not None and hasattr(module, "RESULTS_DIR"):
-                monkeypatch.setattr(module, "RESULTS_DIR", root)
-
-    return _repoint
+def extens_vs_noise() -> ModuleType:
+    """Return the extens-versus-noise module."""
+    return sys.modules["extens_vs_noise"]

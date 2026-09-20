@@ -1,5 +1,7 @@
 """Contracts for induction-analysis statistical plumbing."""
 
+# isort: skip_file
+
 import contextlib
 import io
 import json
@@ -13,26 +15,73 @@ from types import ModuleType
 from typing import Any
 
 import numpy as np
+import power_analysis as design
 import pytest
 from scipy.stats import binom
+from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Mark, Marks
 from tests._paths import REPO_ROOT
 
 # pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import (  # noqa: F401
+from tests.analysis.conftest import SHALLOW_DEPTH  # noqa: F401
+
+from tests.analysis.conftest import (  # isort: skip
     ANALYSIS_DIR,
-    SHALLOW_DEPTH,
     build_tree,
-    extens_vs_noise,
-    multiplicity_sim,
-    paired_analysis,
-    power_analysis,
-    repoint,
-    significance_report,
 )
 
 NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
+
+
+def _noisy_curve(n: int) -> float:
+    """Return the sustained-crossing fixture's noisy power."""
+    return 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
+
+
+def test_apply_corrections_matches_statsmodels() -> None:
+    """Batched masks agree with statsmodels row by row away from exact ties."""
+    import _power_common
+
+    alpha = _power_common.ALPHA
+    rng = np.random.default_rng(7)
+    pv = np.vstack(
+        [
+            rng.uniform(0, 1, size=(40, 6)),
+            rng.uniform(0, 0.02, size=(10, 6)),
+            np.array([[0.001, 0.011, 0.021, 0.031, 0.041, 0.9]]),
+        ]
+    )
+    got = _power_common.apply_corrections(pv, alpha)
+    methods = {
+        "Bonferroni": "bonferroni",
+        "Holm": "holm",
+        "Hochberg": "simes-hochberg",
+        "BH": "fdr_bh",
+    }
+    for name, method in methods.items():
+        for row, mask in zip(pv, got[name]):
+            expected = multipletests(row, alpha=alpha, method=method)[0]
+            assert list(mask) == list(expected), (name, row.tolist())
+
+
+def test_apply_corrections_share_one_inclusive_boundary() -> None:
+    """Every procedure rejects a p-value sitting exactly on its threshold."""
+    import _power_common
+
+    alpha = _power_common.ALPHA
+    m = 4
+    pv = np.array(
+        [
+            [alpha / m, alpha / (m - 1), 0.5, 0.9],
+            [alpha * 1 / m, alpha * 2 / m, alpha * 3 / m, alpha * 4 / m],
+        ]
+    )
+    got = _power_common.apply_corrections(pv, alpha)
+    assert list(got["Bonferroni"][0]) == [True, False, False, False]
+    assert list(got["Holm"][0]) == [True, True, False, False]
+    assert list(got["Hochberg"][0]) == [True, True, False, False]
+    assert list(got["BH"][1]) == [True, True, True, True]
 
 
 def test_power_analysis_roster_comes_from_the_study_config(
@@ -172,7 +221,7 @@ def small_tree(
         model="stub-model",
         marks=tuple(
             Mark(query=f"q{i}", answer=i, response="x", score=0, compliance="empty")
-            for i in range(9)
+            for i in range(power_analysis.N_HARMONICS)
         ),
         date=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
@@ -182,24 +231,21 @@ def small_tree(
 
 
 def test_walkers_skip_an_unparsable_replicate_filename(
-    repoint: Callable[[Path], None],
     paired_analysis: ModuleType,
     significance_report: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
 ) -> None:
     """A non-replicate file in the tree is skipped, by both the loader and the census."""
     root, cell = small_tree
-    repoint(root)
-    loaded = paired_analysis.load_marks()
-    correct = loaded[0]
+    loaded = paired_analysis.load_marks(root)
+    correct = loaded.correct
     assert sorted(correct[cell]) == list(range(SHALLOW_DEPTH))
 
-    census = significance_report.compliance_census(loaded[2])
-    assert census[cell]["n"] == SHALLOW_DEPTH * 9
+    census = significance_report.compliance_census(loaded)
+    assert census[cell]["n"] == SHALLOW_DEPTH * design.N_HARMONICS
 
 
 def test_paired_report_handles_no_measurable_design_effects(
-    repoint: Callable[[Path], None],
     power_analysis: ModuleType,
     paired_analysis: ModuleType,
     tmp_path: Path,
@@ -224,10 +270,9 @@ def test_paired_report_handles_no_measurable_design_effects(
         ),
         copies=copies,
     )
-    repoint(tmp_path)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-        paired_analysis.main()
+        paired_analysis.main(tmp_path)
     assert (
         "Clustering / cross-stratum covariance: no measurable PRIMARY contrasts "
         "(every contrast has zero independence-assumed variance), so no design "
@@ -236,7 +281,6 @@ def test_paired_report_handles_no_measurable_design_effects(
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
-    repoint: Callable[[Path], None],
     paired_analysis: ModuleType,
     significance_report: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
@@ -244,8 +288,6 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 ) -> None:
     """Contrasts and census share one loader pass."""
     root, _cell = small_tree
-    repoint(root)
-
     reads = []
     original = Marks.load.__func__
     monkeypatch.setattr(
@@ -254,19 +296,18 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
         classmethod(lambda cls, path: reads.append(str(path)) or original(cls, path)),
     )
 
-    loaded = paired_analysis.load_marks()
+    loaded = paired_analysis.load_marks(root)
     after_load = len(reads)
-    census = significance_report.compliance_census(loaded[2])
+    census = significance_report.compliance_census(loaded)
 
-    n_cells = len(loaded[0])
-    assert n_cells == 84
+    n_cells = len(loaded.correct)
+    assert n_cells == design.N_LADDER_CONTRASTS
     assert after_load == n_cells * SHALLOW_DEPTH, after_load
     assert len(reads) == after_load, reads[after_load:]
     assert len(census) == n_cells
 
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
-    repoint: Callable[[Path], None],
     extens_vs_noise: ModuleType,
     paired_analysis: ModuleType,
     power_analysis: ModuleType,
@@ -275,7 +316,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
 ) -> None:
     """Focused contrasts reuse family p-values."""
     root, _cell = small_tree
-    repoint(root)
     calls = []
     real = paired_analysis.signflip_exact_p
     monkeypatch.setattr(
@@ -288,9 +328,9 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         contextlib.redirect_stdout(io.StringIO()),
         contextlib.redirect_stderr(io.StringIO()),
     ):
-        extens_vs_noise.main()
+        extens_vs_noise.main(root)
 
-    assert len(calls) == power_analysis.N_PRIMARY, len(calls)
+    assert len(calls) == design.N_PRIMARY, len(calls)
 
 
 def test_monte_carlo_output_lands_in_the_results_dir(
@@ -299,7 +339,7 @@ def test_monte_carlo_output_lands_in_the_results_dir(
     """Checkpoint JSON uses the general ignored results directory."""
     import _power_common
 
-    expected = _power_common.results_dir(multiplicity_sim.__file__, up=1)
+    expected = _power_common.results_dir("induction")
     assert multiplicity_sim.OUT_PATH.parent == expected
     assert multiplicity_sim.OUT_PATH.name.endswith(".json")
 
@@ -312,10 +352,7 @@ def test_dump_creates_its_own_results_directory(
     """Dump creates the ignored results directory on fresh checkouts."""
     target = tmp_path / "results" / "multiplicity_sim_results.json"
     assert not target.parent.exists()
-    monkeypatch.setattr(multiplicity_sim, "OUT_PATH", target)
-    monkeypatch.setattr(multiplicity_sim, "OUT", {"probe": 1})
-
-    multiplicity_sim.dump("probe")
+    multiplicity_sim.dump({"probe": 1}, target, "probe")
 
     assert target.exists()
     assert json.loads(target.read_text()) == {"probe": 1}
@@ -328,17 +365,14 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
 ) -> None:
     """A failed checkpoint write does not replace the previous JSON."""
     target = tmp_path / "multiplicity_sim_results.json"
-    monkeypatch.setattr(multiplicity_sim, "OUT_PATH", target)
-    monkeypatch.setattr(multiplicity_sim, "OUT", {"first": 1})
-    multiplicity_sim.dump("first")
+    multiplicity_sim.dump({"first": 1}, target, "first")
 
     def fail_dump(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError("simulated checkpoint failure")
 
     monkeypatch.setattr(multiplicity_sim.json, "dump", fail_dump)
-    monkeypatch.setattr(multiplicity_sim, "OUT", {"second": 2})
     with pytest.raises(RuntimeError, match="simulated checkpoint failure"):
-        multiplicity_sim.dump("second")
+        multiplicity_sim.dump({"second": 2}, target, "second")
 
     assert json.loads(target.read_text()) == {"first": 1}
     assert [p.name for p in tmp_path.iterdir()] == [target.name]
@@ -346,22 +380,34 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
 
 def test_contrast_row_handles_empty_drop_invalid_pairs(
     paired_analysis: ModuleType,
+    power_analysis: ModuleType,
 ) -> None:
     """Dropping all invalid marks returns empty accuracies without warnings."""
     key_a = ("model_a", "intens")
     key_b = ("model_b", "noise_intens")
     correct = {
-        key_a: {seed: np.ones(9, dtype=bool) for seed in range(2)},
-        key_b: {seed: np.zeros(9, dtype=bool) for seed in range(2)},
+        key_a: {
+            seed: np.ones(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
+        },
+        key_b: {
+            seed: np.zeros(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
+        },
     }
     valid = {
-        key_a: {seed: np.ones(9, dtype=bool) for seed in range(2)},
-        key_b: {seed: np.zeros(9, dtype=bool) for seed in range(2)},
+        key_a: {
+            seed: np.ones(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
+        },
+        key_b: {
+            seed: np.zeros(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
+        },
     }
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         row = paired_analysis.contrast_row(
-            correct, valid, key_a, key_b, drop_invalid=True
+            paired_analysis.CellMarks(correct, valid, {}),
+            key_a,
+            key_b,
+            drop_invalid=True,
         )
 
     assert row["n"] == 0
@@ -376,12 +422,15 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
     with contextlib.redirect_stdout(io.StringIO()):
-        multiplicity_sim.part5(rng, n_sims=200)
-    part5 = multiplicity_sim.OUT["part5"]
+        part5 = multiplicity_sim.part5(rng, n_sims=200)
 
-    assert part5["alpha_trend_studywide"] == pytest.approx(alpha / 154)
-    assert part5["alpha_trend_only"] == pytest.approx(alpha / 28)
-    assert part5["alpha_pairwise"] == pytest.approx(alpha / 210)
+    assert part5["alpha_trend_studywide"] == pytest.approx(
+        alpha / multiplicity_sim.N_REDUCED
+    )
+    assert part5["alpha_trend_only"] == pytest.approx(
+        alpha / multiplicity_sim.N_LADDERS
+    )
+    assert part5["alpha_pairwise"] == pytest.approx(alpha / multiplicity_sim.N_PRIMARY)
     for row in part5["rows"]:
         assert "trend_studywide" in row and "trend_trend_only_family" in row
 
@@ -470,7 +519,7 @@ def test_sizing_crossing_is_sustained_not_first_hit(
     """A noisy first crossing is not accepted when later power dips below target."""
 
     def fake_cmh_stat(_succ_a: np.ndarray, _succ_b: np.ndarray, n: int) -> np.ndarray:
-        fraction = 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
+        fraction = _noisy_curve(n)
         n_reject = int(round(fraction * power_analysis.N_SIMS))
         return np.concatenate(
             (np.full(n_reject, 1e6), np.zeros(power_analysis.N_SIMS - n_reject))
@@ -501,10 +550,7 @@ def test_equivalence_crossing_is_sustained_not_first_hit(
         _alpha: float,
         _n_sims: int,
     ) -> dict[int, float]:
-        return {
-            n: 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
-            for n in range(1, power_analysis.MAX_REPLICATES + 1)
-        }
+        return {n: _noisy_curve(n) for n in range(1, power_analysis.MAX_REPLICATES + 1)}
 
     monkeypatch.setattr(power_analysis, "_equivalence_power_curve", fake_power_curve)
     rates = np.full(power_analysis.N_HARMONICS, 0.5)
@@ -520,17 +566,24 @@ def test_recommended_replicates_carries_censored_contrasts(
     power_analysis: ModuleType,
 ) -> None:
     """A censored family has no whole-family R, and the render says so instead of dropping them."""
-    censored = power_analysis.recommended_replicates(40, 3, 210)
+    censored = power_analysis.recommended_replicates(40, 3, power_analysis.N_PRIMARY)
     assert censored["family_r"] is None
-    assert censored["n_powered"] == 207 and censored["n_primary"] == 210
+    assert (
+        censored["n_powered"] == power_analysis.N_PRIMARY - 3
+        and censored["n_primary"] == power_analysis.N_PRIMARY
+    )
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         power_analysis.render_recommended_replicates(censored)
     out = buf.getvalue()
-    assert "CENSORED" in out and "3 of 210" in out and "207 of 210" in out, out
+    assert (
+        "CENSORED" in out
+        and f"3 of {power_analysis.N_PRIMARY}" in out
+        and f"{power_analysis.N_PRIMARY - 3} of {power_analysis.N_PRIMARY}" in out
+    ), out
     assert "excluded" not in out.lower(), out
 
-    full = power_analysis.recommended_replicates(40, 0, 210)
+    full = power_analysis.recommended_replicates(40, 0, power_analysis.N_PRIMARY)
     assert full["family_r"] == 40
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -668,7 +721,7 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
             0.90,
             0.0,
             0.5,
-            multiplicity_sim.R_DEFAULT,
+            multiplicity_sim.N_REPLICATES,
             4000,
             np.random.default_rng(17),
             stats=False,
@@ -685,8 +738,12 @@ def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     """Each ICC has a labeled output block."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        multiplicity_sim.part2(np.random.default_rng(2), n_sims=200, search_sims=100)
-    out = multiplicity_sim.OUT["part2"]
+        out = multiplicity_sim.part2(
+            np.random.default_rng(2),
+            multiplicity_sim.results_dir("induction"),
+            n_sims=200,
+            search_sims=100,
+        )
 
     assert set(out["icc"]) == {"0.0", "0.2", "0.4"}
     for icc_key, block in out["icc"].items():
@@ -704,9 +761,7 @@ def test_study_design_effect_ignores_checkpoint_without_replicates(
 ) -> None:
     """A checkpoint directory is not a measured study lane."""
     (tmp_path / "multiplicity_sim_results.json").write_text("{}", encoding="utf-8")
-    paired_analysis = sys.modules["paired_analysis"]
-    monkeypatch.setattr(paired_analysis, "RESULTS_DIR", tmp_path)
-    assert multiplicity_sim.study_design_effect() is None
+    assert multiplicity_sim.study_design_effect(tmp_path) is None
 
 
 def test_each_icc_block_reports_the_design_effect_it_produces(
@@ -714,8 +769,13 @@ def test_each_icc_block_reports_the_design_effect_it_produces(
 ) -> None:
     """Each ICC block reports its simulated design effect."""
     with contextlib.redirect_stdout(io.StringIO()):
-        multiplicity_sim.part2(np.random.default_rng(3), n_sims=200, search_sims=100)
-    blocks = multiplicity_sim.OUT["part2"]["icc"]
+        out = multiplicity_sim.part2(
+            np.random.default_rng(3),
+            multiplicity_sim.results_dir("induction"),
+            n_sims=200,
+            search_sims=100,
+        )
+    blocks = out["icc"]
     deffs = [blocks[k]["design_effect_simulated"] for k in ("0.0", "0.2", "0.4")]
     assert all(isinstance(d, float) for d in deffs), deffs
     assert 0.8 < deffs[0] < 1.3, deffs
@@ -738,7 +798,8 @@ def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic(
     for s, pos in invalid.items():
         valid[key_a][s][pos] = False
 
-    _a, _b, sidx, hidx = paired_analysis.aligned(correct, valid, key_a, key_b, True)
+    marks = paired_analysis.CellMarks(correct, valid, {})
+    _a, _b, sidx, hidx = paired_analysis.aligned(marks, key_a, key_b, True)
 
     for i, s in enumerate(seeds):
         expected = [h for h in range(n) if h != invalid[s]]

@@ -6,24 +6,22 @@ Synthetic trees keep reported claims conditional on their supporting data.
 import contextlib
 import io
 import re
+import shutil
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from power_analysis import N_HARMONICS
 
 # Pytest discovers imported fixtures from module globals.
 # pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import (  # noqa: F401
+from tests.analysis.conftest import SHALLOW_DEPTH  # noqa: F401
+
+from tests.analysis.conftest import (  # isort: skip
     DEEP_DEPTH,
-    SHALLOW_DEPTH,
     build_tree,
-    extens_vs_noise,
-    paired_analysis,
-    power_analysis,
-    repoint,
-    significance_report,
 )
 
 #: Collapsed noise arm whose failed control is padding-driven.
@@ -37,27 +35,25 @@ TIED_MODEL = "nemo3_30b"
 #: Model whose informative arm is deliberately below its empty-context floor.
 REVERSED_MODEL = "ds_flash"
 #: Model whose collapse annotation is not caused by padding.
-CAVEAT_MODEL = "ds_flash"
-#: Model whose copied noise control does not reject while compliance is skewed.
-PAD_CONTROL_MODEL = "ds_flash"
+PAD_MODEL = "ds_flash"
 
 _SKEW_SPLIT = 10
 
 
 def _skew_census(
-    module: ModuleType, key: tuple[str, str], per_seed: dict[range, tuple[int, int]]
+    module: ModuleType,
+    per_seed: Mapping[tuple[str, str], dict[int, tuple[int, int]]],
 ) -> Callable[[dict], dict]:
-    """Wrap `module.compliance_census` so `key`'s per-seed counts are overwritten."""
+    """Wrap the census so selected per-seed counts are overwritten."""
     real = module.compliance_census
 
-    def skewed(compliance: dict) -> dict:
-        census = real(compliance)
-        cell = census[key]
-        for seeds, counts in per_seed.items():
-            for seed in seeds:
-                cell["per_seed"][seed] = counts
-        nc = sum(n for n, _t in cell["per_seed"].values())
-        cell["rate"] = nc / sum(t for _n, t in cell["per_seed"].values())
+    def skewed(marks: object) -> dict:
+        census = real(marks)
+        for key, replacements in per_seed.items():
+            cell = census[key]
+            cell["per_seed"].update(replacements)
+            nc = sum(n for n, _t in cell["per_seed"].values())
+            cell["rate"] = nc / sum(t for _n, t in cell["per_seed"].values())
         return census
 
     return skewed
@@ -134,14 +130,14 @@ def _ceiling_profile(model: str, info: str) -> tuple[float, float, str, range]:
 
 def _caveat_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(DEEP_DEPTH)
-    if model == CAVEAT_MODEL and info == "intens":
+    if model == PAD_MODEL and info == "intens":
         return 0.50, 0.50, "empty", seeds
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
 
 def _padding_control_profile(model: str, info: str) -> tuple[float, float, str, range]:
     seeds = range(DEEP_DEPTH)
-    if model == PAD_CONTROL_MODEL and info in {"intens", "noise_intens", "zero"}:
+    if model == PAD_MODEL and info in {"intens", "noise_intens", "zero"}:
         return 0.10, 0.0, "empty", seeds
     return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
@@ -241,15 +237,13 @@ def padding_control_tree(
 ) -> Path:
     """Build a copied noise control whose compliance can be skewed independently."""
     root = tmp_path_factory.mktemp("padding-control")
-    source = (PAD_CONTROL_MODEL, "zero")
+    source = (PAD_MODEL, "zero")
     build_tree(
         root,
         power_analysis.MODELS,
         power_analysis.INFOS,
         _padding_control_profile,
-        copies={
-            (PAD_CONTROL_MODEL, info): source for info in ("intens", "noise_intens")
-        },
+        copies={(PAD_MODEL, info): source for info in ("intens", "noise_intens")},
     )
     return root
 
@@ -271,41 +265,52 @@ def shared_seed_noise_tree(
 
 @pytest.fixture
 def report(
-    repoint: Callable[[Path], None], significance_report: ModuleType
+    significance_report: ModuleType,
 ) -> Callable[[Path], str]:
-    """Return ``root -> significance_report.main()``'s captured output."""
+    """Return captured report output for an explicit result directory."""
 
     def _report(root: Path) -> str:
-        repoint(root)
-        return _run(significance_report.main)
+        return _run(lambda: significance_report.main(root))
 
     return _report
 
 
-# ===========================================================================
-# the control-failure message is hard-coded and there is no depth guard
-# ===========================================================================
+# The shallow fixture pins the incomplete-sync guard and control messaging.
 
 
 def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
-    report: Callable[[Path], str], shallow_tree: Path
+    report: Callable[[Path], str],
+    shallow_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """At 6 seeds nothing is rejectable, so the report must say `INCOMPLETE SYNC` and suppress the padding exoneration."""
     out = report(shallow_tree)
+    computed = significance_report.compute(shallow_tree)
+    assert computed.floor_bound
+    assert computed.depth_min == SHALLOW_DEPTH
     assert "INCOMPLETE SYNC" in out
     # The blanket exoneration must NOT print under a floor-bound family.
     assert "whitespace padding drove" not in out
     # Include threshold arithmetic so the banner is auditable.
     banner = out.split("INCOMPLETE SYNC", 1)[1][:800]
-    assert re.search(r"2\s*/\s*2\W*\W?6|3\.12\d*e-0?2", banner), banner
-    assert re.search(r"2\.38\d*e-0?4|0\.05\s*/\s*210", banner), banner
+    assert f"2/2**{computed.depth_max}" in banner
+    assert f"ALPHA/m = {significance_report.ALPHA} / {computed.m}" in banner
 
 
 def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
-    report: Callable[[Path], str], collapse_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    significance_report: ModuleType,
 ) -> None:
     """Collapsed noise controls are split from compliant failures."""
     out = report(collapse_tree)
+    computed = significance_report.compute(collapse_tree)
+    assert computed.fails
+    assert len(computed.fails) == (
+        len(computed.fails_total)
+        + len(computed.fails_partial)
+        + len(computed.fails_unexplained)
+    )
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     fails = [ln for ln in controls.splitlines() if ln.strip().startswith("FAILS")]
     # Exoneration requires a collapsed noise arm.
@@ -345,17 +350,14 @@ def _padding_control_report(
         "compliance_census",
         _skew_census(
             significance_report,
-            (PAD_CONTROL_MODEL, "intens"),
-            {range(DEEP_DEPTH): (0, 9)},
-        ),
-    )
-    monkeypatch.setattr(
-        significance_report,
-        "compliance_census",
-        _skew_census(
-            significance_report,
-            (PAD_CONTROL_MODEL, "noise_intens"),
-            {range(DEEP_DEPTH): noise_counts},
+            {
+                (PAD_MODEL, "intens"): dict.fromkeys(
+                    range(DEEP_DEPTH), (0, N_HARMONICS)
+                ),
+                (PAD_MODEL, "noise_intens"): dict.fromkeys(
+                    range(DEEP_DEPTH), noise_counts
+                ),
+            },
         ),
     )
     return report(padding_control_tree)
@@ -366,6 +368,7 @@ def test_partial_pad_crossing_is_not_called_near_total(
     significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
+    power_analysis: ModuleType,
 ) -> None:
     """A partial compliance collapse is reported as a caveat, not control causation."""
     controls = _padding_control_report(
@@ -373,7 +376,7 @@ def test_partial_pad_crossing_is_not_called_near_total(
         significance_report,
         padding_control_tree,
         monkeypatch,
-        (4, 9),
+        (4, N_HARMONICS),
     ).split("ZERO-ARM CONTROLS", 1)[1]
     assert "near-total non-compliance" not in controls
     assert "55.6% compliant on the compared seeds" in controls
@@ -385,6 +388,7 @@ def test_total_pad_crossing_keeps_near_total_exoneration(
     significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
+    power_analysis: ModuleType,
 ) -> None:
     """A total compliance collapse retains the padding exoneration."""
     controls = _padding_control_report(
@@ -392,7 +396,7 @@ def test_total_pad_crossing_keeps_near_total_exoneration(
         significance_report,
         padding_control_tree,
         monkeypatch,
-        (9, 9),
+        (N_HARMONICS, N_HARMONICS),
     ).split("ZERO-ARM CONTROLS", 1)[1]
     assert "near-total non-compliance" in controls
 
@@ -423,28 +427,42 @@ def test_reversed_controls_are_not_counted_as_passing(
 
 
 def test_replicate_depth_gate_uses_the_shallowest_lane(
-    repoint: Callable[[Path], None],
     paired_analysis: ModuleType,
     tmp_path_factory: pytest.TempPathFactory,
     power_analysis: ModuleType,
 ) -> None:
-    """One deep lane must not silence the short-depth warning (``paired_analysis.py:306``)."""
+    """The shallowest lane controls the depth warning."""
     deep_cell = (power_analysis.MODELS[0], "intens")
     root = tmp_path_factory.mktemp("mixed_depth")
 
     def profile(model: str, info: str) -> tuple[float, float, str, range]:
         seeds = (
-            range(paired_analysis.EXPECTED_R)
+            range(power_analysis.N_REPLICATES)
             if (model, info) == deep_cell
             else range(SHALLOW_DEPTH)
         )
         return (0.10 if info == "zero" else 0.90), 0.0, "empty", seeds
 
     build_tree(root, power_analysis.MODELS, power_analysis.INFOS, profile)
-    repoint(root)
-    out = _run(paired_analysis.main)
+    out = _run(lambda: paired_analysis.main(root))
     assert "WARNING" in out
     assert str(SHALLOW_DEPTH) in out
+
+
+def test_extra_replicate_seed_is_rejected(
+    shallow_tree: Path,
+    power_analysis: ModuleType,
+    paired_analysis: ModuleType,
+    tmp_path: Path,
+) -> None:
+    """A lane outside the registered seed range is a collection failure."""
+    root = tmp_path / "extra-seed"
+    shutil.copytree(shallow_tree, root)
+    cell = (power_analysis.MODELS[0], power_analysis.INFOS[0])
+    source = root / f"{cell[0]}_{cell[1]}" / "rep_0.yaml"
+    source.rename(source.with_name("rep_30.yaml"))
+    with pytest.raises(SystemExit, match="30"):
+        paired_analysis.load_marks(root)
 
 
 # ===========================================================================
@@ -547,17 +565,14 @@ def test_all_cells_noise_count_uses_whole_cell_rates(
         "compliance_census",
         _skew_census(
             significance_report,
-            (SKEW_MODEL, "intens"),
-            {range(_SKEW_SPLIT): (0, 9)},
-        ),
-    )
-    monkeypatch.setattr(
-        significance_report,
-        "compliance_census",
-        _skew_census(
-            significance_report,
-            (SKEW_MODEL, "noise_intens"),
-            {range(3): (9, 9)},
+            {
+                (SKEW_MODEL, "intens"): dict.fromkeys(
+                    range(_SKEW_SPLIT), (0, N_HARMONICS)
+                ),
+                (SKEW_MODEL, "noise_intens"): dict.fromkeys(
+                    range(3), (N_HARMONICS, N_HARMONICS)
+                ),
+            },
         ),
     )
     out = report(shared_seed_noise_tree)
@@ -589,9 +604,7 @@ def test_zero_vs_zero_controls_report_the_measured_count_only(
         assert len(re.findall(r"^  SIG    ", tail, re.M)) == n_sig, tail
 
 
-# ===========================================================================
-# three narrative conclusions printed regardless of their own counts
-# ===========================================================================
+# Each narrative conclusion is gated by its own computed count.
 
 
 def test_the_ladder_claim_is_conditional_on_its_own_count(
@@ -648,7 +661,10 @@ def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
 
 
 def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
-    report: Callable[[Path], str], collapse_tree: Path, clean_tree: Path
+    report: Callable[[Path], str],
+    collapse_tree: Path,
+    clean_tree: Path,
+    power_analysis: ModuleType,
 ) -> None:
     """`CEILING pairs` needs at least one ceiling pair, and its zero-discordant count must be measured, not asserted as "many"."""
     collapse = report(collapse_tree)
@@ -658,7 +674,7 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     clean = report(clean_tree)
     ceiling_line = [ln for ln in clean.splitlines() if "CEILING pairs" in ln]
     assert ceiling_line, clean[-2000:]
-    assert " 126" in ceiling_line[0], ceiling_line[0]
+    assert f" {power_analysis.N_INFO_CONTRASTS}" in ceiling_line[0], ceiling_line[0]
     tail = clean.split("CEILING pairs", 1)[1]
     # A measured count of zero-discordant ceiling pairs, not the word "many".
     assert re.search(r"\d+ .{0,40}zero discordant", tail, re.IGNORECASE), tail[:600]
@@ -691,17 +707,14 @@ def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
     assert clean_match.group(1) == clean_match.group(2)
 
 
-# ===========================================================================
-# the direction label had no tie branch
-# ===========================================================================
+# Exact ties retain a distinct direction label.
 
 
 def test_exact_ties_are_labelled_tied_not_extens_higher(
-    repoint: Callable[[Path], None], extens_vs_noise: ModuleType, collapse_tree: Path
+    extens_vs_noise: ModuleType, collapse_tree: Path
 ) -> None:
     """A byte-identical pair of arms must be labelled tied, not awarded to either side."""
-    repoint(collapse_tree)
-    out = _run(extens_vs_noise.main)
+    out = _run(lambda: extens_vs_noise.main(collapse_tree))
     tied_rows = [ln for ln in out.splitlines() if TIED_MODEL in ln]
     assert tied_rows, out[:2000]
     for line in tied_rows:
@@ -714,11 +727,10 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
 
 
 def test_collapsed_lane_buckets_as_collapse(
-    repoint: Callable[[Path], None], extens_vs_noise: ModuleType, collapse_tree: Path
+    extens_vs_noise: ModuleType, collapse_tree: Path
 ) -> None:
     """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
-    repoint(collapse_tree)
-    out = _run(extens_vs_noise.main)
+    out = _run(lambda: extens_vs_noise.main(collapse_tree))
     # The per-model table only: detail rows take their mechanism from the bucket heading.
     table = out.split("mechanism / non-compliance", 1)[1].split("\nH210 =", 1)[0]
     rows = {
@@ -749,21 +761,22 @@ def test_mechanism_annotates_collapse_without_asserting_direction(
 
 
 def test_extens_vs_noise_rates_use_the_aligned_seed_population(
-    repoint: Callable[[Path], None],
     extens_vs_noise: ModuleType,
     collapse_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-compliance outside the seeds the noise arm covers must not colour the contrast."""
-    repoint(collapse_tree)
     # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
     skewed = _skew_census(
         extens_vs_noise,
-        (SKEW_MODEL, "extens"),
-        {range(_SKEW_SPLIT, DEEP_DEPTH): (9, 9)},
+        {
+            (SKEW_MODEL, "extens"): dict.fromkeys(
+                range(_SKEW_SPLIT, DEEP_DEPTH), (N_HARMONICS, N_HARMONICS)
+            )
+        },
     )
     monkeypatch.setattr(extens_vs_noise, "compliance_census", skewed)
-    out = _run(extens_vs_noise.main)
+    out = _run(lambda: extens_vs_noise.main(collapse_tree))
     skew_lines = [ln for ln in out.splitlines() if SKEW_MODEL in ln]
     assert skew_lines, out[:2000]
     rates = [
@@ -785,18 +798,30 @@ def test_collapse_tags_use_the_compared_seeds(
     """Collapse tags use only seeds shared by the compared contrast arms."""
     skewed = _skew_census(
         significance_report,
-        (SKEW_MODEL, "noise_intens"),
-        {range(_SKEW_SPLIT): (0, 9), range(_SKEW_SPLIT, DEEP_DEPTH): (9, 9)},
+        {
+            (SKEW_MODEL, "noise_intens"): {
+                **dict.fromkeys(range(_SKEW_SPLIT), (0, N_HARMONICS)),
+                **dict.fromkeys(
+                    range(_SKEW_SPLIT, DEEP_DEPTH),
+                    (N_HARMONICS, N_HARMONICS),
+                ),
+            }
+        },
     )
     monkeypatch.setattr(significance_report, "compliance_census", skewed)
     out = report(collapse_tree)
-    label = "[exaone_32b] noise_intens vs zero"
+    label = f"[{SKEW_MODEL}] noise_intens vs zero"
     lines = [line for line in out.splitlines() if label in line]
     assert lines, out[:3000]
     assert all("[COLLAPSE:" not in line for line in lines), lines
 
     crossing = _skew_census(
-        significance_report, (SKEW_MODEL, "noise_intens"), {range(_SKEW_SPLIT): (9, 9)}
+        significance_report,
+        {
+            (SKEW_MODEL, "noise_intens"): dict.fromkeys(
+                range(_SKEW_SPLIT), (N_HARMONICS, N_HARMONICS)
+            )
+        },
     )
     monkeypatch.setattr(significance_report, "compliance_census", crossing)
     out = report(collapse_tree)
