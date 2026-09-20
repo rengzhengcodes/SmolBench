@@ -10,6 +10,7 @@ chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sys
@@ -51,29 +52,8 @@ from scipy.stats import chi2, norm
 from smolbench.evals.results_store import LocalResultsStore
 
 # Equivalent-R search ladder, starting at N_REPLICATES so "pairing bought nothing" stays reachable.
-EQ_R_GRID = (
-    N_REPLICATES,
-    35,
-    40,
-    45,
-    50,
-    60,
-    70,
-    85,
-    100,
-    120,
-    145,
-    175,
-    210,
-    250,
-    300,
-    360,
-    430,
-    520,
-    620,
-    750,
-    900,
-)
+EQ_R_GRID = (N_REPLICATES, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250)
+EQ_R_GRID += (300, 360, 430, 520, 620, 750, 900)
 
 # Include the unclustered baseline and plausible clustering range.
 ICC_GRID = (0.0, 0.2, 0.4)
@@ -88,12 +68,7 @@ def dump(out: dict, path: Path, tag: str) -> None:
     """Atomically write a checkpoint JSON via a sibling temp file.
 
     A failed write leaves the previous checkpoint intact; the directory is
-    created here, not at import.
-
-    Parameters
-    ----------
-    tag : str
-        Checkpoint label written to the log.
+    created here, not at import. ``tag`` is the checkpoint label written to the log.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -147,27 +122,9 @@ def paired_marks(
     correlated at `rho` like the item latents, so mixing them in at `icc` leaves the
     cross-arm latent correlation at `rho` instead of attenuating it to ``(1 - icc) * rho``.
 
-    Parameters
-    ----------
-    p_a : float
-        Marginal mark rate for arm A.
-    p_b : float
-        Marginal mark rate for arm B.
-    rho : float
-        Tetrachoric correlation between matched marks.
-    n_sims : int
-        Number of simulated experiments.
-    reps : int
-        Number of replicates per experiment.
-    rng : np.random.Generator
-        Random generator for latent draws.
-    icc : float, optional
-        Shared per-replicate latent variance fraction; default is zero.
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray]
-        Simulated Boolean marks for arms A and B.
+    ``p_a``/``p_b`` are the marginal mark rates, ``rho`` the tetrachoric correlation
+    between matched marks, ``icc`` the shared per-replicate latent variance fraction.
+    Returns Boolean marks for arms A and B shaped ``(n_sims, reps, N_HARMONICS)``.
     """
     if not 0.0 <= icc < 1.0:
         raise ValueError(f"icc must be in [0.0, 1.0), got {icc!r}")
@@ -187,14 +144,8 @@ def paired_marks(
 def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -> dict:
     """Find minimum detectable differences at each ceiling.
 
-    Parameters
-    ----------
-    rng : np.random.Generator
-        Random-number generator for simulated counts.
-    n_sims : int, optional
-        Number of simulations per baseline rate and gap.
-    step : float, optional
-        Accuracy-gap increment to scan.
+    ``n_sims`` simulations per baseline rate and gap; ``step`` is the accuracy-gap
+    increment to scan.
     """
     print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
     rows = []
@@ -212,18 +163,16 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
                     if pw >= 0.80:
                         found[a_lab] = (round(d, 4), float(pw))
             d += step
+        mdd_bonf, pow_bonf = found.get("bonf", (None, None))
+        mdd_naive, pow_naive = found.get("naive", (None, None))
         row = {
             "p_a": p_a,
-            "mdd_bonf": found.get("bonf", (None, None))[0],
-            "pow_bonf": found.get("bonf", (None, None))[1],
-            "mdd_naive": found.get("naive", (None, None))[0],
-            "pow_naive": found.get("naive", (None, None))[1],
+            "mdd_bonf": mdd_bonf,
+            "pow_bonf": pow_bonf,
+            "mdd_naive": mdd_naive,
+            "pow_naive": pow_naive,
+            "ratio": mdd_bonf / mdd_naive if mdd_bonf and mdd_naive else None,
         }
-        row["ratio"] = (
-            row["mdd_bonf"] / row["mdd_naive"]
-            if row["mdd_bonf"] and row["mdd_naive"]
-            else None
-        )
         rows.append(row)
         print(
             f"  p_A={p_a:.2f}  MDD(alpha={ALPHA_PRIMARY:.2e})={row['mdd_bonf']}  "
@@ -236,14 +185,8 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
 def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) -> dict:
     """Measure Type I error under within-replicate clustering.
 
-    Parameters
-    ----------
-    rng : np.random.Generator
-        Random-number generator for simulated marks.
-    n_sims : int, optional
-        Total simulations per grid configuration.
-    chunk : int, optional
-        Bounds peak memory.
+    ``n_sims`` total simulations per grid configuration, drawn in ``chunk``-sized
+    batches to bound peak memory.
     """
     print(
         "\n=== PART 3: within-replicate clustering -> actual Type I error ===",
@@ -329,14 +272,8 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
     pairwise row's ``ALPHA / N_PRIMARY``); `trend_trend_only_family` at the
     narrower ``ALPHA / N_LADDERS``, correcting only among the trend tests
     themselves, reported as a labelled sensitivity figure since that
-    narrower family is not pre-registered anywhere.
-
-    Parameters
-    ----------
-    rng : np.random.Generator
-        Random-number generator for simulated counts.
-    n_sims : int, optional
-        Simulations per rate scenario.
+    narrower family is not pre-registered anywhere. ``n_sims`` simulations per
+    rate scenario.
     """
     print("\n=== PART 5: 1-df trend vs 2-df omnibus vs 3 pairwise ===", flush=True)
     # The same N_LADDERS trend tests as PART 4's reduced family.
@@ -383,21 +320,15 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
             ).mean()
         )
         rows.append(res)
-        print(f"  {label}", flush=True)
         print(
+            f"  {label}\n"
             f"    study-wide: trend[a={ALPHA}/{N_REDUCED}]="
             f"{res['trend_studywide']:.4f} "
             f"gcmh(2df)[a={ALPHA}/{N_FAMILIES}]={res['gcmh_studywide']:.4f} "
             f"any-pairwise[a={ALPHA}/{N_PRIMARY}]="
-            f"{res['pairwise_any_studywide']:.4f}",
-            flush=True,
-        )
-        print(
+            f"{res['pairwise_any_studywide']:.4f}\n"
             f"    sensitivity: trend[a={ALPHA}/{N_LADDERS}, trend-only family, "
-            f"not pre-registered]={res['trend_trend_only_family']:.4f}",
-            flush=True,
-        )
-        print(
+            f"not pre-registered]={res['trend_trend_only_family']:.4f}\n"
             f"    local a={ALPHA}: trend={res['trend_local05']:.4f} "
             f"gcmh={res['gcmh_local05']:.4f} any-pairwise={res['pairwise_any_local']:.4f}",
             flush=True,
@@ -425,31 +356,10 @@ def _paired_powers(
 ) -> tuple[float, float, float | None, float | None]:
     """Compute unpaired and paired power on identical simulated marks.
 
-    Disabling diagnostics preserves powers and avoids costly float upcasts.
-
-    Parameters
-    ----------
-    p_a : float
-        Baseline success rate for arm A.
-    delta : float
-        Success-rate gap subtracted from `p_a` for arm B.
-    rho : float
-        Latent correlation between matched arm marks.
-    reps : int
-        Replicates in each simulation.
-    n_sims : int
-        Number of simulated datasets.
-    rng : np.random.Generator
-        Random-number generator for matched marks.
-    stats : bool, optional
-        Whether to compute the mark-level diagnostics.
-    icc : float, optional
-        Within-replicate latent correlation.
-
-    Returns
-    -------
-    tuple
-        ``(power_unpaired, power_paired, phi_binary, agreement)``.
+    Arm B's rate is ``p_a - delta``; the marks come from `paired_marks`. Setting
+    ``stats=False`` skips the mark-level diagnostics, which preserves the powers
+    and avoids costly float upcasts. Returns ``(power_unpaired, power_paired,
+    phi_binary, agreement)``.
     """
     p_b = p_a - delta
     ma, mb = paired_marks(p_a, p_b, rho, n_sims, reps, rng, icc=icc)
@@ -501,17 +411,9 @@ def part2(
 ) -> dict:
     """Measure pairing gains over unpaired testing.
 
-    Compare simulated `design_effect` at each `icc` with the study
-    estimate.
-
-    Parameters
-    ----------
-    rng : np.random.Generator
-        Random-number generator for simulated marks.
-    n_sims : int, optional
-        Number of simulations for the main power calculations.
-    search_sims : int, optional
-        Number of simulations at each equivalent-R search rung.
+    Compare simulated `design_effect` at each `icc` with the study estimate.
+    ``n_sims`` simulations drive the main power figures, ``search_sims`` each
+    equivalent-R search rung.
     """
     measured = study_design_effect(results_dir)
     measured_str = (
@@ -519,8 +421,8 @@ def part2(
         if measured is not None
         else f"unknown (no results tree at {results_dir})"
     )
-    print("\n=== PART 2: pairing gain (matched items) ===", flush=True)
     print(
+        "\n=== PART 2: pairing gain (matched items) ===\n"
         f"  study's own measured design effect: {measured_str} -- compare "
         f"against each icc block's design_effect_simulated below",
         flush=True,
@@ -657,13 +559,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     """Measure multiplicity-correction cost against known truth.
 
     The fixed-size trend arm separates test choice from correction-family size.
-
-    Parameters
-    ----------
-    rng : np.random.Generator
-        Random-number generator for simulated counts.
-    n_sims : int, optional
-        Number of simulated p-value families.
+    ``n_sims`` simulated p-value families.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
     rates = build_rate_matrix()
@@ -700,10 +596,10 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     ladder_nonflat = ~np.all(ladder_rates == ladder_rates[:, :1], axis=1)
     print(
         f"  config: {n_true} true effects / {int(is_null.sum())} true nulls; "
-        f"non-flat ladders = {int(ladder_nonflat.sum())}/{N_LADDERS}",
+        f"non-flat ladders = {int(ladder_nonflat.sum())}/{N_LADDERS}\n"
+        f"  true-effect deltas: {np.sort(true_diff[~is_null])}",
         flush=True,
     )
-    print(f"  true-effect deltas: {np.sort(true_diff[~is_null])}", flush=True)
 
     succ = np.empty((n_sims, N_FAMILIES, N_RUNGS, N_INFOS, N_HARMONICS), dtype=np.int32)
     for f in range(N_FAMILIES):
@@ -717,12 +613,13 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
         pv[:, t] = cmh_p(
             succ[:, c[0], c[1], c[2], :], succ[:, c[3], c[4], c[5], :], N_REPLICATES
         )
-    trend_p = np.empty((n_sims, N_LADDERS))
-    t = 0
-    for f in range(N_FAMILIES):
-        for i in range(N_INFOS):
-            trend_p[:, t] = chi2.sf(trend_stat(succ[:, f, :, i, :], N_REPLICATES), df=1)
-            t += 1
+    trend_p = np.column_stack(
+        [
+            chi2.sf(trend_stat(succ[:, f, :, i, :], N_REPLICATES), df=1)
+            for f in range(N_FAMILIES)
+            for i in range(N_INFOS)
+        ]
+    )
     pv_red = np.concatenate([trend_p, pv[:, N_LADDER_CONTRASTS:]], axis=1)
     null_red = np.concatenate([~ladder_nonflat, is_null[N_LADDER_CONTRASTS:]])
     m_red = pv_red.shape[1]
@@ -809,16 +706,16 @@ def main(
     out_path = results_dir / OUT_NAME if out_path is None else out_path
     t0 = time.time()
     out: dict[str, dict] = {}
-    out["part1"] = part1(np.random.default_rng(SEED + 1))
-    dump(out, out_path, "part1")
-    out["part2"] = part2(np.random.default_rng(SEED + 2), results_dir)
-    dump(out, out_path, "part2")
-    out["part3"] = part3(np.random.default_rng(SEED + 3))
-    dump(out, out_path, "part3")
-    out["part4"] = part4(np.random.default_rng(SEED + 4))
-    dump(out, out_path, "part4")
-    out["part5"] = part5(np.random.default_rng(SEED + 5))
-    dump(out, out_path, "part5")
+    parts = (
+        part1,
+        functools.partial(part2, results_dir=results_dir),
+        part3,
+        part4,
+        part5,
+    )
+    for i, part in enumerate(parts, 1):
+        out[f"part{i}"] = part(np.random.default_rng(SEED + i))
+        dump(out, out_path, f"part{i}")
     print(f"\nTOTAL {time.time() - t0:.1f}s", flush=True)
 
 
