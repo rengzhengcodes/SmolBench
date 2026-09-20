@@ -1,6 +1,6 @@
 """Shared analysis constants and result-path helpers.
 
-Stdlib-only so either study can import it.
+Kept dependency-light (numpy plus smolbench) so either study can import it.
 """
 
 from pathlib import Path
