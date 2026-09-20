@@ -5,25 +5,23 @@ Hochberg is sensitivity-only: its positive-dependence condition is unverified.
 Collapsed cells are annotated, never excluded.
 """
 
+from __future__ import annotations
+
+# isort: skip_file
+
 import sys
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import (  # noqa: E402
-    _reject,
-    contrast_row,
-    holm,
-    load_marks,
-)
-from power_analysis import (  # noqa: E402
-    ALPHA,
-    MODELS,
-    build_primary_contrasts,
-)
+from _power_common import apply_corrections  # noqa: E402
+from paired_analysis import CellMarks, contrast_row, holm, load_marks  # noqa: E402
+from power_analysis import RESULTS_DIR  # noqa: E402
+from power_analysis import ALPHA, MODELS, build_primary_contrasts
 
 # Import the label so a rename cannot silently read empty values as zero.
 from smolbench.evals.parsing import EMPTY
@@ -51,16 +49,18 @@ def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    return _reject(pvals, alpha, "simes-hochberg")
+    return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), alpha)[
+        "Hochberg"
+    ][0]
 
 
-def compliance_census(compliance: dict) -> dict:
+def compliance_census(marks: CellMarks) -> dict:
     """Measure non-compliance per parsed ``(model, info)`` cell.
 
     Parameters
     ----------
-    compliance : dict
-        Per-cell compliance mappings from `paired_analysis.load_marks`.
+    marks : CellMarks
+        Parsed marks from `paired_analysis.load_marks`.
 
     Returns
     -------
@@ -68,7 +68,7 @@ def compliance_census(compliance: dict) -> dict:
         Cell key -> ``rate``.
     """
     out = {}
-    for key, by_seed in compliance.items():
+    for key, by_seed in marks.compliance.items():
         vals = [v for seed_vals in by_seed.values() for v in seed_vals]
         if not vals:
             continue
@@ -200,64 +200,38 @@ def _step_boundary(pvals: np.ndarray, rows: list, m: int, n_rej: int) -> None:
         )
 
 
-def main() -> None:
+def collapse_tag(row: dict, census: dict) -> str:
+    """Return collapse annotations for a contrast row."""
+    hits = [
+        h
+        for h in (
+            collapse_note(row["key_a"], row["rate_a"], census),
+            collapse_note(row["key_b"], row["rate_b"], census),
+        )
+        if h
+    ]
+    return ("   [COLLAPSE: " + "; ".join(hits) + "]") if hits else ""
+
+
+def _legacy_render(report: Report) -> None:
     """Run and print the significance report.
 
     Narrative claims remain conditional on displayed counts.
     """
-    correct, valid, compliance = load_marks()
-    contrasts = build_primary_contrasts()
-    census = compliance_census(compliance)
-
-    rows = []
-    for label, key_a, key_b in contrasts:
-        row = contrast_row(correct, valid, key_a, key_b)
-        rows.append(
-            {
-                "label": label,
-                **row,
-                "rate_a": (
-                    common_seed_rate(census[key_a], row["seeds"])
-                    if key_a in census
-                    else None
-                ),
-                "rate_b": (
-                    common_seed_rate(census[key_b], row["seeds"])
-                    if key_b in census
-                    else None
-                ),
-                "kind": classify(key_a, key_b),
-                "kind_is_ladder": "ladder" in label,
-            }
-        )
-
+    rows = report.rows
+    census = report.census
     p_cl = np.array([r["p_cluster"] for r in rows])
     p_item = np.array([r["p_item"] for r in rows])
     p_unp = np.array([r["p_unpaired"] for r in rows])
-    m = len(rows)
-
-    hp = holm(p_cl, ALPHA)
-    hb = hochberg(p_cl, ALPHA)
-    # Every correction pass this report needs, taken ONCE so the summary table does not re-run them.
-    h_item = holm(p_item, ALPHA)
-    rej_by_test = {
-        "seed sign-flip (PRIMARY)": (p_cl, {"Holm": hp, "Hochberg": hb}),
-        "item McNemar (descript.)": (
-            p_item,
-            {"Holm": h_item, "Hochberg": hochberg(p_item, ALPHA)},
-        ),
-        "unpaired CMH (descript.)": (
-            p_unp,
-            {"Holm": holm(p_unp, ALPHA), "Hochberg": hochberg(p_unp, ALPHA)},
-        ),
-    }
+    m = report.m
+    hp, hb, h_item = report.hp, report.hb, report.h_item
+    rej_by_test = report.rej_by_test
 
     # ---- DEPTH GUARD: gating on the DEEPEST contrast asks whether ANYTHING is rejectable. ---
-    depth_min = min(r["n_seeds"] for r in rows)
-    depth_max = max(r["n_seeds"] for r in rows)
+    depth_min, depth_max = report.depth_min, report.depth_max
     holm_first_step = ALPHA / m
     floor_deepest = 2 / 2**depth_max
-    floor_bound = floor_deepest > holm_first_step
+    floor_bound = report.floor_bound
     if floor_bound:
         print(
             f"\n{'!' * 78}\nINCOMPLETE SYNC -- the family sits below the "
@@ -492,18 +466,6 @@ def main() -> None:
             f"not padding-specific."
         )
 
-    # ---- the findings ------------------------------------------------------
-    def tag(r: dict) -> str:
-        hits = [
-            h
-            for h in (
-                collapse_note(r["key_a"], r["rate_a"], census),
-                collapse_note(r["key_b"], r["rate_b"], census),
-            )
-            if h
-        ]
-        return ("   [COLLAPSE: " + "; ".join(hits) + "]") if hits else ""
-
     sel = [r for i, r in enumerate(rows) if hp[i] and r["kind"] == "finding"]
     tot = sum(1 for r in rows if r["kind"] == "finding")
     print(
@@ -535,9 +497,9 @@ def main() -> None:
             print(
                 f"  {direction} {r['label']:52s} {r['acc_a']:.3f} -> "
                 f"{r['acc_b']:.3f}   p={r['p_cluster']:.2e} "
-                f"(item {r['p_item']:.2e}){tag(r)}"
+                f"(item {r['p_item']:.2e}){collapse_tag(r, census)}"
             )
-    n_flag = sum(1 for r in sel if tag(r))
+    n_flag = sum(1 for r in sel if collapse_tag(r, census))
     n_pad = sum(
         1
         for r in sel
@@ -611,13 +573,13 @@ def main() -> None:
             if r["key_a"][1] == "zero"
             else (r["acc_a"], r["acc_b"])
         )
-        note = tag(r)
+        note = collapse_tag(r, census)
         print(
             f"  REVERSED {r['label']:52s} {info_acc:.3f} vs floor "
             f"{zero_acc:.3f}   p={r['p_cluster']:.2e}{note}"
         )
     for r in sorted(fails, key=lambda r: -r["acc_a"]):
-        note = tag(r)
+        note = collapse_tag(r, census)
         print(
             f"  FAILS  {r['label']:52s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}"
             f"   p={r['p_cluster']:.2e}{note}"
@@ -733,6 +695,188 @@ def main() -> None:
         f"live in\n  a handful of replicates cannot go below "
         f"2/2^(that handful)."
     )
+
+
+@dataclass(frozen=True)
+class Report:
+    """Computed significance-report quantities."""
+
+    rows: list[dict]
+    m: int
+    hp: np.ndarray
+    hb: np.ndarray
+    h_item: np.ndarray
+    rej_by_test: dict
+    depth_min: int
+    depth_max: int
+    floor_bound: bool
+    census: dict
+    pad_rows: list[dict]
+    pad_lanes: set[str]
+    over: list[tuple[str, str]]
+    findings: list[dict]
+    n_findings_total: int
+    n_flag: int
+    n_pad: int
+    passing: list[dict]
+    reversed_: list[dict]
+    fails: list[dict]
+    fails_total: list[dict]
+    fails_partial: list[dict]
+    fails_unexplained: list[dict]
+    zero_vs_zero: list[int]
+    not_significant: list[dict]
+    ceiling: list[dict]
+    n_zero_discordant: int
+
+
+def compute(results_dir: Path = RESULTS_DIR) -> Report:
+    """Compute the significance report without printing."""
+    marks = load_marks(results_dir)
+    census = compliance_census(marks)
+    rows = []
+    for label, key_a, key_b in build_primary_contrasts():
+        row = contrast_row(marks, key_a, key_b)
+        rows.append(
+            {
+                "label": label,
+                **row,
+                "rate_a": (
+                    common_seed_rate(census[key_a], row["seeds"])
+                    if key_a in census
+                    else None
+                ),
+                "rate_b": (
+                    common_seed_rate(census[key_b], row["seeds"])
+                    if key_b in census
+                    else None
+                ),
+                "kind": classify(key_a, key_b),
+                "kind_is_ladder": "ladder" in label,
+            }
+        )
+    p_cl = np.array([r["p_cluster"] for r in rows])
+    p_item = np.array([r["p_item"] for r in rows])
+    p_unp = np.array([r["p_unpaired"] for r in rows])
+    m = len(rows)
+    hp = holm(p_cl, ALPHA)
+    hb = hochberg(p_cl, ALPHA)
+    h_item = holm(p_item, ALPHA)
+    rej_by_test = {
+        "seed sign-flip (PRIMARY)": (p_cl, {"Holm": hp, "Hochberg": hb}),
+        "item McNemar (descript.)": (
+            p_item,
+            {"Holm": h_item, "Hochberg": hochberg(p_item, ALPHA)},
+        ),
+        "unpaired CMH (descript.)": (
+            p_unp,
+            {"Holm": holm(p_unp, ALPHA), "Hochberg": hochberg(p_unp, ALPHA)},
+        ),
+    }
+    depth_min = min(r["n_seeds"] for r in rows)
+    depth_max = max(r["n_seeds"] for r in rows)
+    floor_bound = 2 / 2**depth_max > ALPHA / m
+    over = sorted(
+        (k for k, v in census.items() if v["rate"] >= COLLAPSE_THRESHOLD),
+        key=lambda k: -census[k]["rate"],
+    )
+    pad_rows = []
+    for model in MODELS:
+        ci, cn = census.get((model, "intens")), census.get((model, "noise_intens"))
+        if ci is None or cn is None:
+            continue
+        common = sorted(set(ci["per_seed"]) & set(cn["per_seed"]))
+        rate_i, rate_n = common_seed_rate(ci, common), common_seed_rate(cn, common)
+        if rate_i is None or rate_n is None:
+            continue
+        pad_rows.append(
+            {
+                "model": model,
+                "delta": rate_n - rate_i,
+                "rate_i": rate_i,
+                "rate_n": rate_n,
+                "n_common": len(common),
+                "cn": cn,
+            }
+        )
+    pad_lanes = {r["model"] for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"])}
+    findings = [r for i, r in enumerate(rows) if hp[i] and r["kind"] == "finding"]
+    n_findings_total = sum(r["kind"] == "finding" for r in rows)
+    n_flag = sum(bool(collapse_tag(r, census)) for r in findings)
+    n_pad = sum(
+        {r["key_a"][1], r["key_b"][1]} == {"extens", "noise_intens"}
+        and r["key_a"][0] in pad_lanes
+        for r in findings
+    )
+    floor = [i for i, r in enumerate(rows) if r["kind"] == "arm-vs-floor"]
+    zero_vs_zero = [i for i, r in enumerate(rows) if r["kind"] == "zero-vs-zero"]
+    passing, reversed_ = [], []
+    fails = [rows[i] for i in floor if not hp[i]]
+    for i in floor:
+        r = rows[i]
+        info_acc, zero_acc = (
+            (r["acc_b"], r["acc_a"])
+            if r["key_a"][1] == "zero"
+            else (r["acc_a"], r["acc_b"])
+        )
+        if hp[i]:
+            (passing if info_acc > zero_acc else reversed_).append(r)
+    fails_total, fails_partial, fails_unexplained = [], [], []
+    if fails and not floor_bound:
+        for r in fails:
+            info_key = r["key_b"] if r["key_a"][1] == "zero" else r["key_a"]
+            if info_key[1] == "noise_intens" and info_key[0] in pad_lanes:
+                info_rate = r["rate_b"] if r["key_a"][1] == "zero" else r["rate_a"]
+                if info_rate is not None and info_rate >= TOTAL_COLLAPSE:
+                    fails_total.append(r)
+                else:
+                    fails_partial.append(r)
+            else:
+                fails_unexplained.append(r)
+    not_significant = [
+        r for i, r in enumerate(rows) if not hp[i] and r["kind"] == "finding"
+    ]
+    ceiling = [r for r in not_significant if min(r["acc_a"], r["acc_b"]) >= 0.95]
+    n_zero_discordant = sum(r["b"] + r["c"] == 0 for r in ceiling)
+    return Report(
+        rows,
+        m,
+        hp,
+        hb,
+        h_item,
+        rej_by_test,
+        depth_min,
+        depth_max,
+        floor_bound,
+        census,
+        pad_rows,
+        pad_lanes,
+        over,
+        findings,
+        n_findings_total,
+        n_flag,
+        n_pad,
+        passing,
+        reversed_,
+        fails,
+        fails_total,
+        fails_partial,
+        fails_unexplained,
+        zero_vs_zero,
+        not_significant,
+        ceiling,
+        n_zero_discordant,
+    )
+
+
+def render(report: Report) -> None:
+    """Render a computed report."""
+    _legacy_render(report)
+
+
+def main(results_dir: Path = RESULTS_DIR) -> None:
+    """Compute and render the significance report."""
+    render(compute(results_dir))
 
 
 if __name__ == "__main__":

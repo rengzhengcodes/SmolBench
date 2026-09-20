@@ -7,29 +7,38 @@ seed's 9 harmonic items, which share one answer vector, as independent. They sta
 data-dependent family sizing.
 """
 
+# isort: skip_file
+
 import sys
+from enum import StrEnum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from collections.abc import Mapping  # noqa: E402
+
 import numpy as np
-from paired_analysis import (  # noqa: E402
-    build_primary_contrasts,
-    contrast_row,
-    holm,
-    load_marks,
-)
+from paired_analysis import build_primary_contrasts  # noqa: E402
+from paired_analysis import contrast_row, holm, load_marks
 
 # Import the owned threshold to avoid a divergent local value.
+from power_analysis import RESULTS_DIR  # noqa: E402
 from power_analysis import ALPHA, MODELS  # noqa: E402
-from significance_report import (  # noqa: E402
-    COLLAPSE_THRESHOLD,
-    common_seed_rate,
-    compliance_census,
-    hochberg,
-)
+from significance_report import COLLAPSE_THRESHOLD  # noqa: E402
+from significance_report import common_seed_rate, compliance_census, hochberg
 
-MECHANISMS = ("information", "noise COLLAPSED", "extens COLLAPSED", "both COLLAPSED")
+
+class Mechanism(StrEnum):
+    """Compliance mechanism labels."""
+
+    INFORMATION = "information"
+    NOISE_COLLAPSED = "noise COLLAPSED"
+    EXTENS_COLLAPSED = "extens COLLAPSED"
+    BOTH_COLLAPSED = "both COLLAPSED"
+
+
+MECHANISMS = tuple(Mechanism)
+_INITIAL_RESULTS_DIR = RESULTS_DIR
 
 
 def mechanism(nc_e: float, nc_n: float) -> str:
@@ -41,12 +50,12 @@ def mechanism(nc_e: float, nc_n: float) -> str:
     """
     e_bad, n_bad = nc_e >= COLLAPSE_THRESHOLD, nc_n >= COLLAPSE_THRESHOLD
     if e_bad and n_bad:
-        return "both COLLAPSED"
+        return Mechanism.BOTH_COLLAPSED
     if n_bad:
-        return "noise COLLAPSED"
+        return Mechanism.NOISE_COLLAPSED
     if e_bad:
-        return "extens COLLAPSED"
-    return "information"
+        return Mechanism.EXTENS_COLLAPSED
+    return Mechanism.INFORMATION
 
 
 def direction(acc_e: float, acc_n: float) -> str:
@@ -73,23 +82,38 @@ def direction(acc_e: float, acc_n: float) -> str:
     return "exactly tied"
 
 
-def main() -> None:
+def nc(
+    census: Mapping[tuple[str, str], dict],
+    key: tuple[str, str],
+    seeds: list[int],
+) -> float:
+    """Return the compared-seed non-compliance rate."""
+    rate = common_seed_rate(census[key], seeds)
+    if rate is None:
+        raise RuntimeError(f"no compared-seed marks for {key}")
+    return rate
+
+
+def star(ok: bool) -> str:
+    """Render a yes/no table cell."""
+    return " yes " if ok else "  .  "
+
+
+def main(results_dir: Path = RESULTS_DIR) -> None:
     """Print the extens-versus-noise report.
 
     Three-way direction labels keep lane and aggregate tallies consistent.
     """
-    correct, valid, compliance = load_marks()
-    census = compliance_census(compliance)
-
-    def nc(key: tuple[str, str], seeds: list[int]) -> float:
-        # `aligned` already rejected an empty intersection, so the pooled rate exists.
-        rate = common_seed_rate(census[key], seeds)
-        assert rate is not None
-        return rate
+    if results_dir == _INITIAL_RESULTS_DIR:
+        results_dir = RESULTS_DIR
+    marks = load_marks(results_dir)
+    correct, valid = marks.correct, marks.valid
+    compliance = marks.compliance
+    census = compliance_census(marks)
 
     # Keep the full family: the displayed subset is selected after measurement.
     full = [
-        {"label": label, **contrast_row(correct, valid, key_a, key_b)}
+        {"label": label, **contrast_row(marks, key_a, key_b)}
         for label, key_a, key_b in build_primary_contrasts()
     ]
     holm_full = holm(np.array([r["p_cluster"] for r in full]), ALPHA)
@@ -102,7 +126,7 @@ def main() -> None:
         # Contrast order matches the table's extens/noise columns.
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        nc_e, nc_n = nc(ka, fr["seeds"]), nc(kb, fr["seeds"])
+        nc_e, nc_n = nc(census, ka, fr["seeds"]), nc(census, kb, fr["seeds"])
         rows.append(
             {
                 "model": model,
@@ -154,10 +178,6 @@ def main() -> None:
     print(hdr)
     print("-" * len(hdr))
 
-    def star(ok: bool) -> str:
-        """Render a yes/no table cell."""
-        return " yes " if ok else "  .  "
-
     for i, r in enumerate(rows):
         flags = [r["mech"]]
         for lbl, v in (("extens", r["nc_e"]), ("noise", r["nc_n"])):
@@ -207,7 +227,7 @@ def main() -> None:
     print(f"\n{'=' * 78}\nTHE TWO MECHANISMS\n{'=' * 78}")
     for mech, title, gloss in (
         (
-            "information",
+            Mechanism.INFORMATION,
             "INFORMATION / LABEL-DENSITY (both arms well-formed)",
             "the noise arm obeys the output contract, so the comparison is not "
             "about whether\n  the model could answer at all. CAVEAT: the "
@@ -218,7 +238,7 @@ def main() -> None:
             "saturated failure mode repeated, not graded induction difficulty",
         ),
         (
-            "noise COLLAPSED",
+            Mechanism.NOISE_COLLAPSED,
             "PADDING-ROBUSTNESS COLLAPSE (noise arm >= "
             f"{COLLAPSE_THRESHOLD:.0%} non-compliant, extens arm intact)",
             "the pad broke the output contract on the noise arm, so this row "
@@ -227,14 +247,14 @@ def main() -> None:
             "from the compliance gap",
         ),
         (
-            "extens COLLAPSED",
+            Mechanism.EXTENS_COLLAPSED,
             f"EXTENS ARM >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT (noise arm "
             f"intact)",
             "the enumeration, not the pad, is what broke the format -- so the "
             "accuracy\n  contrast here is partly a format effect too",
         ),
         (
-            "both COLLAPSED",
+            Mechanism.BOTH_COLLAPSED,
             f"BOTH ARMS >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT",
             "neither arm is a working control; the row is a compliance result "
             "on both\n  sides and its accuracy direction is not attributable to "
@@ -269,7 +289,7 @@ def main() -> None:
 
     up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])
     down_all = sum(1 for r in rows if r["acc_n"] < r["acc_e"])
-    coll = [r for r in rows if r["mech"] != "information"]
+    coll = [r for r in rows if r["mech"] != Mechanism.INFORMATION]
     coll_down = sum(1 for r in coll if r["acc_n"] < r["acc_e"])
     coll_up = sum(1 for r in coll if r["acc_n"] > r["acc_e"])
     print(
@@ -288,7 +308,9 @@ def main() -> None:
         f"select on a covariate of the outcome."
     )
     clean_down = [
-        r for r in rows if r["acc_n"] < r["acc_e"] and r["mech"] == "information"
+        r
+        for r in rows
+        if r["acc_n"] < r["acc_e"] and r["mech"] == Mechanism.INFORMATION
     ]
     if clean_down:
         print(
