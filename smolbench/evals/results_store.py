@@ -265,8 +265,12 @@ class LocalResultsStore(ResultsStore):
     def _dirname(self, tag: str, info: str) -> str:
         return f"{self.prefix}{tag}_{info}"
 
-    def _path(self, addr: ReplicateAddress) -> Path:
+    def path(self, addr: ReplicateAddress) -> Path:
+        """Return the replicate file for `addr`."""
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
+
+    def _path(self, addr: ReplicateAddress) -> Path:
+        return self.path(addr)
 
     def exists(self, addr: ReplicateAddress) -> bool:
         """Return whether the local result file exists.
