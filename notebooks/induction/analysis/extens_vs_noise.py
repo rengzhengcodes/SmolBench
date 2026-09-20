@@ -7,6 +7,7 @@ stay in the primary contrast family because re-correcting after picking the subs
 data-dependent family sizing.
 """
 
+import collections
 import sys
 from enum import StrEnum
 from pathlib import Path
@@ -20,7 +21,13 @@ from paired_analysis import (  # noqa: E402
     holm,
     load_marks,
 )
-from power_analysis import ALPHA, MODELS, RESULTS_DIR  # noqa: E402
+from power_analysis import (  # noqa: E402
+    ALPHA,
+    MODELS,
+    N_HARMONICS,
+    N_PRIMARY,
+    RESULTS_DIR,
+)
 from significance_report import (  # noqa: E402
     COLLAPSE_THRESHOLD,
     common_seed_rate,
@@ -136,17 +143,18 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                 "p_cluster": fr["p_cluster"],
                 "p_item": fr["p_item"],
                 "p_unp": fr["p_unpaired"],
-                "holm210": bool(holm_full[i_full]),
-                "holm210_item": bool(holm_full_item[i_full]),
+                "dir": direction(fr["acc_a"], fr["acc_b"]),
+                "holm_full": bool(holm_full[i_full]),
+                "holm_full_item": bool(holm_full_item[i_full]),
                 "nc_e": nc_e,
                 "nc_n": nc_n,
                 "mech": mechanism(nc_e, nc_n),
             }
         )
 
-    p21 = np.array([r["p_cluster"] for r in rows])
-    h21, hb21 = holm(p21, ALPHA), hochberg(p21, ALPHA)
-    p21_item = np.array([r["p_item"] for r in rows])
+    p_sub = np.array([r["p_cluster"] for r in rows])
+    h_sub, hb_sub = holm(p_sub, ALPHA), hochberg(p_sub, ALPHA)
+    p_sub_item = np.array([r["p_item"] for r in rows])
 
     print("EXTENSIONAL vs NOISE-PADDED INTENSIONAL, per model")
     print("Both arms token-matched; the contrast isolates INFORMATION from LENGTH")
@@ -161,15 +169,17 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     print(
         f"PRIMARY p = exact seed-level sign-flip over "
         f"{min(r['n_seeds'] for r in rows)} replicates (the independent "
-        f"unit;\n  the 9 harmonics inside a seed share one answer vector). "
+        f"unit;\n  the {N_HARMONICS} harmonics inside a seed share one answer "
+        "vector). "
         f"Item-level exact\n  McNemar on "
         f"{min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} matched "
         f"marks is shown beside it as a DESCRIPTIVE figure.\n"
     )
     hdr = (
         f"{'model':13s} {'extens':>7s} {'noise':>7s} {'disc':>6s} {'b/c':>9s} "
-        f"{'p_seed':>10s} {'p_item':>10s} {'H210':>5s} {'H21':>4s} "
-        f"{'Hoch21':>7s}  mechanism / non-compliance"
+        f"{'p_seed':>10s} {'p_item':>10s} {f'H{N_PRIMARY}':>5s} "
+        f"{f'H{len(MODELS)}':>4s} "
+        f"{f'Hoch{len(MODELS)}':>7s}  mechanism / non-compliance"
     )
     print(hdr)
     print("-" * len(hdr))
@@ -183,38 +193,42 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             f"{r['model']:13s} {r['acc_e']:7.3f} {r['acc_n']:7.3f} "
             f"{r['disc']:6.3f} {r['b']:4d}/{r['c']:<4d} "
             f"{r['p_cluster']:10.2e} {r['p_item']:10.2e} "
-            f"{star(r['holm210']):>5s} {star(h21[i]):>4s} "
-            f"{star(hb21[i]):>7s}  {'; '.join(flags)}"
+            f"{star(r['holm_full']):>5s} {star(h_sub[i]):>4s} "
+            f"{star(hb_sub[i]):>7s}  {'; '.join(flags)}"
         )
 
     print(
-        "\nH210 = Holm over the pre-registered 210-contrast family, on the "
-        "SEED-LEVEL p\n  (PRIMARY inference). H21 / Hoch21 = Holm / Hochberg "
-        "over these 21 only --\n  SENSITIVITY ONLY; re-sizing the family to a "
+        f"\nH{N_PRIMARY} = Holm over the pre-registered "
+        f"{N_PRIMARY}-contrast family, on the SEED-LEVEL p\n  (PRIMARY "
+        f"inference). H{len(MODELS)} / Hoch{len(MODELS)} = Holm / Hochberg "
+        f"over these {len(MODELS)} only --\n  SENSITIVITY ONLY; re-sizing the "
+        "family to a "
         "subset chosen after seeing the data\n  is not a valid primary "
         "analysis."
     )
     print(
-        f"  agreement: H210 {sum(r['holm210'] for r in rows)}, "
-        f"H21 {int(h21.sum())}, Hoch21 {int(hb21.sum())} of {len(rows)}"
+        f"  agreement: H{N_PRIMARY} {sum(r['holm_full'] for r in rows)}, "
+        f"H{len(MODELS)} {int(h_sub.sum())}, Hoch{len(MODELS)} "
+        f"{int(hb_sub.sum())} of {len(rows)}"
     )
     print(
-        f"  the same family under the DESCRIPTIVE item-level p: H210 "
-        f"{sum(r['holm210_item'] for r in rows)}, H21 "
-        f"{int(holm(p21_item, ALPHA).sum())}, Hoch21 "
-        f"{int(hochberg(p21_item, ALPHA).sum())} -- the clustering\n  "
+        f"  the same family under the DESCRIPTIVE item-level p: "
+        f"H{N_PRIMARY} "
+        f"{sum(r['holm_full_item'] for r in rows)}, H{len(MODELS)} "
+        f"{int(holm(p_sub_item, ALPHA).sum())}, Hoch{len(MODELS)} "
+        f"{int(hochberg(p_sub_item, ALPHA).sum())} -- the clustering\n  "
         f"correction changes "
-        f"{sum(1 for r in rows if r['holm210'] != r['holm210_item'])} of these "
-        f"21 primary decisions."
+        f"{sum(1 for r in rows if r['holm_full'] != r['holm_full_item'])} of "
+        f"these {len(MODELS)} primary decisions."
     )
 
-    sig = [r for r in rows if r["holm210"]]
+    sig = [r for r in rows if r["holm_full"]]
     print(
-        f"\nSIGNIFICANT under the primary (m=210, seed-level) correction: "
-        f"{len(sig)} of {len(rows)}"
+        f"\nSIGNIFICANT under the primary (m={N_PRIMARY}, seed-level) "
+        f"correction: {len(sig)} of {len(rows)}"
     )
     for r in sorted(sig, key=lambda r: r["p_cluster"]):
-        d = direction(r["acc_e"], r["acc_n"])
+        d = r["dir"]
         print(
             f"  {r['model']:13s} {r['acc_e']:.3f} vs {r['acc_n']:.3f}   "
             f"{d:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}"
@@ -258,15 +272,15 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         ),
     ):
         sel = [r for r in rows if r["mech"] == mech]
-        sel_sig = [r for r in sel if r["holm210"]]
+        sel_sig = [r for r in sel if r["holm_full"]]
         print(
             f"\n-- {title}: {len(sel)} lane{'' if len(sel) == 1 else 's'}, "
             f"{len(sel_sig)} significant"
         )
         print(f"  {gloss}.")
         for r in sorted(sel, key=lambda r: r["p_cluster"]):
-            d = direction(r["acc_e"], r["acc_n"])
-            mark = "SIG " if r["holm210"] else "  . "
+            d = r["dir"]
+            mark = "SIG " if r["holm_full"] else "  . "
             print(
                 f"  {mark}{r['model']:13s} {r['acc_e']:.3f} vs "
                 f"{r['acc_n']:.3f}   {d:13s} "
@@ -274,20 +288,22 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                 f"p={r['p_cluster']:.2e}"
             )
         if sel_sig:
-            # Explicit comparison keeps ties out of extens-higher.
-            up = sum(1 for r in sel_sig if r["acc_n"] > r["acc_e"])
-            down = sum(1 for r in sel_sig if r["acc_n"] < r["acc_e"])
+            sig_dirs = collections.Counter(r["dir"] for r in sel_sig)
+            up = sig_dirs["noise HIGHER"]
+            down = sig_dirs["extens HIGHER"]
             print(
                 f"  => direction among the significant ones: {up} "
                 f"noise-higher, {down} extens-higher, "
                 f"{len(sel_sig) - up - down} tied."
             )
 
-    up_all = sum(1 for r in rows if r["acc_n"] > r["acc_e"])
-    down_all = sum(1 for r in rows if r["acc_n"] < r["acc_e"])
+    dirs = collections.Counter(r["dir"] for r in rows)
+    up_all = dirs["noise HIGHER"]
+    down_all = dirs["extens HIGHER"]
     coll = [r for r in rows if r["mech"] != Mechanism.INFORMATION]
-    coll_down = sum(1 for r in coll if r["acc_n"] < r["acc_e"])
-    coll_up = sum(1 for r in coll if r["acc_n"] > r["acc_e"])
+    coll_dirs = collections.Counter(r["dir"] for r in coll)
+    coll_down = coll_dirs["extens HIGHER"]
+    coll_up = coll_dirs["noise HIGHER"]
     print(
         f"\n{'=' * 78}\nRAW DIRECTION, ALL {len(rows)} LANES, NO SIGNIFICANCE "
         f"FILTER\n{'=' * 78}"
@@ -306,7 +322,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     clean_down = [
         r
         for r in rows
-        if r["acc_n"] < r["acc_e"] and r["mech"] == Mechanism.INFORMATION
+        if r["dir"] == "extens HIGHER" and r["mech"] == Mechanism.INFORMATION
     ]
     if clean_down:
         print(
