@@ -530,9 +530,7 @@ def omnibus_power(
         Estimated omnibus-gate rejection fraction.
     """
     rungs = FAMILIES[family]
-    strata = [
-        (k, info) for info in INFOS for k in range(N_HARMONICS)
-    ]  # K = N_HARMONICS * N_INFOS
+    strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]
     cell_rates = np.array(
         [[rates[(rung, info)][k] for k, info in strata] for rung in rungs]
     )  # (3, K)
@@ -593,7 +591,12 @@ def omnibus_interaction_power(
 
     x_null, x_full = design(False), design(True)
     df_extra = x_full.shape[1] - x_null.shape[1]
-    assert df_extra == DF_INTERACTION, (df_extra, DF_INTERACTION)
+    if df_extra != DF_INTERACTION:
+        # ``python -O`` strips asserts; this invariant sizes the chi2 threshold.
+        raise RuntimeError(
+            f"interaction design gained {df_extra} df, expected "
+            f"DF_INTERACTION={DF_INTERACTION}"
+        )
     crit = chi2.isf(ALPHA, df=df_extra)
     cell_rates = np.array([rates[(m, i)][k] for m, i, k in cells])
 
