@@ -1,0 +1,38 @@
+# rescore of results/runs/main_v3 -> results/runs/main_v3_rescored
+# 13335 cell rows
+
+## actions
+  keep                      10935
+  relabel_timeout             201
+  relabel_truncated            14
+  reverify                   2185
+
+## verdict transitions (orig -> new)
+  lean_error   -> success         420
+  exception    -> timeout         201
+  exception    -> lean_error       62
+  success      -> lean_error       28
+  exception    -> success          26
+  lean_error   -> exception        22
+  lean_error   -> truncated        16
+  lean_error   -> incomplete        8
+  incomplete   -> lean_error        7
+  success      -> truncated         1
+  success      -> exception         1
+# rescore of results/runs/main_v3_2 -> results/runs/main_v3_2_rescored
+# 1921 cell rows
+
+## actions
+  keep                       1660
+  relabel_truncated            15
+  reverify                    246
+
+## verdict transitions (orig -> new)
+  lean_error   -> success         109
+  lean_error   -> timeout          22
+  lean_error   -> truncated        15
+  lean_error   -> exception        10
+  success      -> lean_error        6
+  lean_error   -> incomplete        2
+  success      -> timeout           1
+  success      -> exception         1

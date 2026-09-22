@@ -34,6 +34,9 @@ directory, as the `_load` helper in `tests/deduction/test_deduction_analysis_rep
 | `error_bars.py` | Published block sign-flip error bars; this, not `power_analysis.py`, produces the published 14/21. The headline pool drops a cell whose every attempt was `exception`/`replay_failed` (an infrastructure fault); `--denominator count-as-failure` scores it 0 instead, and the other rule is always reported as a sensitivity row. `--recovery-dir` stays local-only, though those rows are archived under `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`; that layout is neither `scaling_*` nor `verified_rows.jsonl`. |
 | `hint_vs_noise.py` | Informative-rung-versus-noise comparison (default `hint:3` vs `noise:3`; `--info-rung`/`--noise-rung` pick another pair). A lane with no cell carrying both rungs exits non-zero rather than printing a null. |
 
+`PILOT_2026-07.md` records the July 2026 pilot: defects found in review, how they were fixed here,
+and the re-scored numbers (`pilot_2026-07/`).
+
 ## Data layout
 
 The uncommitted corpus is `notebooks/deduction/data/leandojo_benchmark_4/`.
