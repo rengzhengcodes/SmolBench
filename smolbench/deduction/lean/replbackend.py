@@ -691,7 +691,41 @@ def _default_server_factory(root: Path) -> LeanServer:
     LeanServer
         Started server.
     """
-    return LeanServer(LeanREPLConfig(project=LocalProject(directory=str(root))))
+    return LeanServer(
+        LeanREPLConfig(project=LocalProject(directory=str(root)), repl_rev=repl_rev_for(root))
+    )
+
+
+#: Overrides the REPL revision derived from the project's ``lean-toolchain``.
+REPL_REV_ENV: str = "SMOLBENCH_REPL_REV"
+
+
+def repl_rev_for(root: Path) -> str:
+    """REPL git revision for the project at ``root``.
+
+    lean-interact 0.11 defaults to REPL ``v4.21.0-rc3`` and, when no
+    ``<rev>_lean-toolchain-<lean>`` tag exists for the project's Lean, falls
+    back to that revision and then refuses the mismatch (seen with Mathlib at
+    Lean v4.34.0-rc2). leanprover-community/repl tags a release per Lean
+    version, so the project's own toolchain version is the revision to use.
+    ``SMOLBENCH_REPL_REV`` overrides it.
+
+    Parameters
+    ----------
+    root : Path
+        Project checkout containing ``lean-toolchain``
+        (``leanprover/lean4:v4.34.0-rc2``).
+
+    Returns
+    -------
+    str
+        e.g. ``"v4.34.0-rc2"``.
+    """
+    override = os.environ.get(REPL_REV_ENV)
+    if override:
+        return override
+    toolchain = (root / "lean-toolchain").read_text().strip()
+    return toolchain.rsplit(":", 1)[-1]
 
 
 def _describe(response: Any) -> str:
