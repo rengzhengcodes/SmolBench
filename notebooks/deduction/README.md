@@ -58,6 +58,11 @@ sidecars with `python -m smolbench.deduction.lean.cli filter --kind random --spl
 `python -m smolbench.deduction.lean.cli build-derivation-index`, so `hint:3` closures follow the
 traced proofs' premise usage (exact for named usage) instead of a text scan; without it the index
 is rebuilt in memory on every process start.
+Then `python -m smolbench.deduction.lean.cli build-checked-signatures --splits val` writes
+`checked_signatures.json`: LeanDojo's export omits declarations without their own source span
+(`@[to_additive]` lemmas, constructors, projections), about 8% of MPI citations; this runs `#print`
+for each through `lake env lean` in the traced checkout (or `SMOLBENCH_MATHLIB_ROOT`) so they render
+with a real signature instead of a placeholder. Both sidecars are read by `premises.lookup`.
 
 Check the export's premise coverage before building anything on it: the share of traced tactics
 with a non-empty `annotated_tactic[1]` should be well above half. lean-dojo-v2 drops any premise

@@ -473,9 +473,10 @@ def _render_library_parts(
 
     render_one = signature if form == "sig" else body_with_proof
     parts = _render_stepk_parts(theorem, k, 2)
+    # No kind in the header: corpus records say ``commanddeclaration`` or
+    # ``lemma`` while checked (generated) ones say ``theorem``, a tell.
     entries = [
-        f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
-        f"```lean\n{render_one(p)}\n```"
+        f"### `{p.full_name}` at `{p.file_path}`\n```lean\n{render_one(p)}\n```"
         for p in _library_premises(theorem, k, depth)
     ]
     if entries:
