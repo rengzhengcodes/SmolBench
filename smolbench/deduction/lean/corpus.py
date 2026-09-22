@@ -289,4 +289,5 @@ def reset_caches() -> None:
     premises._file_context.cache_clear()
     premises._short_name_index.cache_clear()
     premises._derivation_index.cache_clear()
+    premises._checked.cache_clear()
     premises.referenced_premises.cache_clear()

@@ -77,6 +77,30 @@ def cmd_build_derivation_index(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_checked_signatures(args: argparse.Namespace) -> int:
+    """Write ``checked_signatures.json`` for trace-cited names the corpus lacks; returns 0.
+
+    Runs ``#print`` through ``lake env lean`` in the built Mathlib (the traced
+    checkout, else ``SMOLBENCH_MATHLIB_ROOT``), importing only each name's
+    module. Generated lemmas (``@[to_additive]``), constructors and
+    projections then render with a signature instead of a placeholder.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+
+    Returns
+    -------
+    int
+        0.
+    """
+    from .premises import write_checked_signatures
+
+    path, wanted, got = write_checked_signatures(args.kind, tuple(args.splits))
+    print(f"wrote {path}: {got}/{wanted} missing names resolved")
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """List theorems with traced tactics in a ``(kind, split)`` slice; returns 0.
 
@@ -511,6 +535,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="write <data_root>/derivation_index.json from the traced splits",
     )
     p_didx.set_defaults(func=cmd_build_derivation_index)
+
+    p_chk = sub.add_parser(
+        "build-checked-signatures",
+        help="write <data_root>/checked_signatures.json via #print in the built Mathlib",
+    )
+    p_chk.add_argument("--kind", default="random")
+    p_chk.add_argument("--splits", nargs="+", default=["val"])
+    p_chk.set_defaults(func=cmd_build_checked_signatures)
 
     p_list = sub.add_parser("list", help="list theorems in a split")
     _add_split_args(p_list)
