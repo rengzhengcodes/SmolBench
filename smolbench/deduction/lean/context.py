@@ -435,11 +435,13 @@ def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
         premise_dep_closure,
     )
 
-    seeds = [
-        p
-        for p in (lookup(rec["full_name"]) for rec in theorem.traced_tactics[k].premises)
-        if p is not None
-    ]
+    seeds: list = []
+    seen: set[str] = set()
+    for rec in theorem.traced_tactics[k].premises:  # a trace may cite a lemma twice
+        p = lookup(rec["full_name"])
+        if p is not None and p.full_name not in seen:
+            seen.add(p.full_name)
+            seeds.append(p)
     if not seeds:
         return []
     return library_order(seeds + premise_dep_closure(seeds, depth))

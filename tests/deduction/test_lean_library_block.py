@@ -95,3 +95,14 @@ def test_validate_accepts_new_chains_and_rejects_bad_levels() -> None:
         context.validate(chain, 9)
         with pytest.raises(ValueError):
             context.validate(chain, 10)
+
+
+def test_block_lists_a_twice_cited_lemma_once(thms: dict) -> None:
+    import dataclasses
+
+    a = thms["Mini.theoremA"]
+    tt = a.traced_tactics[2]
+    doubled = dataclasses.replace(tt, premises=tt.premises + tt.premises[:1])
+    a2 = dataclasses.replace(a, traced_tactics=a.traced_tactics[:2] + [doubled])
+    text = context.render(a2, 2, "sig", 0).text
+    assert text.count("### `Mini.premiseA`") == 1
