@@ -863,7 +863,7 @@ def test_require_postcutoff_checks_the_pool_before_sampling(
 def test_sanity_failure_verdicts_is_exactly_the_positively_broken_set() -> None:
     """Exact failure set excludes infrastructure and tail-only verdicts."""
     assert runner.SANITY_FAILURE_VERDICTS == frozenset(
-        {"lean_error", "incomplete", "given_up", "replay_failed"}
+        {"lean_error", "incomplete", "given_up", "timeout", "replay_failed"}
     )
     assert "exception" not in runner.SANITY_FAILURE_VERDICTS
     assert "no_answer" not in runner.SANITY_FAILURE_VERDICTS
@@ -918,7 +918,7 @@ def test_write_run_analysis_counts_no_answer_in_its_own_column(
 def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Analysis counts cells: retries must not read as 1/2 and unmeasured cells stay in denominator."""
+    """Analysis counts cells: retries must not read as 1/2; unmeasured cells leave the denominator."""
     monkeypatch.setenv("SMOLBENCH_LEAN_DATA", str(tmp_path / "data"))
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True)
@@ -944,7 +944,9 @@ def test_write_run_analysis_collapses_an_exception_then_retry_duplicate(
     header = next(line for line in lines if "noans" in line and "exc" in line).split()
     sep = next(i for i, line in enumerate(lines) if line.startswith("---"))
     row = (lines[sep + 2] if lines[sep + 1].startswith("#") else lines[sep + 1]).split()
-    assert row[2] == "1/2", row
+    # T1 resolved to success; T2's only surviving row is an infrastructure
+    # exception, which is missing data: shown in `exc`, not in N.
+    assert row[2] == "1/1", row
     assert row[header.index("exc")] == "1", row
 
 
@@ -1119,8 +1121,8 @@ def test_resume_truncates_a_torn_final_line_before_appending(
     ), "two records welded into one line"
 
 
-def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings() -> None:
-    """Assert seven verdicts map to runner glyphs to avoid silent given_up rendering."""
+def test_verdict_taxonomy_keeps_exactly_the_eight_recorded_strings() -> None:
+    """Assert the eight verdicts map to runner glyphs to avoid silent rendering gaps."""
     from typing import get_args
 
     assert set(get_args(verify.Verdict)) == {
@@ -1129,10 +1131,13 @@ def test_verdict_taxonomy_keeps_exactly_the_seven_recorded_strings() -> None:
         "incomplete",
         "given_up",
         "no_answer",
+        "timeout",
         "exception",
         "replay_failed",
     }
-    assert "timeout" not in get_args(verify.Verdict)
+    # A candidate that runs past the per-request timeout is a model failure:
+    # scored 0, never unmeasurable.
+    assert "timeout" not in runner.NEVER_MEASURED_VERDICTS
     unmapped = set(get_args(verify.Verdict)) - set(runner._VERDICT_GLYPH)
     assert not unmapped, f"runner._VERDICT_GLYPH cannot render {sorted(unmapped)}"
 

@@ -236,7 +236,7 @@ def test_analyze_collapses_an_exception_then_retry_duplicate(
 def test_analyze_keeps_an_exception_only_cell_visible(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Exception-only cells must remain once in `exc` and the denominator."""
+    """Exception-only cells stay visible once in `exc` but leave the denominator (missing data)."""
     rows = [
         cell_row(theorem_id="T1", verdict="exception"),
         cell_row(theorem_id="T1", verdict="exception"),
@@ -247,7 +247,7 @@ def test_analyze_keeps_an_exception_only_cell_visible(
     lines = out.splitlines()
     hdr = _header_index(lines, "lerr", "noans", "trunc")
     header, row = lines[hdr].split(), _table_rows(lines, hdr)[0].split()
-    assert row[2] == "0/1"
+    assert row[2] == "0/0"
     assert row[header.index("exc")] == "1"
 
 
