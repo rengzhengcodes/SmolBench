@@ -264,3 +264,74 @@ def test_holm_delegation_matches_the_step_down_rule(
     got = eb.holm(np.array(pvals, dtype=float), 0.05)
     assert list(map(bool, got)) == _reference_holm(pvals, 0.05), (pvals, list(got))
     assert len(got) == len(pvals), "the mask must stay in the input's order and length"
+
+
+# A lane without the paired rungs is missing data, never a null.
+
+
+def test_lane_without_both_rungs_exits_instead_of_printing_a_null(
+    hvn: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rows carrying only hint:3 must not yield n=0, p=1 and a "no effect" narrative."""
+    _write_rows_dir(tmp_path, hvn.MODELS, n_theorems=10, b=2, c=2)
+    victim = tmp_path / hvn.MODELS[0] / "verified_rows.jsonl"
+    kept = [ln for ln in victim.read_text().splitlines() if '"noise:3"' not in ln]
+    victim.write_text("\n".join(kept) + "\n")
+    with pytest.raises(SystemExit) as exc:
+        hvn.main(["--rows-dir", str(tmp_path)])
+    msg = str(exc.value)
+    assert hvn.MODELS[0] in msg and "noise:3" in msg and "missing data" in msg
+    for fragment in _NULL_NARRATIVE:
+        assert fragment not in capsys.readouterr().out
+
+
+def test_rung_pair_is_selectable(
+    hvn: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--info-rung/--noise-rung drive both the filter and the report labels."""
+    _write_rows_dir(tmp_path, hvn.MODELS, n_theorems=30, b=3, c=3)
+    for f in tmp_path.glob("*/verified_rows.jsonl"):
+        f.write_text(f.read_text().replace('"hint:3"', '"hint:2"').replace('"noise:3"', '"noise:2"'))
+    with pytest.raises(SystemExit):
+        hvn.main(["--rows-dir", str(tmp_path)])  # default pair is absent
+    assert hvn.main(["--rows-dir", str(tmp_path), "--info-rung", "hint:2", "--noise-rung", "noise:2"]) == 0
+    out = capsys.readouterr().out
+    assert "DEDUCTION: hint:2 vs noise:2" in out
+    assert "hint:3" not in out.split("DEDUCTION")[1].split("MINIMUM")[0]
+
+
+# error_bars: a no-survivor cell is dropped by default, scored 0 only on request.
+
+
+@pytest.fixture(scope="module")
+def eb() -> ModuleType:
+    return load_analysis("error_bars", ANALYSIS)
+
+
+def test_no_survivor_cells_are_dropped_from_the_headline_pool(
+    eb: ModuleType, tmp_path: Path
+) -> None:
+    """An infrastructure fault in one lane removes the block from the paired pool; it does not score that lane 0."""
+    _write_rows_dir(tmp_path, eb.MODELS, n_theorems=6, b=1, c=1)
+    victim = tmp_path / eb.MODELS[0] / "verified_rows.jsonl"
+    lines = victim.read_text().splitlines()
+    patched = [
+        ln.replace('"success"', '"exception"').replace('"lean_error"', '"exception"')
+        if '"T0"' in ln and '"hint:3"' in ln
+        else ln
+        for ln in lines
+    ]
+    assert patched != lines
+    victim.write_text("\n".join(patched) + "\n")
+
+    _m, blocks, _r, meta = eb.build_pool(tmp_path)
+    assert meta["count_as_failure"] is False
+    assert (1, "hint:3") not in blocks.get("T0", {}), "the faulted cell must not be paired"
+    assert (1, "noise:3") in blocks["T0"], "the lane's other rung still pairs"
+    assert meta["dropped"] == {eb.MODELS[0]: [("T0", 1, "hint:3")]}
+    assert meta["added"] == {}
+
+    _m, blocks_caf, _r, meta_caf = eb.build_pool(tmp_path, count_as_failure=True)
+    assert blocks_caf["T0"][(1, "hint:3")][eb.MODELS[0]] == 0
+    assert meta_caf["added"] == {eb.MODELS[0]: [("T0", 1, "hint:3")]}
+    assert meta_caf["dropped"] == {}

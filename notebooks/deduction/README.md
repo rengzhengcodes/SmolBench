@@ -31,8 +31,8 @@ directory, as the `_load` helper in `tests/deduction/test_deduction_analysis_rep
 | --- | --- |
 | `rows_source.py` | Shared reader and S3 downloader; maps `<prefix>/scaling_<key>/verified_rows.jsonl` to `<dir>/<model>/verified_rows.jsonl`. |
 | `power_analysis.py` | Paired McNemar and bootstrap analysis; uniquely falls back to `all_rows.jsonl`. |
-| `error_bars.py` | Published block sign-flip error bars; this, not `power_analysis.py`, produces the published 14/21. `--recovery-dir` stays local-only, though those rows are archived under `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`; that layout is neither `scaling_*` nor `verified_rows.jsonl`. |
-| `hint_vs_noise.py` | Hint-versus-noise comparison. |
+| `error_bars.py` | Published block sign-flip error bars; this, not `power_analysis.py`, produces the published 14/21. The headline pool drops a cell whose every attempt was `exception`/`replay_failed` (an infrastructure fault); `--denominator count-as-failure` scores it 0 instead, and the other rule is always reported as a sensitivity row. `--recovery-dir` stays local-only, though those rows are archived under `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`; that layout is neither `scaling_*` nor `verified_rows.jsonl`. |
+| `hint_vs_noise.py` | Informative-rung-versus-noise comparison (default `hint:3` vs `noise:3`; `--info-rung`/`--noise-rung` pick another pair). A lane with no cell carrying both rungs exits non-zero rather than printing a null. |
 
 ## Data layout
 
@@ -51,7 +51,10 @@ Measure the active `random`/`val` pool instead of assuming a count:
 Build the post-cutoff corpus with `scripts/deduction/build_postcutoff_corpus.py` and set
 `SMOLBENCH_LEAN_DATA`. Missing corpus files raise an actionable `FileNotFoundError`; generate
 sidecars with `python -m smolbench.deduction.lean.cli filter --kind random --split val`
-(about 70 minutes per split).
+(about 70 minutes per split). Then write the derivation sidecar,
+`python -m smolbench.deduction.lean.cli build-derivation-index`, so `hint:3` closures follow the
+traced proofs' premise usage (exact for named usage) instead of a text scan; without it the index
+is rebuilt in memory on every process start.
 
 The driver requires a post-cutoff corpus because every roster checkpoint's knowledge cutoff postdates the reference trace, so a model may have memorised older theorems' proofs during training.
 
@@ -99,7 +102,30 @@ expensive; such statements report `exception` or `replay_failed`.
 Phase 1 writes `unverified` cells and `skipped` sanity rows through `NullVerifier`; an empty
 extracted tactic is `no_answer`, not `lean_error`, because Lean never saw a tactic. Phase 2 writes
 sibling `verified_rows.jsonl`; it never modifies `all_rows.jsonl`, so a verification bug cannot
-lose paid candidate proofs.
+lose paid candidate proofs. `--reverify-all` re-scores every group, including ones that already
+carry a verdict, into a fresh `verified_rows.jsonl`; use it after a verifier change.
+
+### Verdicts
+
+| Verdict | Meaning | Scored |
+| --- | --- | --- |
+| `success` | Tail closed every goal. | 1 |
+| `lean_error` | Lean rejected a tactic, or tactics remain after the goals closed. | 0 |
+| `incomplete` | Tail ran clean but goals remain. | 0 |
+| `given_up` | Tail contains `sorry`/`admit`. | 0 |
+| `no_answer` | No tactic could be extracted from the completion. | 0 |
+| `timeout` | Lean did not finish the candidate within the request timeout (a model failure: the candidate is too expensive to check). | 0 |
+| `exception` | Infrastructure fault (REPL crashed, environment missing); the candidate was never judged. | dropped |
+| `replay_failed` | The ground-truth prefix itself did not replay, so no candidate for that cell can be judged. | dropped |
+
+Candidates are scored as whole tactic blocks: an indented continuation line or a leading `|`
+belongs to the previous tactic, so a multi-line `calc`, `cases ... with`, or `conv` block is one
+step. A REPL killed by a timeout is reopened at the checkpoint before the next candidate, so one
+expensive candidate cannot poison the rest of its block.
+
+`max_tokens: 32768` in `sweep.yaml` is the generation budget. A completion cut at that budget
+shows in the `trunc` column of `analyze` (from `finish_reason`); it is scored on whatever tactic
+it contains, so raise the budget before comparing reasoning models that run long.
 
 ### Phase-2 traps, both of which fail SILENTLY
 
