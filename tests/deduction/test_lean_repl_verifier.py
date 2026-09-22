@@ -590,9 +590,12 @@ def test_open_at_step_replays_the_prefix_and_yields_the_reached_state(
 ) -> None:
     session = FakeSession({"a": _ok(), "b": _ok()})
     calls = _install_session(monkeypatch, session, state=5)
-    with verify.open_at_step(_bt(["a", "b", "c"]), 2, timeout=99) as (s, state):
-        assert s is session
-        assert state == 7
+    with verify.open_at_step(_bt(["a", "b", "c"]), 2, timeout=99) as (cp, state):
+        # `open_at_step` yields a Checkpoint wrapping the live session so a
+        # killed REPL can be reopened between candidates.
+        assert isinstance(cp, verify.Checkpoint)
+        assert cp.session is session
+        assert cp.state == state == 7
     assert [t for _, t in session.seen] == ["a", "b"]
     assert session.seen[0][0] == 5
     assert calls[0]["timeout"] == 99
@@ -988,3 +991,122 @@ def test_open_session_returns_the_sorrys_proof_state_on_the_happy_path(
     assert sent[1].env == 3
     assert sent[1].cmd.rstrip().endswith(":= by sorry")
     assert f"theorem {replbackend.TARGET_NAME}" in sent[1].cmd
+
+
+# ---------------------------------------------------------------------------
+# Multi-line tactics, whole-block scoring, timeout verdict, checkpoint reopen
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tail, expected",
+    [
+        ("simp", ["simp"]),
+        ("intro h\nexact h", ["intro h", "exact h"]),
+        # Indented continuation lines belong to the tactic above them.
+        (
+            "have h := foo\n    (bar baz)\n    (by simp)\nexact h",
+            ["have h := foo\n    (bar baz)\n    (by simp)", "exact h"],
+        ),
+        # `| case => ...` arms belong to the `induction ... with` above them.
+        (
+            "induction n with\n| zero => simp\n| succ n ih => simp [ih]",
+            ["induction n with\n| zero => simp\n| succ n ih => simp [ih]"],
+        ),
+        ("calc a = b := by simp\n  _ = c := by ring\nexact this",
+         ["calc a = b := by simp\n  _ = c := by ring", "exact this"]),
+        # Focus bullets start tactics; their indented bodies continue them.
+        ("constructor\n· simp\n· intro x\n  exact x",
+         ["constructor", "· simp", "· intro x\n  exact x"]),
+        # A uniformly indented block (as inside a `by`) is dedented first.
+        ("  intro h\n  exact h", ["intro h", "exact h"]),
+        ("\n\n", []),
+    ],
+)
+def test_split_tactics_keeps_multi_line_tactics_whole(
+    tail: str, expected: list[str]
+) -> None:
+    assert verify._split_tactics(tail) == expected
+
+
+def test_try_tail_submits_a_multi_line_tactic_as_one_step() -> None:
+    """The verifier must send `induction … with` and its arms to Lean together."""
+    block = "induction n with\n| zero => simp\n| succ n ih => simp [ih]"
+    session = FakeSession({block: _DONE})
+    assert verify.try_tail(session, 0, block, "t").verdict == "success"
+    assert [t for _, t in session.seen] == [block]
+
+
+def test_try_tail_rejects_tactics_after_the_goals_are_closed() -> None:
+    """`simp\\nQED` does not compile in a Lean file; it must not score as success."""
+    session = FakeSession({"simp": _DONE, "QED": _ok()})
+    res = verify.try_tail(session, 0, "simp\nQED", "t")
+    assert res.verdict == "lean_error"
+    assert "1 tactic(s) follow" in (res.error or "")
+    # Lean was never asked about the trailing junk: the block is already invalid.
+    assert [t for _, t in session.seen] == ["simp"]
+
+
+def test_try_tail_records_a_request_timeout_as_the_timeout_verdict() -> None:
+    """A tactic that runs past the timeout is the model's failure, not infrastructure."""
+    session = FakeSession({"decide": replbackend.ReplTimeout("timeout after 600s on t")})
+    res = verify.try_tail(session, 0, "decide", "t")
+    assert res.verdict == "timeout"
+    assert "decide" in (res.error or "") and "timeout after 600s" in (res.error or "")
+
+
+def test_try_tail_still_raises_on_a_closed_repl() -> None:
+    """A dead process is infrastructure: the caller records `exception`."""
+    session = FakeSession({"rfl": replbackend.ReplClosed("REPL closed on t")})
+    with pytest.raises(replbackend.ReplError):
+        verify.try_tail(session, 0, "rfl", "t")
+
+
+def test_checkpoint_reopens_the_session_after_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One non-terminating candidate must not void every later candidate on the block."""
+    first = FakeSession({"a": _ok(), "decide": replbackend.ReplTimeout("timeout after 1s on t")})
+    second = FakeSession({"a": _ok(), "rfl": _DONE})
+    sessions = iter([first, second])
+    opens: list[int] = []
+
+    def fake_open(bt: BenchmarkTheorem, timeout: float | None = 600, **kwargs: Any):
+        opens.append(timeout)
+        return next(sessions), 0
+
+    monkeypatch.setattr(replbackend, "open_session", fake_open)
+    bt = _bt(["a", "b"])
+    with verify.open_at_step(bt, 1, timeout=42) as (cp, state):
+        assert isinstance(cp, verify.Checkpoint)
+        assert verify.try_tail(cp, state, "decide", "t").verdict == "timeout"
+        assert cp.dead and cp.reopens == 0
+        # The next candidate transparently reopens, replays the prefix `a`,
+        # and verifies on the fresh session's state.
+        assert verify.try_tail(cp, state, "rfl", "t").verdict == "success"
+        assert cp.reopens == 1 and not cp.dead
+    assert opens == [42, 42]
+    assert first.closed == 1 and second.closed == 1
+    assert [t for _, t in second.seen] == ["a", "rfl"]
+
+
+def test_checkpoint_reopen_failure_propagates_as_repl_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = FakeSession({"rfl": replbackend.ReplClosed("REPL closed on t")})
+    calls = 0
+
+    def fake_open(bt: BenchmarkTheorem, timeout: float | None = 600, **kwargs: Any):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return first, 0
+        raise replbackend.ReplError("server would not start")
+
+    monkeypatch.setattr(replbackend, "open_session", fake_open)
+    with verify.open_at_step(_bt(["x"]), 0) as (cp, state):
+        with pytest.raises(replbackend.ReplError):
+            verify.try_tail(cp, state, "rfl", "t")
+        assert cp.dead
+        with pytest.raises(replbackend.ReplError, match="would not start"):
+            verify.try_tail(cp, state, "rfl", "t")

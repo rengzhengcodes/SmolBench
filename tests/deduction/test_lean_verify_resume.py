@@ -479,3 +479,49 @@ def test_verify_rows_script_guard_requires_mathlib_root(
             pytest.skip(f"mathlib_root wants more than a skeleton checkout: {exc}")
     finally:
         sys.modules.pop("lvr_root_seam", None)
+
+
+def test_reverify_all_rescores_rows_that_already_carry_verdicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A verifier change must be applicable to a run whose rows are already scored."""
+    rows = [
+        _cell("T", 1, rep=0, verdict="lean_error"),
+        _cell("T", 1, rep=1, verdict="success"),
+    ]
+    # Without the flag the run is a silent no-op: nothing pending, nothing uploaded.
+    fake = _Fake(verdict="success")
+    rc, uploaded = _run(monkeypatch, tmp_path, rows, fake=fake)
+    assert rc == 0 and uploaded is None and fake.tried == []
+    # With it, every cell is re-scored from its stored candidate.
+    fake = _Fake(verdict="success")
+    rc, uploaded = _run(monkeypatch, tmp_path, rows, fake=fake, reverify_all=True)
+    assert rc == 0 and uploaded is not None
+    # Both rows share the candidate text, so Lean is asked once and the
+    # verdict fans out to both (unique_candidates).
+    assert len(fake.tried) == 1
+    assert [r["verdict"] for r in _cells(uploaded)] == ["success", "success"]
+
+
+def test_open_failure_is_exception_not_replay_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A session that never opened is infrastructure; only a failed prefix is replay_failed."""
+
+    class _Broken(_Fake):
+        @contextlib.contextmanager
+        def open_at_step(self, bt: Any, k: int) -> Iterator[tuple[str, str]]:
+            raise RuntimeError("SMOLBENCH_MATHLIB_ROOT is unset")
+            yield ("dojo", "state")  # pragma: no cover
+
+    class _BadPrefix(_Fake):
+        @contextlib.contextmanager
+        def open_at_step(self, bt: Any, k: int) -> Iterator[tuple[str, str]]:
+            raise RuntimeError("prefix tactic 'simp' -> lean_error on T")
+            yield ("dojo", "state")  # pragma: no cover
+
+    rows = [_cell("T", 1, rep=0)]
+    _rc, up = _run(monkeypatch, tmp_path, rows, fake=_Broken())
+    assert [r["verdict"] for r in _cells(up)] == ["exception"]
+    _rc, up = _run(monkeypatch, tmp_path, rows, fake=_BadPrefix())
+    assert [r["verdict"] for r in _cells(up)] == ["replay_failed"]
