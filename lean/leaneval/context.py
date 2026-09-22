@@ -107,7 +107,6 @@ def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     return parts
 
 
-_HINT2_3_TOKEN_CAP = 50_000  # token budget for transitive closure rendering
 
 
 # ---------------------------------------------------------------------------
@@ -286,8 +285,6 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                     f"```lean\n{body_with_proof(p)}\n```"
                 )
                 cost = _count_tokens(snippet)
-                if used + cost > _HINT2_3_TOKEN_CAP:
-                    break
                 chunks.append(snippet)
                 used += cost
                 n_kept += 1

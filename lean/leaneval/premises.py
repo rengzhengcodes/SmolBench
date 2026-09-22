@@ -407,13 +407,13 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 
 
 def premise_dep_closure(
-    seeds: list[Premise], depth: int, max_premises: int = 500,
+    seeds: list[Premise], depth: int,
 ) -> list[Premise]:
     """BFS over derivation edges (`referenced_premises`) to depth `depth`.
 
     Yields premises reachable from `seeds` within `depth` hops in BFS order
-    (closest first). Excludes the seeds themselves. Capped at `max_premises`
-    to keep prompts bounded; truncation drops the deepest discoveries first.
+    (closest first). Excludes the seeds themselves. Uncapped: a cap would
+    let two levels render identically and empty their comparison.
     """
     if depth <= 0 or not seeds:
         return []
@@ -428,8 +428,6 @@ def premise_dep_closure(
                     visited.add(ref.full_name)
                     next_frontier.append(ref)
                     out.append(ref)
-                    if len(out) >= max_premises:
-                        return out
         if not next_frontier:
             break
         frontier = next_frontier
