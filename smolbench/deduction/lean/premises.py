@@ -12,11 +12,13 @@ without a trace (definitions, instances, term-mode proofs).
 
 from __future__ import annotations
 
+import heapq
 import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Iterable
 
 from .corpus import data_root, metadata
 
@@ -65,6 +67,61 @@ def _index() -> dict[str, Premise]:
                     file_path=rec["path"],
                 )
     return idx
+
+
+@lru_cache(maxsize=1)
+def _file_rank() -> dict[str, int]:
+    """Import-order rank of every corpus file: a file ranks after all it imports.
+
+    Kahn's algorithm over ``corpus.jsonl``'s ``imports`` with sorted-path
+    tie-breaks, so the order is total and machine-independent. A file that
+    imports a path absent from the corpus ignores that edge.
+    """
+    path = data_root() / "corpus.jsonl"
+    imports: dict[str, list[str]] = {}
+    with path.open() as f:
+        for line in f:
+            rec = json.loads(line)
+            imports.setdefault(rec["path"], list(rec.get("imports") or []))
+    indeg = {p: 0 for p in imports}
+    users: dict[str, list[str]] = {p: [] for p in imports}
+    for p, deps in imports.items():
+        for d in deps:
+            if d in imports and d != p:
+                indeg[p] += 1
+                users[d].append(p)
+    ready = sorted(p for p, n in indeg.items() if n == 0)
+    rank: dict[str, int] = {}
+    heapq.heapify(ready)
+    while ready:
+        p = heapq.heappop(ready)
+        rank[p] = len(rank)
+        for u in users[p]:
+            indeg[u] -= 1
+            if indeg[u] == 0:
+                heapq.heappush(ready, u)
+    for p in sorted(imports):  # cycles (should not occur): append deterministically
+        rank.setdefault(p, len(rank))
+    return rank
+
+
+def library_order(ps: Iterable[Premise]) -> list[Premise]:
+    """Sort premises as Mathlib builds them: import order, then line, then name.
+
+    Every dependency precedes its dependents (a file can only use what it
+    imports or what comes earlier in itself), so this is a topological order
+    of the derivation without marking which entries are the roots.
+
+    Parameters
+    ----------
+    ps : Iterable[Premise]
+
+    Returns
+    -------
+    list[Premise]
+    """
+    rank = _file_rank()
+    return sorted(ps, key=lambda p: (rank.get(p.file_path, len(rank)), p.start, p.full_name))
 
 
 def lookup(full_name: str) -> Premise | None:

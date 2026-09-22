@@ -13,11 +13,22 @@ from typing import Literal
 
 from .corpus import BenchmarkTheorem
 
-Chain = Literal["stepk", "hint", "noise"]
+Chain = Literal["stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise"]
 
-# ``stepk`` has levels 0..2; hint/noise reach 9 because transitive context is token-capped.
-# Noise mirrors hint because it renders levels ``N-1`` and ``N``.
-_MAX_LEVEL: dict[str, int] = {"stepk": 2, "hint": 9, "noise": 9}
+# ``stepk`` has levels 0..2. ``hint``/``noise`` (flagged ladder) and
+# ``sig``/``proof`` (unflagged library block, level = hops beyond the MPI
+# lemmas) go to 9; the closure is uncapped, so the roster bounds the depth.
+# ``signoise:N`` pads ``sig:0`` to ``sig:N``; ``proofnoise:N`` pads ``sig:N``
+# to ``proof:N``.
+_MAX_LEVEL: dict[str, int] = {
+    "stepk": 2,
+    "hint": 9,
+    "noise": 9,
+    "sig": 9,
+    "proof": 9,
+    "signoise": 9,
+    "proofnoise": 9,
+}
 
 
 def split_state(state_pp: str) -> tuple[str, str]:
@@ -207,19 +218,61 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
+    return _pad_to_target(
+        theorem,
+        k,
+        level,
+        _render_hint_parts(theorem, k, level - 1),
+        _render_hint_parts(theorem, k, level),
+        f"noise:{level}",
+        f"hint:{level - 1}",
+        f"hint:{level}",
+    )
 
-    # Only noise needs tokenization's requests/joblib/numpy/psutil dependencies.
+
+def _pad_to_target(  # pylint: disable=too-many-arguments
+    theorem: BenchmarkTheorem,
+    k: int,
+    level: int,
+    base_parts: list[str],
+    target_parts: list[str],
+    rung: str,
+    base_rung: str,
+    target_rung: str,
+) -> list[str]:
+    """Whitespace-pad ``base_parts`` to ``target_parts``' exact PROMPT token count.
+
+    Shared by every length control (``noise``, ``signoise``, ``proofnoise``)
+    so they cannot drift. Import the tokenizer lazily because only controls
+    need its ``requests``/``joblib``/``numpy``/``psutil`` dependencies.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+    k : int
+    level : int
+    base_parts : list[str]
+    target_parts : list[str]
+    rung, base_rung, target_rung : str
+        Names for error messages.
+
+    Returns
+    -------
+    list[str]
+
+    Raises
+    ------
+    ValueError
+        Base longer than target, or padding that does not hit the target.
+    """
     from smolbench.evals.tokenization import (
         TiktokenTokenizer,
         choose_whitespace_unit,
         token_matched_noise_prompt,
     )
 
-    base_parts = _render_hint_parts(theorem, k, level - 1)
     base_text = "\n\n".join(base_parts)
     base_prompt = _as_full_prompt(level, base_text)
-
-    target_parts = _render_hint_parts(theorem, k, level)
     target_text = "\n\n".join(target_parts)
     target_prompt = _as_full_prompt(level, target_text)
 
@@ -229,8 +282,8 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
 
     if base_tokens > target_tokens:
         raise ValueError(
-            f"noise:{level} baseline (hint:{level - 1}, {base_tokens} PROMPT "
-            f"tokens) is LONGER than its hint:{level} target ({target_tokens} "
+            f"{rung} baseline ({base_rung}, {base_tokens} PROMPT "
+            f"tokens) is LONGER than its {target_rung} target ({target_tokens} "
             f"PROMPT tokens) for {theorem.full_name!r} at k={k} -- a "
             "whitespace pad can only grow a rendering, never shrink one, so "
             "this rung cannot be built as a length control"
@@ -251,7 +304,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     padded_tokens = tokenizer.count(padded_prompt)
     if padded_tokens != target_tokens:
         raise ValueError(
-            f"noise:{level} padding for {theorem.full_name!r} at k={k} did not "
+            f"{rung} padding for {theorem.full_name!r} at k={k} did not "
             f"hit the exact target: got {padded_tokens} PROMPT tokens, wanted "
             f"{target_tokens}"
         )
@@ -264,7 +317,7 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     reconstructed = _as_full_prompt(level, base_text + pad)
     if reconstructed != padded_prompt:
         raise ValueError(
-            f"noise:{level} pad recovery for {theorem.full_name!r} at k={k} "
+            f"{rung} pad recovery for {theorem.full_name!r} at k={k} "
             "did not reconstruct the padded prompt: slicing the instruction "
             "suffix off the helper's returned prompt produced a pad that, "
             "re-rendered, does not reproduce that prompt byte-for-byte"
@@ -362,6 +415,104 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
     return parts
 
 
+def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
+    """MPI lemmas of step ``k`` plus their ``depth``-hop closure, in library order.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+    k : int
+    depth : int
+
+    Returns
+    -------
+    list[Premise]
+        Empty when no MPI lemma is in the corpus.
+    """
+    from .premises import (  # pylint: disable=cyclic-import
+        library_order,
+        lookup,
+        premise_dep_closure,
+    )
+
+    seeds = [
+        p
+        for p in (lookup(rec["full_name"]) for rec in theorem.traced_tactics[k].premises)
+        if p is not None
+    ]
+    if not seeds:
+        return []
+    return library_order(seeds + premise_dep_closure(seeds, depth))
+
+
+def _render_library_parts(
+    theorem: BenchmarkTheorem, k: int, depth: int, form: str
+) -> list[str]:
+    """``sig:depth`` / ``proof:depth``: `stepk:2` plus one unflagged library block.
+
+    The block lists the MPI lemmas and their closure together, in import
+    order, with nothing marking which entries the next tactic uses. ``form``
+    ``sig`` renders each declaration's signature; ``proof`` renders its full
+    source with proof. A step whose MPI is empty renders no block.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+    k : int
+    depth : int
+    form : str
+        ``"sig"`` or ``"proof"``.
+
+    Returns
+    -------
+    list[str]
+    """
+    from .premises import body_with_proof, signature  # pylint: disable=cyclic-import
+
+    render_one = signature if form == "sig" else body_with_proof
+    parts = _render_stepk_parts(theorem, k, 2)
+    entries = [
+        f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
+        f"```lean\n{render_one(p)}\n```"
+        for p in _library_premises(theorem, k, depth)
+    ]
+    if entries:
+        parts.append("## Library context\n" + "\n\n".join(entries))
+    return parts
+
+
+def _render_signoise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
+    """``signoise:N`` = ``sig:0`` padded to ``sig:N``: the hops as blank length."""
+    if level < 1:
+        raise ValueError(f"signoise:{level} not defined; only signoise:1+ supported")
+    return _pad_to_target(
+        theorem,
+        k,
+        level,
+        _render_library_parts(theorem, k, 0, "sig"),
+        _render_library_parts(theorem, k, level, "sig"),
+        f"signoise:{level}",
+        "sig:0",
+        f"sig:{level}",
+    )
+
+
+def _render_proofnoise_parts(
+    theorem: BenchmarkTheorem, k: int, level: int
+) -> list[str]:
+    """``proofnoise:N`` = ``sig:N`` padded to ``proof:N``: the proof bodies as blank length."""
+    return _pad_to_target(
+        theorem,
+        k,
+        level,
+        _render_library_parts(theorem, k, level, "sig"),
+        _render_library_parts(theorem, k, level, "proof"),
+        f"proofnoise:{level}",
+        f"sig:{level}",
+        f"proof:{level}",
+    )
+
+
 def validate(chain: Chain, level: int) -> None:
     """Check that `(chain, level)` names an in-range rung.
 
@@ -415,6 +566,12 @@ def render(
         parts = _render_hint_parts(theorem, k, level)
     elif chain == "noise":
         parts = _render_noise_parts(theorem, k, level)
+    elif chain in ("sig", "proof"):
+        parts = _render_library_parts(theorem, k, level, chain)
+    elif chain == "signoise":
+        parts = _render_signoise_parts(theorem, k, level)
+    elif chain == "proofnoise":
+        parts = _render_proofnoise_parts(theorem, k, level)
     else:
         raise ValueError(f"unknown chain {chain!r}")
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
@@ -434,6 +591,17 @@ IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
     ("noise", 1),
     ("noise", 2),
     ("noise", 3),
+    ("sig", 0),
+    ("sig", 1),
+    ("sig", 2),
+    ("proof", 0),
+    ("proof", 1),
+    ("proof", 2),
+    ("signoise", 1),
+    ("signoise", 2),
+    ("proofnoise", 0),
+    ("proofnoise", 1),
+    ("proofnoise", 2),
 )
 
 
@@ -517,5 +685,34 @@ def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=t
         target_text = "\n\n".join(target_parts)
         base_tokens = tokenizer.count(_as_full_prompt(level, base_text))
         target_tokens = tokenizer.count(_as_full_prompt(level, target_text))
+        return target_tokens - base_tokens <= 0
+
+    if chain in ("sig", "proof"):
+        # Trivial when the block is empty, or adds nothing over the rung
+        # below it: sig:N over sig:N-1 (no new closure entries), proof:N over
+        # sig:N (every body equals its signature).
+        if not _library_premises(theorem, k, level):
+            return True
+        if chain == "sig":
+            return level > 0 and len(_library_premises(theorem, k, level)) == len(
+                _library_premises(theorem, k, level - 1)
+            )
+        return _render_library_parts(theorem, k, level, "proof") == _render_library_parts(
+            theorem, k, level, "sig"
+        )
+    if chain in ("signoise", "proofnoise"):
+        if chain == "signoise" and level < 1:
+            return True
+        from smolbench.evals.tokenization import TiktokenTokenizer
+
+        tokenizer = TiktokenTokenizer()
+        if chain == "signoise":
+            base = _render_library_parts(theorem, k, 0, "sig")
+            target = _render_library_parts(theorem, k, level, "sig")
+        else:
+            base = _render_library_parts(theorem, k, level, "sig")
+            target = _render_library_parts(theorem, k, level, "proof")
+        base_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(base)))
+        target_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(target)))
         return target_tokens - base_tokens <= 0
     return False

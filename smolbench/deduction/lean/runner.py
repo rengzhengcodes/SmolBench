@@ -774,7 +774,15 @@ NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset(
     v for v, row in VERDICTS.items() if row[2]
 )
 
-_CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
+_CHAIN_ORDER = {
+    "stepk": 0,
+    "hint": 1,
+    "noise": 2,
+    "sig": 3,
+    "signoise": 4,
+    "proof": 5,
+    "proofnoise": 6,
+}
 
 
 def _glyph(v: str) -> str:
