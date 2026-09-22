@@ -692,12 +692,23 @@ def _default_server_factory(root: Path) -> LeanServer:
         Started server.
     """
     return LeanServer(
-        LeanREPLConfig(project=LocalProject(directory=str(root)), repl_rev=repl_rev_for(root))
+        LeanREPLConfig(
+            project=LocalProject(directory=str(root)),
+            repl_git=os.environ.get(REPL_GIT_ENV, DEFAULT_REPL_GIT),
+            repl_rev=repl_rev_for(root),
+        )
     )
 
 
 #: Overrides the REPL revision derived from the project's ``lean-toolchain``.
 REPL_REV_ENV: str = "SMOLBENCH_REPL_REV"
+#: Overrides the REPL repository. lean-interact's default is its own fork,
+#: whose newest tag stopped at Lean v4.33.0-rc1 (checked 2026-09-22); the
+#: community REPL tags a release per Lean version, so `repl_rev_for` always
+#: resolves against it. Verified on Mathlib at Lean v4.34.0-rc2: Command,
+#: sorry -> proof state, ProofStep -> Completed.
+REPL_GIT_ENV: str = "SMOLBENCH_REPL_GIT"
+DEFAULT_REPL_GIT: str = "https://github.com/leanprover-community/repl"
 
 
 def repl_rev_for(root: Path) -> str:

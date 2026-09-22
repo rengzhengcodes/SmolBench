@@ -1121,3 +1121,13 @@ def test_repl_rev_follows_the_project_toolchain(tmp_path, monkeypatch) -> None:
     assert replbackend.repl_rev_for(tmp_path) == "v4.34.0-rc2"
     monkeypatch.setenv(replbackend.REPL_REV_ENV, "v4.35.0")
     assert replbackend.repl_rev_for(tmp_path) == "v4.35.0"
+
+
+def test_repl_git_defaults_to_the_community_repl(monkeypatch) -> None:
+    from smolbench.deduction.lean import replbackend
+
+    assert replbackend.DEFAULT_REPL_GIT.endswith("leanprover-community/repl")
+    monkeypatch.setenv(replbackend.REPL_GIT_ENV, "https://example.com/repl")
+    import os
+
+    assert os.environ.get(replbackend.REPL_GIT_ENV, replbackend.DEFAULT_REPL_GIT) == "https://example.com/repl"
