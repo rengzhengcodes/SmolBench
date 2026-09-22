@@ -348,20 +348,16 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
             # token or premise cap may silently make two levels identical.
             # Context-window limits belong to the model roster, not the rung.
             transitive_premises = premise_dep_closure(seeds, depth)
-            chunks: list[str] = []
-            used = 0
-            for p in transitive_premises:
-                snippet = (
-                    f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
-                    f"```lean\n{body_with_proof(p)}\n```"
-                )
-                used += _count_tokens(snippet)
-                chunks.append(snippet)
+            chunks = [
+                f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
+                f"```lean\n{body_with_proof(p)}\n```"
+                for p in transitive_premises
+            ]
             if chunks:
+                # Bare heading: hop depth, premise count, and token estimate
+                # would tell the model how large the manipulation is.
                 parts.append(
-                    f"## Transitive premise context ({depth}-hop, "
-                    f"{len(chunks)} premises, ≈{used} tokens)\n"
-                    + "\n\n".join(chunks)
+                    "## Transitive premise context\n" + "\n\n".join(chunks)
                 )
     return parts
 

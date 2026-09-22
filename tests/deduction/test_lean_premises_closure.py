@@ -215,3 +215,110 @@ def test_file_context_handles_open_forms(tmp_path: Path, monkeypatch: pytest.Mon
     assert premises._file_context("X.lean", 7) == ("A.B", ("Nat", "Finset", "List"))
     premises._source_lines.cache_clear()
     premises._file_context.cache_clear()
+
+
+def test_ident_re_accepts_unicode_lean_names() -> None:
+    """Mathlib names carry subscripts and Greek letters; an ASCII class split them."""
+    text = "(forall₂_congr fun _ _ => by exact eq_comm).trans ext_iff.symm; hε ▸ Nat.succ_le'"
+    toks = premises._IDENT_RE.findall(text)
+    for want in ("forall₂_congr", "eq_comm", "ext_iff.symm", "hε", "Nat.succ_le'"):
+        assert want in toks, toks
+    assert "forall" not in toks and "_congr" not in toks, toks
+    assert not any(t[0].isdigit() for t in premises._IDENT_RE.findall("2 * x₁ + 3")), "numerals are not names"
+
+
+def test_resolve_dotted_prefix_before_dot_notation() -> None:
+    """`ext_iff.symm` is the constant `ext_iff` under the namespace, then `.symm`."""
+    idx = {"Foo.ext_iff": 1, "Foo.Bar.trans": 2, "Nat.succ_le": 3}
+    short = _short(idx)
+    assert premises._resolve_name("ext_iff.symm", "Foo", (), idx, short) == "Foo.ext_iff"
+    assert premises._resolve_name("ext_iff.symm.trans", "Foo", (), idx, short) == "Foo.ext_iff"
+    assert premises._resolve_name("Bar.trans", "Foo", (), idx, short) == "Foo.Bar.trans"
+    assert premises._resolve_name("h.succ_le", "Nat", (), idx, short) == "Nat.succ_le"
+
+
+def test_trace_covers_proof_only_for_top_level_tactic_blocks() -> None:
+    assert premises._trace_covers_proof("theorem t : P := by\n  simp")
+    assert premises._trace_covers_proof("theorem t : P :=by simp")
+    assert not premises._trace_covers_proof(
+        "theorem t : P :=\n  (foo fun _ => by exact bar).trans baz"
+    )
+    assert not premises._trace_covers_proof("def d : ℕ := 3")
+
+
+def test_partial_trace_is_unioned_with_text_references(
+    mini: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A term-mode proof with a nested `by` traces only that block; the term-level names must survive."""
+    repo = (
+        mini
+        / ".cache"
+        / "lean_dojo"
+        / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}"
+        / "mathlib4"
+    )
+    (repo / "Mini").mkdir(parents=True)
+    lines = ["namespace Mini"]
+    lines += [f"-- filler {i}" for i in range(2, 10)]
+    lines += [
+        "theorem premiseA {n : ℕ} (h : P n) : R n :=",
+        "  (premiseB n).elim (by exact h)",
+        "",
+        "",
+        "",
+        "def premiseB (n : ℕ) : ℕ := n + 1",
+        "",
+        "end Mini",
+    ]
+    (repo / "Mini" / "Prem.lean").write_text("\n".join(lines) + "\n")
+    corpus.reset_caches()
+    # theoremA's corpus record is `:= by ...`: the trace covers it.
+    assert premises.dep_source("Mini.theoremA") == "trace"
+    # premiseA is untraced: plain text path.
+    assert premises.dep_source("Mini.premiseA") == "text"
+    got = [p.full_name for p in premises.referenced_premises("Mini.premiseA")]
+    assert got == ["Mini.premiseB"]
+
+    # With a partial trace for premiseA, both sources contribute, trace first.
+    idx = dict(premises.build_derivation_index())
+    idx["Mini.premiseA"] = ["Mini.theoremB"]
+    monkeypatch.setattr(premises, "_derivation_index", lambda: idx)
+    premises.referenced_premises.cache_clear()
+    try:
+        assert premises.dep_source("Mini.premiseA") == "trace+text"
+        got = [p.full_name for p in premises.referenced_premises("Mini.premiseA")]
+        assert got == ["Mini.theoremB", "Mini.premiseB"]
+    finally:
+        monkeypatch.undo()
+        corpus.reset_caches()
+
+
+def test_projection_after_a_term_is_not_a_global_short_name(
+    mini: Path,
+) -> None:
+    """`(x).premiseB` must not resolve `premiseB` by global uniqueness; only the file context may."""
+    repo = (
+        mini
+        / ".cache"
+        / "lean_dojo"
+        / f"leanprover-community-mathlib4-{_FIXTURE_COMMIT}"
+        / "mathlib4"
+    )
+    (repo / "Mini").mkdir(parents=True)
+    lines = [f"-- filler {i}" for i in range(1, 10)]  # no namespace, no open
+    lines += [
+        "theorem Mini.premiseA {n : ℕ} (h : P n) : R n :=",
+        "  (h).premiseB",
+        "", "", "",
+        "def Mini.premiseB (n : ℕ) : ℕ := n + 1",
+    ]
+    (repo / "Mini" / "Prem.lean").write_text("\n".join(lines) + "\n")
+    corpus.reset_caches()
+    assert premises.referenced_premises("Mini.premiseA") == ()
+    # Under `namespace Mini` the projection head resolves through the context.
+    (repo / "Mini" / "Prem.lean").write_text(
+        "namespace Mini\n" + "\n".join(lines[1:]) + "\nend Mini\n"
+    )
+    corpus.reset_caches()
+    got = [p.full_name for p in premises.referenced_premises("Mini.premiseA")]
+    assert got == ["Mini.premiseB"]
