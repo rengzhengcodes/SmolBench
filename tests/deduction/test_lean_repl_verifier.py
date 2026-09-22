@@ -1110,3 +1110,14 @@ def test_checkpoint_reopen_failure_propagates_as_repl_error(
         assert cp.dead
         with pytest.raises(replbackend.ReplError, match="would not start"):
             verify.try_tail(cp, state, "rfl", "t")
+
+
+def test_repl_rev_follows_the_project_toolchain(tmp_path, monkeypatch) -> None:
+    """lean-interact's default REPL revision does not match Mathlib's Lean; use the project's."""
+    from smolbench.deduction.lean import replbackend
+
+    (tmp_path / "lean-toolchain").write_text("leanprover/lean4:v4.34.0-rc2\n")
+    monkeypatch.delenv(replbackend.REPL_REV_ENV, raising=False)
+    assert replbackend.repl_rev_for(tmp_path) == "v4.34.0-rc2"
+    monkeypatch.setenv(replbackend.REPL_REV_ENV, "v4.35.0")
+    assert replbackend.repl_rev_for(tmp_path) == "v4.35.0"
