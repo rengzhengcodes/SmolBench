@@ -175,4 +175,6 @@ The study uses replay-passing, tactic-traceable theorems and four rungs: `stepk:
 `data/` are archived; see `notebooks/ARCHIVE.md` for restoration or regeneration.
 
 The documented rung universe is `stepk:0..2` and `hint:0..4`; `context.validate` also accepts
-`hint`/`noise` through level 9, but deeper hops increasingly hit the renderer's 50k-token cap before reaching a rendered prompt.
+`hint`/`noise` through level 9. The transitive closure is uncapped (no token or premise limit), so
+deep levels grow roughly threefold per hop and can exceed a model's context window; choose levels per
+model from the measured prompt lengths (`PILOT_2026-07.md`, "Hint ladder length").
