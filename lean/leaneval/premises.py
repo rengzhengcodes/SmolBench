@@ -3,17 +3,19 @@
 `corpus.jsonl` has one record per Lean source file in the traced repo:
     {path, imports: [paths], premises: [{full_name, code, start, end, kind}]}
 
-Three layers of premise data:
+Two layers of premise data:
 
 - `signature(p)` — the prefix of `code` before the first top-level `:=`.
-- `body(p)` — the corpus's `code` field (signature-only for theorems, includes
-  `:= body` for `def`s).
 - `body_with_proof(p)` — slices the source file from the premise's `start` to
-  the next top-level declaration. Captures the proof body for theorems too.
+  the next top-level declaration. Captures the proof body for theorems too
+  (the corpus `code` field is signature-only for theorems).
 
-`transitive_files(seeds, depth)` does a BFS over file-level imports for
-`hint:3`/`hint:4` rungs. `premises_in_files(paths)` yields the premises
-declared in those files for token-budget-bounded inclusion.
+`premise_dep_closure(seeds, depth)` BFS-expands per-premise derivation edges
+for the `hint:3+` rungs. Edges come from `referenced_premises`, which
+prefers the LeanDojo trace (the premises each tactic of a theorem's proof
+actually used, the same data the MPI is built from) and falls back to
+namespace-aware name matching over the declaration source for premises
+without a trace (definitions, instances, term-mode proofs).
 """
 
 from __future__ import annotations
@@ -92,16 +94,6 @@ def signature(p: Premise) -> str:
     return s.rstrip()
 
 
-def body(p: Premise) -> str:
-    """Premise source as captured in `corpus.jsonl` (signature-only for theorems)."""
-    return p.code
-
-
-def index_size() -> int:
-    """Total number of unique premises indexed."""
-    return len(_index())
-
-
 # ---------------------------------------------------------------------------
 # Source-file slicing — captures real proof bodies (theorems too)
 # ---------------------------------------------------------------------------
@@ -147,6 +139,15 @@ def _resolve_source(file_path: str) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+@lru_cache(maxsize=512)
+def _source_lines(file_path: str) -> tuple[str, ...] | None:
+    """Lines of a corpus source file, or None if it is not on disk."""
+    src = _resolve_source(file_path)
+    if src is None:
+        return None
+    return tuple(src.read_text().splitlines())
+
+
 @lru_cache(maxsize=8192)
 def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: int = 200) -> str:
     """Slice the full declaration (statement + proof body) from a source file.
@@ -158,10 +159,9 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
       - end of file
     Returns the slice with trailing whitespace stripped, or `""` on miss.
     """
-    src = _resolve_source(file_path)
-    if src is None:
+    lines = _source_lines(file_path)
+    if lines is None:
         return ""
-    lines = src.read_text().splitlines()
     s = max(0, start_line - 1)
     if s >= len(lines):
         return ""
@@ -177,78 +177,68 @@ def slice_full_decl(file_path: str, start_line: int, end_line: int, max_lines: i
 def body_with_proof(p: Premise) -> str:
     """Slice from the source file: full declaration including any proof body.
 
-    Falls back to `body(p)` (the corpus `code` field) if the source file isn't
-    accessible.
+    Falls back to the corpus `code` field if the source file isn't accessible.
     """
     sliced = slice_full_decl(p.file_path, p.start[0], p.end[0])
     return sliced or p.code
 
 
 # ---------------------------------------------------------------------------
-# File-level transitive closure (hint:3 / hint:4)
+# Trace-based derivation index
 # ---------------------------------------------------------------------------
+
+
+DERIVATION_INDEX_PATH = DATA_ROOT.parent / "derivation_index.json"
+
+
+def build_derivation_index(kind: str = "random") -> dict[str, list[str]]:
+    """`full_name -> premises used by its traced proof`, over every split.
+
+    Reads the raw benchmark JSON (train.json is 357 MB) without going through
+    `load_split`'s cache so the objects can be freed afterwards. Premises are
+    in first-use order, deduplicated, self-references dropped. A traced
+    theorem whose proof named no corpus premise maps to an empty list.
+    """
+    out: dict[str, list[str]] = {}
+    for split in ("train", "val", "test"):
+        raw = json.loads((DATA_ROOT / kind / f"{split}.json").read_text())
+        for rec in raw:
+            tts = rec.get("traced_tactics") or []
+            if not tts:
+                continue
+            seen: set[str] = {rec["full_name"]}
+            names: list[str] = []
+            for tt in tts:
+                annotated = tt.get("annotated_tactic") or []
+                for p in (annotated[1] if len(annotated) > 1 else []):
+                    n = p["full_name"]
+                    if n not in seen:
+                        seen.add(n)
+                        names.append(n)
+            out[rec["full_name"]] = names
+        del raw
+    return out
 
 
 @lru_cache(maxsize=1)
-def _file_records() -> dict[str, dict]:
-    """Map `file_path -> {imports: [...], premises: [...]}`. Loaded once (~5s)."""
-    out: dict[str, dict] = {}
-    with (DATA_ROOT / "corpus.jsonl").open() as f:
-        for line in f:
-            r = json.loads(line)
-            out[r["path"]] = {"imports": r["imports"], "premises": r["premises"]}
-    return out
+def _derivation_index() -> dict[str, list[str]]:
+    """Load `data/derivation_index.json`, building it on first use (~1 min)."""
+    if DERIVATION_INDEX_PATH.exists():
+        return json.loads(DERIVATION_INDEX_PATH.read_text())
+    idx = build_derivation_index()
+    DERIVATION_INDEX_PATH.write_text(json.dumps(idx))
+    return idx
 
 
-def transitive_files(seed_files: set[str], depth: int) -> list[str]:
-    """BFS over file imports starting from `seed_files`.
-
-    Returns a list of file paths discovered at hops 1..depth (excluding seeds),
-    in BFS order so token-truncation keeps the closest dependencies.
-    """
-    if depth <= 0:
-        return []
-    records = _file_records()
-    visited: set[str] = set(seed_files)
-    frontier = list(seed_files)
-    out: list[str] = []
-    for _ in range(depth):
-        next_frontier: list[str] = []
-        for f in frontier:
-            rec = records.get(f)
-            if not rec:
-                continue
-            for imp in rec["imports"]:
-                if imp not in visited:
-                    visited.add(imp)
-                    next_frontier.append(imp)
-                    out.append(imp)
-        frontier = next_frontier
-    return out
-
-
-def premises_in_files(file_paths: list[str]) -> list[Premise]:
-    """Yield Premise records for every premise declared in the given files."""
-    records = _file_records()
-    out: list[Premise] = []
-    for fp in file_paths:
-        rec = records.get(fp)
-        if not rec:
-            continue
-        for p in rec["premises"]:
-            out.append(Premise(
-                full_name=p["full_name"],
-                code=p["code"],
-                start=tuple(p["start"]),  # type: ignore[arg-type]
-                end=tuple(p["end"]),      # type: ignore[arg-type]
-                kind=p["kind"],
-                file_path=fp,
-            ))
-    return out
+def dep_source(full_name: str) -> str:
+    """Which edge source `referenced_premises` uses: trace | text | none."""
+    if full_name in _derivation_index():
+        return "trace"
+    return "text" if lookup(full_name) is not None else "none"
 
 
 # ---------------------------------------------------------------------------
-# Per-premise dependency graph (proper transitive closure for hint:3 / hint:4)
+# Text fallback: namespace-aware name resolution over the declaration source
 # ---------------------------------------------------------------------------
 
 
@@ -256,7 +246,76 @@ def premises_in_files(file_paths: list[str]) -> list[Premise]:
 # alphanumeric, underscore, prime, dot (for namespacing), and a few unicode
 # letters that mathlib uses heavily. We deliberately stay ASCII-leaning here
 # since name lookups are against the corpus index (which uses ASCII full_names).
+# A trailing `.` (sentence end in a docstring) is stripped by the caller.
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
+
+_NAMESPACE_RE = re.compile(r"^namespace\s+([\w.']+)")
+_SECTION_RE = re.compile(r"^section\b")
+_END_RE = re.compile(r"^end\b")
+_OPEN_RE = re.compile(r"^open\s+(?!scoped\b)(.+)$")
+
+
+@lru_cache(maxsize=8192)
+def _file_context(file_path: str, line: int) -> tuple[str, tuple[str, ...]]:
+    """`(current namespace, opened namespaces)` in effect at 1-indexed `line`.
+
+    Tracks `namespace`/`section`/`end` nesting and `open` commands above the
+    line. `open A in` and `open A (x y)` / `hiding` / `renaming` forms are
+    read as opening `A`; `open scoped` is ignored (notation only).
+    """
+    lines = _source_lines(file_path) or ()
+    stack: list[str | None] = []  # namespace name, or None for a section
+    opens: list[str] = []
+    for raw in lines[: max(0, line - 1)]:
+        s = raw.strip()
+        if m := _NAMESPACE_RE.match(s):
+            stack.append(m.group(1))
+        elif _SECTION_RE.match(s):
+            stack.append(None)
+        elif _END_RE.match(s):
+            if stack:
+                stack.pop()
+        elif m := _OPEN_RE.match(s):
+            body = re.split(r"\b(?:hiding|renaming|in)\b|\(", m.group(1))[0]
+            opens.extend(tok for tok in body.split() if re.fullmatch(r"[\w.']+", tok))
+    ns = ".".join(n for n in stack if n)
+    return ns, tuple(opens)
+
+
+def _resolve_name(tok: str, ns: str, opens: tuple[str, ...], idx: dict, short_idx: dict) -> str | None:
+    """Resolve an identifier the way Lean would, given the file context.
+
+    Order: exact full name; `_root_.` prefix; qualified under the current
+    namespace, its ancestors, or an opened namespace (also opened namespaces
+    relative to the current one); a bare short name that is globally unique;
+    for `x.foo` dot notation on a local, the suffix under the same context.
+    Returns None when nothing or more than one candidate matches.
+    """
+    if tok.startswith("_root_."):
+        tok = tok[len("_root_."):]
+    if tok in idx:
+        return tok
+
+    prefixes = []
+    parts = ns.split(".") if ns else []
+    for i in range(len(parts), 0, -1):
+        prefixes.append(".".join(parts[:i]))
+    scopes = set(prefixes) | set(opens) | {f"{p}.{o}" for p in prefixes for o in opens}
+    hits = {f"{s}.{tok}" for s in scopes if f"{s}.{tok}" in idx}
+    if len(hits) == 1:
+        return hits.pop()
+    if hits:
+        return None  # ambiguous even with context
+
+    if "." not in tok:
+        cands = short_idx.get(tok)
+        return cands[0] if cands and len(cands) == 1 else None
+
+    # `h.trans`-style dot notation on a local: resolve the suffix under the
+    # file context only (never by global uniqueness — too many collisions).
+    suffix = tok.rpartition(".")[2]
+    hits = {f"{s}.{suffix}" for s in scopes if f"{s}.{suffix}" in idx}
+    return hits.pop() if len(hits) == 1 else None
 
 # Lean keywords + tactic vocabulary + ubiquitous short identifiers that would
 # pollute the dep graph if treated as premise references. Not exhaustive; just
@@ -299,16 +358,30 @@ def _short_name_index() -> dict[str, list[str]]:
 
 @lru_cache(maxsize=4096)
 def referenced_premises(full_name: str) -> tuple[Premise, ...]:
-    """Premises referenced (by name) in `full_name`'s body.
+    """Derivation edges of `full_name`: the premises its proof uses.
 
-    Tokenizes the premise's body (proof + signature), looks up each
-    identifier-like token in the premise index by exact full-name match
-    or by short-name match (when unambiguous). Filters Lean keywords,
-    common tactics, and very-common short identifiers.
+    1. If the LeanDojo benchmark traced `full_name`'s proof, return the
+       premises its tactics used (in first-use order). This is exact for
+       named usage. It does not include lemmas `simp`/`omega`/`aesop` find
+       on their own, and instances resolved by typeclass search.
+    2. Otherwise (definitions, instances, term-mode proofs) tokenize the
+       declaration source and resolve each identifier with the file's
+       `namespace`/`open` context (`_resolve_name`). This is a reference
+       closure over the whole declaration, statement included.
 
-    Returns a tuple (so it's hashable and lru-cacheable). Empty tuple if the
-    premise isn't found or has no recognisable refs.
+    Returns a tuple (hashable, lru-cacheable). Empty if nothing resolves.
     """
+    traced = _derivation_index().get(full_name)
+    if traced is not None:
+        out: list[Premise] = []
+        seen: set[str] = {full_name}
+        for n in traced:
+            p = lookup(n)
+            if p is not None and n not in seen:
+                seen.add(n)
+                out.append(p)
+        return tuple(out)
+
     p = lookup(full_name)
     if p is None:
         return ()
@@ -318,30 +391,25 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
 
     idx = _index()
     short_idx = _short_name_index()
+    ns, opens = _file_context(p.file_path, p.start[0])
 
-    seen: set[str] = {full_name}
-    out: list[Premise] = []
+    seen = {full_name}
+    out = []
     for tok in _IDENT_RE.findall(text):
+        tok = tok.rstrip(".")
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
-        # Exact full-name match (e.g. `Set.subset_def`).
-        if tok in idx and tok not in seen:
-            seen.add(tok)
-            out.append(idx[tok])
-            continue
-        # Short-name match — only when unambiguous (one full_name candidate).
-        if "." not in tok:
-            cands = short_idx.get(tok)
-            if cands and len(cands) == 1 and cands[0] not in seen:
-                seen.add(cands[0])
-                out.append(idx[cands[0]])
+        resolved = _resolve_name(tok, ns, opens, idx, short_idx)
+        if resolved is not None and resolved not in seen:
+            seen.add(resolved)
+            out.append(idx[resolved])
     return tuple(out)
 
 
 def premise_dep_closure(
     seeds: list[Premise], depth: int, max_premises: int = 500,
 ) -> list[Premise]:
-    """BFS over per-premise references to depth `depth`.
+    """BFS over derivation edges (`referenced_premises`) to depth `depth`.
 
     Yields premises reachable from `seeds` within `depth` hops in BFS order
     (closest first). Excludes the seeds themselves. Capped at `max_premises`

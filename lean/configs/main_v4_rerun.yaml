@@ -1,0 +1,79 @@
+# Re-run of the rungs whose prompts changed after main_v3:
+#
+#   hint:3   derivation edges now come from the LeanDojo trace (exact for
+#            traced premises) with a namespace-aware text fallback, instead
+#            of global-unique name matching (premises.referenced_premises).
+#   noise:*  fitted filler: the whole noise prompt matches hint:N's cl100k
+#            token count exactly and the header carries no commentary. The
+#            main_v3 noise arms were ~24 tokens over budget and said
+#            "no informational content". noise:3 also inherits hint:3's
+#            new size.
+#
+# Same models, theorems, and settings as main_v3. Figures merge runs with
+# last-run-wins per cell, so list this run AFTER main_v3_rescored and its
+# rows replace the stale hint:3/noise:* rows:
+#
+#   uv run python figures/success_rate_bars.py --runs main_v3_rescored main_v4_rerun
+#
+# Provider tokenizers still count lorem ~7-12% higher than cl100k does. Check
+# prompt_tokens for hint:N vs noise:N after the run and report the ratio.
+#
+# Cost: 100 theorems × 4 rungs × 7 models × 3 rollouts ≈ 8,400 cells,
+# roughly 40% of main_v3.
+run_name: main_v4_rerun
+
+models:
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2-speciale"
+    display_name: "v3.2-speciale"
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 100
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - noise:1
+  - noise:2
+  - hint:3
+  - noise:3
+
+n_rollouts: 3
+temperature: 0.7
+max_tokens: 32768
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 8

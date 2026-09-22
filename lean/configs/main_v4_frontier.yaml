@@ -1,0 +1,61 @@
+# Frontier closed-weight models on the FULL 100-theorem sample.
+#
+# main_v3_2 ran Sonnet 4.6 and GPT-5.5 on a 30-theorem subset (21 with
+# non-trivial cells, 16 in the analysis set). That is too few theorems to
+# support the open-vs-closed contrast: a paired 95% interval on a pass-rate
+# difference at n=16 is roughly ±25 pp. This config runs the same four model
+# configs on the same 100 theorems as main_v3 (seed 0), paper rungs only
+# (hint:4/noise:4 dropped). The noise rungs use the fitted filler, so analyze
+# noise against main_v4_noise, not main_v3.
+#
+# Cost estimate from main_v3_2's per-cell spend, scaled 30 -> 100 theorems
+# and 10 -> 8 rungs: roughly 2.7x main_v3_2. Sonnet thinking dominates.
+run_name: main_v4_frontier
+
+models:
+  - provider: openai_compat
+    model: "anthropic/claude-sonnet-4.6"
+    display_name: "sonnet-4.6-none"
+  - provider: openai_compat
+    model: "anthropic/claude-sonnet-4.6"
+    display_name: "sonnet-4.6-thinking"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "openai/gpt-5.5"
+    display_name: "gpt-5.5-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 100
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - noise:1
+  - hint:2
+  - noise:2
+  - hint:3
+  - noise:3
+
+n_rollouts: 3
+temperature: 0.7
+max_tokens: 32768
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 4

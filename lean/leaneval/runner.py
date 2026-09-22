@@ -46,7 +46,14 @@ from .corpus import (
 from .llm import build_client
 from .llm.base import LLMClient
 from .prompt import build_messages, extract_tactic_block
-from .verify import open_at_step, replay_ground_truth, try_tail, verify_proof_tail
+from .verify import (
+    ProofResult,
+    SCORED_VERDICTS,
+    open_at_step,
+    replay_ground_truth,
+    try_tail,
+    verify_proof_tail,
+)
 
 
 RESULTS_ROOT = Path(__file__).resolve().parent.parent / "results"
@@ -70,6 +77,29 @@ def slug_rung(rung: str) -> str:
 def slug_model(model: str) -> str:
     """Take the last `/` segment: `anthropic/claude-haiku-4.5` -> `claude-haiku-4.5`."""
     return model.rsplit("/", 1)[-1]
+
+
+def hit_output_cap(finish_reason: str | None, completion_tokens: int, max_tokens: int) -> bool:
+    """True when the response was cut off by the output-token budget."""
+    return finish_reason in ("length", "max_tokens") or completion_tokens >= max_tokens
+
+
+def apply_truncation(verdict: ProofResult, rsp, max_tokens: int) -> ProofResult:
+    """Downgrade a non-success verdict to `truncated` when the response hit the
+    output cap. A truncated response that still verifies stays `success`."""
+    if verdict.verdict == "success":
+        return verdict
+    if not hit_output_cap(rsp.finish_reason, rsp.completion_tokens, max_tokens):
+        return verdict
+    note = (
+        f"truncated: finish_reason={rsp.finish_reason!r}, "
+        f"completion_tokens={rsp.completion_tokens} (max_tokens={max_tokens})"
+    )
+    return ProofResult(
+        verdict.theorem, "truncated", verdict.tail_tried,
+        error=f"{note}; {verdict.error}" if verdict.error else note,
+        final_state_pp=verdict.final_state_pp,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +135,7 @@ def run_cell(
 
         t1 = time.monotonic()
         verdict = verify_proof_tail(theorem, k, candidate, timeout=dojo_timeout)
+        verdict = apply_truncation(verdict, rsp, max_tokens)
         verify_ms = int((time.monotonic() - t1) * 1000)
 
         ground_truth_remaining = "\n".join(
@@ -131,6 +162,7 @@ def run_cell(
             "context_chars": len(rendered.text),
             "gen_ms": gen_ms,
             "verify_ms": verify_ms,
+            "finish_reason": rsp.finish_reason,
             "candidate_proof": candidate,
             "raw_response": rsp.text,
             "reasoning_content": rsp.reasoning,
@@ -306,6 +338,8 @@ _VERDICT_GLYPH = {
     "lean_error": "✘",
     "incomplete": "·",
     "given_up": "?",
+    "timeout": "⏱",
+    "truncated": "T",
     "replay_failed": "!",
     "exception": "X",
 }
@@ -406,23 +440,28 @@ def write_theorem_summary(theorem_dir: Path) -> None:
     (theorem_dir / "summary.md").write_text("\n".join(lines))
 
 
-def write_run_analysis(run_dir: Path) -> None:
-    """Read all_rows.jsonl, dump a (rung, model) pass-rate table to analysis.txt."""
-    all_rows = run_dir / "all_rows.jsonl"
-    if not all_rows.exists():
-        return
+def aggregate_rows(path: Path | str) -> tuple[dict[tuple[str, str], dict[str, int]], int, int, int]:
+    """Aggregate a run JSONL into per-(rung, model) verdict/token counters.
 
+    Single source for `write_run_analysis` and `cli analyze` — the two must
+    bucket verdicts identically or analysis.txt and the CLI table diverge.
+    Returns `(cells, n_rows, n_sanity_pass, n_sanity_fail)`. Malformed lines
+    are skipped. `n` counts every row; `scored` counts rows whose verdict is
+    in SCORED_VERDICTS (infrastructure failures excluded) and is the
+    pass-rate denominator.
+    """
     cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
+            "n": 0, "scored": 0, "success": 0, "lean_error": 0, "incomplete": 0,
+            "given_up": 0, "timeout": 0, "truncated": 0,
+            "replay_failed": 0, "exception": 0,
             "tok_in": 0, "tok_out": 0, "ms": 0,
         }
     )
     n_sanity_pass = 0
     n_sanity_fail = 0
     n_rows = 0
-    with all_rows.open() as f:
+    with open(path) as f:
         for line in f:
             try:
                 r = json.loads(line)
@@ -444,9 +483,67 @@ def write_run_analysis(run_dir: Path) -> None:
                 c[v] += 1
             else:
                 c["exception"] += 1
+            if v in SCORED_VERDICTS:
+                c["scored"] += 1
             c["tok_in"] += r.get("prompt_tokens", 0)
             c["tok_out"] += r.get("completion_tokens", 0)
             c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+    return cells, n_rows, n_sanity_pass, n_sanity_fail
+
+
+def format_cells_table(cells: dict[tuple[str, str], dict[str, int]]) -> list[str]:
+    """Render `aggregate_rows` cells as the (rung, model) pass-rate table
+    plus the per-model rollup, one output line per list element.
+
+    `rate` = success / scored. `N` is the scored count; `exc` (infra
+    failures) and `rplf` are shown but not in the denominator."""
+    out: list[str] = []
+    header = (
+        f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'tmout':>5} {'trunc':>5} "
+        f"{'rplf':>5} {'exc':>4} "
+        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
+    )
+    out.append(header)
+    out.append("-" * len(header))
+    for (rung, model), c in sorted(cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])):
+        n = c["n"]
+        scored = c["scored"]
+        rate = c["success"] / scored if scored else 0
+        avg_in = c["tok_in"] / n if n else 0
+        avg_out = c["tok_out"] / n if n else 0
+        avg_s = c["ms"] / n / 1000 if n else 0
+        out.append(
+            f"{rung:<10} {model:<36} {c['success']:>5}/{scored:<4} "
+            f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
+            f"{c['given_up']:>5} {c['timeout']:>5} {c['truncated']:>5} "
+            f"{c['replay_failed']:>5} {c['exception']:>4} "
+            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
+        )
+
+    out.append("\n# per-model totals")
+    by_model: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"scored": 0, "success": 0, "tok_in": 0, "tok_out": 0}
+    )
+    for (_, model), c in cells.items():
+        by_model[model]["scored"] += c["scored"]
+        by_model[model]["success"] += c["success"]
+        by_model[model]["tok_in"] += c["tok_in"]
+        by_model[model]["tok_out"] += c["tok_out"]
+    for model, m in sorted(by_model.items()):
+        rate = m["success"] / m["scored"] if m["scored"] else 0
+        out.append(f"  {model:<36}  {m['success']:>4}/{m['scored']:<4}  {rate:>6.1%}  "
+                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+    return out
+
+
+def write_run_analysis(run_dir: Path) -> None:
+    """Read all_rows.jsonl, dump a (rung, model) pass-rate table to analysis.txt."""
+    all_rows = run_dir / "all_rows.jsonl"
+    if not all_rows.exists():
+        return
+
+    cells, n_rows, n_sanity_pass, n_sanity_fail = aggregate_rows(all_rows)
 
     out: list[str] = []
     out.append(f"# {n_rows} cells; sanity {n_sanity_pass} pass / {n_sanity_fail} fail\n")
@@ -456,39 +553,7 @@ def write_run_analysis(run_dir: Path) -> None:
         (run_dir / "analysis.txt").write_text("\n".join(out) + "(no cell rows)\n")
         return
 
-    header = (
-        f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
-        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
-    )
-    out.append(header)
-    out.append("-" * len(header))
-    for (rung, model), c in sorted(cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])):
-        n = c["n"]
-        rate = c["success"] / n if n else 0
-        avg_in = c["tok_in"] / n if n else 0
-        avg_out = c["tok_out"] / n if n else 0
-        avg_s = c["ms"] / n / 1000 if n else 0
-        out.append(
-            f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
-            f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
-            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
-        )
-
-    out.append("\n# per-model totals")
-    by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0}
-    )
-    for (_, model), c in cells.items():
-        by_model[model]["n"] += c["n"]
-        by_model[model]["success"] += c["success"]
-        by_model[model]["tok_in"] += c["tok_in"]
-        by_model[model]["tok_out"] += c["tok_out"]
-    for model, m in sorted(by_model.items()):
-        rate = m["success"] / m["n"] if m["n"] else 0
-        out.append(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-                   f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+    out.extend(format_cells_table(cells))
     (run_dir / "analysis.txt").write_text("\n".join(out) + "\n")
 
 
@@ -506,75 +571,6 @@ def regenerate_run_artifacts(run_dir: Path) -> None:
 # Inner cell loop — shares one Dojo session across all rungs/models/rollouts
 # at a single (theorem, k). Caller wraps in a try/except for open failures.
 # ---------------------------------------------------------------------------
-
-
-def _run_cells_at_step(
-    *,
-    all_rows,                               # open file handle, append mode
-    theorem: BenchmarkTheorem,
-    k: int,
-    rungs: list[str],
-    rendered_by_rung: dict,
-    models_cfg: list[dict],
-    n_rollouts: int,
-    temperature: float,
-    max_tokens: int,
-    client_factory,
-    done_keys: set,
-    tdir: Path,
-    dojo_timeout: int,
-    write_lock: threading.Lock | None = None,
-    print_lock: threading.Lock | None = None,
-) -> tuple[int, int, int]:
-    """Open Dojo at (theorem, k); run all cells. Returns (n_written, n_ok, n_skipped)."""
-    n_written = n_ok = n_skipped = 0
-    write_lock = write_lock or threading.Lock()
-    print_lock = print_lock or threading.Lock()
-
-    with open_at_step(theorem, k, timeout=dojo_timeout) as (dojo, state_at_k):
-        for rung in rungs:
-            rendered = rendered_by_rung[rung]
-            chain, level_str = rung.split(":", 1)
-            level = int(level_str)
-            messages = build_messages(rendered)
-
-            for mc in models_cfg:
-                client = client_factory(mc)
-                model = mc["model"]
-                display_name = mc.get("display_name", model)
-                extra_params = mc.get("extra_params")
-                for rollout_idx in range(n_rollouts):
-                    key = _row_key(display_name, theorem.full_name, k, rung, rollout_idx)
-                    if key in done_keys:
-                        n_skipped += 1
-                        continue
-
-                    row = _execute_one_cell(
-                        client=client, model=model, messages=messages,
-                        rendered=rendered, theorem=theorem, k=k, chain=chain,
-                        level=level, rung=rung, rollout_idx=rollout_idx,
-                        provider=mc["provider"], temperature=temperature,
-                        max_tokens=max_tokens, dojo=dojo, state_at_k=state_at_k,
-                        display_name=display_name, extra_params=extra_params,
-                    )
-
-                    with write_lock:
-                        all_rows.write(json.dumps(row, ensure_ascii=False) + "\n")
-                        all_rows.flush()
-                    _append_output(row, tdir)
-                    n_written += 1
-                    if row["verdict"] == "success":
-                        n_ok += 1
-
-                    with print_lock:
-                        print(
-                            f"  {theorem.full_name[:40]:<40}  k={k}  {rung:<8}  "
-                            f"{slug_model(model):<24}  r{rollout_idx}  "
-                            f"{row['verdict']:<14}  "
-                            f"gen={row['gen_ms']/1000:.1f}s  ver={row['verify_ms']/1000:.1f}s",
-                            flush=True,
-                        )
-    return n_written, n_ok, n_skipped
 
 
 def _run_cells_at_step_concurrent(
@@ -712,6 +708,7 @@ def _run_cells_at_step_concurrent(
                         "prompt_tokens": 0, "completion_tokens": 0,
                         "cache_read_tokens": 0, "cache_creation_tokens": 0,
                         "gen_ms": gen_ms, "verify_ms": 0,
+                        "finish_reason": None,
                         "candidate_proof": "", "raw_response": "",
                         "verdict": "exception",
                         "lean_error": f"{type(exc).__name__}: {exc}",
@@ -723,11 +720,11 @@ def _run_cells_at_step_concurrent(
                     try:
                         verdict = try_tail(dojo, state_at_k, candidate, theorem.full_name)
                     except Exception as exc:  # noqa: BLE001
-                        from .verify import ProofResult
                         verdict = ProofResult(
                             theorem.full_name, "exception", candidate,
                             error=f"{type(exc).__name__}: {exc}",
                         )
+                    verdict = apply_truncation(verdict, rsp, max_tokens)
                     verify_ms = int((time.monotonic() - t_ver) * 1000)
                     row = {
                         **base_row,
@@ -737,6 +734,7 @@ def _run_cells_at_step_concurrent(
                         "cache_read_tokens": rsp.cache_read_tokens,
                         "cache_creation_tokens": rsp.cache_creation_tokens,
                         "gen_ms": gen_ms, "verify_ms": verify_ms,
+                        "finish_reason": rsp.finish_reason,
                         "candidate_proof": candidate, "raw_response": rsp.text,
                         "reasoning_content": rsp.reasoning,
                         "verdict": verdict.verdict,
@@ -763,86 +761,6 @@ def _run_cells_at_step_concurrent(
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
     return n_written, n_ok, n_skipped
-
-
-def _execute_one_cell(
-    *,
-    client: LLMClient, model: str, messages: list, rendered,
-    theorem: BenchmarkTheorem, k: int, chain: str, level: int,
-    rung: str, rollout_idx: int, provider: str, temperature: float,
-    max_tokens: int, dojo, state_at_k,
-    display_name: str | None = None,
-    extra_params: dict | None = None,
-) -> dict:
-    """Run one (rung, model, rollout) cell and return the JSONL row dict."""
-    row_model = display_name or model
-    base_row = {
-        "kind": "cell",
-        "theorem_id": theorem.full_name,
-        "file_path": theorem.file_path,
-        "k": k,
-        "n_total_tactics": len(theorem.traced_tactics),
-        "chain": chain,
-        "level": level,
-        "rung": rung,
-        "rollout_idx": rollout_idx,
-        "model": row_model,
-        "api_model": model,
-        "provider": provider,
-        "temperature": temperature,
-        "context_chars": len(rendered.text),
-        "ground_truth_remaining": "\n".join(
-            tt.tactic for tt in theorem.traced_tactics[k:]
-        ),
-    }
-
-    t_gen = time.monotonic()
-    try:
-        rsp = client.complete(
-            messages, model=model, max_tokens=max_tokens, temperature=temperature,
-            extra_params=extra_params,
-        )
-    except Exception as exc:  # noqa: BLE001
-        gen_ms = int((time.monotonic() - t_gen) * 1000)
-        return {
-            **base_row,
-            "prompt_tokens": 0, "completion_tokens": 0,
-            "cache_read_tokens": 0, "cache_creation_tokens": 0,
-            "gen_ms": gen_ms, "verify_ms": 0,
-            "candidate_proof": "", "raw_response": "",
-            "verdict": "exception",
-            "lean_error": f"{type(exc).__name__}: {exc}",
-            "final_state_pp": None,
-        }
-    gen_ms = int((time.monotonic() - t_gen) * 1000)
-
-    candidate = extract_tactic_block(rsp.text)
-
-    t_ver = time.monotonic()
-    try:
-        verdict = try_tail(dojo, state_at_k, candidate, theorem.full_name)
-    except Exception as exc:  # noqa: BLE001
-        from .verify import ProofResult
-        verdict = ProofResult(
-            theorem.full_name, "exception", candidate,
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    verify_ms = int((time.monotonic() - t_ver) * 1000)
-
-    return {
-        **base_row,
-        "api_model": rsp.model or model,
-        "prompt_tokens": rsp.prompt_tokens,
-        "completion_tokens": rsp.completion_tokens,
-        "cache_read_tokens": rsp.cache_read_tokens,
-        "cache_creation_tokens": rsp.cache_creation_tokens,
-        "gen_ms": gen_ms, "verify_ms": verify_ms,
-        "candidate_proof": candidate, "raw_response": rsp.text,
-        "reasoning_content": rsp.reasoning,
-        "verdict": verdict.verdict,
-        "lean_error": verdict.error,
-        "final_state_pp": verdict.final_state_pp,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -873,7 +791,11 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True) -> int:
     temperature = float(config.get("temperature", 0.7))
     max_tokens = int(config.get("max_tokens", 4096))
     dojo_timeout = int(config.get("dojo_timeout", 300))
-    concurrent_gen = bool(config.get("concurrent_gen", True))
+    if not config.get("concurrent_gen", True):
+        raise ValueError(
+            "concurrent_gen: false is no longer supported — the serial cell "
+            "loop was removed; all sweeps use the concurrent path"
+        )
     max_concurrency = int(config.get("max_concurrency", 12))
     skip_trivial = bool(config.get("skip_trivial", True))
     theorem_workers = int(config.get("theorem_workers", 1))
@@ -939,8 +861,7 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True) -> int:
     n_ok = 0
 
     print(
-        f"theorem-workers: {theorem_workers}  "
-        f"(concurrent_gen={concurrent_gen}, max_concurrency={max_concurrency})",
+        f"theorem-workers: {theorem_workers}  (max_concurrency={max_concurrency})",
         flush=True,
     )
 
@@ -1004,30 +925,18 @@ def sweep(config: dict, run_dir: Path, *, resume: bool = True) -> int:
                     _write_prompt(rung, rendered.text, tdir)
 
                 try:
-                    if concurrent_gen:
-                        written_here, ok_here, skipped_here = _run_cells_at_step_concurrent(
-                            all_rows=all_rows,
-                            theorem=theorem, k=k,
-                            rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
-                            models_cfg=models_cfg, n_rollouts=n_rollouts,
-                            temperature=temperature, max_tokens=max_tokens,
-                            client_factory=_client_for, done_keys=done_keys,
-                            tdir=tdir, dojo_timeout=dojo_timeout,
-                            max_workers=max_concurrency,
-                            write_lock=write_lock, print_lock=print_lock,
-                            model_semaphores=model_semaphores,
-                        )
-                    else:
-                        written_here, ok_here, skipped_here = _run_cells_at_step(
-                            all_rows=all_rows,
-                            theorem=theorem, k=k,
-                            rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
-                            models_cfg=models_cfg, n_rollouts=n_rollouts,
-                            temperature=temperature, max_tokens=max_tokens,
-                            client_factory=_client_for, done_keys=done_keys,
-                            tdir=tdir, dojo_timeout=dojo_timeout,
-                            write_lock=write_lock, print_lock=print_lock,
-                        )
+                    written_here, ok_here, skipped_here = _run_cells_at_step_concurrent(
+                        all_rows=all_rows,
+                        theorem=theorem, k=k,
+                        rungs=effective_rungs, rendered_by_rung=rendered_by_rung,
+                        models_cfg=models_cfg, n_rollouts=n_rollouts,
+                        temperature=temperature, max_tokens=max_tokens,
+                        client_factory=_client_for, done_keys=done_keys,
+                        tdir=tdir, dojo_timeout=dojo_timeout,
+                        max_workers=max_concurrency,
+                        write_lock=write_lock, print_lock=print_lock,
+                        model_semaphores=model_semaphores,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     with print_lock:
                         print(

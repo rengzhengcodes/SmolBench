@@ -46,13 +46,15 @@ All 10 rungs are implemented (`stepk:0..2`, `hint:0..4`, `noise:3..4`).
 - `hint:2` (full source incl. proof) — slices the cached mathlib4 source file
   from the premise's `start` to the next top-level declaration. Captures real
   proof bodies for theorems, not just the signature stored in `code`.
-- `hint:3` / `hint:4` — file-level transitive closure: BFS over the corpus's
-  per-file `imports` from the seed files (the files containing the true
-  premises), depth 1 / 2. Premises in those reachable files are included in
-  signature form, BFS-ordered (closest first) and truncated to a 50k token
-  budget. This is the *cheap* variant of transitive closure — coarser than
-  per-premise dep-graph scanning but tractable and aligned with the "more
-  context-shaped padding" framing.
+- `hint:3` / `hint:4` — per-premise derivation closure
+  (`premises.premise_dep_closure`), depth 1 / 2 from the true premises.
+  Edges come from the LeanDojo trace when the premise's own proof was
+  traced (the premises its tactics used; exact for named usage, blind to
+  what `simp`/`omega` find internally) and otherwise from namespace-aware
+  name resolution over the declaration source (`data/derivation_index.json`
+  is built on first use from all benchmark splits). Reachable premises are
+  included with full source bodies (same shape as `hint:2`), BFS-ordered
+  (closest first), capped at 500 premises and a 50k token budget.
 
 ### Trivial-rung skip (default on)
 
@@ -179,7 +181,50 @@ uv run python -m leaneval.cli run-sweep --config configs/smoke.yaml
 
 # aggregate a sweep JSONL into a (rung, model) pass-rate table
 uv run python -m leaneval.cli analyze results/runs/smoke_v1.jsonl
+
+# re-score a finished run offline with the current splitter + verdict
+# taxonomy (Lean only, no model calls) -> results/runs/<run>_rescored/
+uv run python -m leaneval.cli rescore results/runs/main_v3
 ```
+
+## Verdicts
+
+Every cell row carries one verdict (see `leaneval/verify.py`):
+
+| verdict | meaning | in pass-rate denominator |
+|---|---|---|
+| `success` | all goals closed | yes |
+| `lean_error` | Lean rejected a tactic | yes |
+| `incomplete` | all tactics applied, goals remain | yes |
+| `given_up` | model emitted `sorry` | yes |
+| `timeout` | a tactic ran past the Dojo timeout (the model chose a non-terminating tactic) | yes |
+| `truncated` | response hit `max_tokens` and did not verify | yes |
+| `exception` | infrastructure: API transport error, Dojo crash, session open failure | no (missing data, re-run on resume) |
+| `replay_failed` | ground-truth prefix would not replay | no |
+
+Multi-line tactics (indented continuations, `| case =>` arms, `calc`
+chains) are sent to Lean as one tactic. Runs scored before this rule
+existed can be re-scored offline with `rescore`; every row keeps its raw
+response.
+
+## Figures
+
+`figures/_util.py` holds the level registry (paper level ↔ rung), the
+per-model analysis set, pass rates, and paired bootstrap intervals. The
+paper figures are `success_rate_bars.py`, `marginal_content_vs_noise.py`,
+`none_vs_mpi.py`, `response_length_per_model_rung.py`, and
+`prompt_length_vs_hint.py`; `gen_separated.py` renders the open/closed
+variants. Default inputs are the `_rescored` run dirs.
+
+| paper level | rung |
+|---|---|
+| None | `stepk:2` |
+| MPI | `hint:0` |
+| MPI+Signatures | `hint:1` |
+| One-Hop | `hint:2` |
+| Two-Hop | `hint:3` |
+
+`hint:4` (2-hop closure) is not a paper level and is not plotted.
 
 In Python: `from leaneval.corpus import iter_replay_passing` yields the
 `BenchmarkTheorem`s whose ground-truth replay was recorded as `success`.
@@ -191,12 +236,12 @@ lean/
 ├── pyproject.toml        # uv-managed deps, Python 3.12 pin
 ├── lean-toolchain        # local Lean pin (Dojo manages its own per traced repo)
 ├── .python-version       # 3.12
-├── configs/              # (todo) YAML run configs
+├── configs/              # YAML run configs
 ├── data/                 # (gitignored) LeanDojo Benchmark 4 + traced corpus
 ├── results/              # (gitignored) JSONL run outputs
 └── leaneval/             # source
     ├── corpus.py         # load benchmark; iterate (theorem, k, traced_tactic)
-    ├── premises.py       # (todo, Phase 3) premise lookup → (signature, body, file)
+    ├── premises.py       # premise lookup → (signature, body, dep closure)
     ├── context.py        # render rungs along stepk + hint chains
     ├── prompt.py         # message assembly + LLM-response parsing
     ├── llm/              # provider clients behind a thin ABC

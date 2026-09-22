@@ -20,6 +20,7 @@ from typing import Iterator, Literal
 
 from lean_dojo import (
     Dojo,
+    DojoTacticTimeoutError,
     LeanError,
     LeanGitRepo,
     ProofFinished,
@@ -54,7 +55,28 @@ def _open_dojo_with_retry(thm: Theorem, timeout: int):
     assert last_exc is not None
     raise last_exc
 
-Verdict = Literal["success", "lean_error", "incomplete", "given_up", "exception", "replay_failed"]
+# Verdict taxonomy:
+#   success        all goals closed
+#   lean_error     Lean rejected a tactic (model failure)
+#   incomplete     every tactic applied, goals remain (model failure)
+#   given_up       model emitted `sorry`/admit (model failure)
+#   timeout        a tactic ran past the Dojo timeout (model failure — the
+#                  model chose a non-terminating tactic)
+#   truncated      the response hit max_tokens before an answer (budget
+#                  failure; reported separately, counted as a failure)
+#   exception      infrastructure failure — API transport error, Dojo crash,
+#                  session open failure. Missing data: re-run on resume and
+#                  EXCLUDED from pass-rate denominators.
+#   replay_failed  the ground-truth prefix could not be replayed (infra)
+Verdict = Literal[
+    "success", "lean_error", "incomplete", "given_up",
+    "timeout", "truncated", "exception", "replay_failed",
+]
+# Verdicts that count in a pass-rate denominator (everything the model was
+# actually scored on). Single source for runner analysis and figures.
+SCORED_VERDICTS = frozenset(
+    {"success", "lean_error", "incomplete", "given_up", "timeout", "truncated"}
+)
 
 
 @dataclass
@@ -123,20 +145,47 @@ class ProofResult:
 def _split_tactics(tail: str) -> list[str]:
     """Split an LLM-produced tail into individual tactics.
 
-    Dojo's `run_tac` expects a single tactic per call. LLMs typically emit
-    one tactic per line. We split on newlines and drop empty lines; we do
-    *not* split on `;` or `<;>` since those are valid Lean tactic combinators
-    (`t1 <;> t2` and `t1 ; t2` are each one tactic that Dojo parses fine).
+    Dojo's `run_tac` expects a single tactic per call, but a single tactic
+    can span several lines: an indented continuation (`have h := foo\\n  bar`),
+    `induction ... with` followed by `| case => ...` arms, `calc` chains, or a
+    `·` focus block. Splitting on every newline sent each fragment to Lean
+    separately and failed ~96% of multi-line candidates.
+
+    Rule: after removing the common indentation, a line starts a new tactic
+    unless it is indented relative to column 0 or begins with `|` (a match
+    arm), in which case it continues the previous tactic. Relative
+    indentation inside a tactic is preserved because Lean is
+    whitespace-sensitive there. We do not split on `;` or `<;>`, which are
+    tactic combinators.
     """
-    return [line.strip() for line in tail.splitlines() if line.strip()]
+    lines = [line.rstrip() for line in tail.splitlines()]
+    lines = [line for line in lines if line.strip()]
+    if not lines:
+        return []
+    indent = min(len(line) - len(line.lstrip()) for line in lines)
+    lines = [line[indent:] for line in lines]
+
+    tactics: list[str] = []
+    for line in lines:
+        continues = (line[0].isspace() or line.startswith("|")) and tactics
+        if continues:
+            tactics[-1] += "\n" + line
+        else:
+            tactics.append(line.strip())
+    return tactics
 
 
 def try_tail(dojo, state_at_k, tail: str, theorem_name: str) -> ProofResult:
-    """Apply each line of `tail` as a separate tactic from `state_at_k`.
+    """Apply each tactic of `tail` (see `_split_tactics`) from `state_at_k`.
 
     Dojo states are immutable and `run_tac` returns a new state, so it's safe
     to call this multiple times against the same `state_at_k` checkpoint —
     each call branches independently, no re-replay needed.
+
+    A `DojoTacticTimeoutError` is the model's fault (it chose a tactic that
+    does not terminate within the Dojo timeout) and is returned as verdict
+    `timeout`. Other Dojo exceptions (crashes) propagate to the caller as
+    infrastructure failures.
     """
     tactics = _split_tactics(tail)
     if not tactics:
@@ -144,7 +193,13 @@ def try_tail(dojo, state_at_k, tail: str, theorem_name: str) -> ProofResult:
 
     state = state_at_k
     for i, tac in enumerate(tactics):
-        state = dojo.run_tac(state, tac)
+        try:
+            state = dojo.run_tac(state, tac)
+        except DojoTacticTimeoutError as exc:
+            return ProofResult(
+                theorem_name, "timeout", tail,
+                error=f"tail step {i+1}/{len(tactics)} ({tac!r}): {type(exc).__name__}: {exc}",
+            )
         if isinstance(state, ProofFinished):
             return ProofResult(theorem_name, "success", tail)
         if isinstance(state, LeanError):

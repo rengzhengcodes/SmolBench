@@ -1,51 +1,36 @@
-"""Box plot of prompt token length per hint level.
+"""Box plot of prompt token length per paper level (Table 1).
 
-Dedupes by (theorem, k) since prompt size depends only on (theorem, k, rung) —
-independent of model/rollout. Hint levels relabeled hint 1..5 (internal
-hint:0..hint:4); `stepk:2` shown as 'no hint'.
+Dedupes by (theorem, k): prompt size depends only on (theorem, k, rung),
+not on model or rollout. Per (theorem, k, rung) the MEDIAN provider-reported
+prompt_tokens across rollouts/models is used, since providers tokenize
+differently. Restricted to (theorem, k) pairs present at every level.
 
 Run:
     uv run python figures/prompt_length_vs_hint.py
-    uv run python figures/prompt_length_vs_hint.py --runs main_v3 main_v3_2
+    uv run python figures/prompt_length_vs_hint.py --runs main_v3_rescored
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS = ["main_v3", "main_v3_2"]
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _util import DEFAULT_RUNS, LEVELS, ROOT, load_rows
+
 OUT_PATH = ROOT / "figures/prompt_length_vs_hint.png"
 
-LEVELS = ["stepk:2", "hint:0", "hint:1", "hint:2", "hint:3"]
-LABELS = ["no hint", "hint 1", "hint 2", "hint 3", "hint 4"]
-
-
-def load_rows(runs):
-    rows = []
-    for run in runs:
-        path = ROOT / f"results/runs/{run}/all_rows.jsonl"
-        if not path.exists():
-            print(f"warning: {path} missing, skipping")
-            continue
-        rows.extend(json.loads(l) for l in path.open() if l.strip())
-    return rows
+RUNGS = [r for r, _ in LEVELS]
+LABELS = [lbl for _, lbl in LEVELS]
 
 
 def load_prompt_tokens_by_level(runs):
-    """Per (theorem, k, rung), take the MEDIAN reported prompt_tokens across
-    all rollouts/models. Different providers tokenize differently (and
-    occasionally misreport), so a single pick is unreliable.
-
-    Restrict to (theorem, k) pairs present at every level — keeps box-plot
-    columns directly comparable. Theorems trivial-skipped at higher rungs are dropped."""
     rows = load_rows(runs)
     real = [r for r in rows if r.get("model")]
-    raw = {l: {} for l in LEVELS}
+    raw = {l: {} for l in RUNGS}
     for r in real:
         rung = r.get("rung")
         if rung not in raw:
@@ -55,11 +40,8 @@ def load_prompt_tokens_by_level(runs):
         if pt > 0:
             raw[rung].setdefault(key, []).append(pt)
 
-    common = set.intersection(*[set(raw[l].keys()) for l in LEVELS])
-    out = []
-    for l in LEVELS:
-        out.append([int(np.median(raw[l][k])) for k in sorted(common)])
-    return out
+    common = set.intersection(*[set(raw[l].keys()) for l in RUNGS])
+    return [[int(np.median(raw[l][k])) for k in sorted(common)] for l in RUNGS]
 
 
 def main():
@@ -69,7 +51,9 @@ def main():
     args = ap.parse_args()
     print(f"runs: {args.runs}")
     data = load_prompt_tokens_by_level(args.runs)
-    print("n per level: " + ", ".join(f"{LABELS[i]}={len(data[i])}" for i in range(len(LEVELS))))
+    print("n per level: " + ", ".join(f"{LABELS[i]}={len(data[i])}" for i in range(len(RUNGS))))
+    print("median tokens: " + ", ".join(
+        f"{LABELS[i]}={int(np.median(data[i])) if data[i] else 'n/a'}" for i in range(len(RUNGS))))
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.boxplot(
@@ -83,9 +67,9 @@ def main():
         flierprops=dict(marker=".", markersize=3, alpha=0.4),
     )
 
-    ax.set_xlabel("Hint level")
+    ax.set_xlabel("Degree of positive information")
     ax.set_ylabel("Prompt length (tokens)")
-    ax.set_title(f"Prompt length vs hint level  —  {' + '.join(args.runs)}")
+    ax.set_title(f"Prompt length per level  —  {' + '.join(args.runs)}")
     ax.set_yscale("log")
     ax.grid(True, axis="y", alpha=0.3)
     ax.legend(

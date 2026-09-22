@@ -1,0 +1,70 @@
+# Resume main_v3 to fill the cells that died on API transport errors
+# (438 ReadTimeout + 3 HTTP 429 rows recorded as verdict=exception). The
+# runner re-runs exception rows on resume; openai_compat now retries
+# transport errors so they should not recur.
+#
+# Only the rungs whose prompts are unchanged since main_v3 ran: stepk:2 and
+# hint:0..2. The noise filler and the hint:3+ derivation closure changed, so
+# resumed cells at those rungs would not match the rest of the run; they are
+# re-run wholesale by configs/main_v4_rerun.yaml instead.
+#
+#   uv run python -m leaneval.cli run-sweep --config configs/main_v3_resume.yaml \
+#       --out results/runs/main_v3
+#   uv run python -m leaneval.cli rescore results/runs/main_v3
+run_name: main_v3
+
+models:
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2-speciale"
+    display_name: "v3.2-speciale"
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "deepseek/deepseek-v3.2"
+    display_name: "v3.2-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "google/gemini-3-flash-preview"
+    display_name: "gemini-flash-none"
+    extra_params: {reasoning_effort: "none"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-high"
+    extra_params: {reasoning_effort: "high"}
+  - provider: openai_compat
+    model: "moonshotai/kimi-k2.6"
+    display_name: "kimi-k2.6-none"
+    extra_params: {reasoning_effort: "none"}
+
+theorems:
+  source: replay_passing
+  kind: random
+  split: val
+  limit: 100
+  max_tactics: 5
+  seed: 0
+
+k:
+  strategy: last
+
+rungs:
+  - stepk:2
+  - hint:0
+  - hint:1
+  - hint:2
+
+n_rollouts: 3
+temperature: 0.7
+max_tokens: 32768
+dojo_timeout: 300
+
+concurrent_gen: true
+max_concurrency: 16
+skip_trivial: true
+theorem_workers: 8

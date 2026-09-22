@@ -11,9 +11,11 @@ from .base import LLMClient, LLMResponse, Message
 
 DEFAULT_PRIME_BASE_URL = "https://api.pinference.ai/api/v1"
 
-# Retry on transient 429 / 5xx — upstream providers (e.g. Qwen via PI) have
-# tight rate quotas that bursty concurrent traffic can trip even when global
-# concurrency looks fine. Honor Retry-After when present, else exp-backoff.
+# Retry on transient 429 / 5xx and on transport errors (read timeouts,
+# connection resets). Upstream providers (e.g. Qwen via PI) have tight rate
+# quotas that bursty concurrent traffic can trip even when global concurrency
+# looks fine, and long reasoning generations occasionally drop the connection.
+# Honor Retry-After when present, else exp-backoff.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 _RETRY_ATTEMPTS = 4
 _RETRY_BACKOFF_S = (5.0, 15.0, 45.0, 120.0)
@@ -70,10 +72,17 @@ class OpenAICompatClient(LLMClient):
             payload.update(extra_params)
         rsp = None
         for attempt in range(_RETRY_ATTEMPTS):
-            rsp = self._client.post("/chat/completions", json=payload)
-            if rsp.status_code not in _RETRY_STATUSES:
-                break
-            if attempt + 1 == _RETRY_ATTEMPTS:
+            last = attempt + 1 == _RETRY_ATTEMPTS
+            try:
+                rsp = self._client.post("/chat/completions", json=payload)
+            except httpx.TransportError:
+                # ReadTimeout / ConnectError / RemoteProtocolError: no response
+                # object, so retry on the fixed backoff schedule.
+                if last:
+                    raise
+                time.sleep(_RETRY_BACKOFF_S[attempt])
+                continue
+            if rsp.status_code not in _RETRY_STATUSES or last:
                 break
             # Honor server-suggested Retry-After if present and reasonable.
             retry_after = rsp.headers.get("retry-after")

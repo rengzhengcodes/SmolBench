@@ -193,11 +193,9 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
 def cmd_prompt_stats(args: argparse.Namespace) -> int:
     """Render prompts for each (theorem, k=last, rung) and report token stats."""
     import statistics as stats
-    import tiktoken
-    from .context import IMPLEMENTED_RUNGS, render
+    from .context import IMPLEMENTED_RUNGS, _count_tokens, render
     from .corpus import iter_replay_passing
 
-    enc = tiktoken.get_encoding("cl100k_base")
     pool = list(iter_replay_passing(args.kind, args.split))
     if args.max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= args.max_tactics]
@@ -224,7 +222,7 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
             except Exception:
                 n_render_err += 1
                 continue
-            by_rung[rung].append(len(enc.encode(rc.text)))
+            by_rung[rung].append(_count_tokens(rc.text))
 
     print(f"# {len(pool)} theorems, k=last_step")
     if n_render_err:
@@ -245,42 +243,15 @@ def cmd_prompt_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
-    """Aggregate a sweep JSONL into a pass-rate table by (rung, model)."""
-    from collections import defaultdict
+    """Aggregate a sweep JSONL into a pass-rate table by (rung, model).
 
-    cells: dict[tuple[str, str], dict[str, int]] = defaultdict(
-        lambda: {
-            "n": 0, "success": 0, "lean_error": 0, "incomplete": 0,
-            "given_up": 0, "replay_failed": 0, "exception": 0,
-            "tok_in": 0, "tok_out": 0, "ms": 0,
-        }
-    )
+    Same aggregation as the analysis.txt written at the end of a sweep
+    (runner.aggregate_rows/format_cells_table); this command adds the
+    per-model ASCII rung ladder on top.
+    """
+    from .runner import _rung_sort_key, aggregate_rows, format_cells_table, slug_model
 
-    n_rows = 0
-    n_sanity_pass = 0
-    n_sanity_fail = 0
-    with open(args.path) as f:
-        for line in f:
-            r = json.loads(line)
-            kind = r.get("kind", "cell")
-            if kind == "sanity":
-                if r.get("verdict") == "success":
-                    n_sanity_pass += 1
-                else:
-                    n_sanity_fail += 1
-                continue
-            n_rows += 1
-            key = (r.get("rung", "?"), r.get("model", "?"))
-            c = cells[key]
-            c["n"] += 1
-            v = r.get("verdict", "exception")
-            if v in c:
-                c[v] += 1
-            else:
-                c["exception"] += 1
-            c["tok_in"] += r.get("prompt_tokens", 0)
-            c["tok_out"] += r.get("completion_tokens", 0)
-            c["ms"] += r.get("gen_ms", 0) + r.get("verify_ms", 0)
+    cells, n_rows, n_sanity_pass, n_sanity_fail = aggregate_rows(args.path)
 
     if not cells:
         print(f"empty: no rows in {args.path}", file=sys.stderr)
@@ -291,9 +262,6 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if n_sanity_fail:
         print(f"!! {n_sanity_fail} sanity-gate failures — investigate before trusting cell rates")
     print()
-
-    from .runner import _rung_sort_key, slug_model
-    sort_key = lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])
 
     # ---- Per-model rung ladder (ASCII bars) ----
     by_model_rung: dict[tuple[str, str], dict[str, int]] = {(m, r): cells[(r, m)] for (r, m) in cells.keys()}
@@ -314,41 +282,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(f"    {rung:<8} {bar} {rate:>5.1%}  ({c['success']}/{c['n']})")
 
     print()
-    header = (
-        f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
-        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
-    )
-    print(header)
-    print("-" * len(header))
-
-    for (rung, model), c in sorted(cells.items(), key=sort_key):
-        n = c["n"]
-        rate = c["success"] / n if n else 0
-        avg_in = c["tok_in"] / n if n else 0
-        avg_out = c["tok_out"] / n if n else 0
-        avg_s = c["ms"] / n / 1000 if n else 0
-        print(
-            f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
-            f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
-            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
-        )
-
-    # Per-model rollup
-    print("\n# per-model totals")
-    by_model: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0}
-    )
-    for (_, model), c in cells.items():
-        by_model[model]["n"] += c["n"]
-        by_model[model]["success"] += c["success"]
-        by_model[model]["tok_in"] += c["tok_in"]
-        by_model[model]["tok_out"] += c["tok_out"]
-    for model, m in sorted(by_model.items()):
-        rate = m["success"] / m["n"] if m["n"] else 0
-        print(f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
-              f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)")
+    for line in format_cells_table(cells):
+        print(line)
     return 0
 
 
@@ -357,7 +292,8 @@ def cmd_run_sweep(args: argparse.Namespace) -> int:
     import yaml
     cfg = yaml.safe_load(Path(args.config).read_text())
     run_name = cfg.get("run_name") or new_run_id()
-    run_dir = Path(args.out) if args.out else RESULTS_ROOT / "runs" / run_name
+    # Absolute: LeanDojo chdir()s into the traced repo when a session opens.
+    run_dir = Path(args.out).resolve() if args.out else RESULTS_ROOT / "runs" / run_name
     n = sweep(cfg, run_dir, resume=not args.fresh)
     return 0 if n >= 0 else 1
 
@@ -493,6 +429,21 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rescore(args: argparse.Namespace) -> int:
+    """Re-score a run offline (new splitter + verdict taxonomy) into <run>_rescored."""
+    from .rescore import rescore_run
+    # Absolute paths: LeanDojo chdir()s into the traced repo when a session
+    # opens, so a relative path would resolve there at write time.
+    run_dir = Path(args.run_dir).resolve()
+    if not (run_dir / "all_rows.jsonl").exists():
+        print(f"not a run dir (no all_rows.jsonl): {run_dir}", file=sys.stderr)
+        return 2
+    out_dir = Path(args.out).resolve() if args.out else run_dir.parent / f"{run_dir.name}_rescored"
+    rescore_run(run_dir, out_dir, workers=args.workers, dojo_timeout=args.dojo_timeout)
+    print(f"rescored -> {out_dir}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     """Regenerate analysis.txt + per-theorem summary.md from a run dir's durable artifacts."""
     run_dir = Path(args.run_dir)
@@ -562,6 +513,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_an = sub.add_parser("analyze", help="aggregate a sweep JSONL into a (rung, model) pass-rate table")
     p_an.add_argument("path", help="path to sweep JSONL (e.g. <run_dir>/all_rows.jsonl)")
     p_an.set_defaults(func=cmd_analyze)
+
+    p_rs = sub.add_parser("rescore", help="re-score a run offline with the current splitter + verdict taxonomy")
+    p_rs.add_argument("run_dir", help="path to a run directory")
+    p_rs.add_argument("--out", default=None, help="output run dir (default: <run_dir>_rescored)")
+    p_rs.add_argument("--workers", type=int, default=8, help="concurrent Dojo sessions")
+    p_rs.add_argument("--dojo-timeout", type=int, default=None, help="per-tactic timeout (default: run's)")
+    p_rs.set_defaults(func=cmd_rescore)
 
     p_rep = sub.add_parser("report", help="regenerate analysis.txt + per-theorem summary.md in a run dir")
     p_rep.add_argument("run_dir", help="path to a run directory")

@@ -8,13 +8,15 @@ Two chains:
   every hint rung includes `stepk:2` as its baseline.
 
 `stepk:0..2` and `hint:0` are implemented from a BenchmarkTheorem alone.
-`hint:1..4` need premise-body lookup against `corpus.jsonl` and are stubbed for
-Phase 3.
+`hint:1..4` render premise signatures/bodies/dep-closures via `premises.py`
+(corpus.jsonl lookup + source-file slicing). `noise:1+` pads `hint:(N-1)` with
+lorem ipsum to `hint:N`'s token count.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 
 from .corpus import BenchmarkTheorem
@@ -124,6 +126,26 @@ _LOREM_PARAGRAPH = (
 )
 
 
+@lru_cache(maxsize=1)
+def _encoder():
+    """cl100k_base tiktoken encoder, or None when tiktoken is unavailable."""
+    try:
+        import tiktoken
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _count_tokens(s: str) -> int:
+    """Single token counter for all rung sizing — the noise filler budget,
+    the transitive-closure cap, and the triviality gate must all use the same
+    counter or the matched-length invariant silently breaks."""
+    enc = _encoder()
+    if enc is None:
+        return len(s) // 4  # rough ~4 chars/token fallback
+    return len(enc.encode(s))
+
+
 def _generate_lorem(target_tokens: int) -> str:
     """Generate a lorem-ipsum string of approximately `target_tokens` tokens.
 
@@ -133,30 +155,39 @@ def _generate_lorem(target_tokens: int) -> str:
     """
     if target_tokens <= 0:
         return ""
-    try:
-        import tiktoken
-        enc = tiktoken.get_encoding("cl100k_base")
-        tokens_per_para = len(enc.encode(_LOREM_PARAGRAPH))
-        n_paras = max(1, (target_tokens // tokens_per_para) + 1)
-        text = _LOREM_PARAGRAPH * n_paras
-        # Trim to exact target by re-encoding/decoding.
-        toks = enc.encode(text)
-        if len(toks) > target_tokens:
-            toks = toks[:target_tokens]
-        return enc.decode(toks)
-    except Exception:  # noqa: BLE001
+    enc = _encoder()
+    if enc is None:
         # Fallback: rough char-based estimate (~4 chars/token for English).
         target_chars = target_tokens * 4
         n_paras = max(1, target_chars // len(_LOREM_PARAGRAPH) + 1)
         return (_LOREM_PARAGRAPH * n_paras)[:target_chars]
+    tokens_per_para = len(enc.encode(_LOREM_PARAGRAPH))
+    n_paras = max(1, (target_tokens // tokens_per_para) + 1)
+    text = _LOREM_PARAGRAPH * n_paras
+    # Trim to exact target by re-encoding/decoding.
+    toks = enc.encode(text)
+    if len(toks) > target_tokens:
+        toks = toks[:target_tokens]
+    return enc.decode(toks)
 
 
-def _count_tokens(s: str) -> int:
-    try:
-        import tiktoken
-        return len(tiktoken.get_encoding("cl100k_base").encode(s))
-    except Exception:  # noqa: BLE001
-        return len(s) // 4
+def _noise_base_and_delta(
+    theorem: BenchmarkTheorem, k: int, level: int
+) -> tuple[list[str], int]:
+    """`hint:(level-1)` parts plus the token delta to `hint:level`.
+
+    The delta is the noise filler budget. Single source of truth for both
+    `_render_noise_parts` and the `is_trivial_rung` noise branch — if these
+    diverged, a rung could be gated non-trivial yet render zero filler.
+    """
+    base_parts = _render_hint_parts(theorem, k, level - 1)
+    base_tokens = _count_tokens("\n\n".join(base_parts))
+    target_tokens = _count_tokens("\n\n".join(_render_hint_parts(theorem, k, level)))
+    return base_parts, target_tokens - base_tokens
+
+
+_FILLER_HEADER = "## Filler\n"
+_FILLER_FIT_ROUNDS = 4
 
 
 def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -166,27 +197,31 @@ def _render_noise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     added at step N (e.g. for noise:2: lorem-padded hint:1 = signatures plus
     filler vs hint:2 = signatures plus real premise bodies, both at the same
     token count).
+
+    The filler is fitted so that the WHOLE rendered noise prompt (base parts,
+    the section header, and the join separators) has the same cl100k token
+    count as the rendered `hint:N` prompt. The header carries no commentary:
+    an earlier version said "no informational content" and quoted the token
+    budget, which is both a cue to the model and ~24 unbudgeted tokens.
     """
     if level < 1:
         raise ValueError(f"noise:{level} not defined; only noise:1+ supported")
 
-    base_parts = _render_hint_parts(theorem, k, level - 1)
-    base_text = "\n\n".join(base_parts)
-    base_tokens = _count_tokens(base_text)
-
-    target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
-    target_tokens = _count_tokens(target_text)
-
-    delta = target_tokens - base_tokens
+    base_parts, delta = _noise_base_and_delta(theorem, k, level)
     if delta <= 0:
         return base_parts  # nothing to pad; rung is trivial
 
-    filler = _generate_lorem(delta)
-    base_parts.append(
-        f"## Filler (hint:{level-1} → hint:{level} token-match, ≈{delta} tokens, "
-        "no informational content)\n" + filler
-    )
-    return base_parts
+    target_tokens = _count_tokens("\n\n".join(base_parts)) + delta
+    budget = delta
+    filler = ""
+    for _ in range(_FILLER_FIT_ROUNDS):
+        filler = _generate_lorem(budget)
+        total = _count_tokens("\n\n".join(base_parts + [_FILLER_HEADER + filler]))
+        gap = target_tokens - total
+        if gap == 0 or budget + gap <= 0:
+            break
+        budget += gap
+    return base_parts + [_FILLER_HEADER + filler]
 
 
 def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -241,16 +276,6 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                 seeds.append(p)
         if seeds:
             transitive_premises = premise_dep_closure(seeds, depth)
-            try:
-                import tiktoken
-                enc = tiktoken.get_encoding("cl100k_base")
-
-                def tok(s: str) -> int:
-                    return len(enc.encode(s))
-            except Exception:  # noqa: BLE001
-                def tok(s: str) -> int:
-                    return len(s) // 4
-
             chunks: list[str] = []
             used = 0
             n_kept = 0
@@ -260,7 +285,7 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                     f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
                     f"```lean\n{body_with_proof(p)}\n```"
                 )
-                cost = tok(snippet)
+                cost = _count_tokens(snippet)
                 if used + cost > _HINT2_3_TOKEN_CAP:
                     break
                 chunks.append(snippet)
@@ -309,9 +334,11 @@ def render(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int) -> Rende
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
 
 
-# Canonical default rung universe. hint:N for N≥3 = (N−2)-hop transitive
-# closure; depths up to 9 are runnable but will hit the 50k token cap by
-# depth ~5-6 in mathlib (per-premise dep graph fans out fast).
+# Default rung list for `cli prompt-stats`. NOTE: stops at hint:3/noise:3 —
+# it does NOT include the hint:4/noise:4 rungs that the main_v3+/noise_iso
+# configs run, so default prompt-stats output omits the deepest levels.
+# hint:N for N≥3 = (N−2)-hop transitive closure; depths up to 9 are runnable
+# but hit the 50k token cap by depth ~5-6 (per-premise dep graph fans out fast).
 IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
     ("stepk", 0), ("stepk", 1), ("stepk", 2),
     ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3),
@@ -333,7 +360,7 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
       - `hint:0` when no premises are recorded for the next tactic.
       - `hint:1` when the corpus has no record for any of the true premises.
       - `hint:2` when no premise's body differs from its signature.
-      - `hint:3`/`hint:4` when seed files have no imports at the requested depth.
+      - `hint:3+` when the premise dep closure at the requested depth is empty.
 
     Skipping these saves LLM tokens and makes per-rung pass rates a clean
     apples-to-apples comparison: every counted cell saw a real context
@@ -382,13 +409,6 @@ def is_trivial_rung(theorem: BenchmarkTheorem, k: int, chain: Chain, level: int)
             return True
         if is_trivial_rung(theorem, k, "hint", level):
             return True
-        base_text = "\n\n".join(_render_hint_parts(theorem, k, level - 1))
-        target_text = "\n\n".join(_render_hint_parts(theorem, k, level))
-        return _count_tokens(target_text) - _count_tokens(base_text) <= 0
+        _, delta = _noise_base_and_delta(theorem, k, level)
+        return delta <= 0
     return False
-
-# Full rung universe per the README.
-ALL_RUNGS: tuple[tuple[Chain, int], ...] = (
-    ("stepk", 0), ("stepk", 1), ("stepk", 2),
-    ("hint", 0), ("hint", 1), ("hint", 2), ("hint", 3), ("hint", 4),
-)

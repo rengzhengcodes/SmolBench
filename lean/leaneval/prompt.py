@@ -7,6 +7,8 @@ caching can re-use them across the N rollouts at one cell.
 
 from __future__ import annotations
 
+import re
+
 from .context import RenderedContext
 from .llm.base import Message
 
@@ -24,10 +26,7 @@ INSTRUCTION = """Produce the remaining Lean 4 tactics that close all goals from 
 state. Output only the tactic lines, nothing else.""".strip()
 
 
-_FENCE_RE = __import__("re").compile(
-    r"```(?:lean|lean4)?\s*\n(.*?)\n```",
-    __import__("re").DOTALL,
-)
+_FENCE_RE = re.compile(r"```(?:lean|lean4)?\s*\n(.*?)\n```", re.DOTALL)
 
 
 def extract_tactic_block(text: str) -> str:
