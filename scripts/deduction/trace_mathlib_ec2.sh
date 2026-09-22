@@ -192,37 +192,54 @@ else
     # imported on the trace path; the `shim` phase covers the two that are
     # hard-imported but unused.
     run "'$VENV/bin/pip' install lean-dojo-v2==1.0.9 --no-deps"
-    run "'$VENV/bin/pip' install loguru tqdm networkx lxml gitpython PyGithub python-dotenv toml"
+    # Every third-party root imported under lean_dojo_v2/{lean_dojo,utils}/,
+    # verified by importing the wheel with exactly this set (2026-09-22).
+    run "'$VENV/bin/pip' install loguru tqdm networkx lxml gitpython PyGithub python-dotenv toml filelock psutil requests typing_extensions"
     phase_end
 fi
 
 # --------------------------------------------------------------------------
 # Phase 2: shim
 # --------------------------------------------------------------------------
-# lean_dojo/utils/__init__.py hard-imports `deepspeed` and `pytorch_lightning`
-# at module import time -- before any tracing code runs and although the trace
-# path never calls into either. Installing them for real would drag in the
-# conflicting ML stack --no-deps exists to avoid, so two empty stub modules on
-# the venv's site-packages path satisfy the import and nothing else.
+# lean_dojo_v2/utils/common.py hard-imports, at module import time and before
+# any tracing code runs:
+#     from deepspeed.utils.zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
+#     from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
+# Neither is used on the trace path. Installing them for real would drag in the
+# conflicting ML stack --no-deps exists to avoid, so package-shaped stubs that
+# define exactly those two names satisfy the imports. A flat `deepspeed.py`
+# does NOT work: the submodule imports above fail on it (first launch, 2026-09-22).
 SHIM_PY=$(cat <<'EOF'
 import pathlib
 import sysconfig
 
-site_packages = pathlib.Path(sysconfig.get_paths()["purelib"])
+sp = pathlib.Path(sysconfig.get_paths()["purelib"])
 banner = (
-    "# SmolBench stub: lean_dojo.utils hard-imports this module at import time\n"
+    "# SmolBench stub: lean_dojo_v2.utils.common imports this at module load\n"
     "# but tracing never uses it. Installing the real package would pull the\n"
     "# heavy, self-conflicting ML stack that `pip install --no-deps` avoids.\n"
 )
-for module in ("deepspeed", "pytorch_lightning"):
-    (site_packages / f"{module}.py").write_text(banner)
-    print(f"shimmed {site_packages / (module + '.py')}")
+files = {
+    "deepspeed/__init__.py": banner,
+    "deepspeed/utils/__init__.py": banner,
+    "deepspeed/utils/zero_to_fp32.py": banner
+    + "def convert_zero_checkpoint_to_fp32_state_dict(*a, **k):\n"
+    + "    raise RuntimeError('deepspeed stub')\n",
+    "pytorch_lightning/__init__.py": banner,
+    "pytorch_lightning/strategies/__init__.py": banner,
+    "pytorch_lightning/strategies/deepspeed.py": banner + "class DeepSpeedStrategy:\n    pass\n",
+}
+for rel, text in files.items():
+    path = sp / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(f"shimmed {path}")
 EOF
 )
 
 phase_start shim
-if already "$VENV/lib/python3.12/site-packages/deepspeed.py"; then
-    skip_phase "deepspeed.py stub"
+if already "$VENV/lib/python3.12/site-packages/deepspeed/utils/zero_to_fp32.py"; then
+    skip_phase "deepspeed package stub"
 else
     run_python "$SHIM_PY"
     phase_end
@@ -250,6 +267,9 @@ run "mkdir -p '$CACHE_DIR' '$TMP_DIR'"
 run "export CACHE_DIR=$CACHE_DIR"
 run "export TMP_DIR=$TMP_DIR"
 run "export NUM_PROCS=$NUM_PROCS"
+# Progress without SSH: copy the log to S3 every 10 minutes for the life of
+# this script. The final log still lands as trace.log via the launcher.
+run "( while true; do aws s3 cp '$LOG' '${S3_PREFIX}${COMMIT}/trace.progress.log' >/dev/null 2>&1 || true; sleep 600; done ) &"
 phase_end
 
 # --------------------------------------------------------------------------
@@ -284,16 +304,37 @@ fi
 # --------------------------------------------------------------------------
 # Phase 6: trace
 # --------------------------------------------------------------------------
-# The repo argument is the LOCAL checkout path, using lean-dojo-v2's
-# local-checkout support: passing the GitHub URL would make LeanDojo clone and
-# build its own copy, discarding the `lake exe cache get` done above.
-# build_deps=True so that premises defined in mathlib4's dependencies (std,
-# aesop, Qq, ...) appear in corpus.jsonl -- the deduction eval's premise lookup
-# resolves against the whole library, not just Mathlib/.
+# The package is `lean_dojo_v2`; its LeanDojo API lives under
+# `lean_dojo_v2.lean_dojo` (first launch failed on `import lean_dojo`).
+#
+# The repo argument is the LOCAL checkout path. lean-dojo-v2 does NOT trace in
+# place: `_trace` runs `git clone` of that path into a scratch dir, which drops
+# the untracked `.lake/` and with it the oleans phase 5 fetched, and with
+# build_deps=True it never runs `lake exe cache get` itself, so `lake build`
+# would compile all of mathlib4 from source. The wrapper below runs
+# `lake exe cache get` inside the tracer's clone right before its `lake build`
+# (Mathlib's cache covers the dependencies' oleans too), so phase 5 only
+# serves to install the pinned toolchain and warm the cache download.
+# build_deps=True so that premises defined in mathlib4's dependencies (Init,
+# Batteries, Aesop, Qq, ...) appear in corpus.jsonl -- the deduction eval's
+# premise lookup resolves against the whole library, not just Mathlib/.
 TRACE_PY=$(cat <<EOF
-from lean_dojo import LeanGitRepo, generate_benchmark
+import os
+import lean_dojo_v2.lean_dojo.data_extraction.trace as T
+from lean_dojo_v2.lean_dojo import LeanGitRepo, generate_benchmark
+
+_execute = T.execute
+
+def execute(cmd, *args, **kwargs):
+    if cmd == "lake build":
+        print("smolbench: fetching Mathlib oleans inside the tracer's clone", flush=True)
+        _execute("lake exe cache get", *args, **kwargs)
+    return _execute(cmd, *args, **kwargs)
+
+T.execute = execute
 
 repo = LeanGitRepo("$CHECKOUT", "$COMMIT")
+print(f"smolbench: repo={repo} lean={repo.lean_version} procs={os.environ.get('NUM_PROCS')}", flush=True)
 generate_benchmark(repo, "$EXPORT_DIR", build_deps=True)
 print("export written to $EXPORT_DIR")
 EOF
