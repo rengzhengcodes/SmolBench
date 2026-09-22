@@ -52,6 +52,31 @@ def cmd_metadata(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_derivation_index(_: argparse.Namespace) -> int:
+    """Write the trace-based derivation sidecar for the active corpus; returns 0.
+
+    ``hint:3`` closures read this index so that a traced theorem's edges are
+    the premises its proof used, not a text scan of its statement. Without
+    the sidecar the index is rebuilt in memory on every process start, which
+    re-reads ``train.json``.
+
+    Parameters
+    ----------
+    _ : argparse.Namespace
+
+    Returns
+    -------
+    int
+        0.
+    """
+    from .premises import write_derivation_index
+
+    path = write_derivation_index()
+    n = len(json.loads(path.read_text()))
+    print(f"wrote {path} ({n} traced theorems)")
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     """List theorems with traced tactics in a ``(kind, split)`` slice; returns 0.
 
@@ -480,6 +505,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_meta = sub.add_parser("metadata", help="print benchmark metadata.json")
     p_meta.set_defaults(func=cmd_metadata)
+
+    p_didx = sub.add_parser(
+        "build-derivation-index",
+        help="write <data_root>/derivation_index.json from the traced splits",
+    )
+    p_didx.set_defaults(func=cmd_build_derivation_index)
 
     p_list = sub.add_parser("list", help="list theorems in a split")
     _add_split_args(p_list)
