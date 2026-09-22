@@ -290,8 +290,7 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
                 n_kept += 1
             if chunks:
                 parts.append(
-                    f"## Transitive premise context ({depth}-hop, "
-                    f"{n_kept}/{len(transitive_premises)} premises, ≈{used} tokens)\n"
+                    "## Transitive premise context\n"
                     + "\n\n".join(chunks)
                 )
     return parts

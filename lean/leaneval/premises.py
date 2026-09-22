@@ -230,11 +230,40 @@ def _derivation_index() -> dict[str, list[str]]:
     return idx
 
 
+#: A declaration whose proof is one top-level tactic block: the trace covers
+#: all of it. ``:= by`` after the signature; a nested ``fun _ => by`` or
+#: ``have h := by`` inside a term proof does not match at the first ``:=``.
+_TACTIC_PROOF_RE = re.compile(r":=\s*by\b")
+
+
+def _trace_covers_proof(text: str) -> bool:
+    """Whether ``text``'s proof is a single top-level tactic block."""
+    i = text.find(":=")
+    return i >= 0 and _TACTIC_PROOF_RE.match(text, i) is not None
+
+
 def dep_source(full_name: str) -> str:
-    """Which edge source `referenced_premises` uses: trace | text | none."""
+    """Which edge source `referenced_premises` uses.
+
+    ``trace``: the proof is one tactic block and the trace covers it.
+    ``trace+text``: a term-mode proof with traced ``by`` sub-blocks; the
+    trace is partial, so text references are unioned in. ``text``: untraced.
+    ``none``: not in the corpus.
+
+    Parameters
+    ----------
+    full_name : str
+
+    Returns
+    -------
+    str
+    """
+    p = lookup(full_name)
     if full_name in _derivation_index():
-        return "trace"
-    return "text" if lookup(full_name) is not None else "none"
+        if p is None or _trace_covers_proof(body_with_proof(p) or p.code):
+            return "trace"
+        return "trace+text"
+    return "text" if p is not None else "none"
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +276,7 @@ def dep_source(full_name: str) -> str:
 # letters that mathlib uses heavily. We deliberately stay ASCII-leaning here
 # since name lookups are against the corpus index (which uses ASCII full_names).
 # A trailing `.` (sentence end in a docstring) is stripped by the caller.
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'.]*")
+_IDENT_RE = re.compile(r"[^\W\d][\w'.]*")
 
 _NAMESPACE_RE = re.compile(r"^namespace\s+([\w.']+)")
 _SECTION_RE = re.compile(r"^section\b")
@@ -282,24 +311,36 @@ def _file_context(file_path: str, line: int) -> tuple[str, tuple[str, ...]]:
     return ns, tuple(opens)
 
 
-def _resolve_name(tok: str, ns: str, opens: tuple[str, ...], idx: dict, short_idx: dict) -> str | None:
+def _resolve_name(
+    tok: str, ns: str, opens: tuple[str, ...], idx: dict, short_idx: dict
+) -> str | None:
     """Resolve an identifier the way Lean would, given the file context.
 
-    Order: exact full name; `_root_.` prefix; qualified under the current
+    Order: exact full name; ``_root_.`` prefix; qualified under the current
     namespace, its ancestors, or an opened namespace (also opened namespaces
     relative to the current one); a bare short name that is globally unique;
-    for `x.foo` dot notation on a local, the suffix under the same context.
+    for ``x.foo`` dot notation on a local, the suffix under the same context.
     Returns None when nothing or more than one candidate matches.
+
+    Parameters
+    ----------
+    tok : str
+    ns : str
+    opens : tuple[str, ...]
+    idx : dict
+    short_idx : dict
+
+    Returns
+    -------
+    str | None
     """
     if tok.startswith("_root_."):
-        tok = tok[len("_root_."):]
+        tok = tok[len("_root_.") :]
     if tok in idx:
         return tok
 
-    prefixes = []
     parts = ns.split(".") if ns else []
-    for i in range(len(parts), 0, -1):
-        prefixes.append(".".join(parts[:i]))
+    prefixes = [".".join(parts[:i]) for i in range(len(parts), 0, -1)]
     scopes = set(prefixes) | set(opens) | {f"{p}.{o}" for p in prefixes for o in opens}
     hits = {f"{s}.{tok}" for s in scopes if f"{s}.{tok}" in idx}
     if len(hits) == 1:
@@ -311,15 +352,30 @@ def _resolve_name(tok: str, ns: str, opens: tuple[str, ...], idx: dict, short_id
         cands = short_idx.get(tok)
         return cands[0] if cands and len(cands) == 1 else None
 
+    # `ext_iff.symm`: a constant followed by projections. Try each dotted
+    # prefix, longest first, under the same rules (without recursing into
+    # the suffix rule below).
+    parts_tok = tok.split(".")
+    for cut in range(len(parts_tok) - 1, 0, -1):
+        head = ".".join(parts_tok[:cut])
+        if head in idx:
+            return head
+        hits = {f"{s}.{head}" for s in scopes if f"{s}.{head}" in idx}
+        if len(hits) == 1:
+            return hits.pop()
+        if hits:
+            return None
+        if "." not in head:
+            cands = short_idx.get(head)
+            if cands and len(cands) == 1:
+                return cands[0]
+
     # `h.trans`-style dot notation on a local: resolve the suffix under the
-    # file context only (never by global uniqueness — too many collisions).
-    suffix = tok.rpartition(".")[2]
+    # file context only (never by global uniqueness -- too many collisions).
+    suffix = parts_tok[-1]
     hits = {f"{s}.{suffix}" for s in scopes if f"{s}.{suffix}" in idx}
     return hits.pop() if len(hits) == 1 else None
 
-# Lean keywords + tactic vocabulary + ubiquitous short identifiers that would
-# pollute the dep graph if treated as premise references. Not exhaustive; just
-# the high-traffic ones.
 _LEAN_NOISE = frozenset({
     "theorem", "lemma", "def", "instance", "structure", "inductive",
     "axiom", "example", "class", "abbrev", "fun", "let", "in", "do",
@@ -358,47 +414,57 @@ def _short_name_index() -> dict[str, list[str]]:
 
 @lru_cache(maxsize=4096)
 def referenced_premises(full_name: str) -> tuple[Premise, ...]:
-    """Derivation edges of `full_name`: the premises its proof uses.
+    """Derivation edges of ``full_name``: the premises its proof uses.
 
-    1. If the LeanDojo benchmark traced `full_name`'s proof, return the
-       premises its tactics used (in first-use order). This is exact for
-       named usage. It does not include lemmas `simp`/`omega`/`aesop` find
-       on their own, and instances resolved by typeclass search.
-    2. Otherwise (definitions, instances, term-mode proofs) tokenize the
-       declaration source and resolve each identifier with the file's
-       `namespace`/`open` context (`_resolve_name`). This is a reference
-       closure over the whole declaration, statement included.
+    1. If the benchmark traced ``full_name``'s proof, start from the premises
+       its tactics used, in first-use order (exact for named usage). When the
+       proof is one top-level tactic block that is the whole answer.
+    2. Otherwise, or in addition when the trace covers only ``by`` sub-blocks
+       of a term-mode proof, tokenize the declaration source and resolve each
+       identifier with the file's ``namespace``/``open`` context
+       (`_resolve_name`). This is a reference closure over the whole
+       declaration, statement included.
 
-    Returns a tuple (hashable, lru-cacheable). Empty if nothing resolves.
+    Tuples keep cached results hashable.
+
+    Parameters
+    ----------
+    full_name : str
+
+    Returns
+    -------
+    tuple[Premise, ...]
+        Referenced premises; empty if nothing resolves.
     """
+    out: list[Premise] = []
+    seen: set[str] = {full_name}
     traced = _derivation_index().get(full_name)
     if traced is not None:
-        out: list[Premise] = []
-        seen: set[str] = {full_name}
         for n in traced:
             p = lookup(n)
             if p is not None and n not in seen:
                 seen.add(n)
                 out.append(p)
-        return tuple(out)
 
     p = lookup(full_name)
     if p is None:
-        return ()
-    text = body_with_proof(p)
-    if not text:
-        text = p.code  # fallback: corpus signature
+        return tuple(out)
+    text = body_with_proof(p) or p.code  # fallback: corpus signature
+    if traced is not None and _trace_covers_proof(text):
+        return tuple(out)
 
     idx = _index()
     short_idx = _short_name_index()
     ns, opens = _file_context(p.file_path, p.start[0])
 
-    seen = {full_name}
-    out = []
-    for tok in _IDENT_RE.findall(text):
-        tok = tok.rstrip(".")
+    for m in _IDENT_RE.finditer(text):
+        tok = m.group().rstrip(".")
         if tok in _LEAN_NOISE or len(tok) <= 1:
             continue
+        if m.start() > 0 and text[m.start() - 1] == ".":
+            # `(...).trans`: a projection on a term, not a constant. Resolve
+            # the head under the file context only, never by global uniqueness.
+            tok = f"_.{tok}"
         resolved = _resolve_name(tok, ns, opens, idx, short_idx)
         if resolved is not None and resolved not in seen:
             seen.add(resolved)
