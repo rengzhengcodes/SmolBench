@@ -194,3 +194,15 @@ The documented rung universe is `stepk:0..2` and `hint:0..4`; `context.validate`
 `hint`/`noise` through level 9. The transitive closure is uncapped (no token or premise limit), so
 deep levels grow roughly threefold per hop and can exceed a model's context window; choose levels per
 model from the measured prompt lengths (`PILOT_2026-07.md`, "Hint ladder length").
+
+### Unflagged library block: `sig`, `proof`, `signoise`, `proofnoise`
+
+The `hint` ladder names the MPI lemmas at the top of the prompt and appends their closure below, so
+the model is told which entries matter. The library-block chains do not. `sig:N` and `proof:N`
+render the `stepk:2` base plus one `## Library context` block holding the MPI lemmas and their
+N-hop closure together, sorted in import order then line (every dependency precedes its
+dependents; nothing marks the roots). `sig` shows each declaration's signature; `proof` shows its
+full source with proof, so the two forms hold the same set of facts at two token densities.
+`signoise:N` pads `sig:0` to `sig:N`'s prompt length (the hops as blank length); `proofnoise:N`
+pads `sig:N` to `proof:N`'s (the proof bodies as blank length). `sig:0` versus `hint:1` is the
+flagging comparison at near-equal length.
