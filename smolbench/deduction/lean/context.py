@@ -129,9 +129,6 @@ def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
     return parts
 
 
-_HINT2_3_TOKEN_CAP = 50_000  # bounds transitive-closure rendering.
-
-
 def _count_tokens(s: str) -> int:
     """Token count of `s`: `tiktoken` ``cl100k_base``, else ``len(s) // 4``.
 
@@ -347,25 +344,23 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
             if p is not None:
                 seeds.append(p)
         if seeds:
+            # Unbounded on purpose: the closure is the manipulation, so no
+            # token or premise cap may silently make two levels identical.
+            # Context-window limits belong to the model roster, not the rung.
             transitive_premises = premise_dep_closure(seeds, depth)
             chunks: list[str] = []
             used = 0
-            n_kept = 0
             for p in transitive_premises:
                 snippet = (
                     f"### `{p.full_name}` ({p.kind}) at `{p.file_path}`\n"
                     f"```lean\n{body_with_proof(p)}\n```"
                 )
-                cost = _count_tokens(snippet)
-                if used + cost > _HINT2_3_TOKEN_CAP:
-                    break
+                used += _count_tokens(snippet)
                 chunks.append(snippet)
-                used += cost
-                n_kept += 1
             if chunks:
                 parts.append(
                     f"## Transitive premise context ({depth}-hop, "
-                    f"{n_kept}/{len(transitive_premises)} premises, ≈{used} tokens)\n"
+                    f"{len(chunks)} premises, ≈{used} tokens)\n"
                     + "\n\n".join(chunks)
                 )
     return parts
@@ -429,8 +424,9 @@ def render(
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
 
 
-# Default rungs stop at hint:3; validation permits hint:9, whose mathlib fan-out
-# reaches the 50k cap around depth 5–6.
+# Default rungs stop at hint:3; validation permits hint:9. The closure is
+# uncapped, so deep levels can exceed a model's context window; the roster,
+# not the renderer, decides which levels a model can take.
 IMPLEMENTED_RUNGS: tuple[tuple[Chain, int], ...] = (
     ("stepk", 0),
     ("stepk", 1),

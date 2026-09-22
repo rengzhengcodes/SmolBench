@@ -619,22 +619,17 @@ def referenced_premises(full_name: str) -> tuple[Premise, ...]:
     return tuple(out)
 
 
-def premise_dep_closure(
-    seeds: list[Premise],
-    depth: int,
-    max_premises: int = 500,
-) -> list[Premise]:
-    """Return a breadth-first premise closure.
+def premise_dep_closure(seeds: list[Premise], depth: int) -> list[Premise]:
+    """Return the full breadth-first premise closure to ``depth`` hops.
 
-    Excludes seeds; order is hop-major and first-discovered, so the cap drops
-    the deepest, least-relevant references.
+    Excludes seeds; order is hop-major and first-discovered. Uncapped: a cap
+    would let two levels render identically and empty their comparison.
 
     Parameters
     ----------
     seeds : list[Premise]
         Starting premises, excluded from results.
     depth : int
-    max_premises : int, optional
 
     Returns
     -------
@@ -654,8 +649,6 @@ def premise_dep_closure(
                     visited.add(ref.full_name)
                     next_frontier.append(ref)
                     out.append(ref)
-                    if len(out) >= max_premises:
-                        return out
         if not next_frontier:
             break
         frontier = next_frontier
