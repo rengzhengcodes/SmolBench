@@ -65,14 +65,34 @@ def _count_tokens(text: str) -> int:
     return len(tiktoken.get_encoding("cl100k_base").encode(text))
 
 
+def is_linear(theorem: corpus.BenchmarkTheorem) -> bool:
+    """True when every traced tactic starts from the previous tactic's end state.
+
+    LeanDojo records tactics in pre-order and never records ``·`` bullets, so a
+    structured proof's list interleaves nested tactics with top-level ones; its
+    "last tactic" may be the inner step of a case and its prefix may close the
+    goal early. A linear chain is exactly the top-level tactic sequence, so
+    step ``k`` and the replayed prefix mean what the prompt says they mean.
+    """
+    ts = theorem.traced_tactics
+    return all(ts[i].state_before == ts[i - 1].state_after for i in range(1, len(ts)))
+
+
 def select_cells(
-    n: int, max_tactics: int, seed: int, kind: str = "random", split: str = "val"
+    n: int,
+    max_tactics: int,
+    seed: int,
+    kind: str = "random",
+    split: str = "val",
+    linear: bool = False,
 ) -> list[tuple[corpus.BenchmarkTheorem, int]]:
     """Sample ``n`` last-step cells whose final tactic cites a corpus premise."""
     pool = [
         t
         for t in corpus.iter_replay_passing(kind, split)  # type: ignore[arg-type]
-        if t.has_proof and (max_tactics <= 0 or len(t.traced_tactics) <= max_tactics)
+        if t.has_proof
+        and (max_tactics <= 0 or len(t.traced_tactics) <= max_tactics)
+        and (not linear or is_linear(t))
     ]
     rng = random.Random(seed)
     rng.shuffle(pool)
@@ -101,6 +121,7 @@ def render_cell(
                 "file_path": theorem.file_path,
                 "k": k,
                 "n_tactics": len(theorem.traced_tactics),
+                "linear": is_linear(theorem),
                 "ground_truth_tactic": tt.tactic,
                 "mpi_premises": [p["full_name"] for p in tt.premises],
                 "mpi_in_corpus": [
@@ -169,6 +190,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="accept split rows without a postcutoff flag (pilot corpus)",
     )
+    ap.add_argument(
+        "--linear",
+        action="store_true",
+        help="only theorems whose traced tactics form one state chain (no nested tactics)",
+    )
     args = ap.parse_args(argv)
 
     if args.allow_precutoff:
@@ -182,7 +208,9 @@ def main(argv: list[str] | None = None) -> int:
         corpus.reset_caches()
 
     rungs = _rungs(args.max_level)
-    cells = select_cells(args.n, args.max_tactics, args.seed, args.kind, args.split)
+    cells = select_cells(
+        args.n, args.max_tactics, args.seed, args.kind, args.split, linear=args.linear
+    )
     args.out.mkdir(parents=True, exist_ok=True)
     index = []
     for i, (t, k) in enumerate(cells, 1):
