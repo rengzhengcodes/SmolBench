@@ -210,7 +210,16 @@ dependents; nothing marks the roots). `sig` shows each declaration's signature; 
 full source with proof, so the two forms hold the same set of facts at two token densities.
 `signoise:N` pads `sig:0` to `sig:N`'s prompt length (the hops as blank length); `proofnoise:N`
 pads `sig:N` to `proof:N`'s (the proof bodies as blank length). `sig:0` versus `hint:1` is the
-flagging comparison at near-equal length. `hoponly:N` is `sig:N` with the MPI lemmas removed, the
+flagging comparison at near-equal length.
+
+`signoise`/`proofnoise` append the pad as one tail, so the useful entries sit at a different depth
+than in the content rung and the pad is a single multi-kilobyte line; for Claude models the
+cl100k-matched tail was also not token-matched (fewer Claude tokens in most cells, more than the
+context window in a few). `sigpad:N` and `proofpad:N` are the positional controls that replace
+them: `sigpad:N` is `sig:N` with every non-MPI entry replaced in place by a same-token block of
+whitespace lines, so the MPI entries sit at the depth `sig:N` gives them; `proofpad:N` is `proof:N`
+with every proof body replaced in place under its signature. Both match the content rung's prompt
+tokens to within `_PAD_TOLERANCE_TOKENS` and keep every line short. `hoponly:N` is `sig:N` with the MPI lemmas removed, the
 N-hop closure alone as signatures: `hoponly:1` against `sig:1` and `stepk:2` separates the value of
 the MPI itself from the value of its library neighbourhood (a cell whose closure minus the MPI is
 empty renders no block and is trivial).
