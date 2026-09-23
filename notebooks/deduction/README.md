@@ -64,6 +64,13 @@ Then `python -m smolbench.deduction.lean.cli build-checked-signatures --splits v
 for each through `lake env lean` in the traced checkout (or `SMOLBENCH_MATHLIB_ROOT`) so they render
 with a real signature instead of a placeholder. Both sidecars are read by `premises.lookup`.
 
+Check the export's premise coverage before building anything on it: the share of traced tactics
+with a non-empty `annotated_tactic[1]` should be well above half. lean-dojo-v2 drops any premise
+without a definition position, and Lean v4.34 reports none for constants imported from another
+module, so an unpatched export keeps only same-file premises (16% of tactics on the first
+`2ca39e62` export). `scripts/deduction/trace_mathlib_ec2.sh`'s shim phase patches that; such
+premises then carry `def_pos: null`, which `premises.missing_trace_premises` accepts.
+
 The driver requires a post-cutoff corpus because every roster checkpoint's knowledge cutoff postdates the reference trace, so a model may have memorised older theorems' proofs during training.
 
 ### Corpus date vs. model cutoffs
