@@ -783,6 +783,8 @@ _CHAIN_ORDER = {
     "proof": 5,
     "proofnoise": 6,
     "hoponly": 7,
+    "sigpad": 8,
+    "proofpad": 9,
 }
 
 

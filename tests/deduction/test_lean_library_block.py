@@ -131,3 +131,26 @@ def test_hoponly_is_the_closure_without_the_mpi(thms: dict) -> None:
     with pytest.raises(ValueError):
         context.render(a, 2, "hoponly", 0)
     context.validate("hoponly", 9)
+
+
+def test_positional_pads_keep_the_mpi_where_the_content_rung_puts_it(thms: dict) -> None:
+    """``sigpad``/``proofpad`` match the content rung's prompt tokens and leave the MPI entry in place."""
+    pytest.importorskip("tiktoken")
+    from smolbench.evals.tokenization import TiktokenTokenizer
+
+    tok = TiktokenTokenizer()
+    a = thms["Mini.theoremA"]
+    # proofpad:0 replaces premiseA's proof body under its signature.
+    pp = prompt.build_user_prompt(context.render(a, 2, "proofpad", 0))
+    pf = prompt.build_user_prompt(context.render(a, 2, "proof", 0))
+    sg = prompt.build_user_prompt(context.render(a, 2, "sig", 0))
+    assert abs(tok.count(pp) - tok.count(pf)) <= context._PAD_TOLERANCE_TOKENS
+    assert "### `Mini.premiseA`" in pp
+    assert pp.find("### `Mini.premiseA`") == pf.find("### `Mini.premiseA`")
+    assert pp != sg, "the pad must occupy the proof body's place, not vanish"
+    assert max(len(line) for line in pp.splitlines()) < 200, "line-structured filler, no giant line"
+    with pytest.raises(ValueError):
+        context.render(a, 2, "sigpad", 0)
+    # The fixture's 1-hop closure is empty, so sigpad:1 has nothing to pad and is trivial.
+    assert context.is_trivial_rung(a, 2, "sigpad", 1) is True
+    context.validate("proofpad", 9)
