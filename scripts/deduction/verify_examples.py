@@ -40,6 +40,7 @@ RUNG_ORDER = [
     "noise-1", "noise-2", "noise-3", "noise-4",
     "sig-0", "sig-1", "sig-2", "sig-3", "sig-4",
     "signoise-1", "signoise-2", "signoise-3", "signoise-4",
+    "hoponly-1", "hoponly-2", "hoponly-3", "hoponly-4",
     "proof-0", "proof-1", "proof-2", "proof-3", "proof-4",
     "proofnoise-0", "proofnoise-1", "proofnoise-2", "proofnoise-3", "proofnoise-4",
 ]

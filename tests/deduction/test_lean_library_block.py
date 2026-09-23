@@ -106,3 +106,28 @@ def test_block_lists_a_twice_cited_lemma_once(thms: dict) -> None:
     a2 = dataclasses.replace(a, traced_tactics=a.traced_tactics[:2] + [doubled])
     text = context.render(a2, 2, "sig", 0).text
     assert text.count("### `Mini.premiseA`") == 1
+
+
+def test_hoponly_is_the_closure_without_the_mpi(thms: dict) -> None:
+    """``hoponly:N`` lists sig:N's entries minus the MPI lemmas; level 0 is rejected."""
+    a = thms["Mini.theoremA"]
+    sig1 = context.render(a, 2, "sig", 1).text
+    mpi = {p["full_name"] for p in a.traced_tactics[2].premises}
+    hop = context._library_premises(a, 2, 1, exclude_seeds=True)
+    assert not {p.full_name for p in hop} & mpi
+    assert len(hop) == len(context._library_premises(a, 2, 1)) - len(
+        {p.full_name for p in context._library_premises(a, 2, 0)}
+    )
+    if hop:
+        text = context.render(a, 2, "hoponly", 1).text
+        for name in mpi:
+            assert f"### `{name}`" not in text
+        assert "## Library context" in text
+    else:
+        # The fixture's premises cite nothing, so the block is empty and trivial.
+        assert "## Library context" not in context.render(a, 2, "hoponly", 1).text
+        assert context.is_trivial_rung(a, 2, "hoponly", 1) is True
+    assert "## Library context" in sig1
+    with pytest.raises(ValueError):
+        context.render(a, 2, "hoponly", 0)
+    context.validate("hoponly", 9)

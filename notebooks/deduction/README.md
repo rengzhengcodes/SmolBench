@@ -210,4 +210,7 @@ dependents; nothing marks the roots). `sig` shows each declaration's signature; 
 full source with proof, so the two forms hold the same set of facts at two token densities.
 `signoise:N` pads `sig:0` to `sig:N`'s prompt length (the hops as blank length); `proofnoise:N`
 pads `sig:N` to `proof:N`'s (the proof bodies as blank length). `sig:0` versus `hint:1` is the
-flagging comparison at near-equal length.
+flagging comparison at near-equal length. `hoponly:N` is `sig:N` with the MPI lemmas removed, the
+N-hop closure alone as signatures: `hoponly:1` against `sig:1` and `stepk:2` separates the value of
+the MPI itself from the value of its library neighbourhood (a cell whose closure minus the MPI is
+empty renders no block and is trivial).
