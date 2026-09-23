@@ -103,9 +103,18 @@ The variable is read at call time. Verification no longer needs the `~/.cache/le
 traced-corpus download at all. That cache is NOT obsolete repo-wide:
 `premises` still uses `~/.cache/lean_dojo/` through `_traced_root` for hint/noise context. Only VERIFICATION has stopped depending on it.
 
-The REPL environment imports only the theorem module, so file-level `open`, `variable`,
-`namespace`, and local notation are absent. Replaying the file prefix would be correct but is too
-expensive; such statements report `exception` or `replay_failed`.
+The REPL environment imports the theorem's module, then replays the file's scope commands that
+precede the theorem (`namespace`, `section`/`end`, `variable`, `open`, `universe`, `set_option`,
+`include`/`omit`, `local` notation and `attribute [local ...]`; `@[expose] public section` becomes
+`section`, `... in` forms are dropped) before the renamed stub. Under the module system every
+mathlib theorem sits inside such scope, so a bare stub failed on the first unqualified name. The
+REPL parses each `ProofStep` without the scoped notation those commands activate, so every tactic
+is sent as `open scoped <namespaces> in <tactic>`. Leading attributes are stripped from the stub
+(`to_additive` on a renamed lemma fails) and the declared name's dotted prefix is kept
+(`IsSuccPrelimit.smolbenchTarget`) because that prefix opens a namespace for the body. A `where`
+structure-instance proof has no single proof state and reports `exception`. Private lemmas of the
+same file are not reachable through `import`, and Dojo-flattened nested tactics do not replay;
+both report `replay_failed`/`exception` and `cli filter` excludes them.
 
 Phase 1 writes `unverified` cells and `skipped` sanity rows through `NullVerifier`; an empty
 extracted tactic is `no_answer`, not `lean_error`, because Lean never saw a tactic. Phase 2 writes
