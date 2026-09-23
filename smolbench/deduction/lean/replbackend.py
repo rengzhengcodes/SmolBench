@@ -213,6 +213,7 @@ def find_statement_end(text: str) -> int | None:
         Depth-0 non-comment boundary, if present.
     """
     depth = 0
+    first: int | None = None
     for i in _iter_code_positions(text):
         ch = text[i]
         if ch in _OPEN_BRACKETS:
@@ -221,8 +222,17 @@ def find_statement_end(text: str) -> int | None:
             # A mid-expression slice can start with a closer; negative depth hides later ``:=``.
             depth = max(depth - 1, 0)
         elif depth == 0 and ch == ":" and text.startswith(":=", i):
-            return i
-    return None
+            # A statement-level `letI x : T := v` / `haveI` carries its own depth-0 `:=`
+            # before the proof's; the proof boundary is the one followed by `by`.
+            if _BY_AFTER_ASSIGN_RE.match(text, i + 2):
+                return i
+            if first is None:
+                first = i
+    return first
+
+
+#: Whitespace (possibly a newline) then the `by` keyword.
+_BY_AFTER_ASSIGN_RE = re.compile(r"\s*by(?![\w'?!])")
 
 
 def rename_declaration(text: str, target_name: str = TARGET_NAME) -> str:
@@ -719,6 +729,9 @@ def tactic_open_prefix(namespaces: Sequence[str]) -> str:
     return f"open scoped {' '.join(namespaces)} in\n" if namespaces else ""
 
 
+#: ``public theorem`` / ``public lemma``: the export modifier at the start of a code line.
+_PUBLIC_MODIFIER_RE = re.compile(r"(?m)^(\s*)public\s+(?=(?:\w+\s+)*(?:theorem|lemma)\b)")
+
 #: ``where`` at depth 0 before ``:=`` means a structure-instance proof whose
 #: fields carry their own ``:=``; there is no single proof state to open.
 _WHERE_RE = re.compile(r"(?<![\w.'])where(?![\w'])")
@@ -796,7 +809,8 @@ def theorem_statement_stub(
             "statement/proof boundary to cut at"
         )
 
-    statement = strip_leading_attributes(text[:end])
+    # `public` (module system) is meaningless in the REPL's non-module environment.
+    statement = _PUBLIC_MODIFIER_RE.sub("", strip_leading_attributes(text[:end]))
     if _WHERE_RE.search(_code_only(statement)):
         raise StatementError(
             f"cannot open a proof state for {bt.full_name}: its proof is a `where` "

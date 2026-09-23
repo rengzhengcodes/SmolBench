@@ -1243,3 +1243,18 @@ def test_classify_step_reports_a_tactic_exception_on_the_message_channel_as_lean
     )
     assert out.kind == "lean_error"
     assert out.error == "Tactic `rewrite` failed: no occurrence"
+
+
+def test_find_statement_end_prefers_the_assignment_followed_by_by() -> None:
+    """A statement-level `letI x : T := v` carries a depth-0 `:=` before the proof's."""
+    text = "lemma foo : letI x : Nat := 3; x = 3 := by\n  rfl"
+    end = replbackend.find_statement_end(text)
+    assert text[end:].startswith(":= by")
+    # Without a `by`, the first depth-0 assignment is still the boundary.
+    assert replbackend.find_statement_end("theorem t : P :=\n  foo (by simp)") == 14
+
+
+def test_theorem_statement_stub_drops_the_public_modifier() -> None:
+    assert replbackend._PUBLIC_MODIFIER_RE.sub("", "public protected theorem foo : True") == (
+        "protected theorem foo : True"
+    )
