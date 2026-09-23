@@ -171,7 +171,7 @@ USERDATA=$(cat <<UD
 #!/bin/bash
 set -euo pipefail
 exec > >(tee -a /var/log/smolbench-trace.log) 2>&1
-shutdown -h +$LIFETIME   # hard backstop: nothing here may bill past $LIFETIME min
+shutdown -h +$LIFETIME   # cost backstop: STOPS (not terminates) the box after $LIFETIME min; `shutdown -c` over SSM extends
 mkdir -p /mnt/data && chown ubuntu:ubuntu /mnt/data
 echo '$PAYLOAD' | base64 -d | gunzip > /home/ubuntu/trace_mathlib_ec2.sh
 chmod +x /home/ubuntu/trace_mathlib_ec2.sh
@@ -219,7 +219,14 @@ export GITHUB_ACCESS_TOKEN=\$TOKEN
 su ubuntu -c "cd /home/ubuntu && ./trace_mathlib_ec2.sh --commit $COMMIT --s3-prefix $S3_PREFIX" \
   && echo TRACE_OK || echo TRACE_FAILED
 aws s3 cp /var/log/smolbench-trace.log "$S3_PREFIX$COMMIT/trace.log" || true
-shutdown -h now
+# No shutdown here (2026-09-23): the box stays up, success or failure, so the
+# operator can inspect the log, the traced files and the export on the box and
+# rerun a failed phase in place. Two earlier runs were lost to an immediate
+# shutdown. The $LIFETIME backstop above still STOPS (never terminates) the
+# box as a cost guard; cancel it with `shutdown -c` over SSM if a run needs
+# longer. The operator stops/terminates the box by hand once the tarball has
+# been downloaded and checked.
+echo "TRACE PHASES FINISHED; box left running for inspection"
 UD
 )
 if (( DRY_RUN )); then
