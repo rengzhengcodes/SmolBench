@@ -1138,8 +1138,8 @@ def test_repl_git_defaults_to_the_community_repl(monkeypatch) -> None:
 # --------------------------------------------------------------------------
 
 SCOPED = "Mini/Scoped.lean"
-SCOPED_TARGET_LINE = 44  # the `/-- Target ... -/` docstring line
-SCOPED_WHERE_LINE = 49
+SCOPED_TARGET_LINE = 46  # the `/-- Target ... -/` docstring line
+SCOPED_WHERE_LINE = 51
 
 
 def test_scope_commands_keep_scope_and_drop_declarations_and_in_forms() -> None:
@@ -1220,3 +1220,26 @@ def test_repl_session_step_drops_the_prefix_after_an_unknown_namespace() -> None
     assert session.step(0, "simp").kind == "success"
     assert session.tactic_prefix == ""
     assert [r[0].tactic for r in server.runs] == ["open scoped A in\nsimp", "simp"]
+
+
+def test_declaration_in_commands_returns_the_trailing_in_run_in_file_order() -> None:
+    assert replbackend.declaration_in_commands(PROJECT, SCOPED, SCOPED_TARGET_LINE) == [
+        "set_option maxHeartbeats 400000 in",
+        "open Nat in",
+    ]
+    # `theorem whereStyle` follows a declaration, not an `in` command.
+    assert replbackend.declaration_in_commands(PROJECT, SCOPED, SCOPED_WHERE_LINE) == []
+
+
+def test_scoped_syntax_namespaces_include_an_open_in_bound_to_the_declaration() -> None:
+    assert replbackend.scoped_syntax_namespaces(["open Nat in"]) == ["Nat"]
+
+
+def test_classify_step_reports_a_tactic_exception_on_the_message_channel_as_lean_error() -> None:
+    """The community REPL returns `{"message": "Lean error:\n..."}` for an exception a
+    tactic threw (rw found no occurrence, simp made no progress); that is a rejection."""
+    out = replbackend.classify_step(
+        LeanError.model_validate({"message": "Lean error:\nTactic `rewrite` failed: no occurrence"})
+    )
+    assert out.kind == "lean_error"
+    assert out.error == "Tactic `rewrite` failed: no occurrence"

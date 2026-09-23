@@ -41,6 +41,8 @@ variable [DecidableEq α] (x : α)
 attribute [local simp] Nat.add_comm
 local notation "‖" a "‖" => a
 
+set_option maxHeartbeats 400000 in
+open Nat in
 /-- Target with attributes and a dotted name. -/
 @[simp, to_additive (attr := simp)]
 protected theorem Inner.target (h : x = y) : x = y := by

@@ -617,6 +617,46 @@ def scope_prefix(root: Path, file_path: str, start_line: int) -> str:
     return "\n".join(scope_commands(root, file_path, start_line))
 
 
+def _ends_with_in(command: str) -> bool:
+    """True for the ``<command> in`` form that binds to the next declaration."""
+    code = _code_only(command).rstrip()
+    return code == "in" or code.endswith((" in", "\tin", "\nin"))
+
+
+def declaration_in_commands(root: Path, file_path: str, start_line: int) -> list[str]:
+    """The ``... in`` commands that bind to the declaration starting at `start_line`.
+
+    Mathlib puts ``set_option backward.isDefEq.respectTransparency false in``,
+    ``include hZ in`` and ``open Foo in`` on the lines above a theorem, and
+    LeanDojo's ``start`` points at the docstring or keyword below them. They are
+    part of the declaration command (`_scope_command` drops them from the scope
+    replay) and change what its tactics do, so they must precede the stub.
+
+    Parameters
+    ----------
+    root : Path
+    file_path : str
+    start_line : int
+        1-indexed first line of the declaration slice.
+
+    Returns
+    -------
+    list[str]
+        Trailing run of ``in`` commands, in file order; empty when there is none.
+    """
+    source = Path(root) / file_path
+    if not source.is_file():
+        raise FileNotFoundError(f"no such Lean source: {file_path} (looked in {root})")
+    lines = source.read_text(encoding="utf-8").splitlines()[: max(start_line - 1, 0)]
+    commands = _split_top_level_commands(lines)
+    trailing: list[str] = []
+    for command in reversed(commands):
+        if not _ends_with_in(command):
+            break
+        trailing.append(_SCOPE_MODIFIER_RE.sub("", command.lstrip()).rstrip())
+    return trailing[::-1]
+
+
 #: Tokens that end the namespace list of an ``open`` command.
 _OPEN_LIST_TERMINATORS = frozenset({"(", "hiding", "renaming", "in"})
 
@@ -645,6 +685,10 @@ def scoped_syntax_namespaces(commands: Sequence[str]) -> list[str]:
         if not tokens:
             continue
         head = tokens[0]
+        if head == "open" and tokens[-1] == "in":
+            # `open Foo in` bound to the declaration (see `declaration_in_commands`):
+            # its notation is needed for the tactics too.
+            tokens = tokens[:-1]
         if head in ("section", "namespace") or (
             head == "noncomputable" and tokens[1:2] == ["section"]
         ):
@@ -766,6 +810,10 @@ def theorem_statement_stub(
     return f"{rename_declaration(statement, target).rstrip()}\n  := by sorry"
 
 
+#: Message-channel prefix the REPL uses for an exception thrown by a tactic.
+_TACTIC_EXCEPTION_PREFIX = "Lean error:"
+
+
 def classify_step(response: Any) -> StepOutcome:
     """Map one `lean_interact` reply onto a `StepOutcome`.
 
@@ -781,8 +829,17 @@ def classify_step(response: Any) -> StepOutcome:
     StepOutcome
         Normalized tactic outcome.
     """
-    # `LeanError` is infrastructure, not a rejected tactic, or `lean_error` inflates.
     if isinstance(response, LeanError):
+        # The community REPL reports an exception thrown BY a tactic (`rw` found no
+        # occurrence, `simp` made no progress, an unknown identifier, `abortTactic`)
+        # on its message channel as "Lean error:\n<text>" instead of as a
+        # `ProofStepResponse` error message. That is a rejected tactic, scored like
+        # any `lean_error`; anything else on the channel (unknown proof state, bad
+        # request) is infrastructure and stays `exception`.
+        message = response.message.strip()
+        if message.startswith(_TACTIC_EXCEPTION_PREFIX):
+            detail = message[len(_TACTIC_EXCEPTION_PREFIX) :].strip()
+            return StepOutcome("lean_error", None, detail or message, None)
         return StepOutcome("exception", None, f"REPL error: {response.message}", None)
 
     status = response.proof_status or ""
@@ -1041,9 +1098,12 @@ def open_session(
     # second: the bare form still covers self-contained statements when the
     # prefix itself fails to elaborate (e.g. a ``variable`` naming a private def).
     commands = scope_commands(resolved_root, bt.file_path, bt.start[0])
+    bound = declaration_in_commands(resolved_root, bt.file_path, bt.start[0])
+    # The `... in` commands are part of the declaration, so both variants carry them.
+    stub = "\n".join([*bound, stub])
     prefix = "\n".join(commands)
     stubs = [f"{prefix}\n\n{stub}", stub] if prefix else [stub]
-    tactic_prefix = tactic_open_prefix(scoped_syntax_namespaces(commands))
+    tactic_prefix = tactic_open_prefix(scoped_syntax_namespaces([*commands, *bound]))
     module = module_name(bt.file_path)
     factory = server_factory or _default_server_factory
 
