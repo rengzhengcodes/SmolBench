@@ -49,6 +49,16 @@
 #       --name /smolbench/deduction/github_access_token \
 #       --value file:///path/to/token.txt --overwrite
 #
+# LIFECYCLE (2026-09-22): the instance STOPS on shutdown instead of terminating.
+# Both of the runbook's shutdown paths (the $LIFETIME backstop and the final
+# `shutdown -h now`) therefore preserve the root volume: the checkout, the
+# LeanDojo cache with the traced repo, and any partial export survive for
+# inspection or resume, and the box can be started again. The operator
+# terminates it by hand once the tarball has been downloaded. A stopped box
+# bills only for its volume. The instance role carries
+# AmazonSSMManagedInstanceCore so `aws ssm send-command` can read logs and
+# cancel the backstop timer without SSH.
+#
 # IDEMPOTENCY (review finding: run-instances had no check at all). The tag
 # below is derived from $COMMIT, so re-running this script for a commit that
 # already has a live box would silently double-bill a second ~$2/hr
@@ -243,7 +253,7 @@ fi
 aws ec2 run-instances --region "$REGION" --image-id "$AMI" --instance-type "$ITYPE" \
   --iam-instance-profile "Name=$ROLE" \
   --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":$VOL,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
-  --instance-initiated-shutdown-behavior terminate \
+  --instance-initiated-shutdown-behavior stop \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG},{Key=smolbench:experiment,Value=trace-postcutoff}]" \
   --user-data "$USERDATA" \
   --query 'Instances[0].InstanceId' --output text
