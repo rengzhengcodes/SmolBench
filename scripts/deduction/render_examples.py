@@ -45,6 +45,7 @@ RUNG_DOC = {
     "proof:N": "Same block as sig:N with full source and proofs.",
     "signoise:N": "sig:0 padded to sig:N (the hops as blank length).",
     "proofnoise:N": "sig:N padded to proof:N (the proof bodies as blank length).",
+    "hoponly:N": "sig:N with the MPI lemmas removed: the N-hop closure alone, signatures.",
 }
 
 
@@ -55,6 +56,7 @@ def _rungs(max_level: int) -> list[str]:
     out += [f"sig:{i}" for i in range(0, max_level + 1)]
     out += [f"proof:{i}" for i in range(0, max_level + 1)]
     out += [f"signoise:{i}" for i in range(1, max_level + 1)]
+    out += [f"hoponly:{i}" for i in range(1, max_level + 1)]
     out += [f"proofnoise:{i}" for i in range(0, max_level + 1)]
     return out
 

@@ -13,13 +13,17 @@ from typing import Literal
 
 from .corpus import BenchmarkTheorem
 
-Chain = Literal["stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise"]
+Chain = Literal[
+    "stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise", "hoponly"
+]
 
 # ``stepk`` has levels 0..2. ``hint``/``noise`` (flagged ladder) and
 # ``sig``/``proof`` (unflagged library block, level = hops beyond the MPI
 # lemmas) go to 9; the closure is uncapped, so the roster bounds the depth.
 # ``signoise:N`` pads ``sig:0`` to ``sig:N``; ``proofnoise:N`` pads ``sig:N``
-# to ``proof:N``.
+# to ``proof:N``. ``hoponly:N`` is ``sig:N`` with the MPI lemmas themselves
+# removed: the N-hop closure alone, signatures, so the value of the MPI can be
+# separated from the value of its neighbourhood.
 _MAX_LEVEL: dict[str, int] = {
     "stepk": 2,
     "hint": 9,
@@ -28,6 +32,7 @@ _MAX_LEVEL: dict[str, int] = {
     "proof": 9,
     "signoise": 9,
     "proofnoise": 9,
+    "hoponly": 9,
 }
 
 
@@ -415,7 +420,9 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
     return parts
 
 
-def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
+def _library_premises(
+    theorem: BenchmarkTheorem, k: int, depth: int, exclude_seeds: bool = False
+) -> list:
     """MPI lemmas of step ``k`` plus their ``depth``-hop closure, in library order.
 
     Parameters
@@ -423,6 +430,8 @@ def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
     theorem : BenchmarkTheorem
     k : int
     depth : int
+    exclude_seeds : bool, optional
+        Drop the MPI lemmas and keep only the closure (``hoponly``).
 
     Returns
     -------
@@ -444,11 +453,19 @@ def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
             seeds.append(p)
     if not seeds:
         return []
-    return library_order(seeds + premise_dep_closure(seeds, depth))
+    closure = premise_dep_closure(seeds, depth)
+    if exclude_seeds:
+        seed_names = {p.full_name for p in seeds}
+        return library_order([p for p in closure if p.full_name not in seed_names])
+    return library_order(seeds + closure)
 
 
 def _render_library_parts(
-    theorem: BenchmarkTheorem, k: int, depth: int, form: str
+    theorem: BenchmarkTheorem,
+    k: int,
+    depth: int,
+    form: str,
+    exclude_seeds: bool = False,
 ) -> list[str]:
     """``sig:depth`` / ``proof:depth``: `stepk:2` plus one unflagged library block.
 
@@ -464,6 +481,8 @@ def _render_library_parts(
     depth : int
     form : str
         ``"sig"`` or ``"proof"``.
+    exclude_seeds : bool, optional
+        ``hoponly``: the closure without the MPI lemmas.
 
     Returns
     -------
@@ -477,11 +496,21 @@ def _render_library_parts(
     # ``lemma`` while checked (generated) ones say ``theorem``, a tell.
     entries = [
         f"### `{p.full_name}` at `{p.file_path}`\n```lean\n{render_one(p)}\n```"
-        for p in _library_premises(theorem, k, depth)
+        for p in _library_premises(theorem, k, depth, exclude_seeds)
     ]
     if entries:
         parts.append("## Library context\n" + "\n\n".join(entries))
     return parts
+
+
+def _render_hoponly_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
+    """``hoponly:N`` = ``sig:N`` minus the MPI lemmas: the N-hop closure alone.
+
+    Level 0 would be an empty block, so it is rejected.
+    """
+    if level < 1:
+        raise ValueError(f"hoponly:{level} not defined; only hoponly:1+ supported")
+    return _render_library_parts(theorem, k, level, "sig", exclude_seeds=True)
 
 
 def _render_signoise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -575,6 +604,8 @@ def render(
         parts = _render_signoise_parts(theorem, k, level)
     elif chain == "proofnoise":
         parts = _render_proofnoise_parts(theorem, k, level)
+    elif chain == "hoponly":
+        parts = _render_hoponly_parts(theorem, k, level)
     else:
         raise ValueError(f"unknown chain {chain!r}")
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
@@ -718,4 +749,12 @@ def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=t
         base_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(base)))
         target_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(target)))
         return target_tokens - base_tokens <= 0
+    if chain == "hoponly":
+        # Trivial when the closure minus the MPI is empty, or gains nothing
+        # over the level below.
+        if level < 1 or not _library_premises(theorem, k, level, exclude_seeds=True):
+            return True
+        return level > 1 and len(_library_premises(theorem, k, level, True)) == len(
+            _library_premises(theorem, k, level - 1, True)
+        )
     return False

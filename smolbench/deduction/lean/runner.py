@@ -782,6 +782,7 @@ _CHAIN_ORDER = {
     "signoise": 4,
     "proof": 5,
     "proofnoise": 6,
+    "hoponly": 7,
 }
 
 
