@@ -311,6 +311,53 @@ else:
     )
     ast_path.write_text(src)
     print(f"patched {ast_path}")
+
+# --- traced_data.py: keep cross-file premises -------------------------------
+# get_annotated_tactic drops every IdentNode whose def_start/def_end is None.
+# ExtractData.lean under Lean v4.34 reports `defPos: null` for every constant
+# imported from another module (declaration ranges are not available for
+# imports), so the unpatched export annotated only same-file premises: 16% of
+# tactics carried any premise and every cross-file citation (`zero_add`,
+# `Equiv.symm_apply_apply`, ...) was lost (found 2026-09-23 on the first
+# 2ca39e62 export; 1,738 of 2,002 extracted premises in one file had no
+# defPos). Keep the premise and emit def_pos/def_end_pos as null; smolbench's
+# premises.missing_trace_premises tolerates that.
+td_path = sp / "lean_dojo_v2" / "lean_dojo" / "data_extraction" / "traced_data.py"
+src = td_path.read_text()
+old = """            if (
+                node.full_name is not None
+                and node.mod_name is not None
+                and node.def_start is not None
+                and node.def_end is not None
+            ):
+                if cur <= node.start:
+                    annot_tac.append(lean_file[cur : node.start])
+                    annot_tac.append("<a>" + lean_file[node.start : node.end] + "</a>")
+                    prov = {"full_name": node.full_name}
+                    prov["def_path"] = node.def_path
+                    prov["def_pos"] = list(node.def_start)
+                    prov["def_end_pos"] = list(node.def_end)
+"""
+new = """            # SmolBench patch: keep premises without a definition position.
+            if (
+                node.full_name is not None
+                and node.mod_name is not None
+                and node.def_path is not None
+            ):
+                if cur <= node.start:
+                    annot_tac.append(lean_file[cur : node.start])
+                    annot_tac.append("<a>" + lean_file[node.start : node.end] + "</a>")
+                    prov = {"full_name": node.full_name}
+                    prov["def_path"] = node.def_path
+                    prov["def_pos"] = list(node.def_start) if node.def_start is not None else None
+                    prov["def_end_pos"] = list(node.def_end) if node.def_end is not None else None
+"""
+if "SmolBench patch: keep premises without a definition position" in src:
+    print("traced_data.py already patched")
+else:
+    assert src.count(old) == 1, "traced_data.py annotation block not found exactly once"
+    td_path.write_text(src.replace(old, new))
+    print(f"patched {td_path}")
 EOF
 )
 
