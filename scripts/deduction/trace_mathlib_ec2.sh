@@ -234,6 +234,83 @@ for rel, text in files.items():
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     print(f"shimmed {path}")
+
+# lean-dojo-v2 1.0.9 supports Lean <= v4.30 (utils/lean.py is_supported_version).
+# On Lean v4.34 its AST loader died in CommandDeclarationNode.from_data with a
+# bare AssertionError (second launch, 2026-09-22, after a complete 1h45m
+# extraction): a `declaration` command whose body is a syntax kind the loader
+# has no class for. Downstream code already skips declarations with
+# `name is None` (the antiquotation branch), so treat an unknown body the same
+# way and log its kind once, instead of aborting the whole trace.
+ast_path = sp / "lean_dojo_v2" / "lean_dojo" / "data_extraction" / "ast.py"
+src = ast_path.read_text()
+old = """        if isinstance(children[0], CommandDeclmodifiersAntiquotNode):
+            name = None
+        else:
+            assert isinstance(children[0], CommandDeclmodifiersNode)
+            assert isinstance(
+                children[1],
+                (
+                    CommandDefNode,
+                    CommandDefinitionNode,
+                    CommandTheoremNode,
+                    CommandInductiveNode,
+                    CommandClassinductiveNode,
+                    CommandStructureNode,
+                    CommandInstanceNode,
+                    CommandAbbrevNode,
+                    CommandOpaqueNode,
+                    CommandAxiomNode,
+                    CommandExampleNode,
+                ),
+            )
+            name = children[1].name
+"""
+new = """        _known_bodies = (
+            CommandDefNode,
+            CommandDefinitionNode,
+            CommandTheoremNode,
+            CommandInductiveNode,
+            CommandClassinductiveNode,
+            CommandStructureNode,
+            CommandInstanceNode,
+            CommandAbbrevNode,
+            CommandOpaqueNode,
+            CommandAxiomNode,
+            CommandExampleNode,
+        )
+        if isinstance(children[0], CommandDeclmodifiersAntiquotNode):
+            name = None
+        elif not isinstance(children[0], CommandDeclmodifiersNode) or len(
+            children
+        ) < 2 or not isinstance(children[1], _known_bodies):
+            # SmolBench patch: unknown declaration shape (newer Lean syntax).
+            kinds = tuple(type(c).__name__ for c in children)
+            if kinds not in _SMOLBENCH_UNKNOWN_DECLS:
+                _SMOLBENCH_UNKNOWN_DECLS.add(kinds)
+                logger.warning(
+                    f"smolbench: skipping declaration with unknown shape {kinds} in {lean_file.path}"
+                )
+            name = None
+        else:
+            name = children[1].name
+"""
+marker = "_SMOLBENCH_UNKNOWN_DECLS"
+if marker in src:
+    print("ast.py already patched")
+else:
+    assert src.count(old) == 1, "ast.py block to patch not found exactly once"
+    src = src.replace(old, new)
+    # module-level state + logger import, right after the imports
+    anchor = "\n\n@dataclass"
+    assert anchor in src
+    src = src.replace(
+        anchor,
+        "\n\nfrom loguru import logger  # SmolBench patch\n_SMOLBENCH_UNKNOWN_DECLS = set()  # SmolBench patch\n\n@dataclass",
+        1,
+    )
+    ast_path.write_text(src)
+    print(f"patched {ast_path}")
 EOF
 )
 
