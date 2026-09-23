@@ -785,6 +785,8 @@ _CHAIN_ORDER = {
     "hoponly": 7,
     "sigpad": 8,
     "proofpad": 9,
+    "siglorem": 10,
+    "prooflorem": 11,
 }
 
 

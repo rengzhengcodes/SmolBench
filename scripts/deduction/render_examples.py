@@ -48,6 +48,8 @@ RUNG_DOC = {
     "hoponly:N": "sig:N with the MPI lemmas removed: the N-hop closure alone, signatures.",
     "sigpad:N": "sig:N with every non-MPI entry replaced in place by same-token whitespace lines (MPI at the same depth).",
     "proofpad:N": "proof:N with every proof body replaced in place by same-token whitespace lines (signatures at the same depth).",
+    "siglorem:N": "sigpad:N with lorem-ipsum prose as the filler instead of whitespace.",
+    "prooflorem:N": "proofpad:N with lorem-ipsum prose as the filler instead of whitespace.",
 }
 
 
@@ -61,6 +63,8 @@ def _rungs(max_level: int) -> list[str]:
     out += [f"hoponly:{i}" for i in range(1, max_level + 1)]
     out += [f"sigpad:{i}" for i in range(1, max_level + 1)]
     out += [f"proofpad:{i}" for i in range(0, max_level + 1)]
+    out += [f"siglorem:{i}" for i in range(1, max_level + 1)]
+    out += [f"prooflorem:{i}" for i in range(0, max_level + 1)]
     out += [f"proofnoise:{i}" for i in range(0, max_level + 1)]
     return out
 

@@ -42,6 +42,8 @@ RUNG_ORDER = [
     "hoponly-1", "hoponly-2", "hoponly-3", "hoponly-4",
     "sigpad-1", "sigpad-2", "sigpad-3", "sigpad-4",
     "proofpad-0", "proofpad-1", "proofpad-2", "proofpad-3", "proofpad-4",
+    "siglorem-1", "siglorem-2", "siglorem-3", "siglorem-4",
+    "prooflorem-0", "prooflorem-1", "prooflorem-2", "prooflorem-3", "prooflorem-4",
     "proof-0", "proof-1", "proof-2", "proof-3", "proof-4",
     "proofnoise-0", "proofnoise-1", "proofnoise-2", "proofnoise-3", "proofnoise-4",
 ]

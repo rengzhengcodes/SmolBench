@@ -15,7 +15,7 @@ from .corpus import BenchmarkTheorem
 
 Chain = Literal[
     "stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise", "hoponly",
-    "sigpad", "proofpad",
+    "sigpad", "proofpad", "siglorem", "prooflorem",
 ]
 
 # ``stepk`` has levels 0..2. ``hint``/``noise`` (flagged ladder) and
@@ -31,7 +31,11 @@ Chain = Literal[
 # replaced in place by a line-structured whitespace block of the same token
 # count. ``signoise``/``proofnoise`` instead append one whitespace tail, which
 # moves nothing but leaves the useful entries at a different depth and forms a
-# single multi-kilobyte line (see the 2026-09-23 Haiku audit).
+# single multi-kilobyte line (see the 2026-09-23 Haiku audit). ``siglorem:N`` /
+# ``prooflorem:N`` are the same positional controls with lorem-ipsum prose as
+# the filler instead of whitespace: irrelevant but well-formed text of the same
+# token count, so the two fillers bracket "nothing there" and "something
+# unrelated there".
 _MAX_LEVEL: dict[str, int] = {
     "stepk": 2,
     "hint": 9,
@@ -43,6 +47,8 @@ _MAX_LEVEL: dict[str, int] = {
     "hoponly": 9,
     "sigpad": 9,
     "proofpad": 9,
+    "siglorem": 9,
+    "prooflorem": 9,
 }
 
 
@@ -524,17 +530,39 @@ _PAD_TOLERANCE_SCAN = 64
 _FILLER_LINE_UNITS = 40
 
 
-def _filler_block(tokenizer, unit: str, target_tokens: int) -> str:
-    """A multi-line whitespace block costing exactly `target_tokens` tokens.
+#: Deterministic lorem-ipsum word stream for the prose filler.
+_LOREM_WORDS = (
+    "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor "
+    "incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud "
+    "exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute "
+    "irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla "
+    "pariatur excepteur sint occaecat cupidatat non proident sunt in culpa qui officia "
+    "deserunt mollit anim id est laborum"
+).split()
+_LOREM_LINE_WORDS = 12
 
-    Lines of `_FILLER_LINE_UNITS` units separated by newlines; the unit count is
-    bracketed by binary search because newline merges make cost non-linear.
-    Returns ``""`` for a non-positive target.
+
+def _lorem_text(n_words: int) -> str:
+    """The first `n_words` of the cycled lorem stream, `_LOREM_LINE_WORDS` per line."""
+    words = [_LOREM_WORDS[i % len(_LOREM_WORDS)] for i in range(n_words)]
+    lines = [" ".join(words[i : i + _LOREM_LINE_WORDS]) for i in range(0, n_words, _LOREM_LINE_WORDS)]
+    return "\n".join(lines)
+
+
+def _filler_block(tokenizer, unit: str, target_tokens: int, kind: str = "ws") -> str:
+    """A multi-line filler block costing exactly `target_tokens` tokens.
+
+    ``kind="ws"``: lines of `_FILLER_LINE_UNITS` whitespace units. ``kind="lorem"``:
+    lorem-ipsum prose, `_LOREM_LINE_WORDS` words per line. The size is bracketed
+    by binary search because merges make cost non-linear. ``""`` for a
+    non-positive target.
     """
     if target_tokens <= 0:
         return ""
 
     def build(n: int) -> str:
+        if kind == "lorem":
+            return _lorem_text(n)
         lines = [unit * _FILLER_LINE_UNITS] * (n // _FILLER_LINE_UNITS)
         rest = n % _FILLER_LINE_UNITS
         if rest:
@@ -571,7 +599,8 @@ def _render_padded_library_parts(
     k : int
     depth : int
     mode : str
-        ``"sigpad"`` or ``"proofpad"``.
+        ``"sigpad"``, ``"proofpad"`` (whitespace filler), ``"siglorem"`` or
+        ``"prooflorem"`` (lorem-ipsum filler).
 
     Returns
     -------
@@ -587,7 +616,8 @@ def _render_padded_library_parts(
 
     tokenizer = TiktokenTokenizer()
     unit = choose_whitespace_unit(tokenizer)
-    form = "sig" if mode == "sigpad" else "proof"
+    form = "sig" if mode in ("sigpad", "siglorem") else "proof"
+    kind = "lorem" if mode.endswith("lorem") else "ws"
     content_parts = _render_library_parts(theorem, k, depth, form)
     premises = _library_premises(theorem, k, depth)
     if not premises:
@@ -605,7 +635,7 @@ def _render_padded_library_parts(
     # the filler goes between prefix and suffix.
     slots: list[tuple] = []
     for p in premises:
-        if mode == "sigpad":
+        if form == "sig":
             text = entry(p, signature(p))
             if p.full_name in mpi:
                 slots.append(("keep", text))
@@ -632,9 +662,9 @@ def _render_padded_library_parts(
         s = slots[i]
         if s[0] == "keep":
             return s[1]
-        block = _filler_block(tokenizer, unit, targets[i])
+        block = _filler_block(tokenizer, unit, targets[i], kind)
         if i == last and extra["units"] > 0:
-            block = block + unit * extra["units"]
+            block = block + (" " + " ".join(_LOREM_WORDS[:extra["units"]]) if kind == "lorem" else unit * extra["units"])
         return s[1] + block + s[2]
 
     def assemble() -> list[str]:
@@ -779,9 +809,9 @@ def render(
         parts = _render_proofnoise_parts(theorem, k, level)
     elif chain == "hoponly":
         parts = _render_hoponly_parts(theorem, k, level)
-    elif chain in ("sigpad", "proofpad"):
-        if chain == "sigpad" and level < 1:
-            raise ValueError("sigpad:0 not defined; sig:0 has no non-MPI entry to pad")
+    elif chain in ("sigpad", "proofpad", "siglorem", "prooflorem"):
+        if chain in ("sigpad", "siglorem") and level < 1:
+            raise ValueError(f"{chain}:0 not defined; sig:0 has no non-MPI entry to pad")
         parts = _render_padded_library_parts(theorem, k, level, chain)
     else:
         raise ValueError(f"unknown chain {chain!r}")
@@ -926,12 +956,12 @@ def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=t
         base_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(base)))
         target_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(target)))
         return target_tokens - base_tokens <= 0
-    if chain in ("sigpad", "proofpad"):
+    if chain in ("sigpad", "proofpad", "siglorem", "prooflorem"):
         # Trivial exactly when the padded rendering equals the content rendering
         # (no filler slot: no non-MPI entry, or no proof body anywhere).
-        if chain == "sigpad" and level < 1:
+        if chain in ("sigpad", "siglorem") and level < 1:
             return True
-        form = "sig" if chain == "sigpad" else "proof"
+        form = "sig" if chain in ("sigpad", "siglorem") else "proof"
         return _render_padded_library_parts(theorem, k, level, chain) == _render_library_parts(
             theorem, k, level, form
         )
