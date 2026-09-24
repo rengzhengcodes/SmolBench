@@ -211,7 +211,10 @@ def missing_trace_premises(
                 for prem in annotated[1] if len(annotated) > 1 else []:
                     n = prem["full_name"]
                     if n not in idx and n not in out:
-                        out[n] = (prem["def_path"], list(prem["def_pos"]))
+                        # The lean-dojo-v2 export at Lean v4.34 has no definition
+                        # position for imported constants; [0, 0] keeps the shape.
+                        pos = prem.get("def_pos")
+                        out[n] = (prem["def_path"], list(pos) if pos else [0, 0])
     return out
 
 
