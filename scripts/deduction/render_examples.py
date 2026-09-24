@@ -38,7 +38,7 @@ from smolbench.deduction.lean.premises import lookup  # noqa: E402
 from smolbench.deduction.lean.runner import slug_rung, slug_theorem  # noqa: E402
 
 RUNG_DOC = {
-    "stepk:2": "None: goal, full state, proof so far, theorem name. No premises.",
+    "stepk:2": "None: goal, full state, proof so far, file path. No premises.",
     "hint:N": "Flagged ladder: stepk:2 + 'Premises used in the next tactic' (0), + signatures (1), + full source (2), + (N-2)-hop closure (3+).",
     "noise:N": "hint:(N-1) whitespace-padded to hint:N's prompt token count.",
     "sig:N": "Unflagged library block, signatures: MPI lemmas + N-hop closure, import order, nothing marked.",
