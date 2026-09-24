@@ -4,7 +4,12 @@ Resample theorem blocks because their cells share a proof prefix. BCa falls back
 The PRIMARY test is block sign-flip; cell-level McNemar is descriptive because it ignores clustering.
 ``lane_outcomes`` grades through ``power_analysis.grade_verdicts``, shared with
 ``load_joint_cells`` and ``hint_vs_noise.load_rungs``; only denominator and recovery schemas live here.
-A no-survivor cell scores 0 when another lane measured it; dropping makes denominators model-dependent and rewards a broken verifier.
+A no-survivor cell (every attempt ``exception``/``replay_failed``) is an
+infrastructure fault, not a model failure: the headline pool DROPS it, which
+keeps the paired pool identical across lanes (it is an intersection) but makes
+each lane's own denominator model-dependent. ``--denominator count-as-failure``
+restores the old rule (score 0 when another lane measured the cell); it is
+always shown as a sensitivity row so the two are attributable.
 """
 
 import argparse
@@ -361,7 +366,7 @@ def _rate(hits: int, n: int) -> float | None:
 
 
 def build_pool(
-    rows_dir: Path, recovery_dir: Path | None = None, count_as_failure: bool = True
+    rows_dir: Path, recovery_dir: Path | None = None, count_as_failure: bool = False
 ) -> tuple:
     """Build the paired 21-way pool.
 
@@ -370,7 +375,9 @@ def build_pool(
     rows_dir : Path
     recovery_dir : Path | None, optional
     count_as_failure : bool, optional
-        Score model-dependent no-survivors 0 instead of dropping them.
+        Score model-dependent no-survivors 0 instead of dropping them. Off by
+        default: a no-survivor is an infrastructure fault, and scoring it 0
+        biases that lane's paired contrasts downward.
 
     Returns
     -------
@@ -385,10 +392,11 @@ def build_pool(
 
     # A no-survivor is model-dependent only if another lane graded it.
     measurable_somewhere = set().union(*(set(g) for g in graded.values()))
+    dependent = {m: nosurv[m] & measurable_somewhere for m in MODELS}
     added: dict[str, set] = {m: set() for m in MODELS}
     if count_as_failure:
         for model in MODELS:
-            added[model] = nosurv[model] & measurable_somewhere
+            added[model] = dependent[model]
             for key in added[model]:
                 graded[model][key] = 0
 
@@ -431,6 +439,7 @@ def build_pool(
         "count_as_failure": count_as_failure,
         "recovery": recovery_dir is not None,
         "added": {m: sorted(v) for m, v in added.items() if v},
+        "dropped": {m: sorted(v) for m, v in dependent.items() if v and not count_as_failure},
         "rule_cost": cost,
         "n_unresolved": {m: len(nosurv[m] - measurable_somewhere) for m in MODELS},
         "own_denominator": {m: len(graded[m]) for m in MODELS},
@@ -534,7 +543,8 @@ def mode_report(
     )
     if meta:
         n_added = sum(len(v) for v in meta["added"].values())
-        print("Denominator rule: COUNT-AS-FAILURE (default).", end=" ")
+        rule = "COUNT-AS-FAILURE" if meta["count_as_failure"] else "DROP NO-SURVIVOR (default)"
+        print(f"Denominator rule: {rule}.", end=" ")
         if meta["count_as_failure"]:
             print(
                 f"{n_added} model-dependent no-survivor cell(s) scored 0, in "
@@ -573,6 +583,15 @@ def mode_report(
                     f"Successes are\n  unchanged; only the denominator moves, "
                     f"and it moves to the SAME value in all 21 lanes."
                 )
+        else:
+            n_dropped = sum(len(v) for v in meta["dropped"].values())
+            print(
+                f"{n_dropped} model-dependent no-survivor cell(s) dropped from "
+                f"{len(meta['dropped'])} lane(s); the paired pool excludes those "
+                f"blocks' cells for every lane."
+            )
+            for m, cells in sorted(meta["dropped"].items()):
+                print(f"  {m:28s} {', '.join(f'{t}@k{k}/{r}' for t, k, r in cells)}")
         if meta["recovery"]:
             print(
                 "  DojoInit recovery rows POOLED IN -- a SENSITIVITY "
@@ -814,6 +833,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-B", type=int, default=20_000)
     ap.add_argument("--out-json", type=Path, default=None)
     ap.add_argument(
+        "--denominator",
+        choices=("drop", "count-as-failure"),
+        default="drop",
+        help="headline rule for no-survivor cells (see module docstring); the "
+        "other rule is always reported as a sensitivity row",
+    )
+    ap.add_argument(
         "--recovery-dir",
         type=Path,
         default=None,
@@ -835,7 +861,8 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         raise SystemExit(f"missing row files: {[str(f) for f in missing]}")
 
-    models, blocks, _rungs, meta = build_pool(rows_dir)
+    headline_caf = args.denominator == "count-as-failure"
+    models, blocks, _rungs, meta = build_pool(rows_dir, count_as_failure=headline_caf)
     succ, size = block_matrix(models, blocks)
     per_lane = dict(meta["own_rate"])
 
@@ -847,8 +874,8 @@ def main(argv: list[str] | None = None) -> int:
     sensitivity = []
     for caf in (True, False):
         for rec in [None] + ([args.recovery_dir] if args.recovery_dir else []):
-            if caf and rec is None:
-                continue
+            if caf == headline_caf and rec is None:
+                continue  # that is the headline pool itself
             _m, _b, _r, _meta = build_pool(
                 rows_dir, recovery_dir=rec, count_as_failure=caf
             )

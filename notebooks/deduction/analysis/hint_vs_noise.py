@@ -1,8 +1,14 @@
-"""Compare hint:3 with length-matched noise:3.
+"""Compare an informative rung with its length-matched noise control.
 
-Only the trailing 1-hop premise closure differs, so this tests supplementary
-background over direct premises. Pair cells within models; use exact McNemar
-and Holm over 21 models at FWER 0.05 (`ALPHA`).
+Default pair: hint:3 versus noise:3. Only the trailing 1-hop premise closure
+differs, so this tests supplementary background over direct premises. Pair
+cells within models; use exact McNemar and Holm over 21 models at FWER 0.05
+(`ALPHA`). ``--info-rung``/``--noise-rung`` select another pair (for example
+``hint:2`` versus ``noise:2``: direct premise bodies versus padded
+signatures); the report names whichever pair it scored.
+
+A lane that holds no cell with both rungs is a data error, not a null: the
+run exits non-zero instead of printing a confident "no effect".
 
 Run: ``.venv/bin/python notebooks/deduction/analysis/hint_vs_noise.py --s3``.
 """
@@ -27,11 +33,13 @@ from power_analysis import (  # noqa: E402  # pylint: disable=import-error
     reject_unverified_verdicts,
 )
 
-#: Informative rung and length-matched control.
+#: Default informative rung and length-matched control.
 RUNG_INFO, RUNG_NOISE = "hint:3", "noise:3"
 
 
-def load_rungs(path: Path) -> dict:
+def load_rungs(
+    path: Path, info_rung: str = RUNG_INFO, noise_rung: str = RUNG_NOISE
+) -> dict:
     """Map one model's cells to two rung outcomes.
 
     Use the earliest measurable ``replicate_idx == 0`` row. Later replicates
@@ -42,6 +50,8 @@ def load_rungs(path: Path) -> dict:
     ----------
     path : Path
         Model ``verified_rows.jsonl`` file.
+    info_rung : str, optional
+    noise_rung : str, optional
 
     Returns
     -------
@@ -58,7 +68,7 @@ def load_rungs(path: Path) -> dict:
     reject_unverified_verdicts(rows, "verdict", path)
     out: dict = defaultdict(dict)
     for row in cells:
-        if row.get("rung") not in (RUNG_INFO, RUNG_NOISE):
+        if row.get("rung") not in (info_rung, noise_rung):
             continue
         # None is not a measurement, so it cannot score the cell.
         grade = grade_verdicts([row.get("verdict")])
@@ -108,7 +118,7 @@ def _power_pi(n_disc: int, k_crit: int, target: float = 0.80) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run and print the per-model hint:3/noise:3 comparison.
+    """Run and print the per-model informative-vs-noise comparison.
 
     `rows_source.resolve_rows_dir` makes ``--s3`` and ``--rows-dir`` one local
     layout. Missing or unverified lanes raise.
@@ -125,22 +135,35 @@ def main(argv: list[str] | None = None) -> int:
     Raises
     ------
     SystemExit
-        Source, retired, or ungraded-input failure.
+        Source, retired, or ungraded-input failure, or a lane with no cell
+        that carries both rungs.
     FileNotFoundError
         Missing lane.
     """
     ap = argparse.ArgumentParser(description=__doc__)
     rows_source.add_source_args(ap)
+    ap.add_argument("--info-rung", default=RUNG_INFO, help="informative rung")
+    ap.add_argument(
+        "--noise-rung", default=RUNG_NOISE, help="its length-matched control"
+    )
     args = ap.parse_args(argv)
+    r_info, r_noise = args.info_rung, args.noise_rung
 
     rows_dir = rows_source.resolve_from_args(args)
 
     rows = []
     for model in MODELS:
-        pairs = load_rungs(rows_dir / model / "verified_rows.jsonl")
-        both = [v for v in pairs.values() if RUNG_INFO in v and RUNG_NOISE in v]
-        info = np.array([v[RUNG_INFO] for v in both], dtype=bool)
-        noise = np.array([v[RUNG_NOISE] for v in both], dtype=bool)
+        pairs = load_rungs(rows_dir / model / "verified_rows.jsonl", r_info, r_noise)
+        both = [v for v in pairs.values() if r_info in v and r_noise in v]
+        if not both:
+            seen = sorted({r for v in pairs.values() for r in v})
+            raise SystemExit(
+                f"{model}: no cell carries both {r_info} and {r_noise} "
+                f"(rungs measured: {seen or 'none'}); this is missing data, "
+                "not a null result"
+            )
+        info = np.array([v[r_info] for v in both], dtype=bool)
+        noise = np.array([v[r_noise] for v in both], dtype=bool)
         b = int((info & ~noise).sum())  # hint solved, noise not
         c = int((~info & noise).sum())  # noise solved, hint not
         rows.append(
@@ -157,14 +180,21 @@ def main(argv: list[str] | None = None) -> int:
 
     rej = holm(np.array([r["p"] for r in rows]), ALPHA)
 
-    print("DEDUCTION: hint:3 vs noise:3, per model")
-    print(
-        "The two rungs are byte-identical except for hint:3's trailing 1-HOP "
-        "TRANSITIVE\npremise-closure block, which noise:3 replaces with "
-        "token-matched padding. So this\ntests supplementary background on top "
-        "of an already-complete direct-premise\ncontext -- NOT the same "
-        "manipulation as the induction extens-vs-noise contrast."
-    )
+    print(f"DEDUCTION: {r_info} vs {r_noise}, per model")
+    if (r_info, r_noise) == (RUNG_INFO, RUNG_NOISE):
+        print(
+            "The two rungs are byte-identical except for hint:3's trailing 1-HOP "
+            "TRANSITIVE\npremise-closure block, which noise:3 replaces with "
+            "token-matched padding. So this\ntests supplementary background on top "
+            "of an already-complete direct-premise\ncontext -- NOT the same "
+            "manipulation as the induction extens-vs-noise contrast."
+        )
+    else:
+        print(
+            f"noise:N renders hint:(N-1) padded to hint:N's token length, so "
+            f"{r_noise} differs from\n{r_info} only in the block that {r_info} "
+            f"adds over the rung below it."
+        )
     print(
         "Paired exact McNemar on cells matched by (theorem, k) within each "
         "model -- one cell\nper theorem per model, so no cluster correction "
@@ -172,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Holm-Bonferroni over m = {len(rows)} models at FWER {ALPHA}.\n")
     hdr = (
-        f"{'model':30s} {'n':>5s} {'hint:3':>7s} {'noise:3':>8s} {'diff':>7s} "
+        f"{'model':30s} {'n':>5s} {r_info:>7s} {r_noise:>8s} {'diff':>7s} "
         f"{'b/c':>9s} {'p':>10s} {'Holm':>5s}"
     )
     print(hdr)
@@ -189,8 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     sig = [rows[i] for i in range(len(rows)) if rej[i]]
     up = [r for r in sig if r["acc_i"] > r["acc_n"]]
     print(f"\nSignificant under Holm: {len(sig)} of {len(rows)}")
-    print(f"  hint:3 HIGHER (information helps): {len(up)}")
-    print(f"  noise:3 HIGHER:                    {len(sig) - len(up)}")
+    print(f"  {r_info} HIGHER (information helps): {len(up)}")
+    print(f"  {r_noise} HIGHER:                    {len(sig) - len(up)}")
 
     # Conditional MDE uses observed discordance; unconditional MDE is larger.
     print(
@@ -258,8 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         # A nonempty `sig` means this is not a null result.
         if not sig:
             print(
-                "So this null rules out LARGE effects of 1-hop transitive "
-                "premise background,\nnot small ones."
+                f"So this null rules out LARGE effects of the block {r_info} "
+                f"adds over {r_noise},\nnot small ones."
             )
         else:
             print(
@@ -273,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     n_pos = sum(1 for r in rows if r["acc_i"] > r["acc_n"])
     print(
         f"\nDirection of the point estimates, ignoring significance: "
-        f"{n_pos} favour hint:3,\n  {n_neg} favour noise:3, "
+        f"{n_pos} favour {r_info},\n  {n_neg} favour {r_noise}, "
         f"{len(rows) - n_pos - n_neg} exactly tied."
     )
     # `sig` controls this wording: any rejection means a real effect exists.
@@ -284,9 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         majority = (
-            "hint:3"
-            if n_pos > n_neg
-            else "noise:3" if n_neg > n_pos else "neither rung"
+            r_info if n_pos > n_neg else r_noise if n_neg > n_pos else "neither rung"
         )
         print(
             f"  -- {len(sig)} of {len(rows)} model(s) already reject the "
