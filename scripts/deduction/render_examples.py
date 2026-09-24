@@ -38,13 +38,18 @@ from smolbench.deduction.lean.premises import lookup  # noqa: E402
 from smolbench.deduction.lean.runner import slug_rung, slug_theorem  # noqa: E402
 
 RUNG_DOC = {
-    "stepk:2": "None: goal, full state, proof so far, theorem name. No premises.",
+    "stepk:2": "None: goal, full state, proof so far, file path. No premises.",
     "hint:N": "Flagged ladder: stepk:2 + 'Premises used in the next tactic' (0), + signatures (1), + full source (2), + (N-2)-hop closure (3+).",
     "noise:N": "hint:(N-1) whitespace-padded to hint:N's prompt token count.",
     "sig:N": "Unflagged library block, signatures: MPI lemmas + N-hop closure, import order, nothing marked.",
     "proof:N": "Same block as sig:N with full source and proofs.",
     "signoise:N": "sig:0 padded to sig:N (the hops as blank length).",
     "proofnoise:N": "sig:N padded to proof:N (the proof bodies as blank length).",
+    "hoponly:N": "sig:N with the MPI lemmas removed: the N-hop closure alone, signatures.",
+    "sigpad:N": "sig:N with every non-MPI entry replaced in place by same-token whitespace lines (MPI at the same depth).",
+    "proofpad:N": "proof:N with every proof body replaced in place by same-token whitespace lines (signatures at the same depth).",
+    "siglorem:N": "sigpad:N with lorem-ipsum prose as the filler instead of whitespace.",
+    "prooflorem:N": "proofpad:N with lorem-ipsum prose as the filler instead of whitespace.",
 }
 
 
@@ -55,6 +60,11 @@ def _rungs(max_level: int) -> list[str]:
     out += [f"sig:{i}" for i in range(0, max_level + 1)]
     out += [f"proof:{i}" for i in range(0, max_level + 1)]
     out += [f"signoise:{i}" for i in range(1, max_level + 1)]
+    out += [f"hoponly:{i}" for i in range(1, max_level + 1)]
+    out += [f"sigpad:{i}" for i in range(1, max_level + 1)]
+    out += [f"proofpad:{i}" for i in range(0, max_level + 1)]
+    out += [f"siglorem:{i}" for i in range(1, max_level + 1)]
+    out += [f"prooflorem:{i}" for i in range(0, max_level + 1)]
     out += [f"proofnoise:{i}" for i in range(0, max_level + 1)]
     return out
 

@@ -13,13 +13,29 @@ from typing import Literal
 
 from .corpus import BenchmarkTheorem
 
-Chain = Literal["stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise"]
+Chain = Literal[
+    "stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise", "hoponly",
+    "sigpad", "proofpad", "siglorem", "prooflorem",
+]
 
 # ``stepk`` has levels 0..2. ``hint``/``noise`` (flagged ladder) and
 # ``sig``/``proof`` (unflagged library block, level = hops beyond the MPI
 # lemmas) go to 9; the closure is uncapped, so the roster bounds the depth.
 # ``signoise:N`` pads ``sig:0`` to ``sig:N``; ``proofnoise:N`` pads ``sig:N``
-# to ``proof:N``.
+# to ``proof:N``. ``hoponly:N`` is ``sig:N`` with the MPI lemmas themselves
+# removed: the N-hop closure alone, signatures, so the value of the MPI can be
+# separated from the value of its neighbourhood.
+# ``sigpad:N`` / ``proofpad:N`` are POSITIONAL length controls: the informative
+# entries stay exactly where ``sig:N`` / ``proof:N`` put them and every other
+# entry (``sigpad``: each non-MPI entry; ``proofpad``: each proof body) is
+# replaced in place by a line-structured whitespace block of the same token
+# count. ``signoise``/``proofnoise`` instead append one whitespace tail, which
+# moves nothing but leaves the useful entries at a different depth and forms a
+# single multi-kilobyte line (see the 2026-09-23 Haiku audit). ``siglorem:N`` /
+# ``prooflorem:N`` are the same positional controls with lorem-ipsum prose as
+# the filler instead of whitespace: irrelevant but well-formed text of the same
+# token count, so the two fillers bracket "nothing there" and "something
+# unrelated there".
 _MAX_LEVEL: dict[str, int] = {
     "stepk": 2,
     "hint": 9,
@@ -28,6 +44,11 @@ _MAX_LEVEL: dict[str, int] = {
     "proof": 9,
     "signoise": 9,
     "proofnoise": 9,
+    "hoponly": 9,
+    "sigpad": 9,
+    "proofpad": 9,
+    "siglorem": 9,
+    "prooflorem": 9,
 }
 
 
@@ -136,7 +157,9 @@ def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
             parts.append(
                 "## Proof so far\n_(no tactics applied yet — this is the start of the proof)_"
             )
-        parts.append(f"## Theorem\n`{theorem.full_name}` in `{theorem.file_path}`")
+        # The file, not the theorem's name: the verifier's environment holds the
+        # original declaration, so a named theorem can be cited as its own proof.
+        parts.append(f"## File\n`{theorem.file_path}`")
     return parts
 
 
@@ -415,7 +438,9 @@ def _render_hint_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[st
     return parts
 
 
-def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
+def _library_premises(
+    theorem: BenchmarkTheorem, k: int, depth: int, exclude_seeds: bool = False
+) -> list:
     """MPI lemmas of step ``k`` plus their ``depth``-hop closure, in library order.
 
     Parameters
@@ -423,6 +448,8 @@ def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
     theorem : BenchmarkTheorem
     k : int
     depth : int
+    exclude_seeds : bool, optional
+        Drop the MPI lemmas and keep only the closure (``hoponly``).
 
     Returns
     -------
@@ -444,11 +471,19 @@ def _library_premises(theorem: BenchmarkTheorem, k: int, depth: int) -> list:
             seeds.append(p)
     if not seeds:
         return []
-    return library_order(seeds + premise_dep_closure(seeds, depth))
+    closure = premise_dep_closure(seeds, depth)
+    if exclude_seeds:
+        seed_names = {p.full_name for p in seeds}
+        return library_order([p for p in closure if p.full_name not in seed_names])
+    return library_order(seeds + closure)
 
 
 def _render_library_parts(
-    theorem: BenchmarkTheorem, k: int, depth: int, form: str
+    theorem: BenchmarkTheorem,
+    k: int,
+    depth: int,
+    form: str,
+    exclude_seeds: bool = False,
 ) -> list[str]:
     """``sig:depth`` / ``proof:depth``: `stepk:2` plus one unflagged library block.
 
@@ -464,6 +499,8 @@ def _render_library_parts(
     depth : int
     form : str
         ``"sig"`` or ``"proof"``.
+    exclude_seeds : bool, optional
+        ``hoponly``: the closure without the MPI lemmas.
 
     Returns
     -------
@@ -477,11 +514,208 @@ def _render_library_parts(
     # ``lemma`` while checked (generated) ones say ``theorem``, a tell.
     entries = [
         f"### `{p.full_name}` at `{p.file_path}`\n```lean\n{render_one(p)}\n```"
-        for p in _library_premises(theorem, k, depth)
+        for p in _library_premises(theorem, k, depth, exclude_seeds)
     ]
     if entries:
         parts.append("## Library context\n" + "\n\n".join(entries))
     return parts
+
+
+#: Accept a positional pad within this many PROMPT tokens of the content rung:
+#: cl100k merges at filler boundaries make an exact hit impossible for some
+#: cells, and the study tokenizer is only a proxy for the model's anyway.
+_PAD_TOLERANCE_TOKENS = 3
+_PAD_TOLERANCE_SCAN = 64
+
+#: Whitespace units per filler line; a newline every line keeps the block
+#: paginating like source text instead of forming one enormous line.
+_FILLER_LINE_UNITS = 40
+
+
+#: Deterministic lorem-ipsum word stream for the prose filler.
+_LOREM_WORDS = (
+    "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor "
+    "incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud "
+    "exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat duis aute "
+    "irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla "
+    "pariatur excepteur sint occaecat cupidatat non proident sunt in culpa qui officia "
+    "deserunt mollit anim id est laborum"
+).split()
+_LOREM_LINE_WORDS = 12
+
+
+def _lorem_text(n_words: int) -> str:
+    """The first `n_words` of the cycled lorem stream, `_LOREM_LINE_WORDS` per line."""
+    words = [_LOREM_WORDS[i % len(_LOREM_WORDS)] for i in range(n_words)]
+    lines = [" ".join(words[i : i + _LOREM_LINE_WORDS]) for i in range(0, n_words, _LOREM_LINE_WORDS)]
+    return "\n".join(lines)
+
+
+def _filler_block(tokenizer, unit: str, target_tokens: int, kind: str = "ws") -> str:
+    """A multi-line filler block costing exactly `target_tokens` tokens.
+
+    ``kind="ws"``: lines of `_FILLER_LINE_UNITS` whitespace units. ``kind="lorem"``:
+    lorem-ipsum prose, `_LOREM_LINE_WORDS` words per line. The size is bracketed
+    by binary search because merges make cost non-linear. ``""`` for a
+    non-positive target.
+    """
+    if target_tokens <= 0:
+        return ""
+
+    def build(n: int) -> str:
+        if kind == "lorem":
+            return _lorem_text(n)
+        lines = [unit * _FILLER_LINE_UNITS] * (n // _FILLER_LINE_UNITS)
+        rest = n % _FILLER_LINE_UNITS
+        if rest:
+            lines.append(unit * rest)
+        return "\n".join(lines)
+
+    lo, hi = 0, max(4, target_tokens * 2)
+    while tokenizer.count(build(hi)) < target_tokens:
+        hi *= 2
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if tokenizer.count(build(mid)) < target_tokens:
+            lo = mid + 1
+        else:
+            hi = mid
+    return build(lo)
+
+
+def _render_padded_library_parts(
+    theorem: BenchmarkTheorem, k: int, depth: int, mode: str
+) -> list[str]:
+    """``sigpad:depth`` / ``proofpad:depth``: the block with fillers in place.
+
+    ``sigpad``: ``sig:depth`` with every non-MPI entry (header and all) replaced
+    by a same-token filler, so the MPI entries sit at their original token
+    depth. ``proofpad``: ``proof:depth`` with each entry's proof body replaced
+    by a same-token filler under its signature (MPI entries included), so every
+    signature sits where ``proof:depth`` put it. The last filler is then grown
+    or shrunk so the whole prompt costs the content rung's exact token count.
+
+    Parameters
+    ----------
+    theorem : BenchmarkTheorem
+    k : int
+    depth : int
+    mode : str
+        ``"sigpad"``, ``"proofpad"`` (whitespace filler), ``"siglorem"`` or
+        ``"prooflorem"`` (lorem-ipsum filler).
+
+    Returns
+    -------
+    list[str]
+        The content rung's parts unchanged when there is nothing to pad.
+    """
+    from smolbench.evals.tokenization import (
+        TiktokenTokenizer,
+        choose_whitespace_unit,
+    )
+
+    from .premises import body_with_proof, lookup, signature  # pylint: disable=cyclic-import
+
+    tokenizer = TiktokenTokenizer()
+    unit = choose_whitespace_unit(tokenizer)
+    form = "sig" if mode in ("sigpad", "siglorem") else "proof"
+    kind = "lorem" if mode.endswith("lorem") else "ws"
+    content_parts = _render_library_parts(theorem, k, depth, form)
+    premises = _library_premises(theorem, k, depth)
+    if not premises:
+        return content_parts
+    mpi = {
+        p.full_name
+        for rec in theorem.traced_tactics[k].premises
+        if (p := lookup(rec["full_name"])) is not None
+    }
+
+    def entry(p, text: str) -> str:
+        return f"### `{p.full_name}` at `{p.file_path}`\n```lean\n{text}\n```"
+
+    # Each slot: ("keep", text) or ("fill", prefix, suffix, target_tokens) where
+    # the filler goes between prefix and suffix.
+    slots: list[tuple] = []
+    for p in premises:
+        if form == "sig":
+            text = entry(p, signature(p))
+            if p.full_name in mpi:
+                slots.append(("keep", text))
+            else:
+                slots.append(("fill", "", "", tokenizer.count(text)))
+        else:
+            sig_entry = entry(p, signature(p))
+            body_tokens = tokenizer.count(entry(p, body_with_proof(p))) - tokenizer.count(sig_entry)
+            if body_tokens <= 0:
+                slots.append(("keep", sig_entry))
+            else:
+                head, _, _ = sig_entry.rpartition("\n```")
+                slots.append(("fill", head + "\n", "\n```", body_tokens))
+    fill_idx = [i for i, s in enumerate(slots) if s[0] == "fill"]
+    if not fill_idx:
+        return content_parts
+
+    base = _render_stepk_parts(theorem, k, 2)
+    targets = {i: slots[i][3] for i in fill_idx}
+
+    extra = {"units": 0}  # fine adjustment appended to the last filler's final line
+
+    def emit(i: int) -> str:
+        s = slots[i]
+        if s[0] == "keep":
+            return s[1]
+        block = _filler_block(tokenizer, unit, targets[i], kind)
+        if i == last and extra["units"] > 0:
+            block = block + (" " + " ".join(_LOREM_WORDS[:extra["units"]]) if kind == "lorem" else unit * extra["units"])
+        return s[1] + block + s[2]
+
+    def assemble() -> list[str]:
+        return base + ["## Library context\n" + "\n\n".join(emit(i) for i in range(len(slots)))]
+
+    target = tokenizer.count(_as_full_prompt(depth, "\n\n".join(content_parts)))
+    last = fill_idx[-1]
+
+    def total() -> int:
+        return tokenizer.count(_as_full_prompt(depth, "\n\n".join(assemble())))
+
+    # Coarse: correct the total on the last filler; when it cannot absorb a
+    # reduction, spread the reduction over every filler in proportion to its
+    # size (moving the MPI by a fraction of a percent). Fine: append single
+    # units, each ~1 token, until the totals agree. Boundary merges make
+    # neither step exactly linear, so a small residual is tolerated.
+    for _ in range(12):
+        got = total()
+        delta = target - got
+        if abs(delta) <= _PAD_TOLERANCE_TOKENS:
+            break
+        if delta > 0 or targets[last] + delta - 2 >= 0:
+            targets[last] = max(0, targets[last] + delta - 2)
+        else:
+            total_fill = sum(targets.values()) or 1
+            for i in fill_idx:
+                targets[i] = max(0, targets[i] + int(round(delta * targets[i] / total_fill)) - 1)
+    for _ in range(_PAD_TOLERANCE_SCAN):
+        got = total()
+        if got >= target:
+            break
+        extra["units"] += 1
+    got = total()
+    if abs(got - target) > _PAD_TOLERANCE_TOKENS:
+        raise ValueError(
+            f"{mode}:{depth} for {theorem.full_name!r} at k={k}: padded prompt is "
+            f"{got} PROMPT tokens, content rung is {target}"
+        )
+    return assemble()
+
+
+def _render_hoponly_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
+    """``hoponly:N`` = ``sig:N`` minus the MPI lemmas: the N-hop closure alone.
+
+    Level 0 would be an empty block, so it is rejected.
+    """
+    if level < 1:
+        raise ValueError(f"hoponly:{level} not defined; only hoponly:1+ supported")
+    return _render_library_parts(theorem, k, level, "sig", exclude_seeds=True)
 
 
 def _render_signoise_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
@@ -575,6 +809,12 @@ def render(
         parts = _render_signoise_parts(theorem, k, level)
     elif chain == "proofnoise":
         parts = _render_proofnoise_parts(theorem, k, level)
+    elif chain == "hoponly":
+        parts = _render_hoponly_parts(theorem, k, level)
+    elif chain in ("sigpad", "proofpad", "siglorem", "prooflorem"):
+        if chain in ("sigpad", "siglorem") and level < 1:
+            raise ValueError(f"{chain}:0 not defined; sig:0 has no non-MPI entry to pad")
+        parts = _render_padded_library_parts(theorem, k, level, chain)
     else:
         raise ValueError(f"unknown chain {chain!r}")
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
@@ -718,4 +958,21 @@ def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=t
         base_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(base)))
         target_tokens = tokenizer.count(_as_full_prompt(level, "\n\n".join(target)))
         return target_tokens - base_tokens <= 0
+    if chain in ("sigpad", "proofpad", "siglorem", "prooflorem"):
+        # Trivial exactly when the padded rendering equals the content rendering
+        # (no filler slot: no non-MPI entry, or no proof body anywhere).
+        if chain in ("sigpad", "siglorem") and level < 1:
+            return True
+        form = "sig" if chain in ("sigpad", "siglorem") else "proof"
+        return _render_padded_library_parts(theorem, k, level, chain) == _render_library_parts(
+            theorem, k, level, form
+        )
+    if chain == "hoponly":
+        # Trivial when the closure minus the MPI is empty, or gains nothing
+        # over the level below.
+        if level < 1 or not _library_premises(theorem, k, level, exclude_seeds=True):
+            return True
+        return level > 1 and len(_library_premises(theorem, k, level, True)) == len(
+            _library_premises(theorem, k, level - 1, True)
+        )
     return False

@@ -49,7 +49,7 @@ def test_sig_block_is_unflagged_and_in_library_order(thms: dict) -> None:
     assert "exact absurd h" not in text
     assert "theorem Mini.premiseA {n : ℕ} (h : P n) : R n" in text
     # The stepk:2 base is intact.
-    for h in ("## Current goal", "## Full tactic state", "## Proof so far", "## Theorem"):
+    for h in ("## Current goal", "## Full tactic state", "## Proof so far", "## File"):
         assert h in text
 
 
@@ -106,3 +106,51 @@ def test_block_lists_a_twice_cited_lemma_once(thms: dict) -> None:
     a2 = dataclasses.replace(a, traced_tactics=a.traced_tactics[:2] + [doubled])
     text = context.render(a2, 2, "sig", 0).text
     assert text.count("### `Mini.premiseA`") == 1
+
+
+def test_hoponly_is_the_closure_without_the_mpi(thms: dict) -> None:
+    """``hoponly:N`` lists sig:N's entries minus the MPI lemmas; level 0 is rejected."""
+    a = thms["Mini.theoremA"]
+    sig1 = context.render(a, 2, "sig", 1).text
+    mpi = {p["full_name"] for p in a.traced_tactics[2].premises}
+    hop = context._library_premises(a, 2, 1, exclude_seeds=True)
+    assert not {p.full_name for p in hop} & mpi
+    assert len(hop) == len(context._library_premises(a, 2, 1)) - len(
+        {p.full_name for p in context._library_premises(a, 2, 0)}
+    )
+    if hop:
+        text = context.render(a, 2, "hoponly", 1).text
+        for name in mpi:
+            assert f"### `{name}`" not in text
+        assert "## Library context" in text
+    else:
+        # The fixture's premises cite nothing, so the block is empty and trivial.
+        assert "## Library context" not in context.render(a, 2, "hoponly", 1).text
+        assert context.is_trivial_rung(a, 2, "hoponly", 1) is True
+    assert "## Library context" in sig1
+    with pytest.raises(ValueError):
+        context.render(a, 2, "hoponly", 0)
+    context.validate("hoponly", 9)
+
+
+def test_positional_pads_keep_the_mpi_where_the_content_rung_puts_it(thms: dict) -> None:
+    """``sigpad``/``proofpad`` match the content rung's prompt tokens and leave the MPI entry in place."""
+    pytest.importorskip("tiktoken")
+    from smolbench.evals.tokenization import TiktokenTokenizer
+
+    tok = TiktokenTokenizer()
+    a = thms["Mini.theoremA"]
+    # proofpad:0 replaces premiseA's proof body under its signature.
+    pp = prompt.build_user_prompt(context.render(a, 2, "proofpad", 0))
+    pf = prompt.build_user_prompt(context.render(a, 2, "proof", 0))
+    sg = prompt.build_user_prompt(context.render(a, 2, "sig", 0))
+    assert abs(tok.count(pp) - tok.count(pf)) <= context._PAD_TOLERANCE_TOKENS
+    assert "### `Mini.premiseA`" in pp
+    assert pp.find("### `Mini.premiseA`") == pf.find("### `Mini.premiseA`")
+    assert pp != sg, "the pad must occupy the proof body's place, not vanish"
+    assert max(len(line) for line in pp.splitlines()) < 200, "line-structured filler, no giant line"
+    with pytest.raises(ValueError):
+        context.render(a, 2, "sigpad", 0)
+    # The fixture's 1-hop closure is empty, so sigpad:1 has nothing to pad and is trivial.
+    assert context.is_trivial_rung(a, 2, "sigpad", 1) is True
+    context.validate("proofpad", 9)

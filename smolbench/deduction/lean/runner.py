@@ -782,6 +782,11 @@ _CHAIN_ORDER = {
     "signoise": 4,
     "proof": 5,
     "proofnoise": 6,
+    "hoponly": 7,
+    "sigpad": 8,
+    "proofpad": 9,
+    "siglorem": 10,
+    "prooflorem": 11,
 }
 
 
