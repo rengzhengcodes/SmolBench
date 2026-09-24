@@ -49,7 +49,7 @@ def test_sig_block_is_unflagged_and_in_library_order(thms: dict) -> None:
     assert "exact absurd h" not in text
     assert "theorem Mini.premiseA {n : ℕ} (h : P n) : R n" in text
     # The stepk:2 base is intact.
-    for h in ("## Current goal", "## Full tactic state", "## Proof so far", "## Theorem"):
+    for h in ("## Current goal", "## Full tactic state", "## Proof so far", "## File"):
         assert h in text
 
 

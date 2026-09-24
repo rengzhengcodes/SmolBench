@@ -157,7 +157,9 @@ def _render_stepk_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[s
             parts.append(
                 "## Proof so far\n_(no tactics applied yet — this is the start of the proof)_"
             )
-        parts.append(f"## Theorem\n`{theorem.full_name}` in `{theorem.file_path}`")
+        # The file, not the theorem's name: the verifier's environment holds the
+        # original declaration, so a named theorem can be cited as its own proof.
+        parts.append(f"## File\n`{theorem.file_path}`")
     return parts
 
 
