@@ -192,37 +192,178 @@ else
     # imported on the trace path; the `shim` phase covers the two that are
     # hard-imported but unused.
     run "'$VENV/bin/pip' install lean-dojo-v2==1.0.9 --no-deps"
-    run "'$VENV/bin/pip' install loguru tqdm networkx lxml gitpython PyGithub python-dotenv toml"
+    # Every third-party root imported under lean_dojo_v2/{lean_dojo,utils}/,
+    # verified by importing the wheel with exactly this set (2026-09-22).
+    run "'$VENV/bin/pip' install loguru tqdm networkx lxml gitpython PyGithub python-dotenv toml filelock psutil requests typing_extensions"
     phase_end
 fi
 
 # --------------------------------------------------------------------------
 # Phase 2: shim
 # --------------------------------------------------------------------------
-# lean_dojo/utils/__init__.py hard-imports `deepspeed` and `pytorch_lightning`
-# at module import time -- before any tracing code runs and although the trace
-# path never calls into either. Installing them for real would drag in the
-# conflicting ML stack --no-deps exists to avoid, so two empty stub modules on
-# the venv's site-packages path satisfy the import and nothing else.
+# lean_dojo_v2/utils/common.py hard-imports, at module import time and before
+# any tracing code runs:
+#     from deepspeed.utils.zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
+#     from pytorch_lightning.strategies.deepspeed import DeepSpeedStrategy
+# Neither is used on the trace path. Installing them for real would drag in the
+# conflicting ML stack --no-deps exists to avoid, so package-shaped stubs that
+# define exactly those two names satisfy the imports. A flat `deepspeed.py`
+# does NOT work: the submodule imports above fail on it (first launch, 2026-09-22).
 SHIM_PY=$(cat <<'EOF'
 import pathlib
 import sysconfig
 
-site_packages = pathlib.Path(sysconfig.get_paths()["purelib"])
+sp = pathlib.Path(sysconfig.get_paths()["purelib"])
 banner = (
-    "# SmolBench stub: lean_dojo.utils hard-imports this module at import time\n"
+    "# SmolBench stub: lean_dojo_v2.utils.common imports this at module load\n"
     "# but tracing never uses it. Installing the real package would pull the\n"
     "# heavy, self-conflicting ML stack that `pip install --no-deps` avoids.\n"
 )
-for module in ("deepspeed", "pytorch_lightning"):
-    (site_packages / f"{module}.py").write_text(banner)
-    print(f"shimmed {site_packages / (module + '.py')}")
+files = {
+    "deepspeed/__init__.py": banner,
+    "deepspeed/utils/__init__.py": banner,
+    "deepspeed/utils/zero_to_fp32.py": banner
+    + "def convert_zero_checkpoint_to_fp32_state_dict(*a, **k):\n"
+    + "    raise RuntimeError('deepspeed stub')\n",
+    "pytorch_lightning/__init__.py": banner,
+    "pytorch_lightning/strategies/__init__.py": banner,
+    "pytorch_lightning/strategies/deepspeed.py": banner + "class DeepSpeedStrategy:\n    pass\n",
+}
+for rel, text in files.items():
+    path = sp / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(f"shimmed {path}")
+
+# lean-dojo-v2 1.0.9 supports Lean <= v4.30 (utils/lean.py is_supported_version).
+# On Lean v4.34 its AST loader died in CommandDeclarationNode.from_data with a
+# bare AssertionError (second launch, 2026-09-22, after a complete 1h45m
+# extraction): a `declaration` command whose body is a syntax kind the loader
+# has no class for. Downstream code already skips declarations with
+# `name is None` (the antiquotation branch), so treat an unknown body the same
+# way and log its kind once, instead of aborting the whole trace.
+ast_path = sp / "lean_dojo_v2" / "lean_dojo" / "data_extraction" / "ast.py"
+src = ast_path.read_text()
+old = """        if isinstance(children[0], CommandDeclmodifiersAntiquotNode):
+            name = None
+        else:
+            assert isinstance(children[0], CommandDeclmodifiersNode)
+            assert isinstance(
+                children[1],
+                (
+                    CommandDefNode,
+                    CommandDefinitionNode,
+                    CommandTheoremNode,
+                    CommandInductiveNode,
+                    CommandClassinductiveNode,
+                    CommandStructureNode,
+                    CommandInstanceNode,
+                    CommandAbbrevNode,
+                    CommandOpaqueNode,
+                    CommandAxiomNode,
+                    CommandExampleNode,
+                ),
+            )
+            name = children[1].name
+"""
+new = """        _known_bodies = (
+            CommandDefNode,
+            CommandDefinitionNode,
+            CommandTheoremNode,
+            CommandInductiveNode,
+            CommandClassinductiveNode,
+            CommandStructureNode,
+            CommandInstanceNode,
+            CommandAbbrevNode,
+            CommandOpaqueNode,
+            CommandAxiomNode,
+            CommandExampleNode,
+        )
+        if isinstance(children[0], CommandDeclmodifiersAntiquotNode):
+            name = None
+        elif not isinstance(children[0], CommandDeclmodifiersNode) or len(
+            children
+        ) < 2 or not isinstance(children[1], _known_bodies):
+            # SmolBench patch: unknown declaration shape (newer Lean syntax).
+            kinds = tuple(type(c).__name__ for c in children)
+            if kinds not in _SMOLBENCH_UNKNOWN_DECLS:
+                _SMOLBENCH_UNKNOWN_DECLS.add(kinds)
+                logger.warning(
+                    f"smolbench: skipping declaration with unknown shape {kinds} in {lean_file.path}"
+                )
+            name = None
+        else:
+            name = children[1].name
+"""
+marker = "_SMOLBENCH_UNKNOWN_DECLS"
+if marker in src:
+    print("ast.py already patched")
+else:
+    assert src.count(old) == 1, "ast.py block to patch not found exactly once"
+    src = src.replace(old, new)
+    # module-level state + logger import, right after the imports
+    anchor = "\n\n@dataclass"
+    assert anchor in src
+    src = src.replace(
+        anchor,
+        "\n\nfrom loguru import logger  # SmolBench patch\n_SMOLBENCH_UNKNOWN_DECLS = set()  # SmolBench patch\n\n@dataclass",
+        1,
+    )
+    ast_path.write_text(src)
+    print(f"patched {ast_path}")
+
+# --- traced_data.py: keep cross-file premises -------------------------------
+# get_annotated_tactic drops every IdentNode whose def_start/def_end is None.
+# ExtractData.lean under Lean v4.34 reports `defPos: null` for every constant
+# imported from another module (declaration ranges are not available for
+# imports), so the unpatched export annotated only same-file premises: 16% of
+# tactics carried any premise and every cross-file citation (`zero_add`,
+# `Equiv.symm_apply_apply`, ...) was lost (found 2026-09-23 on the first
+# 2ca39e62 export; 1,738 of 2,002 extracted premises in one file had no
+# defPos). Keep the premise and emit def_pos/def_end_pos as null; smolbench's
+# premises.missing_trace_premises tolerates that.
+td_path = sp / "lean_dojo_v2" / "lean_dojo" / "data_extraction" / "traced_data.py"
+src = td_path.read_text()
+old = """            if (
+                node.full_name is not None
+                and node.mod_name is not None
+                and node.def_start is not None
+                and node.def_end is not None
+            ):
+                if cur <= node.start:
+                    annot_tac.append(lean_file[cur : node.start])
+                    annot_tac.append("<a>" + lean_file[node.start : node.end] + "</a>")
+                    prov = {"full_name": node.full_name}
+                    prov["def_path"] = node.def_path
+                    prov["def_pos"] = list(node.def_start)
+                    prov["def_end_pos"] = list(node.def_end)
+"""
+new = """            # SmolBench patch: keep premises without a definition position.
+            if (
+                node.full_name is not None
+                and node.mod_name is not None
+                and node.def_path is not None
+            ):
+                if cur <= node.start:
+                    annot_tac.append(lean_file[cur : node.start])
+                    annot_tac.append("<a>" + lean_file[node.start : node.end] + "</a>")
+                    prov = {"full_name": node.full_name}
+                    prov["def_path"] = node.def_path
+                    prov["def_pos"] = list(node.def_start) if node.def_start is not None else None
+                    prov["def_end_pos"] = list(node.def_end) if node.def_end is not None else None
+"""
+if "SmolBench patch: keep premises without a definition position" in src:
+    print("traced_data.py already patched")
+else:
+    assert src.count(old) == 1, "traced_data.py annotation block not found exactly once"
+    td_path.write_text(src.replace(old, new))
+    print(f"patched {td_path}")
 EOF
 )
 
 phase_start shim
-if already "$VENV/lib/python3.12/site-packages/deepspeed.py"; then
-    skip_phase "deepspeed.py stub"
+if already "$VENV/lib/python3.12/site-packages/deepspeed/utils/zero_to_fp32.py"; then
+    skip_phase "deepspeed package stub"
 else
     run_python "$SHIM_PY"
     phase_end
@@ -250,6 +391,9 @@ run "mkdir -p '$CACHE_DIR' '$TMP_DIR'"
 run "export CACHE_DIR=$CACHE_DIR"
 run "export TMP_DIR=$TMP_DIR"
 run "export NUM_PROCS=$NUM_PROCS"
+# Progress without SSH: copy the log to S3 every 10 minutes for the life of
+# this script. The final log still lands as trace.log via the launcher.
+run "( while true; do aws s3 cp '$LOG' '${S3_PREFIX}${COMMIT}/trace.progress.log' >/dev/null 2>&1 || true; sleep 600; done ) &"
 phase_end
 
 # --------------------------------------------------------------------------
@@ -284,16 +428,37 @@ fi
 # --------------------------------------------------------------------------
 # Phase 6: trace
 # --------------------------------------------------------------------------
-# The repo argument is the LOCAL checkout path, using lean-dojo-v2's
-# local-checkout support: passing the GitHub URL would make LeanDojo clone and
-# build its own copy, discarding the `lake exe cache get` done above.
-# build_deps=True so that premises defined in mathlib4's dependencies (std,
-# aesop, Qq, ...) appear in corpus.jsonl -- the deduction eval's premise lookup
-# resolves against the whole library, not just Mathlib/.
+# The package is `lean_dojo_v2`; its LeanDojo API lives under
+# `lean_dojo_v2.lean_dojo` (first launch failed on `import lean_dojo`).
+#
+# The repo argument is the LOCAL checkout path. lean-dojo-v2 does NOT trace in
+# place: `_trace` runs `git clone` of that path into a scratch dir, which drops
+# the untracked `.lake/` and with it the oleans phase 5 fetched, and with
+# build_deps=True it never runs `lake exe cache get` itself, so `lake build`
+# would compile all of mathlib4 from source. The wrapper below runs
+# `lake exe cache get` inside the tracer's clone right before its `lake build`
+# (Mathlib's cache covers the dependencies' oleans too), so phase 5 only
+# serves to install the pinned toolchain and warm the cache download.
+# build_deps=True so that premises defined in mathlib4's dependencies (Init,
+# Batteries, Aesop, Qq, ...) appear in corpus.jsonl -- the deduction eval's
+# premise lookup resolves against the whole library, not just Mathlib/.
 TRACE_PY=$(cat <<EOF
-from lean_dojo import LeanGitRepo, generate_benchmark
+import os
+import lean_dojo_v2.lean_dojo.data_extraction.trace as T
+from lean_dojo_v2.lean_dojo import LeanGitRepo, generate_benchmark
+
+_execute = T.execute
+
+def execute(cmd, *args, **kwargs):
+    if cmd == "lake build":
+        print("smolbench: fetching Mathlib oleans inside the tracer's clone", flush=True)
+        _execute("lake exe cache get", *args, **kwargs)
+    return _execute(cmd, *args, **kwargs)
+
+T.execute = execute
 
 repo = LeanGitRepo("$CHECKOUT", "$COMMIT")
+print(f"smolbench: repo={repo} lean={repo.lean_version} procs={os.environ.get('NUM_PROCS')}", flush=True)
 generate_benchmark(repo, "$EXPORT_DIR", build_deps=True)
 print("export written to $EXPORT_DIR")
 EOF

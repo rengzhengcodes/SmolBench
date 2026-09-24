@@ -3,8 +3,8 @@
 # (LeanDojo-v2 trace of mathlib4 at $COMMIT -> S3), then shuts itself down.
 #
 # The runbook is shipped inside the cloud-init user-data (gzip+base64, ~7 KB of
-# the 16 KB cap), so the box needs no repo checkout and no SSH. Progress and the
-# final log land under $S3_PREFIX$COMMIT/ next to the tarball.
+# the 16 KB cap), so the box needs no repo checkout. Progress and the final log
+# land under $S3_PREFIX$COMMIT/ next to the tarball.
 #
 # Usage:
 #   scripts/deduction/launch_trace_box.sh [--dry-run] [--force]
@@ -13,7 +13,19 @@
 #      ~4 GiB per concurrent Lean process), TRACE_VOLUME_GB (default 300),
 #      COMMIT (default 2ca39e62...), MAX_LIFETIME_MIN (default 720),
 #      TRACE_GITHUB_TOKEN_SSM_PARAM (default
-#      /smolbench/deduction/github_access_token) -- see SECRET MANAGEMENT below.
+#      /smolbench/deduction/github_access_token) -- see SECRET MANAGEMENT below,
+#      TRACE_SSH_PUBKEY (default ~/.ssh/id_ed25519.pub), TRACE_SSH_CIDR (default
+#      auto: this workstation's egress IP /32) -- see SSH ACCESS below.
+#
+# SSH ACCESS (2026-09-23): the operator's `aws login` token lives ~15 min and
+# its refresh fails, so a box reachable only through SSM/S3 goes dark every
+# time the token dies. The launcher therefore (a) appends the operator's
+# PUBLIC key to ubuntu's authorized_keys via user-data (a public key is not a
+# secret; the private half never leaves the workstation) and (b) puts the box
+# in a dedicated security group `smolbench-trace-ssh` that admits TCP/22 from
+# $TRACE_SSH_CIDR only. After that, `ssh -i <key> ubuntu@<ip>` and scp of
+# /mnt/data/<tarball> need no AWS credentials at all. Set TRACE_SSH_PUBKEY to
+# an empty string to launch without SSH. Public IPs change on stop/start.
 #
 # --dry-run prints the launch plan and touches no AWS API that needs
 # credentials (see the AMI note below); --force skips the idempotency check
@@ -48,6 +60,16 @@
 #     aws ssm put-parameter --region us-west-2 --type SecureString \
 #       --name /smolbench/deduction/github_access_token \
 #       --value file:///path/to/token.txt --overwrite
+#
+# LIFECYCLE (2026-09-22): the instance STOPS on shutdown instead of terminating.
+# Both of the runbook's shutdown paths (the $LIFETIME backstop and the final
+# `shutdown -h now`) therefore preserve the root volume: the checkout, the
+# LeanDojo cache with the traced repo, and any partial export survive for
+# inspection or resume, and the box can be started again. The operator
+# terminates it by hand once the tarball has been downloaded. A stopped box
+# bills only for its volume. The instance role carries
+# AmazonSSMManagedInstanceCore so `aws ssm send-command` can read logs and
+# cancel the backstop timer without SSH.
 #
 # IDEMPOTENCY (review finding: run-instances had no check at all). The tag
 # below is derived from $COMMIT, so re-running this script for a commit that
@@ -125,6 +147,24 @@ ROLE="${EC2_INSTANCE_ROLE_NAME:-smolbench-ec2-role}"
 TAG="smolbench-trace-$COMMIT"
 # Parameter NAME only -- never a value -- see SECRET MANAGEMENT above.
 SSM_PARAM="${TRACE_GITHUB_TOKEN_SSM_PARAM:-/smolbench/deduction/github_access_token}"
+# SSH ACCESS (see header). ${VAR-default} (not :-) so an explicitly empty
+# TRACE_SSH_PUBKEY disables SSH instead of falling back to the default key.
+SSH_PUBKEY_FILE="${TRACE_SSH_PUBKEY-$HOME/.ssh/id_ed25519.pub}"
+SSH_CIDR="${TRACE_SSH_CIDR:-auto}"
+SSH_SG_NAME="smolbench-trace-ssh"
+PUBKEY=""
+if [ -n "$SSH_PUBKEY_FILE" ]; then
+    [ -r "$SSH_PUBKEY_FILE" ] || { echo "TRACE_SSH_PUBKEY not readable: $SSH_PUBKEY_FILE (set it to '' to launch without SSH)" >&2; exit 2; }
+    PUBKEY=$(head -n1 "$SSH_PUBKEY_FILE")
+    # The key is interpolated into the UNQUOTED user-data heredoc below; refuse
+    # anything that could expand there. A real OpenSSH public key never contains
+    # these characters.
+    case "$PUBKEY" in
+        *'`'*|*'$'*|*"'"*|*'"'*|*'\'*) echo "public key contains shell metacharacters; refusing" >&2; exit 2 ;;
+        ssh-*|ecdsa-*|sk-*) ;;
+        *) echo "$SSH_PUBKEY_FILE does not look like an OpenSSH public key" >&2; exit 2 ;;
+    esac
+fi
 
 # --------------------------------------------------------------------------
 # AMI resolution. The one AWS call --dry-run cannot avoid without changing
@@ -149,8 +189,9 @@ PAYLOAD=$(gzip -9c "$RUNBOOK" | base64 -w0)
 # must interpolate its own shell variables into the script that runs on the
 # instance. The only things that heredoc interpolation may ever substitute
 # are: $PAYLOAD (the gzipped+base64 runbook, not a secret), $COMMIT,
-# $S3_PREFIX, $LIFETIME, $REGION and $SSM_PARAM (an SSM parameter NAME, which
-# is not sensitive -- only the VALUE it names is). NEVER add a variable here
+# $S3_PREFIX, $LIFETIME, $REGION, $SSM_PARAM (an SSM parameter NAME, which
+# is not sensitive -- only the VALUE it names is) and $PUBKEY (the operator's
+# PUBLIC SSH key, validated above to contain no shell metacharacters). NEVER add a variable here
 # that holds a secret VALUE (e.g. a token, a password); that is exactly the
 # hole this revision closes -- see SECRET MANAGEMENT above. Anywhere the
 # heredoc body needs a shell variable to be resolved ON THE INSTANCE instead
@@ -161,8 +202,14 @@ USERDATA=$(cat <<UD
 #!/bin/bash
 set -euo pipefail
 exec > >(tee -a /var/log/smolbench-trace.log) 2>&1
-shutdown -h +$LIFETIME   # hard backstop: nothing here may bill past $LIFETIME min
+shutdown -h +$LIFETIME   # cost backstop: STOPS (not terminates) the box after $LIFETIME min; `shutdown -c` over SSM extends
 mkdir -p /mnt/data && chown ubuntu:ubuntu /mnt/data
+# SSH ACCESS: operator's public key (empty when launched with TRACE_SSH_PUBKEY='').
+if [ -n '$PUBKEY' ]; then
+  install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+  echo '$PUBKEY' >> /home/ubuntu/.ssh/authorized_keys
+  chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys && chmod 600 /home/ubuntu/.ssh/authorized_keys
+fi
 echo '$PAYLOAD' | base64 -d | gunzip > /home/ubuntu/trace_mathlib_ec2.sh
 chmod +x /home/ubuntu/trace_mathlib_ec2.sh
 apt-get update -y && apt-get install -y awscli || snap install aws-cli --classic || true
@@ -209,15 +256,52 @@ export GITHUB_ACCESS_TOKEN=\$TOKEN
 su ubuntu -c "cd /home/ubuntu && ./trace_mathlib_ec2.sh --commit $COMMIT --s3-prefix $S3_PREFIX" \
   && echo TRACE_OK || echo TRACE_FAILED
 aws s3 cp /var/log/smolbench-trace.log "$S3_PREFIX$COMMIT/trace.log" || true
-shutdown -h now
+# No shutdown here (2026-09-23): the box stays up, success or failure, so the
+# operator can inspect the log, the traced files and the export on the box and
+# rerun a failed phase in place. Two earlier runs were lost to an immediate
+# shutdown. The $LIFETIME backstop above still STOPS (never terminates) the
+# box as a cost guard; cancel it with `shutdown -c` over SSM if a run needs
+# longer. The operator stops/terminates the box by hand once the tarball has
+# been downloaded and checked.
+echo "TRACE PHASES FINISHED; box left running for inspection"
 UD
 )
 if (( DRY_RUN )); then
   echo "region=$REGION type=$ITYPE vol=${VOL}G ami=$AMI role=$ROLE tag=$TAG lifetime=${LIFETIME}min force=$FORCE ssm_param=$SSM_PARAM"
+  echo "ssh: pubkey=${SSH_PUBKEY_FILE:-<none>} cidr=$SSH_CIDR sg=$SSH_SG_NAME (resolved at launch)"
   echo "user-data bytes: $(printf '%s' "$USERDATA" | wc -c) (cap 16384)"
   exit 0
 fi
 [ "$(printf '%s' "$USERDATA" | wc -c)" -lt 16384 ] || { echo "user-data exceeds 16 KB" >&2; exit 1; }
+
+# --------------------------------------------------------------------------
+# SSH security group (see SSH ACCESS in the header). One reusable group per
+# region in the default VPC; each launch adds the current egress CIDR as a
+# rule (an existing identical rule is not an error). Skipped entirely when
+# SSH is disabled, in which case the instance gets the VPC's default group as
+# before.
+# --------------------------------------------------------------------------
+SG_ARGS=()
+if [ -n "$PUBKEY" ]; then
+  if [ "$SSH_CIDR" = auto ]; then
+    SSH_CIDR="$(curl -fsS --max-time 10 https://checkip.amazonaws.com)/32"
+  fi
+  VPC=$(aws ec2 describe-vpcs --region "$REGION" --filters Name=is-default,Values=true \
+        --query 'Vpcs[0].VpcId' --output text)
+  SG=$(aws ec2 describe-security-groups --region "$REGION" \
+       --filters "Name=group-name,Values=$SSH_SG_NAME" "Name=vpc-id,Values=$VPC" \
+       --query 'SecurityGroups[0].GroupId' --output text)
+  if [ -z "$SG" ] || [ "$SG" = None ]; then
+    SG=$(aws ec2 create-security-group --region "$REGION" --vpc-id "$VPC" \
+         --group-name "$SSH_SG_NAME" --description "SSH to smolbench trace boxes from operator IPs" \
+         --query GroupId --output text)
+  fi
+  aws ec2 authorize-security-group-ingress --region "$REGION" --group-id "$SG" \
+    --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$SSH_CIDR,Description=launch_trace_box}]" \
+    >/dev/null 2>&1 || true   # InvalidPermission.Duplicate when the rule already exists
+  SG_ARGS=(--security-group-ids "$SG")
+  echo "ssh: $SSH_CIDR -> :22 via $SG" >&2
+fi
 
 # --------------------------------------------------------------------------
 # Idempotency check (review finding: run-instances had none). $TAG is
@@ -240,10 +324,17 @@ if (( ! FORCE )); then
   fi
 fi
 
-aws ec2 run-instances --region "$REGION" --image-id "$AMI" --instance-type "$ITYPE" \
+ID=$(aws ec2 run-instances --region "$REGION" --image-id "$AMI" --instance-type "$ITYPE" \
   --iam-instance-profile "Name=$ROLE" \
   --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":$VOL,\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
-  --instance-initiated-shutdown-behavior terminate \
+  --instance-initiated-shutdown-behavior stop \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG},{Key=smolbench:experiment,Value=trace-postcutoff}]" \
-  --user-data "$USERDATA" \
-  --query 'Instances[0].InstanceId' --output text
+  --user-data "$USERDATA" "${SG_ARGS[@]}" \
+  --query 'Instances[0].InstanceId' --output text)
+echo "$ID"
+if [ -n "$PUBKEY" ]; then
+  aws ec2 wait instance-running --region "$REGION" --instance-ids "$ID"
+  IP=$(aws ec2 describe-instances --region "$REGION" --instance-ids "$ID" \
+       --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+  echo "ssh -i ${SSH_PUBKEY_FILE%.pub} ubuntu@$IP    # log: /mnt/data/trace_mathlib_ec2.log; no AWS creds needed" >&2
+fi
