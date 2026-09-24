@@ -40,6 +40,24 @@ class ReplError(Exception):
     """
 
 
+class ReplTimeout(ReplError):
+    """A request exceeded the per-request timeout.
+
+    `lean_interact` kills the server on timeout, so the session is dead
+    afterwards. `verify.try_tail` records this as the model verdict
+    ``"timeout"`` (the candidate tactic did not terminate) and reopens the
+    checkpoint for later candidates.
+    """
+
+
+class ReplClosed(ReplError):
+    """The REPL process is gone (killed, crashed, or pipe broken).
+
+    Infrastructure, not a verdict: the caller records ``"exception"`` and
+    `verify.Checkpoint` reopens the session before the next candidate.
+    """
+
+
 class StatementError(ReplError):
     """Deterministic failure to obtain a statement proof state.
 
@@ -600,11 +618,13 @@ class ReplSession:
         try:
             return self.server.run(request, timeout=self.timeout)
         except TimeoutError as exc:
-            raise ReplError(
+            raise ReplTimeout(
                 f"timeout after {self.timeout}s on {self.theorem}: {exc}"
             ) from exc
-        except BrokenPipeError as exc:
-            raise ReplError(f"REPL closed on {self.theorem}: {exc}") from exc
+        except (BrokenPipeError, ChildProcessError, ConnectionAbortedError) as exc:
+            # `lean_interact` raises ChildProcessError on a dead server and
+            # ConnectionAbortedError on a broken pipe; both mean the process is gone.
+            raise ReplClosed(f"REPL closed on {self.theorem}: {exc}") from exc
 
     def step(self, proof_state: int, tactic: str) -> StepOutcome:
         """Apply `tactic` at `proof_state` and classify the reply.

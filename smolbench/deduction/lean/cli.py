@@ -17,6 +17,7 @@ from pathlib import Path
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
     DEFAULT_DOJO_TIMEOUT,
+    NEVER_MEASURED_VERDICTS,
     analyze_rows,
     jsonl_line,
     load_sweep_config,
@@ -350,33 +351,40 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(f"    {rung:<8} {meter} {rate:>5.1%}  ({c['success']}/{c['n']})")
 
     print()
+    print(
+        "# pass/N omits never-measured rows (missing data, not failures; "
+        "see NEVER_MEASURED_VERDICTS), which the rplf and exc columns count"
+    )
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
-        f"{'noans':>5} {'unvf':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'tmout':>5} "
+        f"{'rplf':>5} {'exc':>4} {'noans':>5} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     _print_table_header(header)
 
     for (rung, model), c in sorted(cells.items(), key=sort_key):
         n = c["n"]
-        rate = c["success"] / n if n else 0
+        scored = n - sum(c[v] for v in NEVER_MEASURED_VERDICTS)
+        rate = c["success"] / scored if scored else 0
         avg_in = c["tok_in"] / n if n else 0
         avg_out = c["tok_out"] / n if n else 0
         avg_s = c["ms"] / n / 1000 if n else 0
         print(
-            f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
+            f"{rung:<10} {model:<36} {c['success']:>5}/{scored:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['given_up']:>5} {c['timeout']:>5} "
+            f"{c['replay_failed']:>5} {c['exception']:>4} "
             f"{c['no_answer']:>5} {c['unverified']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
-    print("\n# per-model totals")
+    print("\n# per-model totals (N excludes never-measured rows)")
     for model, m in sorted(model_totals(cells).items()):
-        rate = m["success"] / m["n"] if m["n"] else 0
+        scored = m["n"] - sum(m.get(v, 0) for v in NEVER_MEASURED_VERDICTS)
+        rate = m["success"] / scored if scored else 0
         print(
-            f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
+            f"  {model:<36}  {m['success']:>4}/{scored:<4}  {rate:>6.1%}  "
             f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)"
         )
 
