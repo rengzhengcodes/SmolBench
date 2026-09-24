@@ -858,10 +858,8 @@ def classify_step(response: Any) -> StepOutcome:
 
     status = response.proof_status or ""
 
-    # Check `sorry` before completion or a contaminated proof scores as success.
-    if response.sorries or "sorry" in status.lower():
-        return StepOutcome("given_up", None, None, None)
-
+    # Check errors before `sorry`: a term that fails to elaborate is filled with a
+    # synthetic `sorry`, so an error-first check keeps that a `lean_error`.
     # Warnings never reject a tactic: `get_errors()` selects severity ``"error"``.
     errors = response.get_errors()
     if errors or status.startswith("Error"):
@@ -873,6 +871,10 @@ def classify_step(response: Any) -> StepOutcome:
             message or f"Lean reported proof status {status!r} with no error message",
             None,
         )
+
+    # Check `sorry` before completion or a contaminated proof scores as success.
+    if response.sorries or "sorry" in status.lower():
+        return StepOutcome("given_up", None, None, None)
 
     # `proofStatus`, not empty goals, is authoritative; sibling goals can remain.
     if status.startswith("Completed"):

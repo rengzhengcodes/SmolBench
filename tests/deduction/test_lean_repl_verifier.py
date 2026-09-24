@@ -361,6 +361,19 @@ def test_classify_step_prefers_given_up_over_success_when_a_sorry_closed_the_goa
     assert out.kind == "given_up"
 
 
+def test_classify_step_reports_an_elaboration_error_as_lean_error_despite_its_sorry() -> None:
+    """A term that fails to elaborate is filled with a synthetic `sorry`; the error wins."""
+    out = replbackend.classify_step(
+        _proof_step(
+            proofStatus="Incomplete: contains sorry",
+            sorries=[{"goal": "⊢ Q n"}],
+            messages=[_msg("type mismatch")],
+        )
+    )
+    assert out.kind == "lean_error"
+    assert "type mismatch" in out.error
+
+
 def test_classify_step_reports_a_repl_level_error_as_exception_not_lean_error() -> None:
     """`LeanError` is the REPL's own channel (bad request / unknown state): infra."""
     out = replbackend.classify_step(
