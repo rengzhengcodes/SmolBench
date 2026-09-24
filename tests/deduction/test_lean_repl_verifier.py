@@ -361,6 +361,19 @@ def test_classify_step_prefers_given_up_over_success_when_a_sorry_closed_the_goa
     assert out.kind == "given_up"
 
 
+def test_classify_step_reports_an_elaboration_error_as_lean_error_despite_its_sorry() -> None:
+    """A term that fails to elaborate is filled with a synthetic `sorry`; the error wins."""
+    out = replbackend.classify_step(
+        _proof_step(
+            proofStatus="Incomplete: contains sorry",
+            sorries=[{"goal": "⊢ Q n"}],
+            messages=[_msg("type mismatch")],
+        )
+    )
+    assert out.kind == "lean_error"
+    assert "type mismatch" in out.error
+
+
 def test_classify_step_reports_a_repl_level_error_as_exception_not_lean_error() -> None:
     """`LeanError` is the REPL's own channel (bad request / unknown state): infra."""
     out = replbackend.classify_step(
@@ -1110,3 +1123,151 @@ def test_checkpoint_reopen_failure_propagates_as_repl_error(
         assert cp.dead
         with pytest.raises(replbackend.ReplError, match="would not start"):
             verify.try_tail(cp, state, "rfl", "t")
+
+
+def test_repl_rev_follows_the_project_toolchain(tmp_path, monkeypatch) -> None:
+    """lean-interact's default REPL revision does not match Mathlib's Lean; use the project's."""
+    from smolbench.deduction.lean import replbackend
+
+    (tmp_path / "lean-toolchain").write_text("leanprover/lean4:v4.34.0-rc2\n")
+    monkeypatch.delenv(replbackend.REPL_REV_ENV, raising=False)
+    assert replbackend.repl_rev_for(tmp_path) == "v4.34.0-rc2"
+    monkeypatch.setenv(replbackend.REPL_REV_ENV, "v4.35.0")
+    assert replbackend.repl_rev_for(tmp_path) == "v4.35.0"
+
+
+def test_repl_git_defaults_to_the_community_repl(monkeypatch) -> None:
+    from smolbench.deduction.lean import replbackend
+
+    assert replbackend.DEFAULT_REPL_GIT.endswith("leanprover-community/repl")
+    monkeypatch.setenv(replbackend.REPL_GIT_ENV, "https://example.com/repl")
+    import os
+
+    assert os.environ.get(replbackend.REPL_GIT_ENV, replbackend.DEFAULT_REPL_GIT) == "https://example.com/repl"
+
+
+# --------------------------------------------------------------------------
+# File scope replay (module-system mathlib: namespace/section/variable/open)
+# --------------------------------------------------------------------------
+
+SCOPED = "Mini/Scoped.lean"
+SCOPED_TARGET_LINE = 46  # the `/-- Target ... -/` docstring line
+SCOPED_WHERE_LINE = 51
+
+
+def test_scope_commands_keep_scope_and_drop_declarations_and_in_forms() -> None:
+    commands = replbackend.scope_commands(PROJECT, SCOPED, SCOPED_TARGET_LINE)
+    assert commands[0] == "section", "`@[expose] public section` replays as a bare section"
+    assert "noncomputable section" in commands
+    assert "open Set Function" in commands
+    assert "open scoped Topology" in commands
+    assert "universe u" in commands
+    assert "variable {α : Type u} [Inhabited α]" in commands
+    assert ["section Closed", "open Hidden hiding foo", "variable (dropped : Nat)", "end Closed"] == [
+        c for c in commands if c in ("section Closed", "open Hidden hiding foo", "variable (dropped : Nat)", "end Closed")
+    ]
+    assert "namespace Mini.Outer" in commands
+    assert "variable [DecidableEq α] (x : α)\n  {y : α}" in commands, "multi-line variable kept whole"
+    assert "attribute [local simp] Nat.add_comm" in commands
+    assert 'local notation "‖" a "‖" => a' in commands
+    joined = "\n".join(commands)
+    for dropped in ("def ", "theorem ", " in", "module", "import", "/-!", "Target"):
+        assert dropped not in joined, f"{dropped!r} must not be replayed: {joined}"
+
+
+def test_scoped_syntax_namespaces_forget_opens_in_closed_blocks() -> None:
+    commands = replbackend.scope_commands(PROJECT, SCOPED, SCOPED_TARGET_LINE)
+    assert replbackend.scoped_syntax_namespaces(commands) == [
+        "Set", "Function", "Topology", "Mini", "Mini.Outer",
+    ], "Hidden was opened inside `section Closed ... end Closed`"
+
+
+def test_tactic_open_prefix_is_empty_without_namespaces() -> None:
+    assert replbackend.tactic_open_prefix([]) == ""
+    assert replbackend.tactic_open_prefix(["A", "B.C"]) == "open scoped A B.C in\n"
+
+
+def test_strip_leading_attributes_removes_every_group_but_keeps_the_docstring() -> None:
+    text = "/-- doc @[x] -/\n@[simp, to_additive (attr := simp)]\n@[nolint foo]\nprotected lemma A.b : True"
+    assert replbackend.strip_leading_attributes(text) == "/-- doc @[x] -/\nprotected lemma A.b : True"
+    assert replbackend.strip_leading_attributes("theorem t [Bar (α := β)] : True") == (
+        "theorem t [Bar (α := β)] : True"
+    )
+
+
+def test_theorem_statement_stub_strips_attributes_and_keeps_the_dotted_prefix() -> None:
+    bt = _bt(["exact h"], file_path=SCOPED, name="Mini.Outer.Inner.target", start=(SCOPED_TARGET_LINE, 1))
+    stub = replbackend.theorem_statement_stub(bt, PROJECT)
+    assert "@[" not in stub, "`to_additive` on a renamed stub would fail"
+    assert f"protected theorem Inner.{replbackend.TARGET_NAME} (h : x = y) : x = y" in stub
+    assert stub.rstrip().endswith(":= by sorry")
+    assert "exact h" not in stub
+
+
+def test_theorem_statement_stub_refuses_a_where_structure_instance_proof() -> None:
+    bt = _bt(["trivial"], file_path=SCOPED, name="Mini.Outer.whereStyle", start=(SCOPED_WHERE_LINE, 1))
+    with pytest.raises(replbackend.StatementError) as exc:
+        replbackend.theorem_statement_stub(bt, PROJECT)
+    assert "where" in str(exc.value)
+
+
+def test_repl_session_step_prepends_the_tactic_prefix() -> None:
+    server = _FakeServer([_proof_step(proofStatus="Completed")])
+    session = replbackend.ReplSession(
+        server=server, timeout=1, theorem="t", tactic_prefix="open scoped A in\n"
+    )
+    assert session.step(0, "simp").kind == "success"
+    assert server.runs[0][0].tactic == "open scoped A in\nsimp"
+
+
+def test_repl_session_step_drops_the_prefix_after_an_unknown_namespace() -> None:
+    server = _FakeServer(
+        [
+            LeanError.model_validate({"message": "Lean error:\nunknown namespace 'A'"}),
+            _proof_step(proofStatus="Completed"),
+        ]
+    )
+    session = replbackend.ReplSession(
+        server=server, timeout=1, theorem="t", tactic_prefix="open scoped A in\n"
+    )
+    assert session.step(0, "simp").kind == "success"
+    assert session.tactic_prefix == ""
+    assert [r[0].tactic for r in server.runs] == ["open scoped A in\nsimp", "simp"]
+
+
+def test_declaration_in_commands_returns_the_trailing_in_run_in_file_order() -> None:
+    assert replbackend.declaration_in_commands(PROJECT, SCOPED, SCOPED_TARGET_LINE) == [
+        "set_option maxHeartbeats 400000 in",
+        "open Nat in",
+    ]
+    # `theorem whereStyle` follows a declaration, not an `in` command.
+    assert replbackend.declaration_in_commands(PROJECT, SCOPED, SCOPED_WHERE_LINE) == []
+
+
+def test_scoped_syntax_namespaces_include_an_open_in_bound_to_the_declaration() -> None:
+    assert replbackend.scoped_syntax_namespaces(["open Nat in"]) == ["Nat"]
+
+
+def test_classify_step_reports_a_tactic_exception_on_the_message_channel_as_lean_error() -> None:
+    """The community REPL returns `{"message": "Lean error:\n..."}` for an exception a
+    tactic threw (rw found no occurrence, simp made no progress); that is a rejection."""
+    out = replbackend.classify_step(
+        LeanError.model_validate({"message": "Lean error:\nTactic `rewrite` failed: no occurrence"})
+    )
+    assert out.kind == "lean_error"
+    assert out.error == "Tactic `rewrite` failed: no occurrence"
+
+
+def test_find_statement_end_prefers_the_assignment_followed_by_by() -> None:
+    """A statement-level `letI x : T := v` carries a depth-0 `:=` before the proof's."""
+    text = "lemma foo : letI x : Nat := 3; x = 3 := by\n  rfl"
+    end = replbackend.find_statement_end(text)
+    assert text[end:].startswith(":= by")
+    # Without a `by`, the first depth-0 assignment is still the boundary.
+    assert replbackend.find_statement_end("theorem t : P :=\n  foo (by simp)") == 14
+
+
+def test_theorem_statement_stub_drops_the_public_modifier() -> None:
+    assert replbackend._PUBLIC_MODIFIER_RE.sub("", "public protected theorem foo : True") == (
+        "protected theorem foo : True"
+    )

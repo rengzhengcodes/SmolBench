@@ -144,11 +144,21 @@ def cmd_replay(args: argparse.Namespace) -> int:
             flush=True,
         )
         if result.error:
-            err = result.error.strip().splitlines()[0][:200]
-            print(f"           err: {err}", flush=True)
+            print(f"           err: {error_summary(result.error, 200)}", flush=True)
 
     print(f"\n{n_ok}/{len(targets)} succeeded")
     return 0 if n_ok == len(targets) else 1
+
+
+def error_summary(text: str, limit: int = 300) -> str:
+    """One-line summary of a verifier error: its first three non-empty lines.
+
+    A REPL-level failure's first line is the bare header ``ReplError: REPL error:
+    Lean error:``; the message that explains it is on the lines after, so a
+    first-line-only summary hid every such cause behind one string.
+    """
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    return " | ".join(lines[:3])[:limit]
 
 
 def cmd_filter(args: argparse.Namespace) -> int:
@@ -207,7 +217,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
                 "wall_ms": ms,
             }
             if r.error:
-                rec["error"] = r.error.strip().splitlines()[0][:300]
+                rec["error"] = error_summary(r.error)
             f.write(jsonl_line(rec))
             f.flush()
 
@@ -300,8 +310,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
             if len(preview) > 5:
                 print(f"    > ... ({len(preview)} lines total)")
         if r["lean_error"]:
-            err = r["lean_error"].splitlines()[0][:200]
-            print(f"    lean_error: {err}")
+            print(f"    lean_error: {error_summary(r['lean_error'], 200)}")
     return 0 if n_ok == n_written else 1
 
 
