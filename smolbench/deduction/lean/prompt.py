@@ -15,7 +15,11 @@ proof, with no surrounding markdown or commentary. Use newline-separated tactics
 exactly as they would appear in a Lean source file.
 
 Do not include the theorem statement, the `by` keyword, or any tactics that
-have already been applied — output only the tactics that remain.""".strip()
+have already been applied — output only the tactics that remain.
+
+Hypotheses shown with `✝` (e.g. `x✝`, `this✝`) are inaccessible and cannot be
+referenced by name. Name them with `rename_i` or use them through `‹_›`,
+`assumption`, or `_`.""".strip()
 
 INSTRUCTION = (
     """Produce the remaining Lean 4 tactics that close all goals from the current
