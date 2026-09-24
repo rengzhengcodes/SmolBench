@@ -31,8 +31,11 @@ directory, as the `_load` helper in `tests/deduction/test_deduction_analysis_rep
 | --- | --- |
 | `rows_source.py` | Shared reader and S3 downloader; maps `<prefix>/scaling_<key>/verified_rows.jsonl` to `<dir>/<model>/verified_rows.jsonl`. |
 | `power_analysis.py` | Paired McNemar and bootstrap analysis; uniquely falls back to `all_rows.jsonl`. |
-| `error_bars.py` | Published block sign-flip error bars; this, not `power_analysis.py`, produces the published 14/21. `--recovery-dir` stays local-only, though those rows are archived under `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`; that layout is neither `scaling_*` nor `verified_rows.jsonl`. |
-| `hint_vs_noise.py` | Hint-versus-noise comparison. |
+| `error_bars.py` | Published block sign-flip error bars; this, not `power_analysis.py`, produces the published 14/21. The headline pool drops a cell whose every attempt was `exception`/`replay_failed` (an infrastructure fault); `--denominator count-as-failure` scores it 0 instead, and the other rule is always reported as a sensitivity row. `--recovery-dir` stays local-only, though those rows are archived under `<prefix>/dojoinit_recovery_<date>/<lane>/recovered_rows.jsonl`; that layout is neither `scaling_*` nor `verified_rows.jsonl`. |
+| `hint_vs_noise.py` | Informative-rung-versus-noise comparison (default `hint:3` vs `noise:3`; `--info-rung`/`--noise-rung` pick another pair). A lane with no cell carrying both rungs exits non-zero rather than printing a null. |
+
+`PILOT_2026-07.md` records the July 2026 pilot: defects found in review, how they were fixed here,
+and the re-scored numbers (`pilot_2026-07/`).
 
 ## Data layout
 
@@ -51,7 +54,22 @@ Measure the active `random`/`val` pool instead of assuming a count:
 Build the post-cutoff corpus with `scripts/deduction/build_postcutoff_corpus.py` and set
 `SMOLBENCH_LEAN_DATA`. Missing corpus files raise an actionable `FileNotFoundError`; generate
 sidecars with `python -m smolbench.deduction.lean.cli filter --kind random --split val`
-(about 70 minutes per split).
+(about 70 minutes per split). Then write the derivation sidecar,
+`python -m smolbench.deduction.lean.cli build-derivation-index`, so `hint:3` closures follow the
+traced proofs' premise usage (exact for named usage) instead of a text scan; without it the index
+is rebuilt in memory on every process start.
+Then `python -m smolbench.deduction.lean.cli build-checked-signatures --splits val` writes
+`checked_signatures.json`: LeanDojo's export omits declarations without their own source span
+(`@[to_additive]` lemmas, constructors, projections), about 8% of MPI citations; this runs `#print`
+for each through `lake env lean` in the traced checkout (or `SMOLBENCH_MATHLIB_ROOT`) so they render
+with a real signature instead of a placeholder. Both sidecars are read by `premises.lookup`.
+
+Check the export's premise coverage before building anything on it: the share of traced tactics
+with a non-empty `annotated_tactic[1]` should be well above half. lean-dojo-v2 drops any premise
+without a definition position, and Lean v4.34 reports none for constants imported from another
+module, so an unpatched export keeps only same-file premises (16% of tactics on the first
+`2ca39e62` export). `scripts/deduction/trace_mathlib_ec2.sh`'s shim phase patches that; such
+premises then carry `def_pos: null`, which `premises.missing_trace_premises` accepts.
 
 The driver requires a post-cutoff corpus because every roster checkpoint's knowledge cutoff postdates the reference trace, so a model may have memorised older theorems' proofs during training.
 
@@ -92,14 +110,46 @@ The variable is read at call time. Verification no longer needs the `~/.cache/le
 traced-corpus download at all. That cache is NOT obsolete repo-wide:
 `premises` still uses `~/.cache/lean_dojo/` through `_traced_root` for hint/noise context. Only VERIFICATION has stopped depending on it.
 
-The REPL environment imports only the theorem module, so file-level `open`, `variable`,
-`namespace`, and local notation are absent. Replaying the file prefix would be correct but is too
-expensive; such statements report `exception` or `replay_failed`.
+The REPL environment imports the theorem's module, then replays the file's scope commands that
+precede the theorem (`namespace`, `section`/`end`, `variable`, `open`, `universe`, `set_option`,
+`include`/`omit`, `local` notation and `attribute [local ...]`; `@[expose] public section` becomes
+`section`, `... in` forms are dropped) before the renamed stub. Under the module system every
+mathlib theorem sits inside such scope, so a bare stub failed on the first unqualified name. The
+REPL parses each `ProofStep` without the scoped notation those commands activate, so every tactic
+is sent as `open scoped <namespaces> in <tactic>`. Leading attributes are stripped from the stub
+(`to_additive` on a renamed lemma fails) and the declared name's dotted prefix is kept
+(`IsSuccPrelimit.smolbenchTarget`) because that prefix opens a namespace for the body. A `where`
+structure-instance proof has no single proof state and reports `exception`. Private lemmas of the
+same file are not reachable through `import`, and Dojo-flattened nested tactics do not replay;
+both report `replay_failed`/`exception` and `cli filter` excludes them.
 
 Phase 1 writes `unverified` cells and `skipped` sanity rows through `NullVerifier`; an empty
 extracted tactic is `no_answer`, not `lean_error`, because Lean never saw a tactic. Phase 2 writes
 sibling `verified_rows.jsonl`; it never modifies `all_rows.jsonl`, so a verification bug cannot
-lose paid candidate proofs.
+lose paid candidate proofs. `--reverify-all` re-scores every group, including ones that already
+carry a verdict, into a fresh `verified_rows.jsonl`; use it after a verifier change.
+
+### Verdicts
+
+| Verdict | Meaning | Scored |
+| --- | --- | --- |
+| `success` | Tail closed every goal. | 1 |
+| `lean_error` | Lean rejected a tactic, or tactics remain after the goals closed. | 0 |
+| `incomplete` | Tail ran clean but goals remain. | 0 |
+| `given_up` | Tail contains `sorry`/`admit`. | 0 |
+| `no_answer` | No tactic could be extracted from the completion. | 0 |
+| `timeout` | Lean did not finish the candidate within the request timeout (a model failure: the candidate is too expensive to check). | 0 |
+| `exception` | Infrastructure fault (REPL crashed, environment missing); the candidate was never judged. | dropped |
+| `replay_failed` | The ground-truth prefix itself did not replay, so no candidate for that cell can be judged. | dropped |
+
+Candidates are scored as whole tactic blocks: an indented continuation line or a leading `|`
+belongs to the previous tactic, so a multi-line `calc`, `cases ... with`, or `conv` block is one
+step. A REPL killed by a timeout is reopened at the checkpoint before the next candidate, so one
+expensive candidate cannot poison the rest of its block.
+
+`max_tokens: 32768` in `sweep.yaml` is the generation budget. A completion cut at that budget
+shows in the `trunc` column of `analyze` (from `finish_reason`); it is scored on whatever tactic
+it contains, so raise the budget before comparing reasoning models that run long.
 
 ### Phase-2 traps, both of which fail SILENTLY
 
@@ -146,4 +196,30 @@ The study uses replay-passing, tactic-traceable theorems and four rungs: `stepk:
 `data/` are archived; see `notebooks/ARCHIVE.md` for restoration or regeneration.
 
 The documented rung universe is `stepk:0..2` and `hint:0..4`; `context.validate` also accepts
-`hint`/`noise` through level 9, but deeper hops increasingly hit the renderer's 50k-token cap before reaching a rendered prompt.
+`hint`/`noise` through level 9. The transitive closure is uncapped (no token or premise limit), so
+deep levels grow roughly threefold per hop and can exceed a model's context window; choose levels per
+model from the measured prompt lengths (`PILOT_2026-07.md`, "Hint ladder length").
+
+### Unflagged library block: `sig`, `proof`, `signoise`, `proofnoise`
+
+The `hint` ladder names the MPI lemmas at the top of the prompt and appends their closure below, so
+the model is told which entries matter. The library-block chains do not. `sig:N` and `proof:N`
+render the `stepk:2` base plus one `## Library context` block holding the MPI lemmas and their
+N-hop closure together, sorted in import order then line (every dependency precedes its
+dependents; nothing marks the roots). `sig` shows each declaration's signature; `proof` shows its
+full source with proof, so the two forms hold the same set of facts at two token densities.
+`signoise:N` pads `sig:0` to `sig:N`'s prompt length (the hops as blank length); `proofnoise:N`
+pads `sig:N` to `proof:N`'s (the proof bodies as blank length). `sig:0` versus `hint:1` is the
+flagging comparison at near-equal length.
+
+`signoise`/`proofnoise` append the pad as one tail, so the useful entries sit at a different depth
+than in the content rung and the pad is a single multi-kilobyte line; for Claude models the
+cl100k-matched tail was also not token-matched (fewer Claude tokens in most cells, more than the
+context window in a few). `sigpad:N` and `proofpad:N` are the positional controls that replace
+them: `sigpad:N` is `sig:N` with every non-MPI entry replaced in place by a same-token block of
+whitespace lines, so the MPI entries sit at the depth `sig:N` gives them; `proofpad:N` is `proof:N`
+with every proof body replaced in place under its signature. Both match the content rung's prompt
+tokens to within `_PAD_TOLERANCE_TOKENS` and keep every line short. `hoponly:N` is `sig:N` with the MPI lemmas removed, the
+N-hop closure alone as signatures: `hoponly:1` against `sig:1` and `stepk:2` separates the value of
+the MPI itself from the value of its library neighbourhood (a cell whose closure minus the MPI is
+empty renders no block and is trivial).

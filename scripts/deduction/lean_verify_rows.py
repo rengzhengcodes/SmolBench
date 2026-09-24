@@ -107,6 +107,33 @@ def group_unverified(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
     return groups
 
 
+def group_all_cells(rows: list[dict]) -> dict[tuple[str, int], list[int]]:
+    """Group EVERY cell row by ``(theorem_id, k)``, whatever its verdict.
+
+    `group_unverified` only selects phase-1 sentinels, so a run whose rows
+    already carry Lean verdicts (a `run_sweep` with the real verifier, or a
+    prior phase 2 folded back) cannot be re-scored after a verifier change:
+    the pass logs "0 groups", finds no sentinels and exits 0. This selector is
+    what ``--reverify-all`` uses to re-score such a run from its stored
+    candidates.
+
+    Parameters
+    ----------
+    rows : list[dict]
+
+    Returns
+    -------
+    dict[tuple[str, int], list[int]]
+        Cell-row indices by ``(theorem_id, k)``.
+    """
+    groups: dict[tuple[str, int], list[int]] = {}
+    for index, row in enumerate(rows):
+        if row.get("kind") != "cell":
+            continue
+        groups.setdefault((row["theorem_id"], row["k"]), []).append(index)
+    return groups
+
+
 def unique_candidates(rows: list[dict], indices: list[int]) -> dict[str, list[int]]:
     """Group `indices` by their exact ``candidate_proof`` text.
 
@@ -646,12 +673,16 @@ def verify_run(
     workdir: Path,
     dry_run: bool = False,
     no_resume: bool = False,
+    reverify_all: bool = False,
     verifier: Any = None,
 ) -> int:
     """Verify one run's unverified cell groups; upload `VERIFIED_FILENAME`.
 
     ``workdir`` is the parent of the private ``workdir / run`` scratch dir.
     Resolve ``verifier=None`` only for pending groups so ``dry_run`` avoids imports.
+    ``reverify_all`` selects every cell row regardless of its recorded verdict
+    (and implies ``no_resume``), so a run can be re-scored after a verifier
+    change; `all_rows.jsonl` is never modified either way.
 
     Parameters
     ----------
@@ -692,7 +723,7 @@ def verify_run(
     verified_rows = download_rows(
         client, bucket, verified_key, run_dir / VERIFIED_FILENAME
     )
-    if no_resume:
+    if no_resume or reverify_all:
         # Resume keys groups, not proofs; regenerated lanes otherwise look done.
         logging.warning(
             f"lean_verify_rows[{run}]: --no-resume: discarding {len(verified_rows)} "
@@ -710,10 +741,12 @@ def verify_run(
         )
 
     # Use paired `out_rows`: all-cells resume must see newly appended cells.
-    done = resume_done_groups(out_rows)
+    # Under --reverify-all every group is pending: the rows' existing verdicts
+    # are exactly what is being redone.
+    done = set() if reverify_all else resume_done_groups(out_rows)
 
     # Immutable `rows` gives phase 1's complete groups; subtract `done` to resume.
-    all_groups = group_unverified(rows)
+    all_groups = group_all_cells(rows) if reverify_all else group_unverified(rows)
     pending = {key: indices for key, indices in all_groups.items() if key not in done}
     if theorem is not None:
         pending = {
@@ -827,13 +860,20 @@ def verify_run(
         ) as exc:  # noqa: BLE001 -- Record open-session failures on rows.
             message = str(exc)
             if isinstance(exc, RuntimeError) and message.startswith("prefix tactic "):
-                # Dojo opened but its prefix failed; infrastructure guidance misleads.
+                # The session opened but the ground-truth prefix did not
+                # replay: that is a corpus claim about the theorem, so it is
+                # `replay_failed` (a sanity failure in runner.VERDICTS).
+                verdict = "replay_failed"
                 lean_error = f"{type(exc).__name__}: {exc}"
             else:
-                # Dojo never opened after verify.py's three retries.
+                # The session never opened (server start, import, statement
+                # elaboration, timeout). That is infrastructure, so it is
+                # `exception` like verify.verify_proof_tail records it; a
+                # wedged box must not read as broken ground truth.
+                verdict = "exception"
                 lean_error = dojo_failure_hint(exc)
             payload = {
-                "verdict": "replay_failed",
+                "verdict": verdict,
                 "lean_error": lean_error,
                 "final_state_pp": None,
                 "verify_ms": 0,
@@ -1010,6 +1050,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--reverify-all",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-score EVERY cell row from its stored candidate, whatever "
+            "verdict all_rows.jsonl already carries (implies --no-resume). "
+            "Use after a verifier change; without it a run whose rows already "
+            "have Lean verdicts is a silent no-op ('0 groups to process'). "
+            "all_rows.jsonl is never modified; verified_rows.jsonl is rewritten."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="list which groups' replicates would be verified for each matching run, "
@@ -1074,6 +1126,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                     workdir=workdir,
                     dry_run=args.dry_run,
                     no_resume=args.no_resume,
+                    reverify_all=args.reverify_all,
                 )
             except Exception as exc:  # noqa: BLE001 -- Isolate one failed run.
                 # Do not catch BaseException: Ctrl-C must stop the pass.

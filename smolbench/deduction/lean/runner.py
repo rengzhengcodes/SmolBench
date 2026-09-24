@@ -755,6 +755,9 @@ VERDICTS: dict[str, tuple[str, bool, bool]] = {
     "given_up": ("?", True, False),
     # Distinct glyph: incomplete/given-up answered, while no_answer answered nothing.
     "no_answer": ("∅", False, False),
+    # The candidate tactic ran past the per-request timeout: a model failure
+    # (scored 0), not infrastructure; the REPL is reopened for later cells.
+    "timeout": ("⏱", True, False),
     "replay_failed": ("!", True, True),
     "exception": ("X", False, True),
     # Generation-only sweeps: cells awaiting deferred verification.
@@ -771,7 +774,20 @@ NEVER_MEASURED_VERDICTS: frozenset[str] = frozenset(
     v for v, row in VERDICTS.items() if row[2]
 )
 
-_CHAIN_ORDER = {"stepk": 0, "hint": 1, "noise": 2}
+_CHAIN_ORDER = {
+    "stepk": 0,
+    "hint": 1,
+    "noise": 2,
+    "sig": 3,
+    "signoise": 4,
+    "proof": 5,
+    "proofnoise": 6,
+    "hoponly": 7,
+    "sigpad": 8,
+    "proofpad": 9,
+    "siglorem": 10,
+    "prooflorem": 11,
+}
 
 
 def _glyph(v: str) -> str:
@@ -930,6 +946,7 @@ def analyze_rows(
             "replay_failed": 0,
             "exception": 0,
             "no_answer": 0,
+            "timeout": 0,
             "unverified": 0,
             "tok_in": 0,
             "tok_out": 0,
@@ -962,11 +979,19 @@ def analyze_rows(
         counter["tok_in"] += row.get("prompt_tokens", 0)
         counter["tok_out"] += row.get("completion_tokens", 0)
         counter["ms"] += row.get("gen_ms", 0) + row.get("verify_ms", 0)
-        # Count cut-off reasoning separately from proof dead ends; vLLM can
-        # put it in `reasoning_content` with empty `raw_response`.
+        # Count cut-off responses separately from proof dead ends. The
+        # provider's `finish_reason` is authoritative ("length" = hit
+        # max_tokens); the text heuristics catch rows recorded before it was
+        # persisted, where vLLM put reasoning in `reasoning_content` with an
+        # empty `raw_response`.
         raw = row.get("raw_response", "") or row.get("content", "")
-        if ("<think>" in raw and "</think>" not in raw) or (
-            row.get("reasoning_content") and not (row.get("raw_response") or "").strip()
+        if (
+            row.get("finish_reason") in ("length", "max_tokens")
+            or ("<think>" in raw and "</think>" not in raw)
+            or (
+                row.get("reasoning_content")
+                and not (row.get("raw_response") or "").strip()
+            )
         ):
             counter["trunc"] += 1
         if lean3.find_relics(row.get("candidate_proof") or ""):
@@ -997,7 +1022,15 @@ def model_totals(
         Model-keyed totals.
     """
     totals: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"n": 0, "success": 0, "tok_in": 0, "tok_out": 0, "l3": 0}
+        lambda: {
+            "n": 0,
+            "success": 0,
+            "exception": 0,
+            "replay_failed": 0,
+            "tok_in": 0,
+            "tok_out": 0,
+            "l3": 0,
+        }
     )
     for (_, model), counter in cells.items():
         for key in totals[model]:
@@ -1042,11 +1075,16 @@ def write_run_analysis(run_dir: Path) -> None:
         (run_dir / "analysis.txt").write_text("\n".join(out) + "(no cell rows)\n")
         return
 
+    out.append(
+        "# pass/N omits never-measured rows (missing data, not failures; "
+        "see NEVER_MEASURED_VERDICTS), which the rplf and exc columns count"
+    )
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} {'noans':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'tmout':>5} "
+        f"{'rplf':>5} {'exc':>4} {'noans':>5} "
         f"{'l3(parse-level)':>16} "
-        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6}"
+        f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     out.append(header)
     out.append("-" * len(header))
@@ -1054,23 +1092,26 @@ def write_run_analysis(run_dir: Path) -> None:
         cells.items(), key=lambda kv: (_rung_sort_key(kv[0][0]), kv[0][1])
     ):
         n = c["n"]
-        rate = c["success"] / n if n else 0
+        scored = n - sum(c[v] for v in NEVER_MEASURED_VERDICTS)
+        rate = c["success"] / scored if scored else 0
         avg_in = c["tok_in"] / n if n else 0
         avg_out = c["tok_out"] / n if n else 0
         avg_s = c["ms"] / n / 1000 if n else 0
         out.append(
-            f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
+            f"{rung:<10} {model:<36} {c['success']:>5}/{scored:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
-            f"{c['no_answer']:>5} {c['l3']:>16} "
-            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f}"
+            f"{c['given_up']:>5} {c['timeout']:>5} "
+            f"{c['replay_failed']:>5} {c['exception']:>4} {c['no_answer']:>5} "
+            f"{c['l3']:>16} "
+            f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
-    out.append("\n# per-model totals")
+    out.append("\n# per-model totals (N excludes never-measured rows)")
     for model, m in sorted(model_totals(cells).items()):
-        rate = m["success"] / m["n"] if m["n"] else 0
+        scored = m["n"] - sum(m.get(v, 0) for v in NEVER_MEASURED_VERDICTS)
+        rate = m["success"] / scored if scored else 0
         out.append(
-            f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
+            f"  {model:<36}  {m['success']:>4}/{scored:<4}  {rate:>6.1%}  "
             f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)  "
             f"l3(parse-level)={m['l3']}"
         )
@@ -1496,6 +1537,24 @@ def sweep(
 
     run_dir.mkdir(parents=True, exist_ok=True)
     all_rows_path = run_dir / "all_rows.jsonl"
+
+    if not resume and all_rows_path.exists():
+        # `resume=False` must not append onto the old rows: `dedupe_cell_rows`
+        # keeps the earliest row per key, so the fresh run's verdicts would be
+        # silently ignored by every reader. Archive the old file under the
+        # SUPERSEDED name the readers refuse (`reject_superseded_rows`), and
+        # the per-theorem outputs with it.
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        archived = run_dir / f"all_rows_SUPERSEDED-{stamp}.jsonl"
+        all_rows_path.rename(archived)
+        theorems_dir = run_dir / "theorems"
+        if theorems_dir.exists():
+            theorems_dir.rename(run_dir / f"theorems_SUPERSEDED-{stamp}")
+        print(
+            f"fresh: archived {all_rows_path.name} -> {archived.name}; "
+            "regenerating every cell",
+            flush=True,
+        )
 
     latest = run_dir.parent / "latest"
     if latest.is_symlink():

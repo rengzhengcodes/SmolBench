@@ -17,6 +17,7 @@ from pathlib import Path
 from .corpus import iter_with_proof, metadata, replay_passing_path
 from .runner import (
     DEFAULT_DOJO_TIMEOUT,
+    NEVER_MEASURED_VERDICTS,
     analyze_rows,
     jsonl_line,
     load_sweep_config,
@@ -48,6 +49,55 @@ def cmd_metadata(_: argparse.Namespace) -> int:
         Unbootstrapped dataset.
     """
     print(json.dumps(metadata(), indent=2))
+    return 0
+
+
+def cmd_build_derivation_index(_: argparse.Namespace) -> int:
+    """Write the trace-based derivation sidecar for the active corpus; returns 0.
+
+    ``hint:3`` closures read this index so that a traced theorem's edges are
+    the premises its proof used, not a text scan of its statement. Without
+    the sidecar the index is rebuilt in memory on every process start, which
+    re-reads ``train.json``.
+
+    Parameters
+    ----------
+    _ : argparse.Namespace
+
+    Returns
+    -------
+    int
+        0.
+    """
+    from .premises import write_derivation_index
+
+    path = write_derivation_index()
+    n = len(json.loads(path.read_text()))
+    print(f"wrote {path} ({n} traced theorems)")
+    return 0
+
+
+def cmd_build_checked_signatures(args: argparse.Namespace) -> int:
+    """Write ``checked_signatures.json`` for trace-cited names the corpus lacks; returns 0.
+
+    Runs ``#print`` through ``lake env lean`` in the built Mathlib (the traced
+    checkout, else ``SMOLBENCH_MATHLIB_ROOT``), importing only each name's
+    module. Generated lemmas (``@[to_additive]``), constructors and
+    projections then render with a signature instead of a placeholder.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+
+    Returns
+    -------
+    int
+        0.
+    """
+    from .premises import write_checked_signatures
+
+    path, wanted, got = write_checked_signatures(args.kind, tuple(args.splits))
+    print(f"wrote {path}: {got}/{wanted} missing names resolved")
     return 0
 
 
@@ -118,11 +168,21 @@ def cmd_replay(args: argparse.Namespace) -> int:
             flush=True,
         )
         if result.error:
-            err = result.error.strip().splitlines()[0][:200]
-            print(f"           err: {err}", flush=True)
+            print(f"           err: {error_summary(result.error, 200)}", flush=True)
 
     print(f"\n{n_ok}/{len(targets)} succeeded")
     return 0 if n_ok == len(targets) else 1
+
+
+def error_summary(text: str, limit: int = 300) -> str:
+    """One-line summary of a verifier error: its first three non-empty lines.
+
+    A REPL-level failure's first line is the bare header ``ReplError: REPL error:
+    Lean error:``; the message that explains it is on the lines after, so a
+    first-line-only summary hid every such cause behind one string.
+    """
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    return " | ".join(lines[:3])[:limit]
 
 
 def cmd_filter(args: argparse.Namespace) -> int:
@@ -181,7 +241,7 @@ def cmd_filter(args: argparse.Namespace) -> int:
                 "wall_ms": ms,
             }
             if r.error:
-                rec["error"] = r.error.strip().splitlines()[0][:300]
+                rec["error"] = error_summary(r.error)
             f.write(jsonl_line(rec))
             f.flush()
 
@@ -274,8 +334,7 @@ def cmd_run_cell(args: argparse.Namespace) -> int:
             if len(preview) > 5:
                 print(f"    > ... ({len(preview)} lines total)")
         if r["lean_error"]:
-            err = r["lean_error"].splitlines()[0][:200]
-            print(f"    lean_error: {err}")
+            print(f"    lean_error: {error_summary(r['lean_error'], 200)}")
     return 0 if n_ok == n_written else 1
 
 
@@ -350,33 +409,40 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(f"    {rung:<8} {meter} {rate:>5.1%}  ({c['success']}/{c['n']})")
 
     print()
+    print(
+        "# pass/N omits never-measured rows (missing data, not failures; "
+        "see NEVER_MEASURED_VERDICTS), which the rplf and exc columns count"
+    )
     header = (
         f"{'rung':<10} {'model':<36} {'pass':>5}/{'N':<4} "
-        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'rplf':>5} {'exc':>4} "
-        f"{'noans':>5} {'unvf':>5} "
+        f"{'rate':>6} {'lerr':>5} {'incp':>5} {'gvup':>5} {'tmout':>5} "
+        f"{'rplf':>5} {'exc':>4} {'noans':>5} {'unvf':>5} "
         f"{'avg_in':>7} {'avg_out':>7} {'avg_s':>6} {'trunc':>6}"
     )
     _print_table_header(header)
 
     for (rung, model), c in sorted(cells.items(), key=sort_key):
         n = c["n"]
-        rate = c["success"] / n if n else 0
+        scored = n - sum(c[v] for v in NEVER_MEASURED_VERDICTS)
+        rate = c["success"] / scored if scored else 0
         avg_in = c["tok_in"] / n if n else 0
         avg_out = c["tok_out"] / n if n else 0
         avg_s = c["ms"] / n / 1000 if n else 0
         print(
-            f"{rung:<10} {model:<36} {c['success']:>5}/{n:<4} "
+            f"{rung:<10} {model:<36} {c['success']:>5}/{scored:<4} "
             f"{rate:>6.1%} {c['lean_error']:>5} {c['incomplete']:>5} "
-            f"{c['given_up']:>5} {c['replay_failed']:>5} {c['exception']:>4} "
+            f"{c['given_up']:>5} {c['timeout']:>5} "
+            f"{c['replay_failed']:>5} {c['exception']:>4} "
             f"{c['no_answer']:>5} {c['unverified']:>5} "
             f"{avg_in:>7.0f} {avg_out:>7.0f} {avg_s:>6.1f} {c['trunc']:>6}"
         )
 
-    print("\n# per-model totals")
+    print("\n# per-model totals (N excludes never-measured rows)")
     for model, m in sorted(model_totals(cells).items()):
-        rate = m["success"] / m["n"] if m["n"] else 0
+        scored = m["n"] - sum(m.get(v, 0) for v in NEVER_MEASURED_VERDICTS)
+        rate = m["success"] / scored if scored else 0
         print(
-            f"  {model:<36}  {m['success']:>4}/{m['n']:<4}  {rate:>6.1%}  "
+            f"  {model:<36}  {m['success']:>4}/{scored:<4}  {rate:>6.1%}  "
             f"({m['tok_in']:,} in / {m['tok_out']:,} out tokens)"
         )
 
@@ -472,6 +538,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_meta = sub.add_parser("metadata", help="print benchmark metadata.json")
     p_meta.set_defaults(func=cmd_metadata)
+
+    p_didx = sub.add_parser(
+        "build-derivation-index",
+        help="write <data_root>/derivation_index.json from the traced splits",
+    )
+    p_didx.set_defaults(func=cmd_build_derivation_index)
+
+    p_chk = sub.add_parser(
+        "build-checked-signatures",
+        help="write <data_root>/checked_signatures.json via #print in the built Mathlib",
+    )
+    p_chk.add_argument("--kind", default="random")
+    p_chk.add_argument("--splits", nargs="+", default=["val"])
+    p_chk.set_defaults(func=cmd_build_checked_signatures)
 
     p_list = sub.add_parser("list", help="list theorems in a split")
     _add_split_args(p_list)
