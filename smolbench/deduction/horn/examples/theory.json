@@ -1,0 +1,11931 @@
+{
+ "seed": 7,
+ "m": 6,
+ "height": 2,
+ "n_extra": 91,
+ "open_frac": 1.0,
+ "constant": "leb",
+ "facts": [
+  "fuval",
+  "ruma",
+  "megiv",
+  "mosa",
+  "pari",
+  "feru",
+  "dolo",
+  "desu",
+  "pebad",
+  "rume",
+  "dudi",
+  "resot",
+  "bazu",
+  "migek",
+  "gubo",
+  "puger",
+  "pedom",
+  "kopip",
+  "kusat",
+  "veleb",
+  "gasun",
+  "lobul",
+  "dudir",
+  "buke",
+  "gapor",
+  "likom",
+  "betek",
+  "zuke",
+  "gigal",
+  "zite",
+  "satob",
+  "vofu",
+  "buzef",
+  "nafir",
+  "neki"
+ ],
+ "goal": "gari",
+ "library": [
+  {
+   "index": 1,
+   "head": "sedu",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "loku",
+    "1": "dume",
+    "00": "dudi",
+    "01": "pebad",
+    "10": "pebad",
+    "11": "dudi"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 2,
+   "head": "gidu",
+   "body": [
+    "sedu",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gidu",
+    "0": "savu",
+    "1": "zili",
+    "00": "gapor",
+    "01": "sedu",
+    "10": "sedu",
+    "11": "gapor"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 3,
+   "head": "rarep",
+   "body": [
+    "gidu",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "rarep",
+    "0": "nabi",
+    "1": "soko",
+    "00": "desu",
+    "01": "gidu",
+    "10": "desu",
+    "11": "desu"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 4,
+   "head": "minu",
+   "body": [
+    "rarep",
+    "ruma"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "minu",
+    "0": "fudov",
+    "1": "ketez",
+    "00": "ruma",
+    "01": "rarep",
+    "10": "rarep",
+    "11": "ruma"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 5,
+   "head": "lige",
+   "body": [
+    "minu",
+    "buzef"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "muke",
+    "1": "zuko",
+    "00": "buzef",
+    "01": "minu",
+    "10": "minu",
+    "11": "minu"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 6,
+   "head": "gari",
+   "body": [
+    "lige",
+    "pari"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "fegez",
+    "1": "rekim",
+    "00": "pari",
+    "01": "pari",
+    "10": "lige",
+    "11": "lige"
+   },
+   "role": "chain"
+  },
+  {
+   "index": 7,
+   "head": "sobeg",
+   "body": [
+    "rarep",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "nedi",
+    "1": "dare",
+    "00": "pebad",
+    "01": "rarep",
+    "10": "rarep",
+    "11": "rarep"
+   },
+   "role": "open"
+  },
+  {
+   "index": 8,
+   "head": "minu",
+   "body": [
+    "sobeg"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "minu",
+    "0": "rofi",
+    "1": "rinan",
+    "00": "sobeg",
+    "01": "sobeg",
+    "10": "sobeg",
+    "11": "sobeg"
+   },
+   "role": "open"
+  },
+  {
+   "index": 9,
+   "head": "gari",
+   "body": [
+    "lige"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "letu",
+    "1": "vuka",
+    "00": "lige",
+    "01": "lige",
+    "10": "lige",
+    "11": "lige"
+   },
+   "role": "open"
+  },
+  {
+   "index": 10,
+   "head": "sobeg",
+   "body": [
+    "rarep",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "zoten",
+    "1": "labig",
+    "00": "rarep",
+    "01": "gapor",
+    "10": "gapor",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 11,
+   "head": "ruzas",
+   "body": [
+    "desu",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "ruzas",
+    "0": "laza",
+    "1": "venes",
+    "00": "gapor",
+    "01": "desu",
+    "10": "gapor",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 12,
+   "head": "sedu",
+   "body": [
+    "ruzas"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "matef",
+    "1": "bero",
+    "00": "ruzas",
+    "01": "ruzas",
+    "10": "ruzas",
+    "11": "ruzas"
+   },
+   "role": "open"
+  },
+  {
+   "index": 13,
+   "head": "rarep",
+   "body": [
+    "gidu",
+    "dudi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "rarep",
+    "0": "zezeg",
+    "1": "kugup",
+    "00": "dudi",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "dudi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 14,
+   "head": "ruzas",
+   "body": [
+    "ruma",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "ruzas",
+    "0": "pepe",
+    "1": "bove",
+    "00": "ruma",
+    "01": "ruma",
+    "10": "ruma",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 15,
+   "head": "gidu",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gidu",
+    "0": "dubeb",
+    "1": "vapo",
+    "00": "sedu",
+    "01": "ruzas",
+    "10": "ruzas",
+    "11": "sedu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 16,
+   "head": "lige",
+   "body": [
+    "minu",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "kugod",
+    "1": "mola",
+    "00": "gapor",
+    "01": "minu",
+    "10": "minu",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 17,
+   "head": "fogan",
+   "body": [
+    "sedu",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "fogan",
+    "0": "fefo",
+    "1": "mimed",
+    "00": "pebad",
+    "01": "sedu",
+    "10": "pebad",
+    "11": "pebad"
+   },
+   "role": "open"
+  },
+  {
+   "index": 18,
+   "head": "gidu",
+   "body": [
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gidu",
+    "0": "nami",
+    "1": "kuda",
+    "00": "fogan",
+    "01": "fogan",
+    "10": "fogan",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 19,
+   "head": "mime",
+   "body": [
+    "minu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "mime",
+    "0": "punib",
+    "1": "vemab",
+    "00": "minu",
+    "01": "minu",
+    "10": "minu",
+    "11": "minu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 20,
+   "head": "lige",
+   "body": [
+    "mime"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "dizal",
+    "1": "pokup",
+    "00": "mime",
+    "01": "mime",
+    "10": "mime",
+    "11": "mime"
+   },
+   "role": "open"
+  },
+  {
+   "index": 21,
+   "head": "sedu",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "kopev",
+    "1": "bibap",
+    "00": "pari",
+    "01": "pebad",
+    "10": "pari",
+    "11": "pebad"
+   },
+   "role": "open"
+  },
+  {
+   "index": 22,
+   "head": "zemi",
+   "body": [
+    "rarep",
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "zemi",
+    "0": "zeba",
+    "1": "kofaz",
+    "00": "fogan",
+    "01": "fogan",
+    "10": "rarep",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 23,
+   "head": "sobeg",
+   "body": [
+    "zemi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "bofeb",
+    "1": "kilub",
+    "00": "zemi",
+    "01": "zemi",
+    "10": "zemi",
+    "11": "zemi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 24,
+   "head": "sedu",
+   "body": [
+    "desu",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "guvaz",
+    "1": "demub",
+    "00": "pebad",
+    "01": "pebad",
+    "10": "desu",
+    "11": "desu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 25,
+   "head": "mime",
+   "body": [
+    "minu",
+    "sedu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "mime",
+    "0": "rovi",
+    "1": "neku",
+    "00": "minu",
+    "01": "sedu",
+    "10": "minu",
+    "11": "minu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 26,
+   "head": "sido",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "pasa",
+    "1": "seniv",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 27,
+   "head": "zemi",
+   "body": [
+    "sido"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "zemi",
+    "0": "kaziv",
+    "1": "getom",
+    "00": "sido",
+    "01": "sido",
+    "10": "sido",
+    "11": "sido"
+   },
+   "role": "open"
+  },
+  {
+   "index": 28,
+   "head": "kirun",
+   "body": [
+    "minu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "kirun",
+    "0": "boka",
+    "1": "sokun",
+    "00": "minu",
+    "01": "minu",
+    "10": "minu",
+    "11": "minu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 29,
+   "head": "mime",
+   "body": [
+    "kirun"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "mime",
+    "0": "dobiz",
+    "1": "pokog",
+    "00": "kirun",
+    "01": "kirun",
+    "10": "kirun",
+    "11": "kirun"
+   },
+   "role": "open"
+  },
+  {
+   "index": 30,
+   "head": "noben",
+   "body": [
+    "lige",
+    "rarep"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "noben",
+    "0": "somi",
+    "1": "mimil",
+    "00": "lige",
+    "01": "rarep",
+    "10": "rarep",
+    "11": "rarep"
+   },
+   "role": "open"
+  },
+  {
+   "index": 31,
+   "head": "gari",
+   "body": [
+    "noben"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "deta",
+    "1": "kilaz",
+    "00": "noben",
+    "01": "noben",
+    "10": "noben",
+    "11": "noben"
+   },
+   "role": "open"
+  },
+  {
+   "index": 32,
+   "head": "noben",
+   "body": [
+    "lige"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "noben",
+    "0": "segil",
+    "1": "givo",
+    "00": "lige",
+    "01": "lige",
+    "10": "lige",
+    "11": "lige"
+   },
+   "role": "open"
+  },
+  {
+   "index": 33,
+   "head": "sido",
+   "body": [
+    "fogan",
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "pefok",
+    "1": "kitig",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 34,
+   "head": "rarep",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "rarep",
+    "0": "nugo",
+    "1": "vome",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 35,
+   "head": "fogan",
+   "body": [
+    "ruzas",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "fogan",
+    "0": "tomo",
+    "1": "goki",
+    "00": "gapor",
+    "01": "gapor",
+    "10": "gapor",
+    "11": "ruzas"
+   },
+   "role": "open"
+  },
+  {
+   "index": 36,
+   "head": "zemi",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "zemi",
+    "0": "mosok",
+    "1": "zafav",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 37,
+   "head": "defe",
+   "body": [
+    "zemi",
+    "pebad"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "defe",
+    "0": "sazov",
+    "1": "baveb",
+    "00": "pebad",
+    "01": "zemi",
+    "10": "pebad",
+    "11": "pebad"
+   },
+   "role": "open"
+  },
+  {
+   "index": 38,
+   "head": "sobeg",
+   "body": [
+    "defe"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "tadar",
+    "1": "goke",
+    "00": "defe",
+    "01": "defe",
+    "10": "defe",
+    "11": "defe"
+   },
+   "role": "open"
+  },
+  {
+   "index": 39,
+   "head": "lige",
+   "body": [
+    "minu",
+    "kirun"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "guga",
+    "1": "tibas",
+    "00": "kirun",
+    "01": "minu",
+    "10": "kirun",
+    "11": "minu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 40,
+   "head": "lolov",
+   "body": [
+    "sido"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lolov",
+    "0": "kudeg",
+    "1": "kegov",
+    "00": "sido",
+    "01": "sido",
+    "10": "sido",
+    "11": "sido"
+   },
+   "role": "open"
+  },
+  {
+   "index": 41,
+   "head": "zemi",
+   "body": [
+    "lolov"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "zemi",
+    "0": "goma",
+    "1": "fober",
+    "00": "lolov",
+    "01": "lolov",
+    "10": "lolov",
+    "11": "lolov"
+   },
+   "role": "open"
+  },
+  {
+   "index": 42,
+   "head": "gari",
+   "body": [
+    "noben",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "lefu",
+    "1": "biso",
+    "00": "desu",
+    "01": "desu",
+    "10": "noben",
+    "11": "noben"
+   },
+   "role": "open"
+  },
+  {
+   "index": 43,
+   "head": "sedu",
+   "body": [
+    "desu",
+    "buzef"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "vemi",
+    "1": "koda",
+    "00": "desu",
+    "01": "buzef",
+    "10": "buzef",
+    "11": "desu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 44,
+   "head": "taril",
+   "body": [
+    "defe",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "taril",
+    "0": "raki",
+    "1": "katu",
+    "00": "defe",
+    "01": "desu",
+    "10": "defe",
+    "11": "defe"
+   },
+   "role": "open"
+  },
+  {
+   "index": 45,
+   "head": "kirun",
+   "body": [
+    "taril"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "kirun",
+    "0": "novo",
+    "1": "mofov",
+    "00": "taril",
+    "01": "taril",
+    "10": "taril",
+    "11": "taril"
+   },
+   "role": "open"
+  },
+  {
+   "index": 46,
+   "head": "vegob",
+   "body": [
+    "sido"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "vegob",
+    "0": "nupim",
+    "1": "dakud",
+    "00": "sido",
+    "01": "sido",
+    "10": "sido",
+    "11": "sido"
+   },
+   "role": "open"
+  },
+  {
+   "index": 47,
+   "head": "zemi",
+   "body": [
+    "vegob"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "zemi",
+    "0": "gemo",
+    "1": "setu",
+    "00": "vegob",
+    "01": "vegob",
+    "10": "vegob",
+    "11": "vegob"
+   },
+   "role": "open"
+  },
+  {
+   "index": 48,
+   "head": "gefi",
+   "body": [
+    "sedu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gefi",
+    "0": "relag",
+    "1": "puga",
+    "00": "sedu",
+    "01": "sedu",
+    "10": "sedu",
+    "11": "sedu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 49,
+   "head": "fogan",
+   "body": [
+    "gefi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "fogan",
+    "0": "zezo",
+    "1": "bigar",
+    "00": "gefi",
+    "01": "gefi",
+    "10": "gefi",
+    "11": "gefi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 50,
+   "head": "defe",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "defe",
+    "0": "rigaf",
+    "1": "beka",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 51,
+   "head": "nunav",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nunav",
+    "0": "mufuf",
+    "1": "mimi",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 52,
+   "head": "sido",
+   "body": [
+    "nunav"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "mobi",
+    "1": "mogaf",
+    "00": "nunav",
+    "01": "nunav",
+    "10": "nunav",
+    "11": "nunav"
+   },
+   "role": "open"
+  },
+  {
+   "index": 53,
+   "head": "pesor",
+   "body": [
+    "ruzas",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "pesor",
+    "0": "lufef",
+    "1": "pedav",
+    "00": "ruzas",
+    "01": "desu",
+    "10": "ruzas",
+    "11": "ruzas"
+   },
+   "role": "open"
+  },
+  {
+   "index": 54,
+   "head": "gefi",
+   "body": [
+    "pesor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gefi",
+    "0": "nibu",
+    "1": "matu",
+    "00": "pesor",
+    "01": "pesor",
+    "10": "pesor",
+    "11": "pesor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 55,
+   "head": "lolov",
+   "body": [
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lolov",
+    "0": "folat",
+    "1": "zebu",
+    "00": "fogan",
+    "01": "fogan",
+    "10": "fogan",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 56,
+   "head": "nunav",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nunav",
+    "0": "remo",
+    "1": "nuner",
+    "00": "ruzas",
+    "01": "ruzas",
+    "10": "sedu",
+    "11": "ruzas"
+   },
+   "role": "open"
+  },
+  {
+   "index": 57,
+   "head": "nunav",
+   "body": [
+    "gefi",
+    "pesor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nunav",
+    "0": "delov",
+    "1": "nupaf",
+    "00": "gefi",
+    "01": "pesor",
+    "10": "gefi",
+    "11": "gefi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 58,
+   "head": "dutan",
+   "body": [
+    "zemi",
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "dutan",
+    "0": "kesel",
+    "1": "rifi",
+    "00": "fogan",
+    "01": "fogan",
+    "10": "zemi",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 59,
+   "head": "taril",
+   "body": [
+    "dutan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "taril",
+    "0": "pogup",
+    "1": "gilam",
+    "00": "dutan",
+    "01": "dutan",
+    "10": "dutan",
+    "11": "dutan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 60,
+   "head": "pesor",
+   "body": [
+    "ruma",
+    "pari"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "pesor",
+    "0": "dipo",
+    "1": "limi",
+    "00": "pari",
+    "01": "pari",
+    "10": "ruma",
+    "11": "pari"
+   },
+   "role": "open"
+  },
+  {
+   "index": 61,
+   "head": "ruzas",
+   "body": [
+    "pebad",
+    "dudi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "ruzas",
+    "0": "kisu",
+    "1": "latak",
+    "00": "dudi",
+    "01": "dudi",
+    "10": "dudi",
+    "11": "pebad"
+   },
+   "role": "open"
+  },
+  {
+   "index": 62,
+   "head": "rika",
+   "body": [
+    "minu",
+    "buzef"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "rika",
+    "0": "pemuf",
+    "1": "girob",
+    "00": "minu",
+    "01": "minu",
+    "10": "buzef",
+    "11": "minu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 63,
+   "head": "lige",
+   "body": [
+    "rika"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "dezik",
+    "1": "basu",
+    "00": "rika",
+    "01": "rika",
+    "10": "rika",
+    "11": "rika"
+   },
+   "role": "open"
+  },
+  {
+   "index": 64,
+   "head": "favap",
+   "body": [
+    "ruzas"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "favap",
+    "0": "sefor",
+    "1": "suso",
+    "00": "ruzas",
+    "01": "ruzas",
+    "10": "ruzas",
+    "11": "ruzas"
+   },
+   "role": "open"
+  },
+  {
+   "index": 65,
+   "head": "sedu",
+   "body": [
+    "favap"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sedu",
+    "0": "sato",
+    "1": "bozo",
+    "00": "favap",
+    "01": "favap",
+    "10": "favap",
+    "11": "favap"
+   },
+   "role": "open"
+  },
+  {
+   "index": 66,
+   "head": "ruzas",
+   "body": [
+    "dudi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "ruzas",
+    "0": "litap",
+    "1": "sosu",
+    "00": "dudi",
+    "01": "dudi",
+    "10": "dudi",
+    "11": "dudi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 67,
+   "head": "gari",
+   "body": [
+    "lige",
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "tigog",
+    "1": "muno",
+    "00": "lige",
+    "01": "lige",
+    "10": "fogan",
+    "11": "lige"
+   },
+   "role": "open"
+  },
+  {
+   "index": 68,
+   "head": "gefi",
+   "body": [
+    "favap",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gefi",
+    "0": "febar",
+    "1": "fifaf",
+    "00": "favap",
+    "01": "desu",
+    "10": "favap",
+    "11": "favap"
+   },
+   "role": "open"
+  },
+  {
+   "index": 69,
+   "head": "gefi",
+   "body": [
+    "favap",
+    "ruzas"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gefi",
+    "0": "doded",
+    "1": "baza",
+    "00": "ruzas",
+    "01": "ruzas",
+    "10": "favap",
+    "11": "favap"
+   },
+   "role": "open"
+  },
+  {
+   "index": 70,
+   "head": "mibik",
+   "body": [
+    "zemi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "mibik",
+    "0": "bilu",
+    "1": "zira",
+    "00": "zemi",
+    "01": "zemi",
+    "10": "zemi",
+    "11": "zemi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 71,
+   "head": "minu",
+   "body": [
+    "mibik"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "minu",
+    "0": "napuz",
+    "1": "zarib",
+    "00": "mibik",
+    "01": "mibik",
+    "10": "mibik",
+    "11": "mibik"
+   },
+   "role": "open"
+  },
+  {
+   "index": 72,
+   "head": "nuluf",
+   "body": [
+    "gidu",
+    "sedu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nuluf",
+    "0": "keted",
+    "1": "sanu",
+    "00": "sedu",
+    "01": "sedu",
+    "10": "gidu",
+    "11": "sedu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 73,
+   "head": "sido",
+   "body": [
+    "nuluf"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "mamak",
+    "1": "kopus",
+    "00": "nuluf",
+    "01": "nuluf",
+    "10": "nuluf",
+    "11": "nuluf"
+   },
+   "role": "open"
+  },
+  {
+   "index": 74,
+   "head": "sido",
+   "body": [
+    "gidu",
+    "nuluf"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "tifov",
+    "1": "kuges",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "nuluf",
+    "11": "nuluf"
+   },
+   "role": "open"
+  },
+  {
+   "index": 75,
+   "head": "mibik",
+   "body": [
+    "zemi",
+    "dutan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "mibik",
+    "0": "tirug",
+    "1": "lekas",
+    "00": "zemi",
+    "01": "zemi",
+    "10": "dutan",
+    "11": "zemi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 76,
+   "head": "digob",
+   "body": [
+    "minu",
+    "fogan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "digob",
+    "0": "mote",
+    "1": "sinar",
+    "00": "fogan",
+    "01": "minu",
+    "10": "minu",
+    "11": "fogan"
+   },
+   "role": "open"
+  },
+  {
+   "index": 77,
+   "head": "lige",
+   "body": [
+    "digob"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "lige",
+    "0": "turo",
+    "1": "suze",
+    "00": "digob",
+    "01": "digob",
+    "10": "digob",
+    "11": "digob"
+   },
+   "role": "open"
+  },
+  {
+   "index": 78,
+   "head": "fogan",
+   "body": [
+    "favap",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "fogan",
+    "0": "tekob",
+    "1": "rope",
+    "00": "gapor",
+    "01": "favap",
+    "10": "gapor",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 79,
+   "head": "sobeg",
+   "body": [
+    "defe",
+    "pesor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "topa",
+    "1": "zipin",
+    "00": "defe",
+    "01": "defe",
+    "10": "pesor",
+    "11": "defe"
+   },
+   "role": "open"
+  },
+  {
+   "index": 80,
+   "head": "favap",
+   "body": [
+    "dudi",
+    "gapor"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "favap",
+    "0": "mabam",
+    "1": "sirik",
+    "00": "gapor",
+    "01": "dudi",
+    "10": "gapor",
+    "11": "gapor"
+   },
+   "role": "open"
+  },
+  {
+   "index": 81,
+   "head": "soni",
+   "body": [
+    "sido",
+    "dutan"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "soni",
+    "0": "sevoz",
+    "1": "gito",
+    "00": "dutan",
+    "01": "sido",
+    "10": "dutan",
+    "11": "sido"
+   },
+   "role": "open"
+  },
+  {
+   "index": 82,
+   "head": "sobeg",
+   "body": [
+    "soni"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sobeg",
+    "0": "vile",
+    "1": "lono",
+    "00": "soni",
+    "01": "soni",
+    "10": "soni",
+    "11": "soni"
+   },
+   "role": "open"
+  },
+  {
+   "index": 83,
+   "head": "soni",
+   "body": [
+    "gidu",
+    "pari"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "soni",
+    "0": "fuzi",
+    "1": "baga",
+    "00": "pari",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 84,
+   "head": "gari",
+   "body": [
+    "noben",
+    "lolov"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "vufu",
+    "1": "rasu",
+    "00": "lolov",
+    "01": "noben",
+    "10": "lolov",
+    "11": "noben"
+   },
+   "role": "open"
+  },
+  {
+   "index": 85,
+   "head": "taril",
+   "body": [
+    "zemi",
+    "dudi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "taril",
+    "0": "kogep",
+    "1": "bone",
+    "00": "zemi",
+    "01": "dudi",
+    "10": "zemi",
+    "11": "zemi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 86,
+   "head": "gari",
+   "body": [
+    "noben",
+    "vegob"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "gari",
+    "0": "zolos",
+    "1": "desi",
+    "00": "noben",
+    "01": "noben",
+    "10": "noben",
+    "11": "vegob"
+   },
+   "role": "open"
+  },
+  {
+   "index": 87,
+   "head": "tosez",
+   "body": [
+    "sedu",
+    "dudi"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "tosez",
+    "0": "silo",
+    "1": "pekok",
+    "00": "sedu",
+    "01": "dudi",
+    "10": "dudi",
+    "11": "dudi"
+   },
+   "role": "open"
+  },
+  {
+   "index": 88,
+   "head": "nuluf",
+   "body": [
+    "tosez"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nuluf",
+    "0": "zomi",
+    "1": "kule",
+    "00": "tosez",
+    "01": "tosez",
+    "10": "tosez",
+    "11": "tosez"
+   },
+   "role": "open"
+  },
+  {
+   "index": 89,
+   "head": "rika",
+   "body": [
+    "taril",
+    "desu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "rika",
+    "0": "botu",
+    "1": "pubob",
+    "00": "taril",
+    "01": "taril",
+    "10": "desu",
+    "11": "taril"
+   },
+   "role": "open"
+  },
+  {
+   "index": 90,
+   "head": "nuluf",
+   "body": [
+    "tosez",
+    "ruma"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nuluf",
+    "0": "tusas",
+    "1": "sosef",
+    "00": "tosez",
+    "01": "ruma",
+    "10": "tosez",
+    "11": "tosez"
+   },
+   "role": "open"
+  },
+  {
+   "index": 91,
+   "head": "sido",
+   "body": [
+    "gidu",
+    "nunav"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sido",
+    "0": "fobir",
+    "1": "subo",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "nunav",
+    "11": "nunav"
+   },
+   "role": "open"
+  },
+  {
+   "index": 92,
+   "head": "defe",
+   "body": [
+    "vegob",
+    "tosez"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "defe",
+    "0": "seno",
+    "1": "doge",
+    "00": "tosez",
+    "01": "vegob",
+    "10": "vegob",
+    "11": "vegob"
+   },
+   "role": "open"
+  },
+  {
+   "index": 93,
+   "head": "tugo",
+   "body": [
+    "gidu"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "tugo",
+    "0": "fale",
+    "1": "disu",
+    "00": "gidu",
+    "01": "gidu",
+    "10": "gidu",
+    "11": "gidu"
+   },
+   "role": "open"
+  },
+  {
+   "index": 94,
+   "head": "soni",
+   "body": [
+    "tugo"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "soni",
+    "0": "babuk",
+    "1": "kufo",
+    "00": "tugo",
+    "01": "tugo",
+    "10": "tugo",
+    "11": "tugo"
+   },
+   "role": "open"
+  },
+  {
+   "index": 95,
+   "head": "dutan",
+   "body": [
+    "vegob"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "dutan",
+    "0": "fono",
+    "1": "nivuk",
+    "00": "vegob",
+    "01": "vegob",
+    "10": "vegob",
+    "11": "vegob"
+   },
+   "role": "open"
+  },
+  {
+   "index": 96,
+   "head": "sore",
+   "body": [
+    "tosez",
+    "favap"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "sore",
+    "0": "kalif",
+    "1": "rake",
+    "00": "tosez",
+    "01": "favap",
+    "10": "favap",
+    "11": "favap"
+   },
+   "role": "open"
+  },
+  {
+   "index": 97,
+   "head": "nunav",
+   "body": [
+    "sore"
+   ],
+   "height": 2,
+   "node_pred": {
+    "": "nunav",
+    "0": "papum",
+    "1": "gekum",
+    "00": "sore",
+    "01": "sore",
+    "10": "sore",
+    "11": "sore"
+   },
+   "role": "open"
+  }
+ ],
+ "rules": [
+  {
+   "key": "lem1",
+   "head": "sedu",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 1,
+   "depth": 0
+  },
+  {
+   "key": "ax1.r",
+   "head": "sedu",
+   "body": [
+    "loku",
+    "dume"
+   ],
+   "kind": "axiom",
+   "link": 1,
+   "depth": 0
+  },
+  {
+   "key": "ax1.0",
+   "head": "loku",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 1,
+   "depth": 1
+  },
+  {
+   "key": "sub1.0",
+   "head": "loku",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 1,
+   "depth": 1
+  },
+  {
+   "key": "ax1.1",
+   "head": "dume",
+   "body": [
+    "pebad",
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 1,
+   "depth": 1
+  },
+  {
+   "key": "sub1.1",
+   "head": "dume",
+   "body": [
+    "pebad",
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 1,
+   "depth": 1
+  },
+  {
+   "key": "lem2",
+   "head": "gidu",
+   "body": [
+    "sedu",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 2,
+   "depth": 0
+  },
+  {
+   "key": "ax2.r",
+   "head": "gidu",
+   "body": [
+    "savu",
+    "zili"
+   ],
+   "kind": "axiom",
+   "link": 2,
+   "depth": 0
+  },
+  {
+   "key": "ax2.0",
+   "head": "savu",
+   "body": [
+    "gapor",
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 2,
+   "depth": 1
+  },
+  {
+   "key": "sub2.0",
+   "head": "savu",
+   "body": [
+    "gapor",
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 2,
+   "depth": 1
+  },
+  {
+   "key": "ax2.1",
+   "head": "zili",
+   "body": [
+    "sedu",
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 2,
+   "depth": 1
+  },
+  {
+   "key": "sub2.1",
+   "head": "zili",
+   "body": [
+    "sedu",
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 2,
+   "depth": 1
+  },
+  {
+   "key": "lem3",
+   "head": "rarep",
+   "body": [
+    "gidu",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 3,
+   "depth": 0
+  },
+  {
+   "key": "ax3.r",
+   "head": "rarep",
+   "body": [
+    "nabi",
+    "soko"
+   ],
+   "kind": "axiom",
+   "link": 3,
+   "depth": 0
+  },
+  {
+   "key": "ax3.0",
+   "head": "nabi",
+   "body": [
+    "desu",
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 3,
+   "depth": 1
+  },
+  {
+   "key": "sub3.0",
+   "head": "nabi",
+   "body": [
+    "desu",
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 3,
+   "depth": 1
+  },
+  {
+   "key": "ax3.1",
+   "head": "soko",
+   "body": [
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 3,
+   "depth": 1
+  },
+  {
+   "key": "sub3.1",
+   "head": "soko",
+   "body": [
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 3,
+   "depth": 1
+  },
+  {
+   "key": "lem4",
+   "head": "minu",
+   "body": [
+    "rarep",
+    "ruma"
+   ],
+   "kind": "lemma",
+   "link": 4,
+   "depth": 0
+  },
+  {
+   "key": "ax4.r",
+   "head": "minu",
+   "body": [
+    "fudov",
+    "ketez"
+   ],
+   "kind": "axiom",
+   "link": 4,
+   "depth": 0
+  },
+  {
+   "key": "ax4.0",
+   "head": "fudov",
+   "body": [
+    "ruma",
+    "rarep"
+   ],
+   "kind": "axiom",
+   "link": 4,
+   "depth": 1
+  },
+  {
+   "key": "sub4.0",
+   "head": "fudov",
+   "body": [
+    "ruma",
+    "rarep"
+   ],
+   "kind": "sublemma",
+   "link": 4,
+   "depth": 1
+  },
+  {
+   "key": "ax4.1",
+   "head": "ketez",
+   "body": [
+    "rarep",
+    "ruma"
+   ],
+   "kind": "axiom",
+   "link": 4,
+   "depth": 1
+  },
+  {
+   "key": "sub4.1",
+   "head": "ketez",
+   "body": [
+    "rarep",
+    "ruma"
+   ],
+   "kind": "sublemma",
+   "link": 4,
+   "depth": 1
+  },
+  {
+   "key": "lem5",
+   "head": "lige",
+   "body": [
+    "minu",
+    "buzef"
+   ],
+   "kind": "lemma",
+   "link": 5,
+   "depth": 0
+  },
+  {
+   "key": "ax5.r",
+   "head": "lige",
+   "body": [
+    "muke",
+    "zuko"
+   ],
+   "kind": "axiom",
+   "link": 5,
+   "depth": 0
+  },
+  {
+   "key": "ax5.0",
+   "head": "muke",
+   "body": [
+    "buzef",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 5,
+   "depth": 1
+  },
+  {
+   "key": "sub5.0",
+   "head": "muke",
+   "body": [
+    "buzef",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 5,
+   "depth": 1
+  },
+  {
+   "key": "ax5.1",
+   "head": "zuko",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 5,
+   "depth": 1
+  },
+  {
+   "key": "sub5.1",
+   "head": "zuko",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 5,
+   "depth": 1
+  },
+  {
+   "key": "lem6",
+   "head": "gari",
+   "body": [
+    "lige",
+    "pari"
+   ],
+   "kind": "lemma",
+   "link": 6,
+   "depth": 0
+  },
+  {
+   "key": "ax6.r",
+   "head": "gari",
+   "body": [
+    "fegez",
+    "rekim"
+   ],
+   "kind": "axiom",
+   "link": 6,
+   "depth": 0
+  },
+  {
+   "key": "ax6.0",
+   "head": "fegez",
+   "body": [
+    "pari"
+   ],
+   "kind": "axiom",
+   "link": 6,
+   "depth": 1
+  },
+  {
+   "key": "sub6.0",
+   "head": "fegez",
+   "body": [
+    "pari"
+   ],
+   "kind": "sublemma",
+   "link": 6,
+   "depth": 1
+  },
+  {
+   "key": "ax6.1",
+   "head": "rekim",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 6,
+   "depth": 1
+  },
+  {
+   "key": "sub6.1",
+   "head": "rekim",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 6,
+   "depth": 1
+  },
+  {
+   "key": "lem7",
+   "head": "sobeg",
+   "body": [
+    "rarep",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 7,
+   "depth": 0
+  },
+  {
+   "key": "ax7.r",
+   "head": "sobeg",
+   "body": [
+    "nedi",
+    "dare"
+   ],
+   "kind": "axiom",
+   "link": 7,
+   "depth": 0
+  },
+  {
+   "key": "ax7.0",
+   "head": "nedi",
+   "body": [
+    "pebad",
+    "rarep"
+   ],
+   "kind": "axiom",
+   "link": 7,
+   "depth": 1
+  },
+  {
+   "key": "sub7.0",
+   "head": "nedi",
+   "body": [
+    "pebad",
+    "rarep"
+   ],
+   "kind": "sublemma",
+   "link": 7,
+   "depth": 1
+  },
+  {
+   "key": "ax7.1",
+   "head": "dare",
+   "body": [
+    "rarep"
+   ],
+   "kind": "axiom",
+   "link": 7,
+   "depth": 1
+  },
+  {
+   "key": "sub7.1",
+   "head": "dare",
+   "body": [
+    "rarep"
+   ],
+   "kind": "sublemma",
+   "link": 7,
+   "depth": 1
+  },
+  {
+   "key": "lem8",
+   "head": "minu",
+   "body": [
+    "sobeg"
+   ],
+   "kind": "lemma",
+   "link": 8,
+   "depth": 0
+  },
+  {
+   "key": "ax8.r",
+   "head": "minu",
+   "body": [
+    "rofi",
+    "rinan"
+   ],
+   "kind": "axiom",
+   "link": 8,
+   "depth": 0
+  },
+  {
+   "key": "ax8.0",
+   "head": "rofi",
+   "body": [
+    "sobeg"
+   ],
+   "kind": "axiom",
+   "link": 8,
+   "depth": 1
+  },
+  {
+   "key": "sub8.0",
+   "head": "rofi",
+   "body": [
+    "sobeg"
+   ],
+   "kind": "sublemma",
+   "link": 8,
+   "depth": 1
+  },
+  {
+   "key": "ax8.1",
+   "head": "rinan",
+   "body": [
+    "sobeg"
+   ],
+   "kind": "axiom",
+   "link": 8,
+   "depth": 1
+  },
+  {
+   "key": "sub8.1",
+   "head": "rinan",
+   "body": [
+    "sobeg"
+   ],
+   "kind": "sublemma",
+   "link": 8,
+   "depth": 1
+  },
+  {
+   "key": "lem9",
+   "head": "gari",
+   "body": [
+    "lige"
+   ],
+   "kind": "lemma",
+   "link": 9,
+   "depth": 0
+  },
+  {
+   "key": "ax9.r",
+   "head": "gari",
+   "body": [
+    "letu",
+    "vuka"
+   ],
+   "kind": "axiom",
+   "link": 9,
+   "depth": 0
+  },
+  {
+   "key": "ax9.0",
+   "head": "letu",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 9,
+   "depth": 1
+  },
+  {
+   "key": "sub9.0",
+   "head": "letu",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 9,
+   "depth": 1
+  },
+  {
+   "key": "ax9.1",
+   "head": "vuka",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 9,
+   "depth": 1
+  },
+  {
+   "key": "sub9.1",
+   "head": "vuka",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 9,
+   "depth": 1
+  },
+  {
+   "key": "lem10",
+   "head": "sobeg",
+   "body": [
+    "rarep",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 10,
+   "depth": 0
+  },
+  {
+   "key": "ax10.r",
+   "head": "sobeg",
+   "body": [
+    "zoten",
+    "labig"
+   ],
+   "kind": "axiom",
+   "link": 10,
+   "depth": 0
+  },
+  {
+   "key": "ax10.0",
+   "head": "zoten",
+   "body": [
+    "rarep",
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 10,
+   "depth": 1
+  },
+  {
+   "key": "sub10.0",
+   "head": "zoten",
+   "body": [
+    "rarep",
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 10,
+   "depth": 1
+  },
+  {
+   "key": "ax10.1",
+   "head": "labig",
+   "body": [
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 10,
+   "depth": 1
+  },
+  {
+   "key": "sub10.1",
+   "head": "labig",
+   "body": [
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 10,
+   "depth": 1
+  },
+  {
+   "key": "lem11",
+   "head": "ruzas",
+   "body": [
+    "desu",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 11,
+   "depth": 0
+  },
+  {
+   "key": "ax11.r",
+   "head": "ruzas",
+   "body": [
+    "laza",
+    "venes"
+   ],
+   "kind": "axiom",
+   "link": 11,
+   "depth": 0
+  },
+  {
+   "key": "ax11.0",
+   "head": "laza",
+   "body": [
+    "gapor",
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 11,
+   "depth": 1
+  },
+  {
+   "key": "sub11.0",
+   "head": "laza",
+   "body": [
+    "gapor",
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 11,
+   "depth": 1
+  },
+  {
+   "key": "ax11.1",
+   "head": "venes",
+   "body": [
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 11,
+   "depth": 1
+  },
+  {
+   "key": "sub11.1",
+   "head": "venes",
+   "body": [
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 11,
+   "depth": 1
+  },
+  {
+   "key": "lem12",
+   "head": "sedu",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "lemma",
+   "link": 12,
+   "depth": 0
+  },
+  {
+   "key": "ax12.r",
+   "head": "sedu",
+   "body": [
+    "matef",
+    "bero"
+   ],
+   "kind": "axiom",
+   "link": 12,
+   "depth": 0
+  },
+  {
+   "key": "ax12.0",
+   "head": "matef",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 12,
+   "depth": 1
+  },
+  {
+   "key": "sub12.0",
+   "head": "matef",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 12,
+   "depth": 1
+  },
+  {
+   "key": "ax12.1",
+   "head": "bero",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 12,
+   "depth": 1
+  },
+  {
+   "key": "sub12.1",
+   "head": "bero",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 12,
+   "depth": 1
+  },
+  {
+   "key": "lem13",
+   "head": "rarep",
+   "body": [
+    "gidu",
+    "dudi"
+   ],
+   "kind": "lemma",
+   "link": 13,
+   "depth": 0
+  },
+  {
+   "key": "ax13.r",
+   "head": "rarep",
+   "body": [
+    "zezeg",
+    "kugup"
+   ],
+   "kind": "axiom",
+   "link": 13,
+   "depth": 0
+  },
+  {
+   "key": "ax13.0",
+   "head": "zezeg",
+   "body": [
+    "dudi",
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 13,
+   "depth": 1
+  },
+  {
+   "key": "sub13.0",
+   "head": "zezeg",
+   "body": [
+    "dudi",
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 13,
+   "depth": 1
+  },
+  {
+   "key": "ax13.1",
+   "head": "kugup",
+   "body": [
+    "gidu",
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 13,
+   "depth": 1
+  },
+  {
+   "key": "sub13.1",
+   "head": "kugup",
+   "body": [
+    "gidu",
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 13,
+   "depth": 1
+  },
+  {
+   "key": "lem14",
+   "head": "ruzas",
+   "body": [
+    "ruma",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 14,
+   "depth": 0
+  },
+  {
+   "key": "ax14.r",
+   "head": "ruzas",
+   "body": [
+    "pepe",
+    "bove"
+   ],
+   "kind": "axiom",
+   "link": 14,
+   "depth": 0
+  },
+  {
+   "key": "ax14.0",
+   "head": "pepe",
+   "body": [
+    "ruma"
+   ],
+   "kind": "axiom",
+   "link": 14,
+   "depth": 1
+  },
+  {
+   "key": "sub14.0",
+   "head": "pepe",
+   "body": [
+    "ruma"
+   ],
+   "kind": "sublemma",
+   "link": 14,
+   "depth": 1
+  },
+  {
+   "key": "ax14.1",
+   "head": "bove",
+   "body": [
+    "ruma",
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 14,
+   "depth": 1
+  },
+  {
+   "key": "sub14.1",
+   "head": "bove",
+   "body": [
+    "ruma",
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 14,
+   "depth": 1
+  },
+  {
+   "key": "lem15",
+   "head": "gidu",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "lemma",
+   "link": 15,
+   "depth": 0
+  },
+  {
+   "key": "ax15.r",
+   "head": "gidu",
+   "body": [
+    "dubeb",
+    "vapo"
+   ],
+   "kind": "axiom",
+   "link": 15,
+   "depth": 0
+  },
+  {
+   "key": "ax15.0",
+   "head": "dubeb",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 15,
+   "depth": 1
+  },
+  {
+   "key": "sub15.0",
+   "head": "dubeb",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 15,
+   "depth": 1
+  },
+  {
+   "key": "ax15.1",
+   "head": "vapo",
+   "body": [
+    "ruzas",
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 15,
+   "depth": 1
+  },
+  {
+   "key": "sub15.1",
+   "head": "vapo",
+   "body": [
+    "ruzas",
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 15,
+   "depth": 1
+  },
+  {
+   "key": "lem16",
+   "head": "lige",
+   "body": [
+    "minu",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 16,
+   "depth": 0
+  },
+  {
+   "key": "ax16.r",
+   "head": "lige",
+   "body": [
+    "kugod",
+    "mola"
+   ],
+   "kind": "axiom",
+   "link": 16,
+   "depth": 0
+  },
+  {
+   "key": "ax16.0",
+   "head": "kugod",
+   "body": [
+    "gapor",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 16,
+   "depth": 1
+  },
+  {
+   "key": "sub16.0",
+   "head": "kugod",
+   "body": [
+    "gapor",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 16,
+   "depth": 1
+  },
+  {
+   "key": "ax16.1",
+   "head": "mola",
+   "body": [
+    "minu",
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 16,
+   "depth": 1
+  },
+  {
+   "key": "sub16.1",
+   "head": "mola",
+   "body": [
+    "minu",
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 16,
+   "depth": 1
+  },
+  {
+   "key": "lem17",
+   "head": "fogan",
+   "body": [
+    "sedu",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 17,
+   "depth": 0
+  },
+  {
+   "key": "ax17.r",
+   "head": "fogan",
+   "body": [
+    "fefo",
+    "mimed"
+   ],
+   "kind": "axiom",
+   "link": 17,
+   "depth": 0
+  },
+  {
+   "key": "ax17.0",
+   "head": "fefo",
+   "body": [
+    "pebad",
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 17,
+   "depth": 1
+  },
+  {
+   "key": "sub17.0",
+   "head": "fefo",
+   "body": [
+    "pebad",
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 17,
+   "depth": 1
+  },
+  {
+   "key": "ax17.1",
+   "head": "mimed",
+   "body": [
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 17,
+   "depth": 1
+  },
+  {
+   "key": "sub17.1",
+   "head": "mimed",
+   "body": [
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 17,
+   "depth": 1
+  },
+  {
+   "key": "lem18",
+   "head": "gidu",
+   "body": [
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 18,
+   "depth": 0
+  },
+  {
+   "key": "ax18.r",
+   "head": "gidu",
+   "body": [
+    "nami",
+    "kuda"
+   ],
+   "kind": "axiom",
+   "link": 18,
+   "depth": 0
+  },
+  {
+   "key": "ax18.0",
+   "head": "nami",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 18,
+   "depth": 1
+  },
+  {
+   "key": "sub18.0",
+   "head": "nami",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 18,
+   "depth": 1
+  },
+  {
+   "key": "ax18.1",
+   "head": "kuda",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 18,
+   "depth": 1
+  },
+  {
+   "key": "sub18.1",
+   "head": "kuda",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 18,
+   "depth": 1
+  },
+  {
+   "key": "lem19",
+   "head": "mime",
+   "body": [
+    "minu"
+   ],
+   "kind": "lemma",
+   "link": 19,
+   "depth": 0
+  },
+  {
+   "key": "ax19.r",
+   "head": "mime",
+   "body": [
+    "punib",
+    "vemab"
+   ],
+   "kind": "axiom",
+   "link": 19,
+   "depth": 0
+  },
+  {
+   "key": "ax19.0",
+   "head": "punib",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 19,
+   "depth": 1
+  },
+  {
+   "key": "sub19.0",
+   "head": "punib",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 19,
+   "depth": 1
+  },
+  {
+   "key": "ax19.1",
+   "head": "vemab",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 19,
+   "depth": 1
+  },
+  {
+   "key": "sub19.1",
+   "head": "vemab",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 19,
+   "depth": 1
+  },
+  {
+   "key": "lem20",
+   "head": "lige",
+   "body": [
+    "mime"
+   ],
+   "kind": "lemma",
+   "link": 20,
+   "depth": 0
+  },
+  {
+   "key": "ax20.r",
+   "head": "lige",
+   "body": [
+    "dizal",
+    "pokup"
+   ],
+   "kind": "axiom",
+   "link": 20,
+   "depth": 0
+  },
+  {
+   "key": "ax20.0",
+   "head": "dizal",
+   "body": [
+    "mime"
+   ],
+   "kind": "axiom",
+   "link": 20,
+   "depth": 1
+  },
+  {
+   "key": "sub20.0",
+   "head": "dizal",
+   "body": [
+    "mime"
+   ],
+   "kind": "sublemma",
+   "link": 20,
+   "depth": 1
+  },
+  {
+   "key": "ax20.1",
+   "head": "pokup",
+   "body": [
+    "mime"
+   ],
+   "kind": "axiom",
+   "link": 20,
+   "depth": 1
+  },
+  {
+   "key": "sub20.1",
+   "head": "pokup",
+   "body": [
+    "mime"
+   ],
+   "kind": "sublemma",
+   "link": 20,
+   "depth": 1
+  },
+  {
+   "key": "lem21",
+   "head": "sedu",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 21,
+   "depth": 0
+  },
+  {
+   "key": "ax21.r",
+   "head": "sedu",
+   "body": [
+    "kopev",
+    "bibap"
+   ],
+   "kind": "axiom",
+   "link": 21,
+   "depth": 0
+  },
+  {
+   "key": "ax21.0",
+   "head": "kopev",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 21,
+   "depth": 1
+  },
+  {
+   "key": "sub21.0",
+   "head": "kopev",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 21,
+   "depth": 1
+  },
+  {
+   "key": "ax21.1",
+   "head": "bibap",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 21,
+   "depth": 1
+  },
+  {
+   "key": "sub21.1",
+   "head": "bibap",
+   "body": [
+    "pari",
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 21,
+   "depth": 1
+  },
+  {
+   "key": "lem22",
+   "head": "zemi",
+   "body": [
+    "rarep",
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 22,
+   "depth": 0
+  },
+  {
+   "key": "ax22.r",
+   "head": "zemi",
+   "body": [
+    "zeba",
+    "kofaz"
+   ],
+   "kind": "axiom",
+   "link": 22,
+   "depth": 0
+  },
+  {
+   "key": "ax22.0",
+   "head": "zeba",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 22,
+   "depth": 1
+  },
+  {
+   "key": "sub22.0",
+   "head": "zeba",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 22,
+   "depth": 1
+  },
+  {
+   "key": "ax22.1",
+   "head": "kofaz",
+   "body": [
+    "rarep",
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 22,
+   "depth": 1
+  },
+  {
+   "key": "sub22.1",
+   "head": "kofaz",
+   "body": [
+    "rarep",
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 22,
+   "depth": 1
+  },
+  {
+   "key": "lem23",
+   "head": "sobeg",
+   "body": [
+    "zemi"
+   ],
+   "kind": "lemma",
+   "link": 23,
+   "depth": 0
+  },
+  {
+   "key": "ax23.r",
+   "head": "sobeg",
+   "body": [
+    "bofeb",
+    "kilub"
+   ],
+   "kind": "axiom",
+   "link": 23,
+   "depth": 0
+  },
+  {
+   "key": "ax23.0",
+   "head": "bofeb",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 23,
+   "depth": 1
+  },
+  {
+   "key": "sub23.0",
+   "head": "bofeb",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 23,
+   "depth": 1
+  },
+  {
+   "key": "ax23.1",
+   "head": "kilub",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 23,
+   "depth": 1
+  },
+  {
+   "key": "sub23.1",
+   "head": "kilub",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 23,
+   "depth": 1
+  },
+  {
+   "key": "lem24",
+   "head": "sedu",
+   "body": [
+    "desu",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 24,
+   "depth": 0
+  },
+  {
+   "key": "ax24.r",
+   "head": "sedu",
+   "body": [
+    "guvaz",
+    "demub"
+   ],
+   "kind": "axiom",
+   "link": 24,
+   "depth": 0
+  },
+  {
+   "key": "ax24.0",
+   "head": "guvaz",
+   "body": [
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 24,
+   "depth": 1
+  },
+  {
+   "key": "sub24.0",
+   "head": "guvaz",
+   "body": [
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 24,
+   "depth": 1
+  },
+  {
+   "key": "ax24.1",
+   "head": "demub",
+   "body": [
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 24,
+   "depth": 1
+  },
+  {
+   "key": "sub24.1",
+   "head": "demub",
+   "body": [
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 24,
+   "depth": 1
+  },
+  {
+   "key": "lem25",
+   "head": "mime",
+   "body": [
+    "minu",
+    "sedu"
+   ],
+   "kind": "lemma",
+   "link": 25,
+   "depth": 0
+  },
+  {
+   "key": "ax25.r",
+   "head": "mime",
+   "body": [
+    "rovi",
+    "neku"
+   ],
+   "kind": "axiom",
+   "link": 25,
+   "depth": 0
+  },
+  {
+   "key": "ax25.0",
+   "head": "rovi",
+   "body": [
+    "minu",
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 25,
+   "depth": 1
+  },
+  {
+   "key": "sub25.0",
+   "head": "rovi",
+   "body": [
+    "minu",
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 25,
+   "depth": 1
+  },
+  {
+   "key": "ax25.1",
+   "head": "neku",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 25,
+   "depth": 1
+  },
+  {
+   "key": "sub25.1",
+   "head": "neku",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 25,
+   "depth": 1
+  },
+  {
+   "key": "lem26",
+   "head": "sido",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 26,
+   "depth": 0
+  },
+  {
+   "key": "ax26.r",
+   "head": "sido",
+   "body": [
+    "pasa",
+    "seniv"
+   ],
+   "kind": "axiom",
+   "link": 26,
+   "depth": 0
+  },
+  {
+   "key": "ax26.0",
+   "head": "pasa",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 26,
+   "depth": 1
+  },
+  {
+   "key": "sub26.0",
+   "head": "pasa",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 26,
+   "depth": 1
+  },
+  {
+   "key": "ax26.1",
+   "head": "seniv",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 26,
+   "depth": 1
+  },
+  {
+   "key": "sub26.1",
+   "head": "seniv",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 26,
+   "depth": 1
+  },
+  {
+   "key": "lem27",
+   "head": "zemi",
+   "body": [
+    "sido"
+   ],
+   "kind": "lemma",
+   "link": 27,
+   "depth": 0
+  },
+  {
+   "key": "ax27.r",
+   "head": "zemi",
+   "body": [
+    "kaziv",
+    "getom"
+   ],
+   "kind": "axiom",
+   "link": 27,
+   "depth": 0
+  },
+  {
+   "key": "ax27.0",
+   "head": "kaziv",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 27,
+   "depth": 1
+  },
+  {
+   "key": "sub27.0",
+   "head": "kaziv",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 27,
+   "depth": 1
+  },
+  {
+   "key": "ax27.1",
+   "head": "getom",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 27,
+   "depth": 1
+  },
+  {
+   "key": "sub27.1",
+   "head": "getom",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 27,
+   "depth": 1
+  },
+  {
+   "key": "lem28",
+   "head": "kirun",
+   "body": [
+    "minu"
+   ],
+   "kind": "lemma",
+   "link": 28,
+   "depth": 0
+  },
+  {
+   "key": "ax28.r",
+   "head": "kirun",
+   "body": [
+    "boka",
+    "sokun"
+   ],
+   "kind": "axiom",
+   "link": 28,
+   "depth": 0
+  },
+  {
+   "key": "ax28.0",
+   "head": "boka",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 28,
+   "depth": 1
+  },
+  {
+   "key": "sub28.0",
+   "head": "boka",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 28,
+   "depth": 1
+  },
+  {
+   "key": "ax28.1",
+   "head": "sokun",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 28,
+   "depth": 1
+  },
+  {
+   "key": "sub28.1",
+   "head": "sokun",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 28,
+   "depth": 1
+  },
+  {
+   "key": "lem29",
+   "head": "mime",
+   "body": [
+    "kirun"
+   ],
+   "kind": "lemma",
+   "link": 29,
+   "depth": 0
+  },
+  {
+   "key": "ax29.r",
+   "head": "mime",
+   "body": [
+    "dobiz",
+    "pokog"
+   ],
+   "kind": "axiom",
+   "link": 29,
+   "depth": 0
+  },
+  {
+   "key": "ax29.0",
+   "head": "dobiz",
+   "body": [
+    "kirun"
+   ],
+   "kind": "axiom",
+   "link": 29,
+   "depth": 1
+  },
+  {
+   "key": "sub29.0",
+   "head": "dobiz",
+   "body": [
+    "kirun"
+   ],
+   "kind": "sublemma",
+   "link": 29,
+   "depth": 1
+  },
+  {
+   "key": "ax29.1",
+   "head": "pokog",
+   "body": [
+    "kirun"
+   ],
+   "kind": "axiom",
+   "link": 29,
+   "depth": 1
+  },
+  {
+   "key": "sub29.1",
+   "head": "pokog",
+   "body": [
+    "kirun"
+   ],
+   "kind": "sublemma",
+   "link": 29,
+   "depth": 1
+  },
+  {
+   "key": "lem30",
+   "head": "noben",
+   "body": [
+    "lige",
+    "rarep"
+   ],
+   "kind": "lemma",
+   "link": 30,
+   "depth": 0
+  },
+  {
+   "key": "ax30.r",
+   "head": "noben",
+   "body": [
+    "somi",
+    "mimil"
+   ],
+   "kind": "axiom",
+   "link": 30,
+   "depth": 0
+  },
+  {
+   "key": "ax30.0",
+   "head": "somi",
+   "body": [
+    "lige",
+    "rarep"
+   ],
+   "kind": "axiom",
+   "link": 30,
+   "depth": 1
+  },
+  {
+   "key": "sub30.0",
+   "head": "somi",
+   "body": [
+    "lige",
+    "rarep"
+   ],
+   "kind": "sublemma",
+   "link": 30,
+   "depth": 1
+  },
+  {
+   "key": "ax30.1",
+   "head": "mimil",
+   "body": [
+    "rarep"
+   ],
+   "kind": "axiom",
+   "link": 30,
+   "depth": 1
+  },
+  {
+   "key": "sub30.1",
+   "head": "mimil",
+   "body": [
+    "rarep"
+   ],
+   "kind": "sublemma",
+   "link": 30,
+   "depth": 1
+  },
+  {
+   "key": "lem31",
+   "head": "gari",
+   "body": [
+    "noben"
+   ],
+   "kind": "lemma",
+   "link": 31,
+   "depth": 0
+  },
+  {
+   "key": "ax31.r",
+   "head": "gari",
+   "body": [
+    "deta",
+    "kilaz"
+   ],
+   "kind": "axiom",
+   "link": 31,
+   "depth": 0
+  },
+  {
+   "key": "ax31.0",
+   "head": "deta",
+   "body": [
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 31,
+   "depth": 1
+  },
+  {
+   "key": "sub31.0",
+   "head": "deta",
+   "body": [
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 31,
+   "depth": 1
+  },
+  {
+   "key": "ax31.1",
+   "head": "kilaz",
+   "body": [
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 31,
+   "depth": 1
+  },
+  {
+   "key": "sub31.1",
+   "head": "kilaz",
+   "body": [
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 31,
+   "depth": 1
+  },
+  {
+   "key": "lem32",
+   "head": "noben",
+   "body": [
+    "lige"
+   ],
+   "kind": "lemma",
+   "link": 32,
+   "depth": 0
+  },
+  {
+   "key": "ax32.r",
+   "head": "noben",
+   "body": [
+    "segil",
+    "givo"
+   ],
+   "kind": "axiom",
+   "link": 32,
+   "depth": 0
+  },
+  {
+   "key": "ax32.0",
+   "head": "segil",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 32,
+   "depth": 1
+  },
+  {
+   "key": "sub32.0",
+   "head": "segil",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 32,
+   "depth": 1
+  },
+  {
+   "key": "ax32.1",
+   "head": "givo",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 32,
+   "depth": 1
+  },
+  {
+   "key": "sub32.1",
+   "head": "givo",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 32,
+   "depth": 1
+  },
+  {
+   "key": "lem33",
+   "head": "sido",
+   "body": [
+    "fogan",
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 33,
+   "depth": 0
+  },
+  {
+   "key": "ax33.r",
+   "head": "sido",
+   "body": [
+    "pefok",
+    "kitig"
+   ],
+   "kind": "axiom",
+   "link": 33,
+   "depth": 0
+  },
+  {
+   "key": "ax33.0",
+   "head": "pefok",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 33,
+   "depth": 1
+  },
+  {
+   "key": "sub33.0",
+   "head": "pefok",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 33,
+   "depth": 1
+  },
+  {
+   "key": "ax33.1",
+   "head": "kitig",
+   "body": [
+    "gidu",
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 33,
+   "depth": 1
+  },
+  {
+   "key": "sub33.1",
+   "head": "kitig",
+   "body": [
+    "gidu",
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 33,
+   "depth": 1
+  },
+  {
+   "key": "lem34",
+   "head": "rarep",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 34,
+   "depth": 0
+  },
+  {
+   "key": "ax34.r",
+   "head": "rarep",
+   "body": [
+    "nugo",
+    "vome"
+   ],
+   "kind": "axiom",
+   "link": 34,
+   "depth": 0
+  },
+  {
+   "key": "ax34.0",
+   "head": "nugo",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 34,
+   "depth": 1
+  },
+  {
+   "key": "sub34.0",
+   "head": "nugo",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 34,
+   "depth": 1
+  },
+  {
+   "key": "ax34.1",
+   "head": "vome",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 34,
+   "depth": 1
+  },
+  {
+   "key": "sub34.1",
+   "head": "vome",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 34,
+   "depth": 1
+  },
+  {
+   "key": "lem35",
+   "head": "fogan",
+   "body": [
+    "ruzas",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 35,
+   "depth": 0
+  },
+  {
+   "key": "ax35.r",
+   "head": "fogan",
+   "body": [
+    "tomo",
+    "goki"
+   ],
+   "kind": "axiom",
+   "link": 35,
+   "depth": 0
+  },
+  {
+   "key": "ax35.0",
+   "head": "tomo",
+   "body": [
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 35,
+   "depth": 1
+  },
+  {
+   "key": "sub35.0",
+   "head": "tomo",
+   "body": [
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 35,
+   "depth": 1
+  },
+  {
+   "key": "ax35.1",
+   "head": "goki",
+   "body": [
+    "gapor",
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 35,
+   "depth": 1
+  },
+  {
+   "key": "sub35.1",
+   "head": "goki",
+   "body": [
+    "gapor",
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 35,
+   "depth": 1
+  },
+  {
+   "key": "lem36",
+   "head": "zemi",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 36,
+   "depth": 0
+  },
+  {
+   "key": "ax36.r",
+   "head": "zemi",
+   "body": [
+    "mosok",
+    "zafav"
+   ],
+   "kind": "axiom",
+   "link": 36,
+   "depth": 0
+  },
+  {
+   "key": "ax36.0",
+   "head": "mosok",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 36,
+   "depth": 1
+  },
+  {
+   "key": "sub36.0",
+   "head": "mosok",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 36,
+   "depth": 1
+  },
+  {
+   "key": "ax36.1",
+   "head": "zafav",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 36,
+   "depth": 1
+  },
+  {
+   "key": "sub36.1",
+   "head": "zafav",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 36,
+   "depth": 1
+  },
+  {
+   "key": "lem37",
+   "head": "defe",
+   "body": [
+    "zemi",
+    "pebad"
+   ],
+   "kind": "lemma",
+   "link": 37,
+   "depth": 0
+  },
+  {
+   "key": "ax37.r",
+   "head": "defe",
+   "body": [
+    "sazov",
+    "baveb"
+   ],
+   "kind": "axiom",
+   "link": 37,
+   "depth": 0
+  },
+  {
+   "key": "ax37.0",
+   "head": "sazov",
+   "body": [
+    "pebad",
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 37,
+   "depth": 1
+  },
+  {
+   "key": "sub37.0",
+   "head": "sazov",
+   "body": [
+    "pebad",
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 37,
+   "depth": 1
+  },
+  {
+   "key": "ax37.1",
+   "head": "baveb",
+   "body": [
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 37,
+   "depth": 1
+  },
+  {
+   "key": "sub37.1",
+   "head": "baveb",
+   "body": [
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 37,
+   "depth": 1
+  },
+  {
+   "key": "lem38",
+   "head": "sobeg",
+   "body": [
+    "defe"
+   ],
+   "kind": "lemma",
+   "link": 38,
+   "depth": 0
+  },
+  {
+   "key": "ax38.r",
+   "head": "sobeg",
+   "body": [
+    "tadar",
+    "goke"
+   ],
+   "kind": "axiom",
+   "link": 38,
+   "depth": 0
+  },
+  {
+   "key": "ax38.0",
+   "head": "tadar",
+   "body": [
+    "defe"
+   ],
+   "kind": "axiom",
+   "link": 38,
+   "depth": 1
+  },
+  {
+   "key": "sub38.0",
+   "head": "tadar",
+   "body": [
+    "defe"
+   ],
+   "kind": "sublemma",
+   "link": 38,
+   "depth": 1
+  },
+  {
+   "key": "ax38.1",
+   "head": "goke",
+   "body": [
+    "defe"
+   ],
+   "kind": "axiom",
+   "link": 38,
+   "depth": 1
+  },
+  {
+   "key": "sub38.1",
+   "head": "goke",
+   "body": [
+    "defe"
+   ],
+   "kind": "sublemma",
+   "link": 38,
+   "depth": 1
+  },
+  {
+   "key": "lem39",
+   "head": "lige",
+   "body": [
+    "minu",
+    "kirun"
+   ],
+   "kind": "lemma",
+   "link": 39,
+   "depth": 0
+  },
+  {
+   "key": "ax39.r",
+   "head": "lige",
+   "body": [
+    "guga",
+    "tibas"
+   ],
+   "kind": "axiom",
+   "link": 39,
+   "depth": 0
+  },
+  {
+   "key": "ax39.0",
+   "head": "guga",
+   "body": [
+    "kirun",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 39,
+   "depth": 1
+  },
+  {
+   "key": "sub39.0",
+   "head": "guga",
+   "body": [
+    "kirun",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 39,
+   "depth": 1
+  },
+  {
+   "key": "ax39.1",
+   "head": "tibas",
+   "body": [
+    "kirun",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 39,
+   "depth": 1
+  },
+  {
+   "key": "sub39.1",
+   "head": "tibas",
+   "body": [
+    "kirun",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 39,
+   "depth": 1
+  },
+  {
+   "key": "lem40",
+   "head": "lolov",
+   "body": [
+    "sido"
+   ],
+   "kind": "lemma",
+   "link": 40,
+   "depth": 0
+  },
+  {
+   "key": "ax40.r",
+   "head": "lolov",
+   "body": [
+    "kudeg",
+    "kegov"
+   ],
+   "kind": "axiom",
+   "link": 40,
+   "depth": 0
+  },
+  {
+   "key": "ax40.0",
+   "head": "kudeg",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 40,
+   "depth": 1
+  },
+  {
+   "key": "sub40.0",
+   "head": "kudeg",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 40,
+   "depth": 1
+  },
+  {
+   "key": "ax40.1",
+   "head": "kegov",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 40,
+   "depth": 1
+  },
+  {
+   "key": "sub40.1",
+   "head": "kegov",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 40,
+   "depth": 1
+  },
+  {
+   "key": "lem41",
+   "head": "zemi",
+   "body": [
+    "lolov"
+   ],
+   "kind": "lemma",
+   "link": 41,
+   "depth": 0
+  },
+  {
+   "key": "ax41.r",
+   "head": "zemi",
+   "body": [
+    "goma",
+    "fober"
+   ],
+   "kind": "axiom",
+   "link": 41,
+   "depth": 0
+  },
+  {
+   "key": "ax41.0",
+   "head": "goma",
+   "body": [
+    "lolov"
+   ],
+   "kind": "axiom",
+   "link": 41,
+   "depth": 1
+  },
+  {
+   "key": "sub41.0",
+   "head": "goma",
+   "body": [
+    "lolov"
+   ],
+   "kind": "sublemma",
+   "link": 41,
+   "depth": 1
+  },
+  {
+   "key": "ax41.1",
+   "head": "fober",
+   "body": [
+    "lolov"
+   ],
+   "kind": "axiom",
+   "link": 41,
+   "depth": 1
+  },
+  {
+   "key": "sub41.1",
+   "head": "fober",
+   "body": [
+    "lolov"
+   ],
+   "kind": "sublemma",
+   "link": 41,
+   "depth": 1
+  },
+  {
+   "key": "lem42",
+   "head": "gari",
+   "body": [
+    "noben",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 42,
+   "depth": 0
+  },
+  {
+   "key": "ax42.r",
+   "head": "gari",
+   "body": [
+    "lefu",
+    "biso"
+   ],
+   "kind": "axiom",
+   "link": 42,
+   "depth": 0
+  },
+  {
+   "key": "ax42.0",
+   "head": "lefu",
+   "body": [
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 42,
+   "depth": 1
+  },
+  {
+   "key": "sub42.0",
+   "head": "lefu",
+   "body": [
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 42,
+   "depth": 1
+  },
+  {
+   "key": "ax42.1",
+   "head": "biso",
+   "body": [
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 42,
+   "depth": 1
+  },
+  {
+   "key": "sub42.1",
+   "head": "biso",
+   "body": [
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 42,
+   "depth": 1
+  },
+  {
+   "key": "lem43",
+   "head": "sedu",
+   "body": [
+    "desu",
+    "buzef"
+   ],
+   "kind": "lemma",
+   "link": 43,
+   "depth": 0
+  },
+  {
+   "key": "ax43.r",
+   "head": "sedu",
+   "body": [
+    "vemi",
+    "koda"
+   ],
+   "kind": "axiom",
+   "link": 43,
+   "depth": 0
+  },
+  {
+   "key": "ax43.0",
+   "head": "vemi",
+   "body": [
+    "desu",
+    "buzef"
+   ],
+   "kind": "axiom",
+   "link": 43,
+   "depth": 1
+  },
+  {
+   "key": "sub43.0",
+   "head": "vemi",
+   "body": [
+    "desu",
+    "buzef"
+   ],
+   "kind": "sublemma",
+   "link": 43,
+   "depth": 1
+  },
+  {
+   "key": "ax43.1",
+   "head": "koda",
+   "body": [
+    "buzef",
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 43,
+   "depth": 1
+  },
+  {
+   "key": "sub43.1",
+   "head": "koda",
+   "body": [
+    "buzef",
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 43,
+   "depth": 1
+  },
+  {
+   "key": "lem44",
+   "head": "taril",
+   "body": [
+    "defe",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 44,
+   "depth": 0
+  },
+  {
+   "key": "ax44.r",
+   "head": "taril",
+   "body": [
+    "raki",
+    "katu"
+   ],
+   "kind": "axiom",
+   "link": 44,
+   "depth": 0
+  },
+  {
+   "key": "ax44.0",
+   "head": "raki",
+   "body": [
+    "defe",
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 44,
+   "depth": 1
+  },
+  {
+   "key": "sub44.0",
+   "head": "raki",
+   "body": [
+    "defe",
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 44,
+   "depth": 1
+  },
+  {
+   "key": "ax44.1",
+   "head": "katu",
+   "body": [
+    "defe"
+   ],
+   "kind": "axiom",
+   "link": 44,
+   "depth": 1
+  },
+  {
+   "key": "sub44.1",
+   "head": "katu",
+   "body": [
+    "defe"
+   ],
+   "kind": "sublemma",
+   "link": 44,
+   "depth": 1
+  },
+  {
+   "key": "lem45",
+   "head": "kirun",
+   "body": [
+    "taril"
+   ],
+   "kind": "lemma",
+   "link": 45,
+   "depth": 0
+  },
+  {
+   "key": "ax45.r",
+   "head": "kirun",
+   "body": [
+    "novo",
+    "mofov"
+   ],
+   "kind": "axiom",
+   "link": 45,
+   "depth": 0
+  },
+  {
+   "key": "ax45.0",
+   "head": "novo",
+   "body": [
+    "taril"
+   ],
+   "kind": "axiom",
+   "link": 45,
+   "depth": 1
+  },
+  {
+   "key": "sub45.0",
+   "head": "novo",
+   "body": [
+    "taril"
+   ],
+   "kind": "sublemma",
+   "link": 45,
+   "depth": 1
+  },
+  {
+   "key": "ax45.1",
+   "head": "mofov",
+   "body": [
+    "taril"
+   ],
+   "kind": "axiom",
+   "link": 45,
+   "depth": 1
+  },
+  {
+   "key": "sub45.1",
+   "head": "mofov",
+   "body": [
+    "taril"
+   ],
+   "kind": "sublemma",
+   "link": 45,
+   "depth": 1
+  },
+  {
+   "key": "lem46",
+   "head": "vegob",
+   "body": [
+    "sido"
+   ],
+   "kind": "lemma",
+   "link": 46,
+   "depth": 0
+  },
+  {
+   "key": "ax46.r",
+   "head": "vegob",
+   "body": [
+    "nupim",
+    "dakud"
+   ],
+   "kind": "axiom",
+   "link": 46,
+   "depth": 0
+  },
+  {
+   "key": "ax46.0",
+   "head": "nupim",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 46,
+   "depth": 1
+  },
+  {
+   "key": "sub46.0",
+   "head": "nupim",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 46,
+   "depth": 1
+  },
+  {
+   "key": "ax46.1",
+   "head": "dakud",
+   "body": [
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 46,
+   "depth": 1
+  },
+  {
+   "key": "sub46.1",
+   "head": "dakud",
+   "body": [
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 46,
+   "depth": 1
+  },
+  {
+   "key": "lem47",
+   "head": "zemi",
+   "body": [
+    "vegob"
+   ],
+   "kind": "lemma",
+   "link": 47,
+   "depth": 0
+  },
+  {
+   "key": "ax47.r",
+   "head": "zemi",
+   "body": [
+    "gemo",
+    "setu"
+   ],
+   "kind": "axiom",
+   "link": 47,
+   "depth": 0
+  },
+  {
+   "key": "ax47.0",
+   "head": "gemo",
+   "body": [
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 47,
+   "depth": 1
+  },
+  {
+   "key": "sub47.0",
+   "head": "gemo",
+   "body": [
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 47,
+   "depth": 1
+  },
+  {
+   "key": "ax47.1",
+   "head": "setu",
+   "body": [
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 47,
+   "depth": 1
+  },
+  {
+   "key": "sub47.1",
+   "head": "setu",
+   "body": [
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 47,
+   "depth": 1
+  },
+  {
+   "key": "lem48",
+   "head": "gefi",
+   "body": [
+    "sedu"
+   ],
+   "kind": "lemma",
+   "link": 48,
+   "depth": 0
+  },
+  {
+   "key": "ax48.r",
+   "head": "gefi",
+   "body": [
+    "relag",
+    "puga"
+   ],
+   "kind": "axiom",
+   "link": 48,
+   "depth": 0
+  },
+  {
+   "key": "ax48.0",
+   "head": "relag",
+   "body": [
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 48,
+   "depth": 1
+  },
+  {
+   "key": "sub48.0",
+   "head": "relag",
+   "body": [
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 48,
+   "depth": 1
+  },
+  {
+   "key": "ax48.1",
+   "head": "puga",
+   "body": [
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 48,
+   "depth": 1
+  },
+  {
+   "key": "sub48.1",
+   "head": "puga",
+   "body": [
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 48,
+   "depth": 1
+  },
+  {
+   "key": "lem49",
+   "head": "fogan",
+   "body": [
+    "gefi"
+   ],
+   "kind": "lemma",
+   "link": 49,
+   "depth": 0
+  },
+  {
+   "key": "ax49.r",
+   "head": "fogan",
+   "body": [
+    "zezo",
+    "bigar"
+   ],
+   "kind": "axiom",
+   "link": 49,
+   "depth": 0
+  },
+  {
+   "key": "ax49.0",
+   "head": "zezo",
+   "body": [
+    "gefi"
+   ],
+   "kind": "axiom",
+   "link": 49,
+   "depth": 1
+  },
+  {
+   "key": "sub49.0",
+   "head": "zezo",
+   "body": [
+    "gefi"
+   ],
+   "kind": "sublemma",
+   "link": 49,
+   "depth": 1
+  },
+  {
+   "key": "ax49.1",
+   "head": "bigar",
+   "body": [
+    "gefi"
+   ],
+   "kind": "axiom",
+   "link": 49,
+   "depth": 1
+  },
+  {
+   "key": "sub49.1",
+   "head": "bigar",
+   "body": [
+    "gefi"
+   ],
+   "kind": "sublemma",
+   "link": 49,
+   "depth": 1
+  },
+  {
+   "key": "lem50",
+   "head": "defe",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 50,
+   "depth": 0
+  },
+  {
+   "key": "ax50.r",
+   "head": "defe",
+   "body": [
+    "rigaf",
+    "beka"
+   ],
+   "kind": "axiom",
+   "link": 50,
+   "depth": 0
+  },
+  {
+   "key": "ax50.0",
+   "head": "rigaf",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 50,
+   "depth": 1
+  },
+  {
+   "key": "sub50.0",
+   "head": "rigaf",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 50,
+   "depth": 1
+  },
+  {
+   "key": "ax50.1",
+   "head": "beka",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 50,
+   "depth": 1
+  },
+  {
+   "key": "sub50.1",
+   "head": "beka",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 50,
+   "depth": 1
+  },
+  {
+   "key": "lem51",
+   "head": "nunav",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 51,
+   "depth": 0
+  },
+  {
+   "key": "ax51.r",
+   "head": "nunav",
+   "body": [
+    "mufuf",
+    "mimi"
+   ],
+   "kind": "axiom",
+   "link": 51,
+   "depth": 0
+  },
+  {
+   "key": "ax51.0",
+   "head": "mufuf",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 51,
+   "depth": 1
+  },
+  {
+   "key": "sub51.0",
+   "head": "mufuf",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 51,
+   "depth": 1
+  },
+  {
+   "key": "ax51.1",
+   "head": "mimi",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 51,
+   "depth": 1
+  },
+  {
+   "key": "sub51.1",
+   "head": "mimi",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 51,
+   "depth": 1
+  },
+  {
+   "key": "lem52",
+   "head": "sido",
+   "body": [
+    "nunav"
+   ],
+   "kind": "lemma",
+   "link": 52,
+   "depth": 0
+  },
+  {
+   "key": "ax52.r",
+   "head": "sido",
+   "body": [
+    "mobi",
+    "mogaf"
+   ],
+   "kind": "axiom",
+   "link": 52,
+   "depth": 0
+  },
+  {
+   "key": "ax52.0",
+   "head": "mobi",
+   "body": [
+    "nunav"
+   ],
+   "kind": "axiom",
+   "link": 52,
+   "depth": 1
+  },
+  {
+   "key": "sub52.0",
+   "head": "mobi",
+   "body": [
+    "nunav"
+   ],
+   "kind": "sublemma",
+   "link": 52,
+   "depth": 1
+  },
+  {
+   "key": "ax52.1",
+   "head": "mogaf",
+   "body": [
+    "nunav"
+   ],
+   "kind": "axiom",
+   "link": 52,
+   "depth": 1
+  },
+  {
+   "key": "sub52.1",
+   "head": "mogaf",
+   "body": [
+    "nunav"
+   ],
+   "kind": "sublemma",
+   "link": 52,
+   "depth": 1
+  },
+  {
+   "key": "lem53",
+   "head": "pesor",
+   "body": [
+    "ruzas",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 53,
+   "depth": 0
+  },
+  {
+   "key": "ax53.r",
+   "head": "pesor",
+   "body": [
+    "lufef",
+    "pedav"
+   ],
+   "kind": "axiom",
+   "link": 53,
+   "depth": 0
+  },
+  {
+   "key": "ax53.0",
+   "head": "lufef",
+   "body": [
+    "ruzas",
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 53,
+   "depth": 1
+  },
+  {
+   "key": "sub53.0",
+   "head": "lufef",
+   "body": [
+    "ruzas",
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 53,
+   "depth": 1
+  },
+  {
+   "key": "ax53.1",
+   "head": "pedav",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 53,
+   "depth": 1
+  },
+  {
+   "key": "sub53.1",
+   "head": "pedav",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 53,
+   "depth": 1
+  },
+  {
+   "key": "lem54",
+   "head": "gefi",
+   "body": [
+    "pesor"
+   ],
+   "kind": "lemma",
+   "link": 54,
+   "depth": 0
+  },
+  {
+   "key": "ax54.r",
+   "head": "gefi",
+   "body": [
+    "nibu",
+    "matu"
+   ],
+   "kind": "axiom",
+   "link": 54,
+   "depth": 0
+  },
+  {
+   "key": "ax54.0",
+   "head": "nibu",
+   "body": [
+    "pesor"
+   ],
+   "kind": "axiom",
+   "link": 54,
+   "depth": 1
+  },
+  {
+   "key": "sub54.0",
+   "head": "nibu",
+   "body": [
+    "pesor"
+   ],
+   "kind": "sublemma",
+   "link": 54,
+   "depth": 1
+  },
+  {
+   "key": "ax54.1",
+   "head": "matu",
+   "body": [
+    "pesor"
+   ],
+   "kind": "axiom",
+   "link": 54,
+   "depth": 1
+  },
+  {
+   "key": "sub54.1",
+   "head": "matu",
+   "body": [
+    "pesor"
+   ],
+   "kind": "sublemma",
+   "link": 54,
+   "depth": 1
+  },
+  {
+   "key": "lem55",
+   "head": "lolov",
+   "body": [
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 55,
+   "depth": 0
+  },
+  {
+   "key": "ax55.r",
+   "head": "lolov",
+   "body": [
+    "folat",
+    "zebu"
+   ],
+   "kind": "axiom",
+   "link": 55,
+   "depth": 0
+  },
+  {
+   "key": "ax55.0",
+   "head": "folat",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 55,
+   "depth": 1
+  },
+  {
+   "key": "sub55.0",
+   "head": "folat",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 55,
+   "depth": 1
+  },
+  {
+   "key": "ax55.1",
+   "head": "zebu",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 55,
+   "depth": 1
+  },
+  {
+   "key": "sub55.1",
+   "head": "zebu",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 55,
+   "depth": 1
+  },
+  {
+   "key": "lem56",
+   "head": "nunav",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "lemma",
+   "link": 56,
+   "depth": 0
+  },
+  {
+   "key": "ax56.r",
+   "head": "nunav",
+   "body": [
+    "remo",
+    "nuner"
+   ],
+   "kind": "axiom",
+   "link": 56,
+   "depth": 0
+  },
+  {
+   "key": "ax56.0",
+   "head": "remo",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 56,
+   "depth": 1
+  },
+  {
+   "key": "sub56.0",
+   "head": "remo",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 56,
+   "depth": 1
+  },
+  {
+   "key": "ax56.1",
+   "head": "nuner",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 56,
+   "depth": 1
+  },
+  {
+   "key": "sub56.1",
+   "head": "nuner",
+   "body": [
+    "sedu",
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 56,
+   "depth": 1
+  },
+  {
+   "key": "lem57",
+   "head": "nunav",
+   "body": [
+    "gefi",
+    "pesor"
+   ],
+   "kind": "lemma",
+   "link": 57,
+   "depth": 0
+  },
+  {
+   "key": "ax57.r",
+   "head": "nunav",
+   "body": [
+    "delov",
+    "nupaf"
+   ],
+   "kind": "axiom",
+   "link": 57,
+   "depth": 0
+  },
+  {
+   "key": "ax57.0",
+   "head": "delov",
+   "body": [
+    "gefi",
+    "pesor"
+   ],
+   "kind": "axiom",
+   "link": 57,
+   "depth": 1
+  },
+  {
+   "key": "sub57.0",
+   "head": "delov",
+   "body": [
+    "gefi",
+    "pesor"
+   ],
+   "kind": "sublemma",
+   "link": 57,
+   "depth": 1
+  },
+  {
+   "key": "ax57.1",
+   "head": "nupaf",
+   "body": [
+    "gefi"
+   ],
+   "kind": "axiom",
+   "link": 57,
+   "depth": 1
+  },
+  {
+   "key": "sub57.1",
+   "head": "nupaf",
+   "body": [
+    "gefi"
+   ],
+   "kind": "sublemma",
+   "link": 57,
+   "depth": 1
+  },
+  {
+   "key": "lem58",
+   "head": "dutan",
+   "body": [
+    "zemi",
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 58,
+   "depth": 0
+  },
+  {
+   "key": "ax58.r",
+   "head": "dutan",
+   "body": [
+    "kesel",
+    "rifi"
+   ],
+   "kind": "axiom",
+   "link": 58,
+   "depth": 0
+  },
+  {
+   "key": "ax58.0",
+   "head": "kesel",
+   "body": [
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 58,
+   "depth": 1
+  },
+  {
+   "key": "sub58.0",
+   "head": "kesel",
+   "body": [
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 58,
+   "depth": 1
+  },
+  {
+   "key": "ax58.1",
+   "head": "rifi",
+   "body": [
+    "zemi",
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 58,
+   "depth": 1
+  },
+  {
+   "key": "sub58.1",
+   "head": "rifi",
+   "body": [
+    "zemi",
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 58,
+   "depth": 1
+  },
+  {
+   "key": "lem59",
+   "head": "taril",
+   "body": [
+    "dutan"
+   ],
+   "kind": "lemma",
+   "link": 59,
+   "depth": 0
+  },
+  {
+   "key": "ax59.r",
+   "head": "taril",
+   "body": [
+    "pogup",
+    "gilam"
+   ],
+   "kind": "axiom",
+   "link": 59,
+   "depth": 0
+  },
+  {
+   "key": "ax59.0",
+   "head": "pogup",
+   "body": [
+    "dutan"
+   ],
+   "kind": "axiom",
+   "link": 59,
+   "depth": 1
+  },
+  {
+   "key": "sub59.0",
+   "head": "pogup",
+   "body": [
+    "dutan"
+   ],
+   "kind": "sublemma",
+   "link": 59,
+   "depth": 1
+  },
+  {
+   "key": "ax59.1",
+   "head": "gilam",
+   "body": [
+    "dutan"
+   ],
+   "kind": "axiom",
+   "link": 59,
+   "depth": 1
+  },
+  {
+   "key": "sub59.1",
+   "head": "gilam",
+   "body": [
+    "dutan"
+   ],
+   "kind": "sublemma",
+   "link": 59,
+   "depth": 1
+  },
+  {
+   "key": "lem60",
+   "head": "pesor",
+   "body": [
+    "ruma",
+    "pari"
+   ],
+   "kind": "lemma",
+   "link": 60,
+   "depth": 0
+  },
+  {
+   "key": "ax60.r",
+   "head": "pesor",
+   "body": [
+    "dipo",
+    "limi"
+   ],
+   "kind": "axiom",
+   "link": 60,
+   "depth": 0
+  },
+  {
+   "key": "ax60.0",
+   "head": "dipo",
+   "body": [
+    "pari"
+   ],
+   "kind": "axiom",
+   "link": 60,
+   "depth": 1
+  },
+  {
+   "key": "sub60.0",
+   "head": "dipo",
+   "body": [
+    "pari"
+   ],
+   "kind": "sublemma",
+   "link": 60,
+   "depth": 1
+  },
+  {
+   "key": "ax60.1",
+   "head": "limi",
+   "body": [
+    "ruma",
+    "pari"
+   ],
+   "kind": "axiom",
+   "link": 60,
+   "depth": 1
+  },
+  {
+   "key": "sub60.1",
+   "head": "limi",
+   "body": [
+    "ruma",
+    "pari"
+   ],
+   "kind": "sublemma",
+   "link": 60,
+   "depth": 1
+  },
+  {
+   "key": "lem61",
+   "head": "ruzas",
+   "body": [
+    "pebad",
+    "dudi"
+   ],
+   "kind": "lemma",
+   "link": 61,
+   "depth": 0
+  },
+  {
+   "key": "ax61.r",
+   "head": "ruzas",
+   "body": [
+    "kisu",
+    "latak"
+   ],
+   "kind": "axiom",
+   "link": 61,
+   "depth": 0
+  },
+  {
+   "key": "ax61.0",
+   "head": "kisu",
+   "body": [
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 61,
+   "depth": 1
+  },
+  {
+   "key": "sub61.0",
+   "head": "kisu",
+   "body": [
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 61,
+   "depth": 1
+  },
+  {
+   "key": "ax61.1",
+   "head": "latak",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "kind": "axiom",
+   "link": 61,
+   "depth": 1
+  },
+  {
+   "key": "sub61.1",
+   "head": "latak",
+   "body": [
+    "dudi",
+    "pebad"
+   ],
+   "kind": "sublemma",
+   "link": 61,
+   "depth": 1
+  },
+  {
+   "key": "lem62",
+   "head": "rika",
+   "body": [
+    "minu",
+    "buzef"
+   ],
+   "kind": "lemma",
+   "link": 62,
+   "depth": 0
+  },
+  {
+   "key": "ax62.r",
+   "head": "rika",
+   "body": [
+    "pemuf",
+    "girob"
+   ],
+   "kind": "axiom",
+   "link": 62,
+   "depth": 0
+  },
+  {
+   "key": "ax62.0",
+   "head": "pemuf",
+   "body": [
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 62,
+   "depth": 1
+  },
+  {
+   "key": "sub62.0",
+   "head": "pemuf",
+   "body": [
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 62,
+   "depth": 1
+  },
+  {
+   "key": "ax62.1",
+   "head": "girob",
+   "body": [
+    "buzef",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 62,
+   "depth": 1
+  },
+  {
+   "key": "sub62.1",
+   "head": "girob",
+   "body": [
+    "buzef",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 62,
+   "depth": 1
+  },
+  {
+   "key": "lem63",
+   "head": "lige",
+   "body": [
+    "rika"
+   ],
+   "kind": "lemma",
+   "link": 63,
+   "depth": 0
+  },
+  {
+   "key": "ax63.r",
+   "head": "lige",
+   "body": [
+    "dezik",
+    "basu"
+   ],
+   "kind": "axiom",
+   "link": 63,
+   "depth": 0
+  },
+  {
+   "key": "ax63.0",
+   "head": "dezik",
+   "body": [
+    "rika"
+   ],
+   "kind": "axiom",
+   "link": 63,
+   "depth": 1
+  },
+  {
+   "key": "sub63.0",
+   "head": "dezik",
+   "body": [
+    "rika"
+   ],
+   "kind": "sublemma",
+   "link": 63,
+   "depth": 1
+  },
+  {
+   "key": "ax63.1",
+   "head": "basu",
+   "body": [
+    "rika"
+   ],
+   "kind": "axiom",
+   "link": 63,
+   "depth": 1
+  },
+  {
+   "key": "sub63.1",
+   "head": "basu",
+   "body": [
+    "rika"
+   ],
+   "kind": "sublemma",
+   "link": 63,
+   "depth": 1
+  },
+  {
+   "key": "lem64",
+   "head": "favap",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "lemma",
+   "link": 64,
+   "depth": 0
+  },
+  {
+   "key": "ax64.r",
+   "head": "favap",
+   "body": [
+    "sefor",
+    "suso"
+   ],
+   "kind": "axiom",
+   "link": 64,
+   "depth": 0
+  },
+  {
+   "key": "ax64.0",
+   "head": "sefor",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 64,
+   "depth": 1
+  },
+  {
+   "key": "sub64.0",
+   "head": "sefor",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 64,
+   "depth": 1
+  },
+  {
+   "key": "ax64.1",
+   "head": "suso",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 64,
+   "depth": 1
+  },
+  {
+   "key": "sub64.1",
+   "head": "suso",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 64,
+   "depth": 1
+  },
+  {
+   "key": "lem65",
+   "head": "sedu",
+   "body": [
+    "favap"
+   ],
+   "kind": "lemma",
+   "link": 65,
+   "depth": 0
+  },
+  {
+   "key": "ax65.r",
+   "head": "sedu",
+   "body": [
+    "sato",
+    "bozo"
+   ],
+   "kind": "axiom",
+   "link": 65,
+   "depth": 0
+  },
+  {
+   "key": "ax65.0",
+   "head": "sato",
+   "body": [
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 65,
+   "depth": 1
+  },
+  {
+   "key": "sub65.0",
+   "head": "sato",
+   "body": [
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 65,
+   "depth": 1
+  },
+  {
+   "key": "ax65.1",
+   "head": "bozo",
+   "body": [
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 65,
+   "depth": 1
+  },
+  {
+   "key": "sub65.1",
+   "head": "bozo",
+   "body": [
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 65,
+   "depth": 1
+  },
+  {
+   "key": "lem66",
+   "head": "ruzas",
+   "body": [
+    "dudi"
+   ],
+   "kind": "lemma",
+   "link": 66,
+   "depth": 0
+  },
+  {
+   "key": "ax66.r",
+   "head": "ruzas",
+   "body": [
+    "litap",
+    "sosu"
+   ],
+   "kind": "axiom",
+   "link": 66,
+   "depth": 0
+  },
+  {
+   "key": "ax66.0",
+   "head": "litap",
+   "body": [
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 66,
+   "depth": 1
+  },
+  {
+   "key": "sub66.0",
+   "head": "litap",
+   "body": [
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 66,
+   "depth": 1
+  },
+  {
+   "key": "ax66.1",
+   "head": "sosu",
+   "body": [
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 66,
+   "depth": 1
+  },
+  {
+   "key": "sub66.1",
+   "head": "sosu",
+   "body": [
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 66,
+   "depth": 1
+  },
+  {
+   "key": "lem67",
+   "head": "gari",
+   "body": [
+    "lige",
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 67,
+   "depth": 0
+  },
+  {
+   "key": "ax67.r",
+   "head": "gari",
+   "body": [
+    "tigog",
+    "muno"
+   ],
+   "kind": "axiom",
+   "link": 67,
+   "depth": 0
+  },
+  {
+   "key": "ax67.0",
+   "head": "tigog",
+   "body": [
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 67,
+   "depth": 1
+  },
+  {
+   "key": "sub67.0",
+   "head": "tigog",
+   "body": [
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 67,
+   "depth": 1
+  },
+  {
+   "key": "ax67.1",
+   "head": "muno",
+   "body": [
+    "fogan",
+    "lige"
+   ],
+   "kind": "axiom",
+   "link": 67,
+   "depth": 1
+  },
+  {
+   "key": "sub67.1",
+   "head": "muno",
+   "body": [
+    "fogan",
+    "lige"
+   ],
+   "kind": "sublemma",
+   "link": 67,
+   "depth": 1
+  },
+  {
+   "key": "lem68",
+   "head": "gefi",
+   "body": [
+    "favap",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 68,
+   "depth": 0
+  },
+  {
+   "key": "ax68.r",
+   "head": "gefi",
+   "body": [
+    "febar",
+    "fifaf"
+   ],
+   "kind": "axiom",
+   "link": 68,
+   "depth": 0
+  },
+  {
+   "key": "ax68.0",
+   "head": "febar",
+   "body": [
+    "favap",
+    "desu"
+   ],
+   "kind": "axiom",
+   "link": 68,
+   "depth": 1
+  },
+  {
+   "key": "sub68.0",
+   "head": "febar",
+   "body": [
+    "favap",
+    "desu"
+   ],
+   "kind": "sublemma",
+   "link": 68,
+   "depth": 1
+  },
+  {
+   "key": "ax68.1",
+   "head": "fifaf",
+   "body": [
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 68,
+   "depth": 1
+  },
+  {
+   "key": "sub68.1",
+   "head": "fifaf",
+   "body": [
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 68,
+   "depth": 1
+  },
+  {
+   "key": "lem69",
+   "head": "gefi",
+   "body": [
+    "favap",
+    "ruzas"
+   ],
+   "kind": "lemma",
+   "link": 69,
+   "depth": 0
+  },
+  {
+   "key": "ax69.r",
+   "head": "gefi",
+   "body": [
+    "doded",
+    "baza"
+   ],
+   "kind": "axiom",
+   "link": 69,
+   "depth": 0
+  },
+  {
+   "key": "ax69.0",
+   "head": "doded",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "axiom",
+   "link": 69,
+   "depth": 1
+  },
+  {
+   "key": "sub69.0",
+   "head": "doded",
+   "body": [
+    "ruzas"
+   ],
+   "kind": "sublemma",
+   "link": 69,
+   "depth": 1
+  },
+  {
+   "key": "ax69.1",
+   "head": "baza",
+   "body": [
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 69,
+   "depth": 1
+  },
+  {
+   "key": "sub69.1",
+   "head": "baza",
+   "body": [
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 69,
+   "depth": 1
+  },
+  {
+   "key": "lem70",
+   "head": "mibik",
+   "body": [
+    "zemi"
+   ],
+   "kind": "lemma",
+   "link": 70,
+   "depth": 0
+  },
+  {
+   "key": "ax70.r",
+   "head": "mibik",
+   "body": [
+    "bilu",
+    "zira"
+   ],
+   "kind": "axiom",
+   "link": 70,
+   "depth": 0
+  },
+  {
+   "key": "ax70.0",
+   "head": "bilu",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 70,
+   "depth": 1
+  },
+  {
+   "key": "sub70.0",
+   "head": "bilu",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 70,
+   "depth": 1
+  },
+  {
+   "key": "ax70.1",
+   "head": "zira",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 70,
+   "depth": 1
+  },
+  {
+   "key": "sub70.1",
+   "head": "zira",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 70,
+   "depth": 1
+  },
+  {
+   "key": "lem71",
+   "head": "minu",
+   "body": [
+    "mibik"
+   ],
+   "kind": "lemma",
+   "link": 71,
+   "depth": 0
+  },
+  {
+   "key": "ax71.r",
+   "head": "minu",
+   "body": [
+    "napuz",
+    "zarib"
+   ],
+   "kind": "axiom",
+   "link": 71,
+   "depth": 0
+  },
+  {
+   "key": "ax71.0",
+   "head": "napuz",
+   "body": [
+    "mibik"
+   ],
+   "kind": "axiom",
+   "link": 71,
+   "depth": 1
+  },
+  {
+   "key": "sub71.0",
+   "head": "napuz",
+   "body": [
+    "mibik"
+   ],
+   "kind": "sublemma",
+   "link": 71,
+   "depth": 1
+  },
+  {
+   "key": "ax71.1",
+   "head": "zarib",
+   "body": [
+    "mibik"
+   ],
+   "kind": "axiom",
+   "link": 71,
+   "depth": 1
+  },
+  {
+   "key": "sub71.1",
+   "head": "zarib",
+   "body": [
+    "mibik"
+   ],
+   "kind": "sublemma",
+   "link": 71,
+   "depth": 1
+  },
+  {
+   "key": "lem72",
+   "head": "nuluf",
+   "body": [
+    "gidu",
+    "sedu"
+   ],
+   "kind": "lemma",
+   "link": 72,
+   "depth": 0
+  },
+  {
+   "key": "ax72.r",
+   "head": "nuluf",
+   "body": [
+    "keted",
+    "sanu"
+   ],
+   "kind": "axiom",
+   "link": 72,
+   "depth": 0
+  },
+  {
+   "key": "ax72.0",
+   "head": "keted",
+   "body": [
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 72,
+   "depth": 1
+  },
+  {
+   "key": "sub72.0",
+   "head": "keted",
+   "body": [
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 72,
+   "depth": 1
+  },
+  {
+   "key": "ax72.1",
+   "head": "sanu",
+   "body": [
+    "gidu",
+    "sedu"
+   ],
+   "kind": "axiom",
+   "link": 72,
+   "depth": 1
+  },
+  {
+   "key": "sub72.1",
+   "head": "sanu",
+   "body": [
+    "gidu",
+    "sedu"
+   ],
+   "kind": "sublemma",
+   "link": 72,
+   "depth": 1
+  },
+  {
+   "key": "lem73",
+   "head": "sido",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "lemma",
+   "link": 73,
+   "depth": 0
+  },
+  {
+   "key": "ax73.r",
+   "head": "sido",
+   "body": [
+    "mamak",
+    "kopus"
+   ],
+   "kind": "axiom",
+   "link": 73,
+   "depth": 0
+  },
+  {
+   "key": "ax73.0",
+   "head": "mamak",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "axiom",
+   "link": 73,
+   "depth": 1
+  },
+  {
+   "key": "sub73.0",
+   "head": "mamak",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "sublemma",
+   "link": 73,
+   "depth": 1
+  },
+  {
+   "key": "ax73.1",
+   "head": "kopus",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "axiom",
+   "link": 73,
+   "depth": 1
+  },
+  {
+   "key": "sub73.1",
+   "head": "kopus",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "sublemma",
+   "link": 73,
+   "depth": 1
+  },
+  {
+   "key": "lem74",
+   "head": "sido",
+   "body": [
+    "gidu",
+    "nuluf"
+   ],
+   "kind": "lemma",
+   "link": 74,
+   "depth": 0
+  },
+  {
+   "key": "ax74.r",
+   "head": "sido",
+   "body": [
+    "tifov",
+    "kuges"
+   ],
+   "kind": "axiom",
+   "link": 74,
+   "depth": 0
+  },
+  {
+   "key": "ax74.0",
+   "head": "tifov",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 74,
+   "depth": 1
+  },
+  {
+   "key": "sub74.0",
+   "head": "tifov",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 74,
+   "depth": 1
+  },
+  {
+   "key": "ax74.1",
+   "head": "kuges",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "axiom",
+   "link": 74,
+   "depth": 1
+  },
+  {
+   "key": "sub74.1",
+   "head": "kuges",
+   "body": [
+    "nuluf"
+   ],
+   "kind": "sublemma",
+   "link": 74,
+   "depth": 1
+  },
+  {
+   "key": "lem75",
+   "head": "mibik",
+   "body": [
+    "zemi",
+    "dutan"
+   ],
+   "kind": "lemma",
+   "link": 75,
+   "depth": 0
+  },
+  {
+   "key": "ax75.r",
+   "head": "mibik",
+   "body": [
+    "tirug",
+    "lekas"
+   ],
+   "kind": "axiom",
+   "link": 75,
+   "depth": 0
+  },
+  {
+   "key": "ax75.0",
+   "head": "tirug",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 75,
+   "depth": 1
+  },
+  {
+   "key": "sub75.0",
+   "head": "tirug",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 75,
+   "depth": 1
+  },
+  {
+   "key": "ax75.1",
+   "head": "lekas",
+   "body": [
+    "dutan",
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 75,
+   "depth": 1
+  },
+  {
+   "key": "sub75.1",
+   "head": "lekas",
+   "body": [
+    "dutan",
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 75,
+   "depth": 1
+  },
+  {
+   "key": "lem76",
+   "head": "digob",
+   "body": [
+    "minu",
+    "fogan"
+   ],
+   "kind": "lemma",
+   "link": 76,
+   "depth": 0
+  },
+  {
+   "key": "ax76.r",
+   "head": "digob",
+   "body": [
+    "mote",
+    "sinar"
+   ],
+   "kind": "axiom",
+   "link": 76,
+   "depth": 0
+  },
+  {
+   "key": "ax76.0",
+   "head": "mote",
+   "body": [
+    "fogan",
+    "minu"
+   ],
+   "kind": "axiom",
+   "link": 76,
+   "depth": 1
+  },
+  {
+   "key": "sub76.0",
+   "head": "mote",
+   "body": [
+    "fogan",
+    "minu"
+   ],
+   "kind": "sublemma",
+   "link": 76,
+   "depth": 1
+  },
+  {
+   "key": "ax76.1",
+   "head": "sinar",
+   "body": [
+    "minu",
+    "fogan"
+   ],
+   "kind": "axiom",
+   "link": 76,
+   "depth": 1
+  },
+  {
+   "key": "sub76.1",
+   "head": "sinar",
+   "body": [
+    "minu",
+    "fogan"
+   ],
+   "kind": "sublemma",
+   "link": 76,
+   "depth": 1
+  },
+  {
+   "key": "lem77",
+   "head": "lige",
+   "body": [
+    "digob"
+   ],
+   "kind": "lemma",
+   "link": 77,
+   "depth": 0
+  },
+  {
+   "key": "ax77.r",
+   "head": "lige",
+   "body": [
+    "turo",
+    "suze"
+   ],
+   "kind": "axiom",
+   "link": 77,
+   "depth": 0
+  },
+  {
+   "key": "ax77.0",
+   "head": "turo",
+   "body": [
+    "digob"
+   ],
+   "kind": "axiom",
+   "link": 77,
+   "depth": 1
+  },
+  {
+   "key": "sub77.0",
+   "head": "turo",
+   "body": [
+    "digob"
+   ],
+   "kind": "sublemma",
+   "link": 77,
+   "depth": 1
+  },
+  {
+   "key": "ax77.1",
+   "head": "suze",
+   "body": [
+    "digob"
+   ],
+   "kind": "axiom",
+   "link": 77,
+   "depth": 1
+  },
+  {
+   "key": "sub77.1",
+   "head": "suze",
+   "body": [
+    "digob"
+   ],
+   "kind": "sublemma",
+   "link": 77,
+   "depth": 1
+  },
+  {
+   "key": "lem78",
+   "head": "fogan",
+   "body": [
+    "favap",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 78,
+   "depth": 0
+  },
+  {
+   "key": "ax78.r",
+   "head": "fogan",
+   "body": [
+    "tekob",
+    "rope"
+   ],
+   "kind": "axiom",
+   "link": 78,
+   "depth": 0
+  },
+  {
+   "key": "ax78.0",
+   "head": "tekob",
+   "body": [
+    "gapor",
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 78,
+   "depth": 1
+  },
+  {
+   "key": "sub78.0",
+   "head": "tekob",
+   "body": [
+    "gapor",
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 78,
+   "depth": 1
+  },
+  {
+   "key": "ax78.1",
+   "head": "rope",
+   "body": [
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 78,
+   "depth": 1
+  },
+  {
+   "key": "sub78.1",
+   "head": "rope",
+   "body": [
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 78,
+   "depth": 1
+  },
+  {
+   "key": "lem79",
+   "head": "sobeg",
+   "body": [
+    "defe",
+    "pesor"
+   ],
+   "kind": "lemma",
+   "link": 79,
+   "depth": 0
+  },
+  {
+   "key": "ax79.r",
+   "head": "sobeg",
+   "body": [
+    "topa",
+    "zipin"
+   ],
+   "kind": "axiom",
+   "link": 79,
+   "depth": 0
+  },
+  {
+   "key": "ax79.0",
+   "head": "topa",
+   "body": [
+    "defe"
+   ],
+   "kind": "axiom",
+   "link": 79,
+   "depth": 1
+  },
+  {
+   "key": "sub79.0",
+   "head": "topa",
+   "body": [
+    "defe"
+   ],
+   "kind": "sublemma",
+   "link": 79,
+   "depth": 1
+  },
+  {
+   "key": "ax79.1",
+   "head": "zipin",
+   "body": [
+    "pesor",
+    "defe"
+   ],
+   "kind": "axiom",
+   "link": 79,
+   "depth": 1
+  },
+  {
+   "key": "sub79.1",
+   "head": "zipin",
+   "body": [
+    "pesor",
+    "defe"
+   ],
+   "kind": "sublemma",
+   "link": 79,
+   "depth": 1
+  },
+  {
+   "key": "lem80",
+   "head": "favap",
+   "body": [
+    "dudi",
+    "gapor"
+   ],
+   "kind": "lemma",
+   "link": 80,
+   "depth": 0
+  },
+  {
+   "key": "ax80.r",
+   "head": "favap",
+   "body": [
+    "mabam",
+    "sirik"
+   ],
+   "kind": "axiom",
+   "link": 80,
+   "depth": 0
+  },
+  {
+   "key": "ax80.0",
+   "head": "mabam",
+   "body": [
+    "gapor",
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 80,
+   "depth": 1
+  },
+  {
+   "key": "sub80.0",
+   "head": "mabam",
+   "body": [
+    "gapor",
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 80,
+   "depth": 1
+  },
+  {
+   "key": "ax80.1",
+   "head": "sirik",
+   "body": [
+    "gapor"
+   ],
+   "kind": "axiom",
+   "link": 80,
+   "depth": 1
+  },
+  {
+   "key": "sub80.1",
+   "head": "sirik",
+   "body": [
+    "gapor"
+   ],
+   "kind": "sublemma",
+   "link": 80,
+   "depth": 1
+  },
+  {
+   "key": "lem81",
+   "head": "soni",
+   "body": [
+    "sido",
+    "dutan"
+   ],
+   "kind": "lemma",
+   "link": 81,
+   "depth": 0
+  },
+  {
+   "key": "ax81.r",
+   "head": "soni",
+   "body": [
+    "sevoz",
+    "gito"
+   ],
+   "kind": "axiom",
+   "link": 81,
+   "depth": 0
+  },
+  {
+   "key": "ax81.0",
+   "head": "sevoz",
+   "body": [
+    "dutan",
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 81,
+   "depth": 1
+  },
+  {
+   "key": "sub81.0",
+   "head": "sevoz",
+   "body": [
+    "dutan",
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 81,
+   "depth": 1
+  },
+  {
+   "key": "ax81.1",
+   "head": "gito",
+   "body": [
+    "dutan",
+    "sido"
+   ],
+   "kind": "axiom",
+   "link": 81,
+   "depth": 1
+  },
+  {
+   "key": "sub81.1",
+   "head": "gito",
+   "body": [
+    "dutan",
+    "sido"
+   ],
+   "kind": "sublemma",
+   "link": 81,
+   "depth": 1
+  },
+  {
+   "key": "lem82",
+   "head": "sobeg",
+   "body": [
+    "soni"
+   ],
+   "kind": "lemma",
+   "link": 82,
+   "depth": 0
+  },
+  {
+   "key": "ax82.r",
+   "head": "sobeg",
+   "body": [
+    "vile",
+    "lono"
+   ],
+   "kind": "axiom",
+   "link": 82,
+   "depth": 0
+  },
+  {
+   "key": "ax82.0",
+   "head": "vile",
+   "body": [
+    "soni"
+   ],
+   "kind": "axiom",
+   "link": 82,
+   "depth": 1
+  },
+  {
+   "key": "sub82.0",
+   "head": "vile",
+   "body": [
+    "soni"
+   ],
+   "kind": "sublemma",
+   "link": 82,
+   "depth": 1
+  },
+  {
+   "key": "ax82.1",
+   "head": "lono",
+   "body": [
+    "soni"
+   ],
+   "kind": "axiom",
+   "link": 82,
+   "depth": 1
+  },
+  {
+   "key": "sub82.1",
+   "head": "lono",
+   "body": [
+    "soni"
+   ],
+   "kind": "sublemma",
+   "link": 82,
+   "depth": 1
+  },
+  {
+   "key": "lem83",
+   "head": "soni",
+   "body": [
+    "gidu",
+    "pari"
+   ],
+   "kind": "lemma",
+   "link": 83,
+   "depth": 0
+  },
+  {
+   "key": "ax83.r",
+   "head": "soni",
+   "body": [
+    "fuzi",
+    "baga"
+   ],
+   "kind": "axiom",
+   "link": 83,
+   "depth": 0
+  },
+  {
+   "key": "ax83.0",
+   "head": "fuzi",
+   "body": [
+    "pari",
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 83,
+   "depth": 1
+  },
+  {
+   "key": "sub83.0",
+   "head": "fuzi",
+   "body": [
+    "pari",
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 83,
+   "depth": 1
+  },
+  {
+   "key": "ax83.1",
+   "head": "baga",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 83,
+   "depth": 1
+  },
+  {
+   "key": "sub83.1",
+   "head": "baga",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 83,
+   "depth": 1
+  },
+  {
+   "key": "lem84",
+   "head": "gari",
+   "body": [
+    "noben",
+    "lolov"
+   ],
+   "kind": "lemma",
+   "link": 84,
+   "depth": 0
+  },
+  {
+   "key": "ax84.r",
+   "head": "gari",
+   "body": [
+    "vufu",
+    "rasu"
+   ],
+   "kind": "axiom",
+   "link": 84,
+   "depth": 0
+  },
+  {
+   "key": "ax84.0",
+   "head": "vufu",
+   "body": [
+    "lolov",
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 84,
+   "depth": 1
+  },
+  {
+   "key": "sub84.0",
+   "head": "vufu",
+   "body": [
+    "lolov",
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 84,
+   "depth": 1
+  },
+  {
+   "key": "ax84.1",
+   "head": "rasu",
+   "body": [
+    "lolov",
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 84,
+   "depth": 1
+  },
+  {
+   "key": "sub84.1",
+   "head": "rasu",
+   "body": [
+    "lolov",
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 84,
+   "depth": 1
+  },
+  {
+   "key": "lem85",
+   "head": "taril",
+   "body": [
+    "zemi",
+    "dudi"
+   ],
+   "kind": "lemma",
+   "link": 85,
+   "depth": 0
+  },
+  {
+   "key": "ax85.r",
+   "head": "taril",
+   "body": [
+    "kogep",
+    "bone"
+   ],
+   "kind": "axiom",
+   "link": 85,
+   "depth": 0
+  },
+  {
+   "key": "ax85.0",
+   "head": "kogep",
+   "body": [
+    "zemi",
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 85,
+   "depth": 1
+  },
+  {
+   "key": "sub85.0",
+   "head": "kogep",
+   "body": [
+    "zemi",
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 85,
+   "depth": 1
+  },
+  {
+   "key": "ax85.1",
+   "head": "bone",
+   "body": [
+    "zemi"
+   ],
+   "kind": "axiom",
+   "link": 85,
+   "depth": 1
+  },
+  {
+   "key": "sub85.1",
+   "head": "bone",
+   "body": [
+    "zemi"
+   ],
+   "kind": "sublemma",
+   "link": 85,
+   "depth": 1
+  },
+  {
+   "key": "lem86",
+   "head": "gari",
+   "body": [
+    "noben",
+    "vegob"
+   ],
+   "kind": "lemma",
+   "link": 86,
+   "depth": 0
+  },
+  {
+   "key": "ax86.r",
+   "head": "gari",
+   "body": [
+    "zolos",
+    "desi"
+   ],
+   "kind": "axiom",
+   "link": 86,
+   "depth": 0
+  },
+  {
+   "key": "ax86.0",
+   "head": "zolos",
+   "body": [
+    "noben"
+   ],
+   "kind": "axiom",
+   "link": 86,
+   "depth": 1
+  },
+  {
+   "key": "sub86.0",
+   "head": "zolos",
+   "body": [
+    "noben"
+   ],
+   "kind": "sublemma",
+   "link": 86,
+   "depth": 1
+  },
+  {
+   "key": "ax86.1",
+   "head": "desi",
+   "body": [
+    "noben",
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 86,
+   "depth": 1
+  },
+  {
+   "key": "sub86.1",
+   "head": "desi",
+   "body": [
+    "noben",
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 86,
+   "depth": 1
+  },
+  {
+   "key": "lem87",
+   "head": "tosez",
+   "body": [
+    "sedu",
+    "dudi"
+   ],
+   "kind": "lemma",
+   "link": 87,
+   "depth": 0
+  },
+  {
+   "key": "ax87.r",
+   "head": "tosez",
+   "body": [
+    "silo",
+    "pekok"
+   ],
+   "kind": "axiom",
+   "link": 87,
+   "depth": 0
+  },
+  {
+   "key": "ax87.0",
+   "head": "silo",
+   "body": [
+    "sedu",
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 87,
+   "depth": 1
+  },
+  {
+   "key": "sub87.0",
+   "head": "silo",
+   "body": [
+    "sedu",
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 87,
+   "depth": 1
+  },
+  {
+   "key": "ax87.1",
+   "head": "pekok",
+   "body": [
+    "dudi"
+   ],
+   "kind": "axiom",
+   "link": 87,
+   "depth": 1
+  },
+  {
+   "key": "sub87.1",
+   "head": "pekok",
+   "body": [
+    "dudi"
+   ],
+   "kind": "sublemma",
+   "link": 87,
+   "depth": 1
+  },
+  {
+   "key": "lem88",
+   "head": "nuluf",
+   "body": [
+    "tosez"
+   ],
+   "kind": "lemma",
+   "link": 88,
+   "depth": 0
+  },
+  {
+   "key": "ax88.r",
+   "head": "nuluf",
+   "body": [
+    "zomi",
+    "kule"
+   ],
+   "kind": "axiom",
+   "link": 88,
+   "depth": 0
+  },
+  {
+   "key": "ax88.0",
+   "head": "zomi",
+   "body": [
+    "tosez"
+   ],
+   "kind": "axiom",
+   "link": 88,
+   "depth": 1
+  },
+  {
+   "key": "sub88.0",
+   "head": "zomi",
+   "body": [
+    "tosez"
+   ],
+   "kind": "sublemma",
+   "link": 88,
+   "depth": 1
+  },
+  {
+   "key": "ax88.1",
+   "head": "kule",
+   "body": [
+    "tosez"
+   ],
+   "kind": "axiom",
+   "link": 88,
+   "depth": 1
+  },
+  {
+   "key": "sub88.1",
+   "head": "kule",
+   "body": [
+    "tosez"
+   ],
+   "kind": "sublemma",
+   "link": 88,
+   "depth": 1
+  },
+  {
+   "key": "lem89",
+   "head": "rika",
+   "body": [
+    "taril",
+    "desu"
+   ],
+   "kind": "lemma",
+   "link": 89,
+   "depth": 0
+  },
+  {
+   "key": "ax89.r",
+   "head": "rika",
+   "body": [
+    "botu",
+    "pubob"
+   ],
+   "kind": "axiom",
+   "link": 89,
+   "depth": 0
+  },
+  {
+   "key": "ax89.0",
+   "head": "botu",
+   "body": [
+    "taril"
+   ],
+   "kind": "axiom",
+   "link": 89,
+   "depth": 1
+  },
+  {
+   "key": "sub89.0",
+   "head": "botu",
+   "body": [
+    "taril"
+   ],
+   "kind": "sublemma",
+   "link": 89,
+   "depth": 1
+  },
+  {
+   "key": "ax89.1",
+   "head": "pubob",
+   "body": [
+    "desu",
+    "taril"
+   ],
+   "kind": "axiom",
+   "link": 89,
+   "depth": 1
+  },
+  {
+   "key": "sub89.1",
+   "head": "pubob",
+   "body": [
+    "desu",
+    "taril"
+   ],
+   "kind": "sublemma",
+   "link": 89,
+   "depth": 1
+  },
+  {
+   "key": "lem90",
+   "head": "nuluf",
+   "body": [
+    "tosez",
+    "ruma"
+   ],
+   "kind": "lemma",
+   "link": 90,
+   "depth": 0
+  },
+  {
+   "key": "ax90.r",
+   "head": "nuluf",
+   "body": [
+    "tusas",
+    "sosef"
+   ],
+   "kind": "axiom",
+   "link": 90,
+   "depth": 0
+  },
+  {
+   "key": "ax90.0",
+   "head": "tusas",
+   "body": [
+    "tosez",
+    "ruma"
+   ],
+   "kind": "axiom",
+   "link": 90,
+   "depth": 1
+  },
+  {
+   "key": "sub90.0",
+   "head": "tusas",
+   "body": [
+    "tosez",
+    "ruma"
+   ],
+   "kind": "sublemma",
+   "link": 90,
+   "depth": 1
+  },
+  {
+   "key": "ax90.1",
+   "head": "sosef",
+   "body": [
+    "tosez"
+   ],
+   "kind": "axiom",
+   "link": 90,
+   "depth": 1
+  },
+  {
+   "key": "sub90.1",
+   "head": "sosef",
+   "body": [
+    "tosez"
+   ],
+   "kind": "sublemma",
+   "link": 90,
+   "depth": 1
+  },
+  {
+   "key": "lem91",
+   "head": "sido",
+   "body": [
+    "gidu",
+    "nunav"
+   ],
+   "kind": "lemma",
+   "link": 91,
+   "depth": 0
+  },
+  {
+   "key": "ax91.r",
+   "head": "sido",
+   "body": [
+    "fobir",
+    "subo"
+   ],
+   "kind": "axiom",
+   "link": 91,
+   "depth": 0
+  },
+  {
+   "key": "ax91.0",
+   "head": "fobir",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 91,
+   "depth": 1
+  },
+  {
+   "key": "sub91.0",
+   "head": "fobir",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 91,
+   "depth": 1
+  },
+  {
+   "key": "ax91.1",
+   "head": "subo",
+   "body": [
+    "nunav"
+   ],
+   "kind": "axiom",
+   "link": 91,
+   "depth": 1
+  },
+  {
+   "key": "sub91.1",
+   "head": "subo",
+   "body": [
+    "nunav"
+   ],
+   "kind": "sublemma",
+   "link": 91,
+   "depth": 1
+  },
+  {
+   "key": "lem92",
+   "head": "defe",
+   "body": [
+    "vegob",
+    "tosez"
+   ],
+   "kind": "lemma",
+   "link": 92,
+   "depth": 0
+  },
+  {
+   "key": "ax92.r",
+   "head": "defe",
+   "body": [
+    "seno",
+    "doge"
+   ],
+   "kind": "axiom",
+   "link": 92,
+   "depth": 0
+  },
+  {
+   "key": "ax92.0",
+   "head": "seno",
+   "body": [
+    "tosez",
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 92,
+   "depth": 1
+  },
+  {
+   "key": "sub92.0",
+   "head": "seno",
+   "body": [
+    "tosez",
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 92,
+   "depth": 1
+  },
+  {
+   "key": "ax92.1",
+   "head": "doge",
+   "body": [
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 92,
+   "depth": 1
+  },
+  {
+   "key": "sub92.1",
+   "head": "doge",
+   "body": [
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 92,
+   "depth": 1
+  },
+  {
+   "key": "lem93",
+   "head": "tugo",
+   "body": [
+    "gidu"
+   ],
+   "kind": "lemma",
+   "link": 93,
+   "depth": 0
+  },
+  {
+   "key": "ax93.r",
+   "head": "tugo",
+   "body": [
+    "fale",
+    "disu"
+   ],
+   "kind": "axiom",
+   "link": 93,
+   "depth": 0
+  },
+  {
+   "key": "ax93.0",
+   "head": "fale",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 93,
+   "depth": 1
+  },
+  {
+   "key": "sub93.0",
+   "head": "fale",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 93,
+   "depth": 1
+  },
+  {
+   "key": "ax93.1",
+   "head": "disu",
+   "body": [
+    "gidu"
+   ],
+   "kind": "axiom",
+   "link": 93,
+   "depth": 1
+  },
+  {
+   "key": "sub93.1",
+   "head": "disu",
+   "body": [
+    "gidu"
+   ],
+   "kind": "sublemma",
+   "link": 93,
+   "depth": 1
+  },
+  {
+   "key": "lem94",
+   "head": "soni",
+   "body": [
+    "tugo"
+   ],
+   "kind": "lemma",
+   "link": 94,
+   "depth": 0
+  },
+  {
+   "key": "ax94.r",
+   "head": "soni",
+   "body": [
+    "babuk",
+    "kufo"
+   ],
+   "kind": "axiom",
+   "link": 94,
+   "depth": 0
+  },
+  {
+   "key": "ax94.0",
+   "head": "babuk",
+   "body": [
+    "tugo"
+   ],
+   "kind": "axiom",
+   "link": 94,
+   "depth": 1
+  },
+  {
+   "key": "sub94.0",
+   "head": "babuk",
+   "body": [
+    "tugo"
+   ],
+   "kind": "sublemma",
+   "link": 94,
+   "depth": 1
+  },
+  {
+   "key": "ax94.1",
+   "head": "kufo",
+   "body": [
+    "tugo"
+   ],
+   "kind": "axiom",
+   "link": 94,
+   "depth": 1
+  },
+  {
+   "key": "sub94.1",
+   "head": "kufo",
+   "body": [
+    "tugo"
+   ],
+   "kind": "sublemma",
+   "link": 94,
+   "depth": 1
+  },
+  {
+   "key": "lem95",
+   "head": "dutan",
+   "body": [
+    "vegob"
+   ],
+   "kind": "lemma",
+   "link": 95,
+   "depth": 0
+  },
+  {
+   "key": "ax95.r",
+   "head": "dutan",
+   "body": [
+    "fono",
+    "nivuk"
+   ],
+   "kind": "axiom",
+   "link": 95,
+   "depth": 0
+  },
+  {
+   "key": "ax95.0",
+   "head": "fono",
+   "body": [
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 95,
+   "depth": 1
+  },
+  {
+   "key": "sub95.0",
+   "head": "fono",
+   "body": [
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 95,
+   "depth": 1
+  },
+  {
+   "key": "ax95.1",
+   "head": "nivuk",
+   "body": [
+    "vegob"
+   ],
+   "kind": "axiom",
+   "link": 95,
+   "depth": 1
+  },
+  {
+   "key": "sub95.1",
+   "head": "nivuk",
+   "body": [
+    "vegob"
+   ],
+   "kind": "sublemma",
+   "link": 95,
+   "depth": 1
+  },
+  {
+   "key": "lem96",
+   "head": "sore",
+   "body": [
+    "tosez",
+    "favap"
+   ],
+   "kind": "lemma",
+   "link": 96,
+   "depth": 0
+  },
+  {
+   "key": "ax96.r",
+   "head": "sore",
+   "body": [
+    "kalif",
+    "rake"
+   ],
+   "kind": "axiom",
+   "link": 96,
+   "depth": 0
+  },
+  {
+   "key": "ax96.0",
+   "head": "kalif",
+   "body": [
+    "tosez",
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 96,
+   "depth": 1
+  },
+  {
+   "key": "sub96.0",
+   "head": "kalif",
+   "body": [
+    "tosez",
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 96,
+   "depth": 1
+  },
+  {
+   "key": "ax96.1",
+   "head": "rake",
+   "body": [
+    "favap"
+   ],
+   "kind": "axiom",
+   "link": 96,
+   "depth": 1
+  },
+  {
+   "key": "sub96.1",
+   "head": "rake",
+   "body": [
+    "favap"
+   ],
+   "kind": "sublemma",
+   "link": 96,
+   "depth": 1
+  },
+  {
+   "key": "lem97",
+   "head": "nunav",
+   "body": [
+    "sore"
+   ],
+   "kind": "lemma",
+   "link": 97,
+   "depth": 0
+  },
+  {
+   "key": "ax97.r",
+   "head": "nunav",
+   "body": [
+    "papum",
+    "gekum"
+   ],
+   "kind": "axiom",
+   "link": 97,
+   "depth": 0
+  },
+  {
+   "key": "ax97.0",
+   "head": "papum",
+   "body": [
+    "sore"
+   ],
+   "kind": "axiom",
+   "link": 97,
+   "depth": 1
+  },
+  {
+   "key": "sub97.0",
+   "head": "papum",
+   "body": [
+    "sore"
+   ],
+   "kind": "sublemma",
+   "link": 97,
+   "depth": 1
+  },
+  {
+   "key": "ax97.1",
+   "head": "gekum",
+   "body": [
+    "sore"
+   ],
+   "kind": "axiom",
+   "link": 97,
+   "depth": 1
+  },
+  {
+   "key": "sub97.1",
+   "head": "gekum",
+   "body": [
+    "sore"
+   ],
+   "kind": "sublemma",
+   "link": 97,
+   "depth": 1
+  },
+  {
+   "key": "fax0.r",
+   "head": "dudi",
+   "body": [
+    "vago",
+    "kulo"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax0.0",
+   "head": "vago",
+   "body": [
+    "gegev",
+    "tilu"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax0.1",
+   "head": "kulo",
+   "body": [
+    "muzen",
+    "lalo"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch0.00.0",
+   "head": "gegev",
+   "body": [
+    "firap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch0.00.1",
+   "head": "firap",
+   "body": [
+    "radaz"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch0.00.2",
+   "head": "radaz",
+   "body": [
+    "zunu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch0.00.3",
+   "head": "zunu",
+   "body": [
+    "kima"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch0.00.4",
+   "head": "kima",
+   "body": [
+    "vuzu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch0.00.5",
+   "head": "vuzu",
+   "body": [
+    "kale"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch0.00.6",
+   "head": "kale",
+   "body": [
+    "mabal"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch0.00.7",
+   "head": "mabal",
+   "body": [
+    "zona"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch0.00.8",
+   "head": "zona",
+   "body": [
+    "sodar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch0.00.9",
+   "head": "sodar",
+   "body": [
+    "gasun"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch0.01.0",
+   "head": "tilu",
+   "body": [
+    "zele"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch0.01.1",
+   "head": "zele",
+   "body": [
+    "gebi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch0.01.2",
+   "head": "gebi",
+   "body": [
+    "bubap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch0.01.3",
+   "head": "bubap",
+   "body": [
+    "tobav"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch0.01.4",
+   "head": "tobav",
+   "body": [
+    "besi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch0.01.5",
+   "head": "besi",
+   "body": [
+    "nanim"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch0.01.6",
+   "head": "nanim",
+   "body": [
+    "dinog"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch0.01.7",
+   "head": "dinog",
+   "body": [
+    "vesag"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch0.01.8",
+   "head": "vesag",
+   "body": [
+    "vafer"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch0.01.9",
+   "head": "vafer",
+   "body": [
+    "zite"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch0.10.0",
+   "head": "muzen",
+   "body": [
+    "doza"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch0.10.1",
+   "head": "doza",
+   "body": [
+    "niles"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch0.10.2",
+   "head": "niles",
+   "body": [
+    "lele"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch0.10.3",
+   "head": "lele",
+   "body": [
+    "fopef"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch0.10.4",
+   "head": "fopef",
+   "body": [
+    "komek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch0.10.5",
+   "head": "komek",
+   "body": [
+    "riled"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch0.10.6",
+   "head": "riled",
+   "body": [
+    "lonap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch0.10.7",
+   "head": "lonap",
+   "body": [
+    "bepo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch0.10.8",
+   "head": "bepo",
+   "body": [
+    "dive"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch0.10.9",
+   "head": "dive",
+   "body": [
+    "migek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch0.11.0",
+   "head": "lalo",
+   "body": [
+    "mebis"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch0.11.1",
+   "head": "mebis",
+   "body": [
+    "bovuf"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch0.11.2",
+   "head": "bovuf",
+   "body": [
+    "navul"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch0.11.3",
+   "head": "navul",
+   "body": [
+    "mamef"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch0.11.4",
+   "head": "mamef",
+   "body": [
+    "fepe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch0.11.5",
+   "head": "fepe",
+   "body": [
+    "guda"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch0.11.6",
+   "head": "guda",
+   "body": [
+    "tovif"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch0.11.7",
+   "head": "tovif",
+   "body": [
+    "rerid"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch0.11.8",
+   "head": "rerid",
+   "body": [
+    "tuma"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch0.11.9",
+   "head": "tuma",
+   "body": [
+    "likom"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax1.r",
+   "head": "pebad",
+   "body": [
+    "vofir",
+    "zibe"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax1.0",
+   "head": "vofir",
+   "body": [
+    "ruzan",
+    "padi"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax1.1",
+   "head": "zibe",
+   "body": [
+    "zivo",
+    "biza"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch1.00.0",
+   "head": "ruzan",
+   "body": [
+    "nopa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch1.00.1",
+   "head": "nopa",
+   "body": [
+    "pebe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch1.00.2",
+   "head": "pebe",
+   "body": [
+    "gufek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch1.00.3",
+   "head": "gufek",
+   "body": [
+    "paba"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch1.00.4",
+   "head": "paba",
+   "body": [
+    "teka"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch1.00.5",
+   "head": "teka",
+   "body": [
+    "sunun"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch1.00.6",
+   "head": "sunun",
+   "body": [
+    "diza"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch1.00.7",
+   "head": "diza",
+   "body": [
+    "bidop"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch1.00.8",
+   "head": "bidop",
+   "body": [
+    "vidaf"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch1.00.9",
+   "head": "vidaf",
+   "body": [
+    "puger"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch1.01.0",
+   "head": "padi",
+   "body": [
+    "nofa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch1.01.1",
+   "head": "nofa",
+   "body": [
+    "moru"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch1.01.2",
+   "head": "moru",
+   "body": [
+    "mavig"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch1.01.3",
+   "head": "mavig",
+   "body": [
+    "zito"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch1.01.4",
+   "head": "zito",
+   "body": [
+    "rizo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch1.01.5",
+   "head": "rizo",
+   "body": [
+    "bipe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch1.01.6",
+   "head": "bipe",
+   "body": [
+    "lezo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch1.01.7",
+   "head": "lezo",
+   "body": [
+    "bidul"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch1.01.8",
+   "head": "bidul",
+   "body": [
+    "mepam"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch1.01.9",
+   "head": "mepam",
+   "body": [
+    "mosa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch1.10.0",
+   "head": "zivo",
+   "body": [
+    "bazus"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch1.10.1",
+   "head": "bazus",
+   "body": [
+    "risu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch1.10.2",
+   "head": "risu",
+   "body": [
+    "budib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch1.10.3",
+   "head": "budib",
+   "body": [
+    "mebil"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch1.10.4",
+   "head": "mebil",
+   "body": [
+    "seda"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch1.10.5",
+   "head": "seda",
+   "body": [
+    "pido"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch1.10.6",
+   "head": "pido",
+   "body": [
+    "foduk"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch1.10.7",
+   "head": "foduk",
+   "body": [
+    "mukid"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch1.10.8",
+   "head": "mukid",
+   "body": [
+    "tuko"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch1.10.9",
+   "head": "tuko",
+   "body": [
+    "resot"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch1.11.0",
+   "head": "biza",
+   "body": [
+    "lopi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch1.11.1",
+   "head": "lopi",
+   "body": [
+    "nibeg"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch1.11.2",
+   "head": "nibeg",
+   "body": [
+    "pumul"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch1.11.3",
+   "head": "pumul",
+   "body": [
+    "feluk"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch1.11.4",
+   "head": "feluk",
+   "body": [
+    "keka"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch1.11.5",
+   "head": "keka",
+   "body": [
+    "fudu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch1.11.6",
+   "head": "fudu",
+   "body": [
+    "napo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch1.11.7",
+   "head": "napo",
+   "body": [
+    "lape"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch1.11.8",
+   "head": "lape",
+   "body": [
+    "semi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch1.11.9",
+   "head": "semi",
+   "body": [
+    "feru"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax2.r",
+   "head": "gapor",
+   "body": [
+    "zudos",
+    "temav"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax2.0",
+   "head": "zudos",
+   "body": [
+    "pudor",
+    "fozi"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax2.1",
+   "head": "temav",
+   "body": [
+    "ramo",
+    "kikip"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch2.00.0",
+   "head": "pudor",
+   "body": [
+    "rosit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch2.00.1",
+   "head": "rosit",
+   "body": [
+    "zomop"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch2.00.2",
+   "head": "zomop",
+   "body": [
+    "kemug"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch2.00.3",
+   "head": "kemug",
+   "body": [
+    "dilu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch2.00.4",
+   "head": "dilu",
+   "body": [
+    "lemak"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch2.00.5",
+   "head": "lemak",
+   "body": [
+    "roku"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch2.00.6",
+   "head": "roku",
+   "body": [
+    "pumu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch2.00.7",
+   "head": "pumu",
+   "body": [
+    "tomor"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch2.00.8",
+   "head": "tomor",
+   "body": [
+    "sina"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch2.00.9",
+   "head": "sina",
+   "body": [
+    "pedom"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch2.01.0",
+   "head": "fozi",
+   "body": [
+    "sure"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch2.01.1",
+   "head": "sure",
+   "body": [
+    "momo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch2.01.2",
+   "head": "momo",
+   "body": [
+    "ritu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch2.01.3",
+   "head": "ritu",
+   "body": [
+    "delid"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch2.01.4",
+   "head": "delid",
+   "body": [
+    "zipek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch2.01.5",
+   "head": "zipek",
+   "body": [
+    "tizu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch2.01.6",
+   "head": "tizu",
+   "body": [
+    "mepi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch2.01.7",
+   "head": "mepi",
+   "body": [
+    "gugos"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch2.01.8",
+   "head": "gugos",
+   "body": [
+    "rudi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch2.01.9",
+   "head": "rudi",
+   "body": [
+    "satob"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch2.10.0",
+   "head": "ramo",
+   "body": [
+    "kubid"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch2.10.1",
+   "head": "kubid",
+   "body": [
+    "rasan"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch2.10.2",
+   "head": "rasan",
+   "body": [
+    "vuri"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch2.10.3",
+   "head": "vuri",
+   "body": [
+    "pufur"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch2.10.4",
+   "head": "pufur",
+   "body": [
+    "defu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch2.10.5",
+   "head": "defu",
+   "body": [
+    "dadap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch2.10.6",
+   "head": "dadap",
+   "body": [
+    "noro"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch2.10.7",
+   "head": "noro",
+   "body": [
+    "basut"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch2.10.8",
+   "head": "basut",
+   "body": [
+    "gikes"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch2.10.9",
+   "head": "gikes",
+   "body": [
+    "dudir"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch2.11.0",
+   "head": "kikip",
+   "body": [
+    "mabe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch2.11.1",
+   "head": "mabe",
+   "body": [
+    "rana"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch2.11.2",
+   "head": "rana",
+   "body": [
+    "gebe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch2.11.3",
+   "head": "gebe",
+   "body": [
+    "zela"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch2.11.4",
+   "head": "zela",
+   "body": [
+    "zoko"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch2.11.5",
+   "head": "zoko",
+   "body": [
+    "nago"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch2.11.6",
+   "head": "nago",
+   "body": [
+    "remit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch2.11.7",
+   "head": "remit",
+   "body": [
+    "navef"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch2.11.8",
+   "head": "navef",
+   "body": [
+    "lofa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch2.11.9",
+   "head": "lofa",
+   "body": [
+    "kopip"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax3.r",
+   "head": "desu",
+   "body": [
+    "zolo",
+    "dozi"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax3.0",
+   "head": "zolo",
+   "body": [
+    "menim",
+    "bisaf"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax3.1",
+   "head": "dozi",
+   "body": [
+    "gedez",
+    "vepov"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch3.00.0",
+   "head": "menim",
+   "body": [
+    "vefit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch3.00.1",
+   "head": "vefit",
+   "body": [
+    "mosun"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch3.00.2",
+   "head": "mosun",
+   "body": [
+    "pego"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch3.00.3",
+   "head": "pego",
+   "body": [
+    "tiro"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch3.00.4",
+   "head": "tiro",
+   "body": [
+    "lugo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch3.00.5",
+   "head": "lugo",
+   "body": [
+    "geza"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch3.00.6",
+   "head": "geza",
+   "body": [
+    "duzi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch3.00.7",
+   "head": "duzi",
+   "body": [
+    "vobub"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch3.00.8",
+   "head": "vobub",
+   "body": [
+    "mate"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch3.00.9",
+   "head": "mate",
+   "body": [
+    "gigal"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch3.01.0",
+   "head": "bisaf",
+   "body": [
+    "vuvit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch3.01.1",
+   "head": "vuvit",
+   "body": [
+    "kagit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch3.01.2",
+   "head": "kagit",
+   "body": [
+    "milo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch3.01.3",
+   "head": "milo",
+   "body": [
+    "nekes"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch3.01.4",
+   "head": "nekes",
+   "body": [
+    "vima"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch3.01.5",
+   "head": "vima",
+   "body": [
+    "togos"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch3.01.6",
+   "head": "togos",
+   "body": [
+    "dekar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch3.01.7",
+   "head": "dekar",
+   "body": [
+    "tetar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch3.01.8",
+   "head": "tetar",
+   "body": [
+    "fogit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch3.01.9",
+   "head": "fogit",
+   "body": [
+    "buke"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch3.10.0",
+   "head": "gedez",
+   "body": [
+    "gunum"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch3.10.1",
+   "head": "gunum",
+   "body": [
+    "sulav"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch3.10.2",
+   "head": "sulav",
+   "body": [
+    "vibu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch3.10.3",
+   "head": "vibu",
+   "body": [
+    "besal"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch3.10.4",
+   "head": "besal",
+   "body": [
+    "gitat"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch3.10.5",
+   "head": "gitat",
+   "body": [
+    "muzed"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch3.10.6",
+   "head": "muzed",
+   "body": [
+    "loni"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch3.10.7",
+   "head": "loni",
+   "body": [
+    "gosu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch3.10.8",
+   "head": "gosu",
+   "body": [
+    "venet"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch3.10.9",
+   "head": "venet",
+   "body": [
+    "zuke"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch3.11.0",
+   "head": "vepov",
+   "body": [
+    "vepib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch3.11.1",
+   "head": "vepib",
+   "body": [
+    "filos"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch3.11.2",
+   "head": "filos",
+   "body": [
+    "kefo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch3.11.3",
+   "head": "kefo",
+   "body": [
+    "gebu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch3.11.4",
+   "head": "gebu",
+   "body": [
+    "fitit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch3.11.5",
+   "head": "fitit",
+   "body": [
+    "furez"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch3.11.6",
+   "head": "furez",
+   "body": [
+    "funo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch3.11.7",
+   "head": "funo",
+   "body": [
+    "dibib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch3.11.8",
+   "head": "dibib",
+   "body": [
+    "bikek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch3.11.9",
+   "head": "bikek",
+   "body": [
+    "nafir"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax4.r",
+   "head": "ruma",
+   "body": [
+    "lifub",
+    "nodi"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax4.0",
+   "head": "lifub",
+   "body": [
+    "rido",
+    "nevul"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax4.1",
+   "head": "nodi",
+   "body": [
+    "siset",
+    "bavo"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch4.00.0",
+   "head": "rido",
+   "body": [
+    "kifu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch4.00.1",
+   "head": "kifu",
+   "body": [
+    "sedi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch4.00.2",
+   "head": "sedi",
+   "body": [
+    "lofil"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch4.00.3",
+   "head": "lofil",
+   "body": [
+    "fulib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch4.00.4",
+   "head": "fulib",
+   "body": [
+    "duvo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch4.00.5",
+   "head": "duvo",
+   "body": [
+    "gomo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch4.00.6",
+   "head": "gomo",
+   "body": [
+    "kurag"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch4.00.7",
+   "head": "kurag",
+   "body": [
+    "fenob"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch4.00.8",
+   "head": "fenob",
+   "body": [
+    "zonel"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch4.00.9",
+   "head": "zonel",
+   "body": [
+    "bazu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch4.01.0",
+   "head": "nevul",
+   "body": [
+    "vumes"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch4.01.1",
+   "head": "vumes",
+   "body": [
+    "buto"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch4.01.2",
+   "head": "buto",
+   "body": [
+    "dobe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch4.01.3",
+   "head": "dobe",
+   "body": [
+    "fokar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch4.01.4",
+   "head": "fokar",
+   "body": [
+    "sirep"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch4.01.5",
+   "head": "sirep",
+   "body": [
+    "luno"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch4.01.6",
+   "head": "luno",
+   "body": [
+    "semu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch4.01.7",
+   "head": "semu",
+   "body": [
+    "vati"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch4.01.8",
+   "head": "vati",
+   "body": [
+    "kuro"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch4.01.9",
+   "head": "kuro",
+   "body": [
+    "neki"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch4.10.0",
+   "head": "siset",
+   "body": [
+    "sazet"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch4.10.1",
+   "head": "sazet",
+   "body": [
+    "nafur"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch4.10.2",
+   "head": "nafur",
+   "body": [
+    "mipe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch4.10.3",
+   "head": "mipe",
+   "body": [
+    "mideg"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch4.10.4",
+   "head": "mideg",
+   "body": [
+    "pagi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch4.10.5",
+   "head": "pagi",
+   "body": [
+    "gusi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch4.10.6",
+   "head": "gusi",
+   "body": [
+    "gune"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch4.10.7",
+   "head": "gune",
+   "body": [
+    "tatu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch4.10.8",
+   "head": "tatu",
+   "body": [
+    "razo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch4.10.9",
+   "head": "razo",
+   "body": [
+    "vofu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch4.11.0",
+   "head": "bavo",
+   "body": [
+    "tasuz"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch4.11.1",
+   "head": "tasuz",
+   "body": [
+    "sope"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch4.11.2",
+   "head": "sope",
+   "body": [
+    "gunav"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch4.11.3",
+   "head": "gunav",
+   "body": [
+    "rameb"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch4.11.4",
+   "head": "rameb",
+   "body": [
+    "bugot"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch4.11.5",
+   "head": "bugot",
+   "body": [
+    "fodu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch4.11.6",
+   "head": "fodu",
+   "body": [
+    "gudit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch4.11.7",
+   "head": "gudit",
+   "body": [
+    "ziva"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch4.11.8",
+   "head": "ziva",
+   "body": [
+    "delu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch4.11.9",
+   "head": "delu",
+   "body": [
+    "lobul"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax5.r",
+   "head": "buzef",
+   "body": [
+    "pivus",
+    "gile"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax5.0",
+   "head": "pivus",
+   "body": [
+    "buna",
+    "nadip"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax5.1",
+   "head": "gile",
+   "body": [
+    "koze",
+    "kuti"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch5.00.0",
+   "head": "buna",
+   "body": [
+    "balen"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch5.00.1",
+   "head": "balen",
+   "body": [
+    "zavar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch5.00.2",
+   "head": "zavar",
+   "body": [
+    "zumo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch5.00.3",
+   "head": "zumo",
+   "body": [
+    "tome"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch5.00.4",
+   "head": "tome",
+   "body": [
+    "rudig"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch5.00.5",
+   "head": "rudig",
+   "body": [
+    "keruf"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch5.00.6",
+   "head": "keruf",
+   "body": [
+    "ziton"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch5.00.7",
+   "head": "ziton",
+   "body": [
+    "milan"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch5.00.8",
+   "head": "milan",
+   "body": [
+    "leber"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch5.00.9",
+   "head": "leber",
+   "body": [
+    "betek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch5.01.0",
+   "head": "nadip",
+   "body": [
+    "duki"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch5.01.1",
+   "head": "duki",
+   "body": [
+    "pufa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch5.01.2",
+   "head": "pufa",
+   "body": [
+    "vaze"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch5.01.3",
+   "head": "vaze",
+   "body": [
+    "susak"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch5.01.4",
+   "head": "susak",
+   "body": [
+    "veze"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch5.01.5",
+   "head": "veze",
+   "body": [
+    "kiti"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch5.01.6",
+   "head": "kiti",
+   "body": [
+    "selu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch5.01.7",
+   "head": "selu",
+   "body": [
+    "lati"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch5.01.8",
+   "head": "lati",
+   "body": [
+    "vopi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch5.01.9",
+   "head": "vopi",
+   "body": [
+    "veleb"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch5.10.0",
+   "head": "koze",
+   "body": [
+    "zomov"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch5.10.1",
+   "head": "zomov",
+   "body": [
+    "kerat"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch5.10.2",
+   "head": "kerat",
+   "body": [
+    "kitu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch5.10.3",
+   "head": "kitu",
+   "body": [
+    "lagu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch5.10.4",
+   "head": "lagu",
+   "body": [
+    "rekun"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch5.10.5",
+   "head": "rekun",
+   "body": [
+    "lota"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch5.10.6",
+   "head": "lota",
+   "body": [
+    "leki"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch5.10.7",
+   "head": "leki",
+   "body": [
+    "vesib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch5.10.8",
+   "head": "vesib",
+   "body": [
+    "gamor"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch5.10.9",
+   "head": "gamor",
+   "body": [
+    "kusat"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch5.11.0",
+   "head": "kuti",
+   "body": [
+    "berav"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch5.11.1",
+   "head": "berav",
+   "body": [
+    "zulek"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch5.11.2",
+   "head": "zulek",
+   "body": [
+    "pasi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch5.11.3",
+   "head": "pasi",
+   "body": [
+    "gila"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch5.11.4",
+   "head": "gila",
+   "body": [
+    "musiz"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch5.11.5",
+   "head": "musiz",
+   "body": [
+    "madun"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch5.11.6",
+   "head": "madun",
+   "body": [
+    "roko"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch5.11.7",
+   "head": "roko",
+   "body": [
+    "birir"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch5.11.8",
+   "head": "birir",
+   "body": [
+    "tifag"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch5.11.9",
+   "head": "tifag",
+   "body": [
+    "fuval"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fax6.r",
+   "head": "pari",
+   "body": [
+    "mipu",
+    "furir"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 0
+  },
+  {
+   "key": "fax6.0",
+   "head": "mipu",
+   "body": [
+    "kova",
+    "kuto"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fax6.1",
+   "head": "furir",
+   "body": [
+    "lupib",
+    "podis"
+   ],
+   "kind": "factax",
+   "link": 0,
+   "depth": 1
+  },
+  {
+   "key": "fch6.00.0",
+   "head": "kova",
+   "body": [
+    "gova"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch6.00.1",
+   "head": "gova",
+   "body": [
+    "reda"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch6.00.2",
+   "head": "reda",
+   "body": [
+    "guver"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch6.00.3",
+   "head": "guver",
+   "body": [
+    "lefe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch6.00.4",
+   "head": "lefe",
+   "body": [
+    "lenol"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch6.00.5",
+   "head": "lenol",
+   "body": [
+    "voneb"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch6.00.6",
+   "head": "voneb",
+   "body": [
+    "dado"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch6.00.7",
+   "head": "dado",
+   "body": [
+    "lagum"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch6.00.8",
+   "head": "lagum",
+   "body": [
+    "sebit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch6.00.9",
+   "head": "sebit",
+   "body": [
+    "megiv"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch6.01.0",
+   "head": "kuto",
+   "body": [
+    "mikor"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch6.01.1",
+   "head": "mikor",
+   "body": [
+    "veni"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch6.01.2",
+   "head": "veni",
+   "body": [
+    "fikan"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch6.01.3",
+   "head": "fikan",
+   "body": [
+    "zefi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch6.01.4",
+   "head": "zefi",
+   "body": [
+    "roguv"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch6.01.5",
+   "head": "roguv",
+   "body": [
+    "giboz"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch6.01.6",
+   "head": "giboz",
+   "body": [
+    "fisa"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch6.01.7",
+   "head": "fisa",
+   "body": [
+    "fafit"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch6.01.8",
+   "head": "fafit",
+   "body": [
+    "lavem"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch6.01.9",
+   "head": "lavem",
+   "body": [
+    "dolo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch6.10.0",
+   "head": "lupib",
+   "body": [
+    "buge"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch6.10.1",
+   "head": "buge",
+   "body": [
+    "tabe"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch6.10.2",
+   "head": "tabe",
+   "body": [
+    "guma"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch6.10.3",
+   "head": "guma",
+   "body": [
+    "bidan"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch6.10.4",
+   "head": "bidan",
+   "body": [
+    "fumas"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch6.10.5",
+   "head": "fumas",
+   "body": [
+    "pesu"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch6.10.6",
+   "head": "pesu",
+   "body": [
+    "dulo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch6.10.7",
+   "head": "dulo",
+   "body": [
+    "dige"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch6.10.8",
+   "head": "dige",
+   "body": [
+    "kebib"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch6.10.9",
+   "head": "kebib",
+   "body": [
+    "gubo"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  },
+  {
+   "key": "fch6.11.0",
+   "head": "podis",
+   "body": [
+    "libi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 2
+  },
+  {
+   "key": "fch6.11.1",
+   "head": "libi",
+   "body": [
+    "sopi"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 3
+  },
+  {
+   "key": "fch6.11.2",
+   "head": "sopi",
+   "body": [
+    "tozil"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 4
+  },
+  {
+   "key": "fch6.11.3",
+   "head": "tozil",
+   "body": [
+    "pomem"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 5
+  },
+  {
+   "key": "fch6.11.4",
+   "head": "pomem",
+   "body": [
+    "mesap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 6
+  },
+  {
+   "key": "fch6.11.5",
+   "head": "mesap",
+   "body": [
+    "zesar"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 7
+  },
+  {
+   "key": "fch6.11.6",
+   "head": "zesar",
+   "body": [
+    "vatap"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 8
+  },
+  {
+   "key": "fch6.11.7",
+   "head": "vatap",
+   "body": [
+    "lopir"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 9
+  },
+  {
+   "key": "fch6.11.8",
+   "head": "lopir",
+   "body": [
+    "boto"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 10
+  },
+  {
+   "key": "fch6.11.9",
+   "head": "boto",
+   "body": [
+    "rume"
+   ],
+   "kind": "factchain",
+   "link": 0,
+   "depth": 11
+  }
+ ],
+ "order": [
+  "ax61.1",
+  "ax2.1",
+  "ax85.0",
+  "fch0.10.8",
+  "ax33.r",
+  "fch3.10.9",
+  "ax56.1",
+  "sub4.1",
+  "sub23.1",
+  "fch2.01.1",
+  "fch0.11.9",
+  "fch1.10.8",
+  "ax68.r",
+  "ax5.1",
+  "sub50.1",
+  "lem18",
+  "sub38.1",
+  "fch5.00.1",
+  "ax49.0",
+  "lem70",
+  "sub77.1",
+  "ax69.1",
+  "fch1.11.7",
+  "sub1.0",
+  "sub48.0",
+  "sub5.1",
+  "lem5",
+  "fch1.01.5",
+  "fch1.10.9",
+  "sub74.1",
+  "lem19",
+  "ax25.0",
+  "sub3.1",
+  "ax74.1",
+  "ax48.r",
+  "fch0.01.5",
+  "sub60.0",
+  "ax67.r",
+  "fch2.11.6",
+  "lem85",
+  "fch5.01.0",
+  "fch4.00.9",
+  "sub34.1",
+  "sub11.0",
+  "fch0.01.1",
+  "lem46",
+  "ax39.0",
+  "fax2.1",
+  "ax49.r",
+  "sub69.1",
+  "ax87.0",
+  "ax61.r",
+  "fch2.11.2",
+  "ax65.0",
+  "fch2.10.0",
+  "fch6.01.2",
+  "ax10.r",
+  "ax41.0",
+  "fch4.01.3",
+  "ax76.r",
+  "fch3.01.9",
+  "sub42.0",
+  "lem41",
+  "fch5.00.3",
+  "ax22.0",
+  "sub93.0",
+  "sub72.0",
+  "ax4.1",
+  "fch3.00.4",
+  "ax95.1",
+  "fch3.00.8",
+  "ax78.1",
+  "ax26.1",
+  "ax12.1",
+  "sub32.0",
+  "ax68.1",
+  "sub82.1",
+  "fch4.10.1",
+  "sub45.0",
+  "lem48",
+  "lem84",
+  "fch4.00.4",
+  "fch2.00.3",
+  "fax3.0",
+  "ax45.0",
+  "lem87",
+  "fch5.00.7",
+  "ax25.1",
+  "ax14.0",
+  "lem88",
+  "fch3.10.4",
+  "fch5.00.2",
+  "ax16.r",
+  "ax82.0",
+  "fch1.11.8",
+  "fch6.01.6",
+  "fch5.00.8",
+  "sub86.1",
+  "fch0.01.4",
+  "ax71.0",
+  "fch1.01.4",
+  "ax38.r",
+  "fch4.01.1",
+  "sub37.1",
+  "lem34",
+  "ax26.r",
+  "fch6.10.1",
+  "sub65.0",
+  "sub83.1",
+  "sub17.0",
+  "fch0.11.2",
+  "fch4.00.3",
+  "fch1.10.4",
+  "ax47.0",
+  "fch0.01.6",
+  "sub10.0",
+  "fch3.01.6",
+  "ax42.0",
+  "lem55",
+  "sub42.1",
+  "fch5.00.9",
+  "lem91",
+  "fch1.10.6",
+  "fch0.01.3",
+  "ax54.1",
+  "sub85.0",
+  "ax7.1",
+  "fch2.11.7",
+  "sub71.1",
+  "fch3.10.7",
+  "fch2.10.9",
+  "fax5.1",
+  "fch6.10.6",
+  "fch1.11.1",
+  "ax69.r",
+  "lem54",
+  "sub91.0",
+  "ax88.1",
+  "ax59.0",
+  "ax86.1",
+  "ax17.0",
+  "sub80.1",
+  "ax3.r",
+  "fch4.01.2",
+  "fch2.01.3",
+  "ax84.1",
+  "sub88.0",
+  "lem64",
+  "sub35.1",
+  "fch5.11.5",
+  "sub89.0",
+  "sub33.0",
+  "fch4.11.1",
+  "fch0.01.0",
+  "lem3",
+  "ax94.r",
+  "ax84.r",
+  "fch4.10.6",
+  "ax14.1",
+  "fch1.00.6",
+  "fax0.r",
+  "ax76.1",
+  "ax87.r",
+  "sub77.0",
+  "sub81.0",
+  "fch2.10.7",
+  "fch1.00.8",
+  "sub73.0",
+  "fch2.10.1",
+  "ax24.r",
+  "sub49.1",
+  "lem79",
+  "ax27.1",
+  "fch6.01.5",
+  "ax28.0",
+  "fch0.10.9",
+  "sub53.1",
+  "ax17.1",
+  "sub2.1",
+  "ax22.1",
+  "sub25.0",
+  "lem26",
+  "fch1.00.0",
+  "ax86.0",
+  "fch2.10.4",
+  "fch6.01.4",
+  "sub73.1",
+  "lem47",
+  "fch6.01.8",
+  "fax5.0",
+  "lem73",
+  "ax57.1",
+  "lem32",
+  "ax7.0",
+  "sub38.0",
+  "sub39.0",
+  "ax14.r",
+  "fch0.00.0",
+  "sub36.0",
+  "ax24.1",
+  "lem6",
+  "lem30",
+  "fch0.11.5",
+  "ax44.0",
+  "sub30.0",
+  "ax66.r",
+  "lem22",
+  "fax1.1",
+  "sub28.1",
+  "lem72",
+  "fch0.11.0",
+  "lem42",
+  "ax80.1",
+  "sub39.1",
+  "fax2.r",
+  "sub27.1",
+  "lem49",
+  "ax62.0",
+  "fax6.r",
+  "fch3.00.7",
+  "fch4.11.6",
+  "ax12.0",
+  "sub19.1",
+  "lem57",
+  "sub96.1",
+  "ax40.r",
+  "fch3.10.5",
+  "ax18.1",
+  "ax67.0",
+  "fch4.01.7",
+  "sub96.0",
+  "fch5.10.1",
+  "fch0.00.4",
+  "fch5.01.9",
+  "fch2.01.6",
+  "ax77.0",
+  "fch6.10.8",
+  "fax3.1",
+  "sub63.1",
+  "sub24.0",
+  "sub53.0",
+  "fch2.01.7",
+  "fch6.11.6",
+  "fch3.01.2",
+  "fch4.00.8",
+  "fax0.0",
+  "lem92",
+  "fch3.11.9",
+  "fch0.10.4",
+  "ax11.0",
+  "ax41.r",
+  "fch3.11.8",
+  "fch6.10.5",
+  "ax87.1",
+  "fch5.01.5",
+  "ax1.1",
+  "fch2.00.4",
+  "ax58.1",
+  "lem17",
+  "fch0.00.8",
+  "sub43.0",
+  "fch0.00.2",
+  "sub71.0",
+  "sub30.1",
+  "fch6.00.0",
+  "ax63.1",
+  "sub31.1",
+  "fch5.10.4",
+  "ax29.0",
+  "fch6.11.9",
+  "lem90",
+  "ax16.1",
+  "lem33",
+  "sub97.0",
+  "sub67.0",
+  "fch1.01.9",
+  "sub21.0",
+  "sub46.1",
+  "fch6.11.5",
+  "fch0.11.1",
+  "ax92.1",
+  "fch3.00.9",
+  "fch1.11.4",
+  "ax73.1",
+  "lem71",
+  "sub64.1",
+  "fch3.01.1",
+  "fch0.01.7",
+  "fch6.11.3",
+  "fch4.01.0",
+  "ax19.r",
+  "sub47.0",
+  "sub29.0",
+  "ax93.1",
+  "ax69.0",
+  "fch3.10.2",
+  "sub62.0",
+  "fch1.01.0",
+  "fch5.10.6",
+  "ax71.r",
+  "fch1.10.2",
+  "ax95.0",
+  "fax5.r",
+  "lem82",
+  "fch6.11.7",
+  "ax37.0",
+  "lem95",
+  "sub29.1",
+  "ax20.0",
+  "sub81.1",
+  "sub35.0",
+  "fch2.10.3",
+  "sub66.0",
+  "lem96",
+  "ax34.0",
+  "sub59.1",
+  "lem50",
+  "sub58.0",
+  "ax21.r",
+  "sub48.1",
+  "lem40",
+  "fch0.00.6",
+  "ax60.r",
+  "ax75.r",
+  "ax20.1",
+  "sub22.0",
+  "lem62",
+  "fch3.11.3",
+  "sub54.1",
+  "ax46.0",
+  "lem97",
+  "fch5.11.4",
+  "lem69",
+  "sub55.0",
+  "sub33.1",
+  "lem38",
+  "lem15",
+  "fch4.10.4",
+  "fch0.00.5",
+  "fch4.10.2",
+  "fch4.01.6",
+  "fch4.10.5",
+  "fch1.10.0",
+  "ax62.r",
+  "ax58.0",
+  "lem43",
+  "fch6.00.8",
+  "fch0.00.3",
+  "fch6.10.4",
+  "sub56.0",
+  "sub8.1",
+  "ax65.r",
+  "fch4.01.5",
+  "ax5.r",
+  "fch2.01.4",
+  "sub62.1",
+  "ax6.0",
+  "ax55.r",
+  "ax52.0",
+  "sub6.1",
+  "fch0.11.3",
+  "sub45.1",
+  "fch6.11.4",
+  "ax4.r",
+  "ax91.0",
+  "ax96.0",
+  "ax86.r",
+  "ax61.0",
+  "ax82.r",
+  "sub59.0",
+  "sub87.1",
+  "fch4.00.2",
+  "ax76.0",
+  "sub87.0",
+  "fch2.10.2",
+  "sub13.1",
+  "ax15.r",
+  "sub58.1",
+  "fch2.01.2",
+  "fch2.11.5",
+  "sub13.0",
+  "fch6.10.3",
+  "sub8.0",
+  "ax3.1",
+  "fch1.00.3",
+  "lem36",
+  "fch0.10.7",
+  "sub1.1",
+  "fch5.01.1",
+  "sub51.0",
+  "ax97.1",
+  "fch4.00.1",
+  "fch4.10.3",
+  "ax30.r",
+  "lem81",
+  "sub15.1",
+  "lem60",
+  "sub66.1",
+  "fch0.00.1",
+  "fch3.11.7",
+  "sub88.1",
+  "fax1.0",
+  "ax29.1",
+  "lem52",
+  "ax7.r",
+  "ax78.0",
+  "ax6.r",
+  "sub61.0",
+  "fch5.11.6",
+  "sub67.1",
+  "fch3.01.0",
+  "ax51.1",
+  "ax21.1",
+  "sub20.1",
+  "sub19.0",
+  "fch2.01.9",
+  "ax82.1",
+  "ax8.r",
+  "ax11.r",
+  "lem78",
+  "fch0.10.6",
+  "fch2.11.4",
+  "fch5.01.3",
+  "ax54.r",
+  "sub34.0",
+  "ax37.r",
+  "fch3.11.2",
+  "sub23.0",
+  "sub86.0",
+  "sub15.0",
+  "fch4.10.9",
+  "fch4.11.2",
+  "fch2.11.3",
+  "fch4.11.3",
+  "fch5.10.3",
+  "sub18.1",
+  "ax49.1",
+  "sub60.1",
+  "ax74.r",
+  "fch6.11.1",
+  "ax42.1",
+  "sub5.0",
+  "fch3.11.6",
+  "ax2.r",
+  "sub80.0",
+  "fch1.10.5",
+  "ax43.1",
+  "sub46.0",
+  "fch2.00.0",
+  "ax92.0",
+  "lem80",
+  "sub11.1",
+  "fch3.00.2",
+  "ax48.0",
+  "ax91.1",
+  "ax25.r",
+  "sub17.1",
+  "ax32.r",
+  "fch4.11.7",
+  "ax44.r",
+  "sub4.0",
+  "ax79.r",
+  "sub49.0",
+  "ax83.r",
+  "ax94.0",
+  "sub40.1",
+  "ax28.1",
+  "lem11",
+  "ax91.r",
+  "ax46.1",
+  "fch3.10.3",
+  "fch2.00.2",
+  "fch6.01.9",
+  "fch1.00.2",
+  "ax21.0",
+  "fch3.10.6",
+  "lem10",
+  "lem9",
+  "fch5.11.1",
+  "ax13.1",
+  "fch5.10.8",
+  "sub41.1",
+  "fch1.11.2",
+  "sub75.0",
+  "lem56",
+  "sub72.1",
+  "ax1.0",
+  "ax29.r",
+  "ax8.1",
+  "ax81.0",
+  "sub83.0",
+  "ax15.0",
+  "fch0.11.6",
+  "sub14.1",
+  "fch4.10.8",
+  "sub57.0",
+  "fch6.00.7",
+  "sub32.1",
+  "ax94.1",
+  "fch3.10.8",
+  "ax72.0",
+  "ax50.r",
+  "fch1.11.6",
+  "ax12.r",
+  "ax93.r",
+  "fch1.01.7",
+  "fch0.11.8",
+  "ax9.r",
+  "ax50.0",
+  "fch4.01.9",
+  "ax4.0",
+  "ax6.1",
+  "fch1.01.6",
+  "ax79.1",
+  "fch4.00.0",
+  "sub28.0",
+  "ax20.r",
+  "fch5.10.5",
+  "fch1.00.7",
+  "sub12.1",
+  "fch4.00.7",
+  "ax19.1",
+  "sub31.0",
+  "lem63",
+  "fch4.00.5",
+  "ax43.r",
+  "lem83",
+  "fax6.1",
+  "ax60.1",
+  "ax95.r",
+  "fch6.11.8",
+  "fch0.01.8",
+  "sub90.1",
+  "sub97.1",
+  "ax34.r",
+  "ax59.1",
+  "ax1.r",
+  "fch0.10.3",
+  "fch1.01.8",
+  "ax52.r",
+  "ax39.1",
+  "ax47.r",
+  "ax81.r",
+  "fch2.11.0",
+  "fch0.10.0",
+  "fch3.00.0",
+  "ax52.1",
+  "ax48.1",
+  "ax83.1",
+  "fch1.01.1",
+  "ax96.r",
+  "fch3.00.1",
+  "fch5.01.8",
+  "ax60.0",
+  "sub84.0",
+  "fch4.11.5",
+  "ax13.0",
+  "fax4.1",
+  "ax90.0",
+  "sub36.1",
+  "fch6.10.2",
+  "fch4.01.8",
+  "sub7.0",
+  "sub20.0",
+  "fch3.01.7",
+  "sub57.1",
+  "ax74.0",
+  "ax32.0",
+  "ax26.0",
+  "fch1.11.3",
+  "ax34.1",
+  "sub16.1",
+  "lem94",
+  "lem39",
+  "fch1.01.2",
+  "sub27.0",
+  "fch2.00.1",
+  "sub56.1",
+  "sub6.0",
+  "ax67.1",
+  "ax40.0",
+  "sub26.1",
+  "sub37.0",
+  "sub94.0",
+  "ax56.0",
+  "lem45",
+  "ax53.1",
+  "fch6.10.0",
+  "fch0.11.4",
+  "ax55.0",
+  "ax40.1",
+  "lem51",
+  "ax77.r",
+  "ax28.r",
+  "fch4.10.7",
+  "ax23.1",
+  "ax10.1",
+  "ax27.0",
+  "ax73.0",
+  "fch4.11.0",
+  "fax2.0",
+  "ax39.r",
+  "fch3.11.0",
+  "fch2.10.8",
+  "fch5.00.0",
+  "fch6.11.0",
+  "ax17.r",
+  "ax80.0",
+  "ax18.r",
+  "lem89",
+  "ax36.r",
+  "fch2.11.8",
+  "lem28",
+  "ax92.r",
+  "lem37",
+  "fch3.01.3",
+  "fch3.00.6",
+  "lem86",
+  "lem29",
+  "ax96.1",
+  "ax3.0",
+  "fch1.00.1",
+  "sub85.1",
+  "fch0.10.5",
+  "ax13.r",
+  "ax24.0",
+  "ax9.0",
+  "ax22.r",
+  "lem75",
+  "ax31.1",
+  "fch5.01.2",
+  "fch4.11.4",
+  "fch4.00.6",
+  "sub76.1",
+  "ax70.r",
+  "fch6.00.1",
+  "fax1.r",
+  "fch0.10.1",
+  "ax36.1",
+  "fch6.11.2",
+  "ax50.1",
+  "sub75.1",
+  "ax38.0",
+  "ax47.1",
+  "lem7",
+  "fch5.00.5",
+  "ax97.0",
+  "ax70.1",
+  "sub12.0",
+  "sub91.1",
+  "ax2.0",
+  "sub54.0",
+  "fch5.10.7",
+  "fch2.00.9",
+  "sub78.1",
+  "fch3.01.8",
+  "ax59.r",
+  "ax63.0",
+  "lem25",
+  "fch2.11.1",
+  "fch5.10.9",
+  "ax80.r",
+  "ax64.1",
+  "sub92.0",
+  "ax36.0",
+  "sub9.1",
+  "ax23.0",
+  "fch4.11.8",
+  "lem53",
+  "sub44.1",
+  "lem93",
+  "fch3.11.1",
+  "sub65.1",
+  "ax43.0",
+  "sub52.1",
+  "ax53.0",
+  "ax9.1",
+  "ax72.1",
+  "ax88.r",
+  "ax68.0",
+  "fch5.11.8",
+  "sub51.1",
+  "fch2.00.8",
+  "fch5.00.4",
+  "ax66.0",
+  "ax54.0",
+  "ax15.1",
+  "ax45.1",
+  "ax89.1",
+  "fch5.00.6",
+  "sub92.1",
+  "ax32.1",
+  "fch5.11.3",
+  "ax89.0",
+  "ax33.0",
+  "lem58",
+  "ax55.1",
+  "sub25.1",
+  "fch1.01.3",
+  "sub9.0",
+  "ax70.0",
+  "sub24.1",
+  "fch0.01.2",
+  "ax72.r",
+  "sub94.1",
+  "fch2.11.9",
+  "ax83.0",
+  "ax58.r",
+  "lem35",
+  "fch2.10.6",
+  "ax10.0",
+  "sub78.0",
+  "fch3.11.5",
+  "ax37.1",
+  "fch4.11.9",
+  "fax4.r",
+  "ax18.0",
+  "sub3.0",
+  "fch5.01.4",
+  "lem14",
+  "ax38.1",
+  "ax16.0",
+  "lem21",
+  "ax79.0",
+  "lem67",
+  "ax57.0",
+  "sub95.0",
+  "ax51.r",
+  "fch5.11.2",
+  "sub7.1",
+  "ax93.0",
+  "sub69.0",
+  "fch5.01.6",
+  "sub40.0",
+  "fch2.01.5",
+  "sub2.0",
+  "ax88.0",
+  "lem24",
+  "sub84.1",
+  "sub68.1",
+  "lem76",
+  "lem12",
+  "lem31",
+  "ax81.1",
+  "fax4.0",
+  "ax75.0",
+  "fch3.00.3",
+  "fch5.11.9",
+  "sub79.1",
+  "ax97.r",
+  "fch0.10.2",
+  "ax19.0",
+  "ax5.0",
+  "fch1.11.0",
+  "ax85.1",
+  "ax71.1",
+  "ax90.1",
+  "lem68",
+  "ax65.1",
+  "fch6.00.2",
+  "sub14.0",
+  "lem13",
+  "ax57.r",
+  "ax35.1",
+  "fch2.01.0",
+  "ax11.1",
+  "sub64.0",
+  "fch0.00.9",
+  "fch3.01.4",
+  "ax33.1",
+  "fch1.00.5",
+  "lem23",
+  "fch0.00.7",
+  "ax66.1",
+  "ax41.1",
+  "lem61",
+  "ax44.1",
+  "fch0.11.7",
+  "fch1.11.5",
+  "sub74.0",
+  "sub70.0",
+  "ax51.0",
+  "fch4.01.4",
+  "fch3.01.5",
+  "lem8",
+  "fch5.11.0",
+  "fch6.01.7",
+  "sub76.0",
+  "fch3.10.0",
+  "fch6.10.9",
+  "ax64.0",
+  "fch1.00.4",
+  "fch6.00.3",
+  "ax73.r",
+  "sub22.1",
+  "ax35.0",
+  "fch6.00.6",
+  "ax85.r",
+  "fch1.10.3",
+  "sub90.0",
+  "sub16.0",
+  "ax75.1",
+  "ax46.r",
+  "ax42.r",
+  "sub44.0",
+  "ax56.r",
+  "fch6.00.5",
+  "sub93.1",
+  "fch3.10.1",
+  "ax53.r",
+  "ax31.0",
+  "fch0.01.9",
+  "sub10.1",
+  "ax45.r",
+  "fax0.1",
+  "lem1",
+  "ax35.r",
+  "sub95.1",
+  "lem4",
+  "lem44",
+  "fch6.10.7",
+  "fch5.10.0",
+  "lem59",
+  "fch6.01.1",
+  "ax64.r",
+  "fch1.00.9",
+  "sub41.0",
+  "fch2.00.5",
+  "fch6.01.0",
+  "ax84.0",
+  "sub63.0",
+  "ax23.r",
+  "fch2.10.5",
+  "lem2",
+  "sub26.0",
+  "ax89.r",
+  "fch4.10.0",
+  "ax30.1",
+  "fch5.01.7",
+  "fch3.11.4",
+  "sub82.0",
+  "fch1.10.1",
+  "ax77.1",
+  "lem20",
+  "fax3.r",
+  "lem77",
+  "sub50.0",
+  "sub68.0",
+  "sub47.1",
+  "lem16",
+  "fch6.01.3",
+  "ax78.r",
+  "sub52.0",
+  "sub89.1",
+  "ax90.r",
+  "fch5.10.2",
+  "fch2.00.7",
+  "sub61.1",
+  "ax63.r",
+  "sub18.0",
+  "lem65",
+  "sub43.1",
+  "fch3.00.5",
+  "ax27.r",
+  "sub70.1",
+  "sub21.1",
+  "lem74",
+  "fch5.11.7",
+  "fch6.00.9",
+  "ax62.1",
+  "lem66",
+  "sub55.1",
+  "ax8.0",
+  "fch1.11.9",
+  "fch6.00.4",
+  "fch1.10.7",
+  "ax31.r",
+  "sub79.0",
+  "fch2.00.6",
+  "fax6.0",
+  "lem27",
+  "ax30.0",
+  "fch2.01.8"
+ ],
+ "constants": [
+  "leb"
+ ],
+ "facts_by_const": {
+  "leb": [
+   "ruma",
+   "pebad",
+   "gapor",
+   "dudi",
+   "buzef",
+   "desu",
+   "pari",
+   "gasun",
+   "zite",
+   "migek",
+   "likom",
+   "puger",
+   "mosa",
+   "resot",
+   "feru",
+   "pedom",
+   "satob",
+   "dudir",
+   "kopip",
+   "gigal",
+   "buke",
+   "zuke",
+   "nafir",
+   "bazu",
+   "neki",
+   "vofu",
+   "lobul",
+   "betek",
+   "veleb",
+   "kusat",
+   "fuval",
+   "megiv",
+   "dolo",
+   "gubo",
+   "rume"
+  ]
+ },
+ "fact_height": 2,
+ "fact_chain": 10,
+ "deep_facts": [
+  "gasun",
+  "zite",
+  "migek",
+  "likom",
+  "puger",
+  "mosa",
+  "resot",
+  "feru",
+  "pedom",
+  "satob",
+  "dudir",
+  "kopip",
+  "gigal",
+  "buke",
+  "zuke",
+  "nafir",
+  "bazu",
+  "neki",
+  "vofu",
+  "lobul",
+  "betek",
+  "veleb",
+  "kusat",
+  "fuval",
+  "megiv",
+  "dolo",
+  "gubo",
+  "rume"
+ ]
+}
