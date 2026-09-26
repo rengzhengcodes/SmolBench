@@ -48,13 +48,18 @@ chain length: −10 points at m = 12, −50 at m = 48, with the same library siz
    arms stay matched within a rung and m scales chain, search space and tokens together
    (`lem` 0.4k to 15k tokens, the other arms 1k to 58k).
 2. A two-stage run per model, with the level chosen from the control arm on disjoint seeds:
-   - Stage 1, calibration (`scripts/deduction/horn/calibrate_m.py`): `lem` on seeds 200-229
-     x 1 replicate, walking the ladder from m = 12: up while the pass rate is above 80%,
-     down while below 60%. Keep the level closest to 70%. A model under 60% at m = 3 is
-     reported as below floor and excluded from the primary contrast; one above 80% at
-     m = 192 is flagged as near ceiling.
-   - Stage 2, the contrast: the four arms at the chosen level, seeds 100-129 x 3 replicates
-     (360 requests per model).
+   - Stage 1, calibration (`scripts/deduction/horn/calibrate_m.py`): a smart search with
+     10 theories per level (seeds 200-209): start at a prior taken from the closest
+     calibrated relative (same family, nearest size), step up the ladder m in {1, 2, 3, 4,
+     6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 96, 192} while more than 8 of 10 pass and down
+     while fewer than 7 pass; stop at 7-8 of 10 (2-3 failures), when bracketed, or at the
+     ladder's end; pick the level nearest the 75% crossing of a logistic fit over the
+     levels run. Typically 2-3 levels, 20-30 requests per model (decided 2026-09-26; the
+     first seven models had run the full ladder with 30 theories per level and keep those
+     picks). A model under the band at m = 1 is below floor and runs at m = 1 for the
+     record.
+   - Stage 2, the full benchmark: the four arms at the chosen level, seeds 100-199 x 3
+     replicates (1,200 requests per model; raised from 30 theories on 2026-09-26).
    The selection uses `lem` only on seeds no contrast cell shares, so it cannot bias the
    contrast. The rule is fixed before the run.
 
@@ -63,7 +68,7 @@ and, as a check that the choice of level does not drive the result, a pooled mod
 model x level x arm terms over every level a model ran. Models below floor are listed, not
 silently dropped.
 
-Size: about 21 models x (90 to 150 calibration + 360) requests, at most 10,700. One p6-b200 block (23 h) held about 4,500
+Size: about 21 models x (20-30 calibration + 1,200) requests, about 26,000. One p6-b200 block (23 h) held about 4,500
 requests x 21 models at up to 58k-token prompts with uncapped output in the Lean run, so
 this fits in one block with margin.
 

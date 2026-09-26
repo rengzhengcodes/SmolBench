@@ -405,3 +405,38 @@ def test_sweep_output_cap_fits_the_served_context(sweep):
     assert sweep.output_cap(st, 4000) == 131072 - 6000 - 1024
     small = sweep.Settings("m", "k", {"max_tokens": 32768, "temperature": 0.7}, 131072, 1, 1, None)
     assert sweep.output_cap(small, 15000) == 32768
+
+
+def test_calibrate_next_level_walk():
+    """The smart search steps toward the band and stops when inside it, bracketed, or at an end."""
+    import importlib.util  # pylint: disable=import-outside-toplevel
+
+    path = REPO_ROOT / "scripts" / "deduction" / "horn" / "calibrate_m.py"
+    spec = importlib.util.spec_from_file_location("calibrate_m", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ladder = [3, 6, 12, 24, 48]
+    assert mod.next_level(ladder, {12: 0.95}, 12, 0.6, 0.8) == 24
+    assert mod.next_level(ladder, {12: 0.95, 24: 0.4}, 24, 0.6, 0.8) is None  # bracketed by 12
+    assert mod.next_level(ladder, {12: 0.7}, 12, 0.6, 0.8) is None  # inside the band
+    assert mod.next_level(ladder, {12: 0.3}, 12, 0.6, 0.8) == 6
+    assert mod.next_level(ladder, {3: 0.2}, 3, 0.6, 0.8) is None  # end of ladder
+    assert mod.next_level(ladder, {48: 0.9}, 48, 0.6, 0.8) is None
+
+
+def test_cells_in_is_replicate_major(tmp_path):
+    """All seeds and arms at replicate 0 come before any replicate 1 cell."""
+    mod = _load_sweep()
+    rung = tmp_path / "m4"
+    for seed in (100, 101, 102):
+        for arm in ("lem", "pad"):
+            d = rung / f"s{seed:04d}" / arm
+            d.mkdir(parents=True)
+            (d / "prompt.md").write_text("p")
+    cells = mod.cells_in(rung, ["lem", "pad"], None, 3)
+    assert len(cells) == 18
+    assert [c.rep for c in cells] == [0] * 6 + [1] * 6 + [2] * 6
+    assert [(c.seed, c.arm) for c in cells[:6]] == [
+        (100, "lem"), (100, "pad"), (101, "lem"), (101, "pad"), (102, "lem"), (102, "pad")
+    ]
+    assert cells[6].key == ("m4", "lem", 100, 1)

@@ -159,17 +159,23 @@ class Cell:
 def cells_in(
     rung_dir: Path, arms: list[str], seeds: list[int] | None, reps: int
 ) -> list[Cell]:
-    """Every (arm, seed, replicate) in ``rung_dir`` that has a rendered prompt."""
+    """Every (arm, seed, replicate) in ``rung_dir`` that has a rendered prompt.
+
+    Replicate-major order: every seed's four arms at replicate 0, then
+    replicate 1, then 2. A run cut short therefore leaves one paired
+    observation per seed rather than three replicates of a few seeds.
+    """
     rung = rung_dir.resolve().name
     out: list[Cell] = []
-    for sd in sorted(rung_dir.glob("s[0-9][0-9][0-9][0-9]")):
-        seed = int(sd.name[1:])
-        if seeds is not None and seed not in seeds:
-            continue
-        for arm in arms:
-            p = sd / arm / "prompt.md"
-            if p.exists():
-                out.extend(Cell(rung, arm, seed, r, p) for r in range(reps))
+    for r in range(reps):
+        for sd in sorted(rung_dir.glob("s[0-9][0-9][0-9][0-9]")):
+            seed = int(sd.name[1:])
+            if seeds is not None and seed not in seeds:
+                continue
+            for arm in arms:
+                p = sd / arm / "prompt.md"
+                if p.exists():
+                    out.append(Cell(rung, arm, seed, r, p))
     return out
 
 

@@ -150,10 +150,16 @@ Served models: `scripts/deduction/horn/sweep.py` sends each cell as one chat com
 model's thinking arguments, and no tools; the answer is the last block of `derive` lines
 after the reasoning is stripped. `finish_reason = length` scores as a failure.
 
-Design: 30 theories x 3 samples per arm, paired by theory. Per model, the chain length is
-chosen from `lem` alone on disjoint calibration seeds 200-229: `scripts/deduction/horn/
-calibrate_m.py` walks the ladder m in {3, 6, 12, 24, 48, 96, 192} up while `lem` passes
-more than 80% and down while it passes less than 60%, and keeps the level closest to 70%
+Design: 100 theories (seeds 100-199) x 3 samples per arm, paired by theory. Per model,
+the chain length is chosen from `lem` alone on disjoint calibration seeds: `scripts/
+deduction/horn/calibrate_m.py` starts at a prior (the pick of the closest calibrated
+relative in the same family), runs 10 theories (seeds 200-209) at that level, steps up
+the ladder m in {1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 96, 192} while more than
+8 of 10 pass and down while fewer than 7 pass, and stops when 7 or 8 pass (2 to 3
+failures in 10), when the target is bracketed, or at the ladder's end; the pick is the
+level nearest the 75% crossing of a logistic fit over the levels run
+(`calibration_pick.py`). The first seven models were calibrated on the full ladder with 30
+theories per level (seeds 200-229) before this rule was set; their picks stand
 (`notebooks/deduction/HORN_ROSTER_PLAN.md`). AWS Bedrock models run through
 `bedrock_sweep.py` (Converse API; `reasoning_effort: high` switches thinking on for GLM-4.7
 and Nemotron-3).
