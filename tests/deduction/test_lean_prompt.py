@@ -48,3 +48,20 @@ def test_extract_tactic_block(text: str, expected: str) -> None:
 def test_build_user_prompt_appends_instruction() -> None:
     rc = RenderedContext(chain="stepk", level=0, text="CONTEXT BLOCK")
     assert prompt.build_user_prompt(rc) == "CONTEXT BLOCK" + "\n\n" + prompt.INSTRUCTION
+
+
+def test_extract_skips_ministral_think_block_with_its_own_fences() -> None:
+    """Ministral's reasoning arrives inline as [THINK]...[/THINK]; fences inside it are not the answer."""
+    text = (
+        "[THINK]\nTry `simp`?\n```\nnot lean\n```\nUse mul_assoc.\n[/THINK]\n"
+        "```lean\napply mul_assoc d b a\n```"
+    )
+    assert prompt.extract_tactic_block(text) == "apply mul_assoc d b a"
+
+
+def test_extract_unclosed_ministral_think_is_empty() -> None:
+    assert prompt.extract_tactic_block("[THINK]\nstill reasoning about mul_assoc") == ""
+
+
+def test_extract_bare_answer_after_ministral_think() -> None:
+    assert prompt.extract_tactic_block("[THINK]\nx\n[/THINK]mul_assoc d b a") == "mul_assoc d b a"

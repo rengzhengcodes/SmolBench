@@ -36,17 +36,17 @@ from smolbench.deduction.lean.replbackend import ReplError  # noqa: E402
 from smolbench.deduction.lean.verify import ProofResult, open_at_step, try_tail  # noqa: E402
 
 RUNG_ORDER = [
-    "stepk-2", "hint-0", "hint-1", "hint-2", "hint-3", "hint-4",
-    "noise-1", "noise-2", "noise-3", "noise-4",
+    "stepk-2",
     "sig-0", "sig-1", "sig-2", "sig-3", "sig-4",
-    "signoise-1", "signoise-2", "signoise-3", "signoise-4",
-    "hoponly-1", "hoponly-2", "hoponly-3", "hoponly-4",
-    "sigpad-1", "sigpad-2", "sigpad-3", "sigpad-4",
-    "proofpad-0", "proofpad-1", "proofpad-2", "proofpad-3", "proofpad-4",
-    "siglorem-1", "siglorem-2", "siglorem-3", "siglorem-4",
-    "prooflorem-0", "prooflorem-1", "prooflorem-2", "prooflorem-3", "prooflorem-4",
     "proof-0", "proof-1", "proof-2", "proof-3", "proof-4",
-    "proofnoise-0", "proofnoise-1", "proofnoise-2", "proofnoise-3", "proofnoise-4",
+    "sigpad-1", "sigpad-2", "sigpad-3", "sigpad-4",
+    "siglorem-1", "siglorem-2", "siglorem-3", "siglorem-4",
+    "proofpad-0", "proofpad-1", "proofpad-2", "proofpad-3", "proofpad-4",
+    "prooflorem-0", "prooflorem-1", "prooflorem-2", "prooflorem-3", "prooflorem-4",
+    "sigfar-1", "sigfar-2", "sigfar-3", "sigfar-4",
+    "signear-1", "signear-2", "signear-3", "signear-4",
+    "prooffar-1", "prooffar-2", "prooffar-3", "prooffar-4",
+    "proofnear-1", "proofnear-2", "proofnear-3", "proofnear-4",
 ]
 
 

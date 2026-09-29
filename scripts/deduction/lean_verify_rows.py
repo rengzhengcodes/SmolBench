@@ -919,6 +919,17 @@ def verify_run(
         for future in concurrent.futures.as_completed(futures):
             future.result()  # `_process_group` records failures instead of raising.
             completed += 1
+            # One line per group so a monitor can show progress and a running
+            # pass rate without waiting for the next checkpoint upload.
+            with write_lock:
+                verdicts = [
+                    r.get("verdict") for r in out_rows if r.get("kind") == "cell"
+                ]
+            scored = [v for v in verdicts if v not in ("unverified", "exception", "replay_failed", None)]
+            logging.info(
+                f"lean_verify_rows[{run}]: progress {completed}/{len(pending)} group(s); "
+                f"{scored.count('success')}/{len(scored)} scored success"
+            )
             if completed % UPLOAD_EVERY_GROUPS == 0:
                 upload_rows(client, out_rows, bucket, verified_key, run_dir)
                 logging.info(

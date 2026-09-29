@@ -7,8 +7,10 @@ otherwise lanes can silently serve each other's checkpoint on a billing box.
 """
 
 import argparse
+import contextlib
 import copy
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -301,8 +303,12 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
             "training."
         )
 
+    # ``LEAN_SWEEP_CONFIG`` names another sweep file for a whole study (the
+    # packed-box run uses its own); an explicit argument still wins.
     config_path = (
-        SWEEP_CONFIG_PATH if sweep_config_path is None else Path(sweep_config_path)
+        Path(sweep_config_path)
+        if sweep_config_path is not None
+        else Path(os.environ.get("LEAN_SWEEP_CONFIG", "").strip() or SWEEP_CONFIG_PATH)
     )
     loaded, sweep_config_sha256 = runner.load_sweep_config(config_path)
 
@@ -359,6 +365,11 @@ def build_config(key: str, *, sweep_config_path: Path | None = None) -> dict:
 
     cfg["run_name"] = run_name
     cfg["seed"] = seed
+    # ``LEAN_N_REPLICATES`` lowers the replicate count for one pass of a
+    # multi-pass run (packed_box.py --passes); resume keeps earlier replicates.
+    raw_reps = os.environ.get("LEAN_N_REPLICATES", "").strip()
+    if raw_reps:
+        cfg["n_replicates"] = int(raw_reps)
 
     theorems: dict[str, Any] = cfg["theorems"]
     theorems["seed"] = seed
@@ -545,7 +556,7 @@ def outstanding_cell_keys(config: dict, run_dir: Path) -> set[tuple]:
     )
 
     theorems = runner._select_theorems(
-        config["theorems"], cell_whitelist=cell_whitelist
+        config["theorems"], cell_whitelist=cell_whitelist, rungs=config.get("rungs")
     )
     sanity_done = runner._sanity_done(all_rows_path)
     k_strategy = config.get("k", {}).get("strategy", "last")
@@ -692,19 +703,45 @@ def main(argv: list[str] | None = None) -> None:
             f"{run_dir}; provisioning to generate them."
         )
 
-    logging.info(
-        f"main[{key}]: provisioning (idempotent -- reattaches to this "
-        f"lane's live 'scaling-{key}'-tagged instance if one already "
-        "exists, e.g. the one the induction phase provisioned; otherwise "
-        "launches a fresh one) ..."
-    )
-    ec2.provision_spot_instance()
+    # ``LEAN_EXTERNAL_ENDPOINT=1``: a vLLM server for this model is already up
+    # (scripts/deduction/packed_box.py starts one per GPU subset on a shared
+    # box), so skip provisioning and the container swap and talk to
+    # EC2_INFERENCE_BASE_URL directly. ``LEAN_SERVER_CONFIG`` names a JSON file
+    # describing that server; it is recorded in place of ec2.server_config.
+    external = os.environ.get("LEAN_EXTERNAL_ENDPOINT", "").strip() == "1"
+    if external:
+        missing = [
+            v for v in ("EC2_INFERENCE_BASE_URL", "EC2_VLLM_API_KEY") if not os.environ.get(v)
+        ]
+        if missing:
+            raise SystemExit(
+                f"LEAN_EXTERNAL_ENDPOINT=1 needs {', '.join(missing)} set to the "
+                "running server's URL and API key."
+            )
+        if args.teardown:
+            raise SystemExit("--teardown has no box to shut down under LEAN_EXTERNAL_ENDPOINT=1.")
+        logging.info(
+            f"main[{key}]: external endpoint {os.environ['EC2_INFERENCE_BASE_URL']}; "
+            "skipping provisioning and serving."
+        )
+    else:
+        logging.info(
+            f"main[{key}]: provisioning (idempotent -- reattaches to this "
+            f"lane's live 'scaling-{key}'-tagged instance if one already "
+            "exists, e.g. the one the induction phase provisioned; otherwise "
+            "launches a fresh one) ..."
+        )
+        ec2.provision_spot_instance()
 
     n = 0
     try:
-        with ec2.serve_model(key):
+        with contextlib.nullcontext(key) if external else ec2.serve_model(key):
             # Snapshot the generating server; append so resumed hardware remains visible.
-            cfg = ec2.server_config(key)
+            if external:
+                server_json = os.environ.get("LEAN_SERVER_CONFIG", "").strip()
+                cfg = json.loads(Path(server_json).read_text()) if server_json else None
+            else:
+                cfg = ec2.server_config(key)
             if cfg is not None:
                 import yaml
 

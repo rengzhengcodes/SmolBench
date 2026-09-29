@@ -154,3 +154,76 @@ def test_positional_pads_keep_the_mpi_where_the_content_rung_puts_it(thms: dict)
     # The fixture's 1-hop closure is empty, so sigpad:1 has nothing to pad and is trivial.
     assert context.is_trivial_rung(a, 2, "sigpad", 1) is True
     context.validate("proofpad", 9)
+
+
+def test_decoy_pool_excludes_mpi_closure_and_own_file(thms: dict) -> None:
+    """``far`` keeps only declarations outside the closure and the theorem's file; ``near`` needs a 10-hop closure."""
+    a = thms["Mini.theoremA"]
+    far = {p.full_name for p in context._decoy_pool(a, 2, 1, near=False)}
+    assert "Mini.premiseA" not in far and "Mini.premiseB" not in far, "MPI lemmas are never decoys"
+    assert "Mini.theoremA" not in far, "same-file declarations are never decoys"
+    assert far == {"Mini.theoremB"}
+    assert context._decoy_pool(a, 2, 1, near=True) == [], "no 10-hop closure beyond the MPI here"
+    assert context.is_trivial_rung(a, 2, "sigfar", 1) is True
+    with pytest.raises(ValueError):
+        context.render(a, 2, "sigfar", 0)
+    context.validate("proofnear", 9)
+
+
+def test_decoy_rungs_replace_non_mpi_entries_in_place(
+    thms: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each non-MPI slot holds the closest-length decoy; MPI entries keep their position."""
+    pytest.importorskip("tiktoken")
+    from smolbench.evals.tokenization import TiktokenTokenizer
+
+    tok = TiktokenTokenizer()
+    a = thms["Mini.theoremA"]
+    hop = premises.lookup("Mini.theoremB")
+    real = context._library_premises
+
+    def fake(theorem, k, depth, exclude_seeds=False):
+        base = real(theorem, k, depth, exclude_seeds)
+        if depth >= 1 and hop.full_name not in {p.full_name for p in base}:
+            base = premises.library_order(base + [hop])
+        return base
+
+    def mk(name: str, code: str) -> premises.Premise:
+        return premises.Premise(name, code, (1, 1), (1, len(code)), "commanddeclaration", "Mini/Decoy.lean")
+
+    decoys = [
+        mk("Mini.decoyShort", "theorem Mini.decoyShort : True := trivial"),
+        mk("Mini.decoyLong", "theorem Mini.decoyLong (a b c d e f g h : ℕ) (hab : a ≤ b) (hcd : c ≤ d) : a + c ≤ b + d := by omega"),
+        mk("Mini.theoremB", "theorem Mini.theoremB : 1 + 1 = 2 := by rfl"),  # in the block: must be skipped
+    ]
+    monkeypatch.setattr(context, "_library_premises", fake)
+    monkeypatch.setattr(context, "_decoy_pool", lambda *_, **__: list(decoys))
+    monkeypatch.setattr(premises, "has_full_source", lambda p: True)
+    sig1 = context.render(a, 2, "sig", 1).text
+    far = context.render(a, 2, "sigfar", 1).text
+    heads = lambda t: [l.split("`")[1] for l in t.splitlines() if l.startswith("### ")]
+    assert heads(sig1) == ["Mini.premiseA", "Mini.premiseB", "Mini.theoremB"]
+    got = heads(far)
+    assert got[:2] == ["Mini.premiseA", "Mini.premiseB"] and got[2] in {"Mini.decoyShort", "Mini.decoyLong"}
+    # Closest token length wins: theoremB's entry is short, so the short decoy is chosen.
+    assert got[2] == "Mini.decoyShort"
+    assert "Mini/Decoy.lean" in far
+    assert far.index("### `Mini.premiseA`") == sig1.index("### `Mini.premiseA`")
+    assert abs(tok.count(far) - tok.count(sig1)) < 40
+    assert context.is_trivial_rung(a, 2, "sigfar", 1) is False
+    # Two slots, one eligible decoy: the pool is too small.
+    monkeypatch.setattr(context, "_decoy_pool", lambda *_, **__: decoys[:1])
+    hop2 = premises.lookup("Mini.premiseB")
+
+    def fake2(theorem, k, depth, exclude_seeds=False):
+        base = real(theorem, k, depth, exclude_seeds)
+        return premises.library_order(base + [hop, hop2]) if depth >= 1 else base
+
+    monkeypatch.setattr(context, "_library_premises", fake2)
+    monkeypatch.setattr(context, "_render_stepk_parts", lambda *_: ["## base"])
+    import dataclasses
+
+    tt = a.traced_tactics[2]
+    a2 = dataclasses.replace(a, traced_tactics=a.traced_tactics[:2] + [dataclasses.replace(tt, premises=tt.premises[:1])])
+    with pytest.raises(ValueError):
+        context.render(a2, 2, "prooffar", 1)

@@ -201,6 +201,23 @@ def cmd_filter(args: argparse.Namespace) -> int:
     int
         0.
     """
+    if getattr(args, "merge_shards", False):
+        main_path = replay_passing_path(args.kind, args.split)
+        seen: set[str] = set()
+        if main_path.exists():
+            seen = {json.loads(line)["full_name"] for line in main_path.open()}
+        added = 0
+        with main_path.open("a") as f:
+            for shard_path in sorted(main_path.parent.glob(f"{main_path.stem}.shard*.jsonl")):
+                for line in shard_path.open():
+                    rec = json.loads(line)
+                    if rec["full_name"] not in seen:
+                        seen.add(rec["full_name"])
+                        f.write(jsonl_line(rec))
+                        added += 1
+        print(f"merged {added} record(s) into {main_path.name}; {len(seen)} total")
+        return 0
+
     # ``verify`` needs lean_interact; defer it for other commands.
     from .verify import replay_ground_truth
 
@@ -208,14 +225,30 @@ def cmd_filter(args: argparse.Namespace) -> int:
     if args.limit > 0:
         pool = pool[: args.limit]
 
-    out_path = replay_passing_path(args.kind, args.split)
+    main_path = replay_passing_path(args.kind, args.split)
+    out_path = main_path
+    shard = getattr(args, "shard", "") or ""
+    if shard:
+        # ``--shard i/n`` replays pool[i::n] into its own file, so n processes
+        # can run at once; skip names the main sidecar already records, then
+        # merge with ``filter --merge-shards``.
+        i_str, _, n_str = shard.partition("/")
+        i, n = int(i_str), int(n_str)
+        if not 0 <= i < n:
+            raise SystemExit(f"--shard {shard!r} must be i/n with 0 <= i < n")
+        pool = pool[i::n]
+        out_path = main_path.with_name(f"{main_path.stem}.shard{i}of{n}.jsonl")
 
     done: dict[str, str] = {}
-    if out_path.exists() and not args.fresh:
-        for line in out_path.open():
-            rec = json.loads(line)
-            done[rec["full_name"]] = rec["verdict"]
-        print(f"resume: {len(done)} already recorded in {out_path.name}", flush=True)
+    for path in {main_path, out_path} if not args.fresh else set():
+        if path.exists():
+            for line in path.open():
+                rec = json.loads(line)
+                done[rec["full_name"]] = rec["verdict"]
+    if done:
+        print(f"resume: {len(done)} already recorded", flush=True)
+    pool_names = {t.full_name for t in pool}
+    done = {k: v for k, v in done.items() if k in pool_names}
 
     if args.fresh and out_path.exists():
         out_path.unlink()
@@ -586,6 +619,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_filter.add_argument("--timeout", type=int, default=300)
     p_filter.add_argument(
         "--fresh", action="store_true", help="delete existing JSONL and start over"
+    )
+    p_filter.add_argument(
+        "--shard", default="", help="i/n: replay only pool[i::n] into its own shard file"
+    )
+    p_filter.add_argument(
+        "--merge-shards", action="store_true",
+        help="append every shard file's records to the main sidecar (dedup by name), then exit",
     )
     p_filter.set_defaults(func=cmd_filter)
 

@@ -1015,6 +1015,18 @@ def _default_server_factory(root: Path) -> LeanServer:
     LeanServer
         Started server.
     """
+    local_repl = os.environ.get(REPL_LOCAL_PATH_ENV, "").strip()
+    if local_repl:
+        # Reuse an already-built REPL checkout and an already-built Mathlib:
+        # the git path pulls the REPL repo and builds under a file lock on every
+        # session, which serializes many parallel sessions to one at a time.
+        return LeanServer(
+            LeanREPLConfig(
+                project=LocalProject(directory=str(root), auto_build=False),
+                local_repl_path=local_repl,
+                build_repl=False,
+            )
+        )
     return LeanServer(
         LeanREPLConfig(
             project=LocalProject(directory=str(root)),
@@ -1026,6 +1038,9 @@ def _default_server_factory(root: Path) -> LeanServer:
 
 #: Overrides the REPL revision derived from the project's ``lean-toolchain``.
 REPL_REV_ENV: str = "SMOLBENCH_REPL_REV"
+#: A built REPL checkout to use as-is (lean-interact ``local_repl_path``). Set it
+#: when many sessions run in parallel; the Mathlib project must also be built.
+REPL_LOCAL_PATH_ENV: str = "SMOLBENCH_REPL_LOCAL_PATH"
 #: Overrides the REPL repository. lean-interact's default is its own fork,
 #: whose newest tag stopped at Lean v4.33.0-rc1 (checked 2026-09-22); the
 #: community REPL tags a release per Lean version, so `repl_rev_for` always

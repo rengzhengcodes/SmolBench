@@ -1,0 +1,78 @@
+# Sweep knobs for the packed single-box run on one p6-b200.48xlarge Capacity
+# Block (2026-09-24). Selected with LEAN_SWEEP_CONFIG; run by
+# scripts/deduction/packed_box.py, which serves each roster model with vLLM
+# batching (not the fleet's --max-num-seqs 1), so results are not bit-for-bit
+# reproducible and must not pool with sweep.yaml runs.
+#
+# Same schema as sweep.yaml; values that differ from it are commented.
+
+temperature: 0.7
+
+# No output cap inside the context: the request omits max_tokens, so an answer
+# ends when the model stops or reaches the served context. packed_box.py serves
+# every model at 131,072 tokens (the roster's smallest native window), so each
+# answer has the same budget; one that does not stop within it is a failure.
+max_tokens: null
+
+# Seconds per request. Lanes stream (EC2_STREAM_COMPLETIONS=1), so the read
+# timeout applies between chunks; this bounds only a stalled stream.
+request_timeout: 43200
+
+max_retries: 2
+
+dojo_timeout: 300
+
+concurrent_gen: true
+
+skip_trivial: true
+
+k:
+  strategy: last
+
+# Three samples per prompt (seeds 0-2), generated in one pass. pass@1 is the
+# mean success over the three; pass@3 is any success among them.
+n_replicates: 3
+
+# Set A: base, the signature ladder to 3 hops, full source at 0 and 2 hops,
+# in-place blank-padding controls, and the MPI-removed ablation. The longest
+# prompt is ~58k cl100k tokens.
+rungs:
+  - stepk:2
+  - sig:0
+  - sig:1
+  - sig:2
+  - sig:3
+  - proof:0
+  - proof:2
+  - sigpad:1
+  - sigpad:2
+  - sigpad:3
+  - proofpad:0
+  - proofpad:2
+  - hoponly:1
+  - hoponly:2
+  - hoponly:3
+
+# Generation only (NullVerifier): no Lean session per worker. Uncapped
+# thinking answers run to 50k+ tokens, and a theorem worker waits for its
+# slowest answer before moving on, so in-flight requests drain unless the
+# client keeps a deep queue: 48 theorem workers x 45 (15 rungs x 3 replicates)
+# keeps up to ~2,000 requests queued at vLLM's --max-num-seqs 256.
+theorem_workers: 48
+
+max_concurrency: 45
+
+theorems:
+  source: replay_passing
+  kind: random
+  # train + val + test: every split of the post-cutoff corpus is held out.
+  split: all
+  # Last step of a proof whose traced tactics form one state chain, and whose
+  # final tactic cites a corpus premise.
+  linear: true
+  require_mpi: true
+  # Every rung above is non-trivial at the last step (context.is_trivial_rung),
+  # so each theorem contributes a cell to all 15 rungs. Added 2026-09-24 after
+  # the first draw had 11 of 100 theorems with an incomplete ladder.
+  require_full_ladder: true
+  limit: 100
