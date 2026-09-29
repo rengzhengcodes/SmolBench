@@ -274,8 +274,12 @@ def load_rows(
     anomalies: list[str],
     scoring: str = DEFAULT_SCORING,
     rungs: Path = RUNGS,
+    keep_text: bool = False,
 ) -> dict[tuple, dict]:
     """``(model, m, arm, seed, rep) -> row`` after rescoring, dedupe and the drops.
+
+    ``keep_text`` keeps each row's ``content``, ``reasoning`` and ``answer``
+    (dropped by default to save memory).
 
     Keeps the non-exception row of a duplicate pair; among non-exception duplicates,
     the first source in ``SOURCES`` order wins.
@@ -320,8 +324,9 @@ def load_rows(
                 r["_source"] = source
                 rescore(model, m, r)
                 r["_corrupt"] = CORRUPT_TOKEN in (r.get("content") or "")
-                for heavy in ("content", "reasoning", "answer"):
-                    r.pop(heavy, None)
+                if not keep_text:
+                    for heavy in ("content", "reasoning", "answer"):
+                        r.pop(heavy, None)
                 key = (model, m, r["arm"], int(r["seed"]), int(r["rep"]))
                 old = kept.get(key)
                 if old is None:
@@ -853,10 +858,11 @@ def run_pipeline(
     picks: dict[str, int | None] | None = None,
     scoring: str = DEFAULT_SCORING,
     rungs: Path = RUNGS,
+    keep_text: bool = False,
 ) -> Results:
     """Load, rescore, dedupe, pick m, summarise, check and diagnose. No files are written."""
     anomalies: list[str] = []
-    rows = load_rows(scratchpad, anomalies, scoring, rungs)
+    rows = load_rows(scratchpad, anomalies, scoring, rungs, keep_text)
     chosen = pick_m(rows, {**PICKS, **(picks or {})}, anomalies)
     imputed = impute_missing(rows, chosen, anomalies)
     summary = summarise(rows, chosen, imputed)
