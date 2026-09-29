@@ -1,6 +1,9 @@
 """Score ``answer.s<i>.md`` files under a rendered tree and summarize per arm.
 
-    python -m smolbench.deduction.horn.score <root> [--json out.jsonl]
+    python -m smolbench.deduction.horn.score <root> [--scoring iclr|default] [--json out.jsonl]
+
+Each answer is extracted under the scoring mode (``extract``) before it is verified, the
+same way the sweep drivers score served models.
 
 Prints pass@1 (mean over samples), the verdict mix and, for ``both``, the
 route split among successes.
@@ -16,14 +19,14 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from .checker import verify
+from .extract import DEFAULT_SCORING, SCORING_MODES, score_answer
 from .render import Rendered
 from .theory import Theory
 
 _ANS_RE = re.compile(r"^answer\.s(\d+)\.md$")
 
 
-def score_tree(root: Path) -> list[dict]:
+def score_tree(root: Path, scoring: str = DEFAULT_SCORING) -> list[dict]:
     """One row per answer file."""
     rows: list[dict] = []
     for sd in sorted(root.glob("s[0-9]*")):
@@ -40,13 +43,14 @@ def score_tree(root: Path) -> list[dict]:
                 mt = _ANS_RE.match(af.name)
                 if not mt:
                     continue
-                v = verify(theory, r, af.read_text(encoding="utf-8"))
+                _, v = score_answer(theory, r, af.read_text(encoding="utf-8"), "stop", scoring)
                 rows.append(
                     {
                         "seed": theory.seed,
                         "arm": r.arm,
                         "sample": int(mt.group(1)),
                         "n_tokens": r.n_tokens,
+                        "scoring": scoring,
                         **asdict(v),
                     }
                 )
@@ -75,9 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point."""
     p = argparse.ArgumentParser(prog="horn-score")
     p.add_argument("root")
+    p.add_argument("--scoring", choices=list(SCORING_MODES), default=DEFAULT_SCORING)
     p.add_argument("--json", default=None, help="write one row per answer as JSONL")
     a = p.parse_args(argv)
-    rows = score_tree(Path(a.root))
+    rows = score_tree(Path(a.root), a.scoring)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
             for r in rows:

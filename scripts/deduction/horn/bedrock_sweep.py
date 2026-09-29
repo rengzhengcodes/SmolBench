@@ -21,7 +21,6 @@ usage::
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import logging
 import sys
@@ -229,9 +228,13 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         scoring=a.scoring,
     )
     out = Path(a.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    sweep.repair_tail(out)
-    all_cells = sweep.cells_in(Path(a.rung_dir), a.arms, sweep._parse_seeds(a.seeds), a.replicates)  # pylint: disable=protected-access
+    fh = None
+    if not a.dry_run:
+        fh = sweep.lock_rows(out)
+        if fh is None:
+            logging.error("%s is locked by another sweep; refusing to run twice", out)
+            return 1
+    all_cells = sweep.cells_in(Path(a.rung_dir), a.arms, sweep.seed_list(a.seeds), a.replicates)
     done = sweep.done_keys(out)
     todo = [c for c in all_cells if (a.model,) + c.key not in done]
     logging.info("%s: %d cells, %d done, %d to run (%s)", a.model, len(all_cells), len(all_cells) - len(todo), len(todo), st.sampling)
@@ -241,12 +244,8 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         return 0
     client = _client(st)
     rows: list[dict] = []
-    with out.open("a", encoding="utf-8") as fh:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            logging.error("%s is locked by another sweep; refusing to run twice", out)
-            return 1
+    assert fh is not None
+    with fh:
         with ThreadPoolExecutor(a.concurrency) as pool:
             futs = {pool.submit(run_cell, client, c, st): c for c in todo}
             for fut in as_completed(futs):

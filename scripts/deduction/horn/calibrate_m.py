@@ -88,22 +88,26 @@ def run_level(a: argparse.Namespace, m: int) -> tuple[float, int, int, int]:
 
 
 def next_level(ladder: list[int], seen: dict[int, float], m: int, lo: float, hi: float) -> int | None:
-    """The next level to run after ``m`` (rate ``seen[m]``), or None when the search is done:
-    inside [lo, hi], bracketed by an adjacent level on the other side of the band, or at
-    the end of the ladder."""
-    i = ladder.index(m)
+    """The next level to run after ``m`` (rate ``seen[m]``), or None when the search is done.
+
+    The search is done when the rate is inside [lo, hi], when the nearest level already
+    run in the search direction lies inside the band or on its other side (the target is
+    bracketed), or at the end of the ladder. Levels already run on the same side of the
+    band (for example by ``--fan-out``) are passed over, not taken as a bracket.
+    """
     rate = seen[m]
     if lo <= rate <= hi:
         return None
-    if rate > hi:
-        if i + 1 >= len(ladder):
-            return None
-        nxt = ladder[i + 1]
-        return None if nxt in seen else nxt  # already run: bracketed
-    if i == 0:
-        return None
-    prv = ladder[i - 1]
-    return None if prv in seen else prv
+    step = 1 if rate > hi else -1
+    i = ladder.index(m) + step
+    while 0 <= i < len(ladder):
+        lvl = ladder[i]
+        if lvl not in seen:
+            return lvl
+        if (seen[lvl] > hi) != (step == 1) or lo <= seen[lvl] <= hi:
+            return None  # inside the band or on its other side: bracketed
+        i += step
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     res = pick_level(levels, a.target, min_cells=min(v[1] for v in seen.values()))
     result = {
         "spec_key": a.spec_key, "model": a.model, "chosen_m": res.get("chosen_m"),
-        "fitted_m70": res.get("fitted_m70"), "status": res["status"],
+        "target": a.target, "fitted_m": res.get("fitted_m"), "status": res["status"],
         "levels": {str(k): {"pass": round(v[0], 3), "n": v[1], "length": v[2]} for k, v in sorted(seen.items())},
         "start": a.start, "seeds": a.seeds,
         "extra_fields": json.loads(a.extra_fields) if a.extra_fields else None,

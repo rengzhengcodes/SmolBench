@@ -422,6 +422,12 @@ def test_calibrate_next_level_walk():
     assert mod.next_level(ladder, {12: 0.3}, 12, 0.6, 0.8) == 6
     assert mod.next_level(ladder, {3: 0.2}, 3, 0.6, 0.8) is None  # end of ladder
     assert mod.next_level(ladder, {48: 0.9}, 48, 0.6, 0.8) is None
+    # --fan-out runs the neighbours first: a neighbour on the same side of the band is
+    # passed over, not taken as a bracket
+    fan = {6: 0.95, 12: 0.9, 24: 0.9}
+    assert mod.next_level(ladder, fan, 12, 0.6, 0.8) == 48
+    assert mod.next_level(ladder, {12: 0.4, 6: 0.5, 24: 0.2}, 12, 0.6, 0.8) == 3
+    assert mod.next_level(ladder, {12: 0.9, 24: 0.7}, 12, 0.6, 0.8) is None  # 24 is in the band
 
 
 def test_cells_in_is_replicate_major(tmp_path):

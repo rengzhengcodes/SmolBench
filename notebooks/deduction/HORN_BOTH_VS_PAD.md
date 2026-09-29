@@ -254,5 +254,5 @@ The full earlier write-up is kept outside the repo.
 
 ## Harness
 `smolbench/deduction/horn/` (theory, render, checker, cli, score) and
-`scripts/deduction/horn/` (render_rung.sh, solve_arms.workflow.js with the Read-only
-`horn-solver` agent, collect_rung.py, analysis scripts). See `scripts/deduction/horn/README.md`.
+`scripts/deduction/horn/` (render_rung.sh; `haiku/` holds solve_arms.workflow.js with the Read-only
+`horn-solver` agent, collect_rung.py and the pilot analysis scripts). See `scripts/deduction/horn/README.md`.
