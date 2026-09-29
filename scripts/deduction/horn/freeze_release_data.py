@@ -38,7 +38,7 @@ import horn_results as hr  # noqa: E402
 
 from smolbench.deduction.horn.cli import build_theory  # noqa: E402
 from smolbench.deduction.horn.extract import verdict_fields  # noqa: E402
-from smolbench.deduction.horn.render import ARMS, Tokenizer, render  # noqa: E402
+from smolbench.deduction.horn.render import Tokenizer, render  # noqa: E402
 from smolbench.deduction.horn.repro import load_protocol  # noqa: E402
 
 VERDICT_FIELDS = ("answer", "verdict", "steps", "route", "reason", "ignored_lines")
@@ -56,11 +56,16 @@ def _clean(r: dict) -> dict:
 
 
 def main_rows(scratchpad: Path, rungs: Path) -> tuple[dict[str, list[dict]], dict[str, int], list[str]]:
-    """Per model, the paper's cells with both scorings, in arm/seed/replicate order."""
+    """Per model, the paper's cells with both scorings.
+
+    Rows keep the order in which the table pipeline first read them: the bootstrap in
+    ``horn_results.arm_stats`` draws seeds in that order, so the same order reproduces
+    the published intervals exactly.
+    """
     res = hr.run_pipeline(scratchpad, scoring="iclr", rungs=rungs, keep_text=True)
     rescore = hr.Rescorer("default", rungs)
     by_model: dict[str, list[dict]] = collections.defaultdict(list)
-    for key in sorted(res.rows, key=lambda k: (k[0], ARMS.index(k[2]), k[3], k[4])):
+    for key in res.rows:
         model, m, *_ = key
         if res.chosen.get(model) != m:
             continue
