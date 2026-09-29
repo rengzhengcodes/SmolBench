@@ -22,7 +22,7 @@ _BOOT_CAP_WARNED: set[float] = set()
 #: Independent streams make sweep drift measure Monte-Carlo error, not seed luck.
 B_GRID = (1_000, 5_000, 20_000, 50_000, 100_000, 200_000, 500_000)
 
-#: Batching bounds peak memory to ``CHUNK * n_theorems * n_models * 4`` bytes.
+#: Batching bounds peak memory to ``CHUNK * n_blocks * n_models * 4`` bytes.
 CHUNK = 2_000
 
 #: 0.0005 cannot change a rate printed to 3 decimals.
@@ -173,9 +173,9 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
     Parameters
     ----------
     succ : np.ndarray
-        Per-theorem success counts.
+        Per-block success counts.
     size : np.ndarray
-        Per-theorem cell counts.
+        Per-block cell counts.
     B : int
         Bootstrap resamples.
     seed : int
@@ -223,7 +223,7 @@ def bootstrap_stats(succ: np.ndarray, size: np.ndarray, B: int, seed: int,
 def diff_ci(bs: dict, ja: int, jb: int) -> dict:
     """Compute the paired BCa interval for rate(b) - rate(a).
 
-    Differencing within each resample cancels the shared theorem draw.
+    Differencing within each resample cancels the shared block draw.
 
     Parameters
     ----------
