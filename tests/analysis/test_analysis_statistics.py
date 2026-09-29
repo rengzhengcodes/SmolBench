@@ -3,47 +3,66 @@
 import contextlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import warnings
-from collections.abc import Callable, Iterator
-from datetime import datetime, timezone
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from unittest.mock import Mock, patch
 
+#: Subprocesses need the same notebook imports as this module.
+NOTEBOOKS_DIR = Path(__file__).resolve().parents[2] / "notebooks"
+sys.path.insert(0, str(NOTEBOOKS_DIR))
+sys.path.insert(0, str(NOTEBOOKS_DIR / "induction" / "analysis"))
+
+import _power_common
+import extens_vs_noise
+import multiplicity_sim
 import numpy as np
+import paired_analysis
+import power_analysis
 import pytest
+import significance_report
+from multiplicity_sim import N_REPLICATES, _paired_powers, paired_marks
 from scipy.stats import binom
 from statsmodels.stats.multitest import multipletests
 
-from smolbench.evals import Mark, Marks
+from smolbench.evals import Marks, study_config
 from tests._paths import REPO_ROOT
 
-# pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import (  # noqa: F401
+# pylint: disable=unused-import  # fixture registration
+from tests.analysis._trees import (
     ANALYSIS_DIR,
     N_HARMONICS,
     N_PRIMARY,
     SHALLOW_DEPTH,
     build_tree,
-    extens_vs_noise,
-    multiplicity_sim,
-    paired_analysis,
-    power_analysis,
+)
+from tests.analysis._trees import power_analysis as sizing_module
+from tests.analysis._trees import (
     profile_for,
     run_captured,
-    significance_report,
 )
 
-import _power_common  # noqa: E402  # `_trees` puts notebooks/ on sys.path
-
-NOTEBOOKS_DIR = REPO_ROOT / "notebooks"
+# pylint: enable=unused-import
 
 
 def _noisy_curve(n: int) -> float:
-    """Return the sustained-crossing fixture's noisy power."""
-    return 0.85 if n in (5, 6) else 0.79 if n == 7 else 0.85 if n >= 8 else 0.1
+    """Return a curve whose first crossing is not sustained.
+
+    Parameters
+    ----------
+    n : int
+        Replicate count.
+
+    Returns
+    -------
+    float
+        Simulated power with a dip at seven replicates.
+    """
+    return 0.79 if n == 7 else 0.85 if n >= 5 else 0.1
 
 
 def test_apply_corrections_matches_statsmodels() -> None:
@@ -87,12 +106,8 @@ def test_apply_corrections_share_one_inclusive_boundary() -> None:
     assert list(got["BH"][1]) == [True, True, True, True]
 
 
-def test_power_analysis_roster_comes_from_the_study_config(
-    power_analysis: ModuleType,
-) -> None:
+def test_power_analysis_roster_comes_from_the_study_config() -> None:
     """Analysis roster derives from the study configuration."""
-    from smolbench.evals import study_config
-
     assert power_analysis.MODELS == tuple(
         study_config.tag_for(key) for key in study_config.roster_keys()
     )
@@ -102,39 +117,38 @@ def test_power_analysis_roster_comes_from_the_study_config(
     }
 
 
-def _tie_heavy_vectors(n: int = 200) -> Iterator[np.ndarray]:
-    """Yield tie-heavy p-value vectors for correction tests."""
-    rng = np.random.default_rng(20260905)
+@pytest.mark.parametrize(
+    "correct", (paired_analysis.holm, significance_report.hochberg, paired_analysis.bh)
+)
+def test_rejection_sets_do_not_depend_on_contrast_build_order(
+    correct: Callable[[np.ndarray, float], np.ndarray],
+) -> None:
+    """Tie ordering cannot change rank-monotone correction decisions.
+
+    Parameters
+    ----------
+    correct : Callable[[np.ndarray, float], np.ndarray]
+        Correction procedure under test.
+    """
+    rng = np.random.default_rng(7)
+    tie_rng = np.random.default_rng(20260905)
     pool = np.array(
         [2 / 2**30, 2 / 2**16, 1.0, 0.05, 0.05 / N_PRIMARY, 1e-8, 0.5, 0.02]
     )
-    for i in range(n):
-        m = int(rng.integers(2, 80))
-        if i % 3 == 0:
-            yield np.round(rng.random(m), 2)
-        else:
-            yield rng.choice(pool, size=m)
-
-
-@pytest.mark.parametrize("name", ("holm", "hochberg", "bh"))
-def test_rejection_sets_do_not_depend_on_contrast_build_order(
-    paired_analysis: ModuleType, significance_report: ModuleType, name: str
-) -> None:
-    """Tie ordering cannot change rank-monotone correction decisions."""
-    fn = getattr(significance_report if name == "hochberg" else paired_analysis, name)
-    rng = np.random.default_rng(7)
-    for pvals in _tie_heavy_vectors(60):
+    for i in range(60):
+        m = int(tie_rng.integers(2, 80))
+        pvals = (
+            np.round(tie_rng.random(m), 2)
+            if i % 3 == 0
+            else tie_rng.choice(pool, size=m)
+        )
         perm = rng.permutation(pvals.size)
-        base = fn(pvals, 0.05)
-        permuted = fn(pvals[perm], 0.05)
+        base = correct(pvals, 0.05)
+        permuted = correct(pvals[perm], 0.05)
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
-def test_mcnemar_is_defined_once(
-    power_analysis: ModuleType,
-    paired_analysis: ModuleType,
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_mcnemar_is_defined_once() -> None:
     """One broadcasting implementation serves the scalar and batched call sites."""
     assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
     assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
@@ -147,40 +161,31 @@ def test_mcnemar_is_defined_once(
     assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
-def test_design_invariants_pin_roster_identity(
-    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_design_invariants_pin_roster_identity() -> None:
     """A same-family checkpoint swap keeps every count but must still fail."""
     power_analysis.check_design_invariants()
     old, new = power_analysis.MODELS[0], "qwen35_9b"
-    monkeypatch.setattr(
+    with patch.multiple(
         power_analysis,
-        "FAMILIES",
-        {
+        FAMILIES={
             fam: tuple(new if t == old else t for t in rungs)
             for fam, rungs in power_analysis.FAMILIES.items()
         },
-    )
-    monkeypatch.setattr(
-        power_analysis,
-        "MODELS",
-        tuple(new if t == old else t for t in power_analysis.MODELS),
-    )
-    assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
-    with pytest.raises(RuntimeError, match="pre-registered tags"):
-        power_analysis.check_design_invariants()
+        MODELS=tuple(new if t == old else t for t in power_analysis.MODELS),
+    ):
+        assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
+        with pytest.raises(RuntimeError, match="pre-registered tags"):
+            power_analysis.check_design_invariants()
 
 
-def test_design_invariants_pin_roster_keys_not_only_tags(
-    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_design_invariants_pin_roster_keys_not_only_tags() -> None:
     """A checkpoint swap that keeps the old tag must still fail on the key."""
     keys = list(power_analysis.ROSTER_KEYS)
     keys[0] = "qwen3.5-9b"
-    monkeypatch.setattr(power_analysis, "ROSTER_KEYS", tuple(keys))
-    assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
-    with pytest.raises(RuntimeError, match="pre-registered roster"):
-        power_analysis.check_design_invariants()
+    with patch.object(power_analysis, "ROSTER_KEYS", tuple(keys)):
+        assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
+        with pytest.raises(RuntimeError, match="pre-registered roster"):
+            power_analysis.check_design_invariants()
 
 
 def test_design_invariants_survive_python_dash_o() -> None:
@@ -207,45 +212,54 @@ def test_design_invariants_survive_python_dash_o() -> None:
 
 @pytest.fixture(scope="module")
 def small_tree(
-    tmp_path_factory: pytest.TempPathFactory, power_analysis: ModuleType
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[Path, tuple[str, str]]:
-    """A 6-seed tree with one unparsable replicate filename."""
+    """Build a 6-seed tree with one unparsable replicate filename.
+
+    Parameters
+    ----------
+    tmp_path_factory : pytest.TempPathFactory
+        Temporary directory factory.
+
+    Returns
+    -------
+    tuple[Path, tuple[str, str]]
+        Tree root and cell with the unparsable filename.
+    """
     tmp_path = tmp_path_factory.mktemp("small-tree")
     build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH))
-    bogus = Marks(
-        model="stub-model",
-        marks=tuple(
-            Mark(query=f"q{i}", answer=i, response="x", score=0, compliance="empty")
-            for i in range(power_analysis.N_HARMONICS)
-        ),
-        date=datetime(2026, 7, 1, tzinfo=timezone.utc),
-    )
     cell = power_analysis.MODELS[0], "intens"
-    bogus.dump(tmp_path / f"{cell[0]}_{cell[1]}" / "rep_bogus.yaml")
+    cell_dir = tmp_path / f"{cell[0]}_{cell[1]}"
+    shutil.copyfile(cell_dir / "rep_0.yaml", cell_dir / "rep_bogus.yaml")
     return tmp_path, cell
 
 
 def test_walkers_skip_an_unparsable_replicate_filename(
-    paired_analysis: ModuleType,
-    significance_report: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
 ) -> None:
-    """A non-replicate file in the tree is skipped, by both the loader and the census."""
+    """Both the loader and census skip a non-replicate filename.
+
+    Parameters
+    ----------
+    small_tree : tuple[Path, tuple[str, str]]
+        Tree root and cell with the unparsable filename.
+    """
     root, cell = small_tree
     loaded = paired_analysis.load_marks(root)
-    correct = loaded.correct
-    assert sorted(correct[cell]) == list(range(SHALLOW_DEPTH))
+    assert sorted(loaded.correct[cell]) == list(range(SHALLOW_DEPTH))
 
     census = significance_report.compliance_census(loaded)
     assert census[cell]["n"] == SHALLOW_DEPTH * N_HARMONICS
 
 
-def test_paired_report_handles_no_measurable_design_effects(
-    power_analysis: ModuleType,
-    paired_analysis: ModuleType,
-    tmp_path: Path,
-) -> None:
-    """Identical cells produce no measurable design effects but still report cleanly."""
+def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> None:
+    """Identical cells produce no measurable design effects but report cleanly.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary results tree.
+    """
     source = (power_analysis.MODELS[0], power_analysis.INFOS[0])
     copies = {
         (model, info): source
@@ -264,25 +278,26 @@ def test_paired_report_handles_no_measurable_design_effects(
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
-    paired_analysis: ModuleType,
-    significance_report: ModuleType,
-    power_analysis: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Contrasts and census share one loader pass."""
+    """Contrasts and census share one loader pass.
+
+    Parameters
+    ----------
+    small_tree : tuple[Path, tuple[str, str]]
+        Tree root and cell with the unparsable filename.
+    """
     root, _cell = small_tree
     reads = []
     original = Marks.load.__func__
-    monkeypatch.setattr(
+    with patch.object(
         Marks,
         "load",
         classmethod(lambda cls, path: reads.append(str(path)) or original(cls, path)),
-    )
-
-    loaded = paired_analysis.load_marks(root)
-    after_load = len(reads)
-    census = significance_report.compliance_census(loaded)
+    ):
+        loaded = paired_analysis.load_marks(root)
+        after_load = len(reads)
+        census = significance_report.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
     assert n_cells == power_analysis.N_LADDER_CONTRASTS
@@ -292,30 +307,29 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
-    extens_vs_noise: ModuleType,
-    paired_analysis: ModuleType,
-    power_analysis: ModuleType,
     small_tree: tuple[Path, tuple[str, str]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Focused contrasts reuse family p-values."""
+    """Focused contrasts reuse family p-values.
+
+    Parameters
+    ----------
+    small_tree : tuple[Path, tuple[str, str]]
+        Tree root and cell with the unparsable filename.
+    """
     root, _cell = small_tree
     calls = []
     real = paired_analysis.signflip_exact_p
-    monkeypatch.setattr(
+    with patch.object(
         paired_analysis,
         "signflip_exact_p",
         lambda diffs: calls.append(1) or real(diffs),
-    )
-
-    run_captured(lambda: extens_vs_noise.main(root))
+    ):
+        run_captured(lambda: extens_vs_noise.main(root))
 
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
 
-def test_monte_carlo_output_lands_in_the_results_dir(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_monte_carlo_output_lands_in_the_results_dir() -> None:
     """Checkpoint JSON uses the general ignored results directory."""
     expected = _power_common.results_dir("induction")
     assert multiplicity_sim.OUT_PATH.parent == expected
@@ -323,16 +337,20 @@ def test_monte_carlo_output_lands_in_the_results_dir(
 
 
 def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
-    multiplicity_sim: ModuleType,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An explicit results directory controls the default checkpoint path."""
-    monkeypatch.setattr(multiplicity_sim, "part2", lambda rng, results_dir: {"part": 2})
-    for i in (1, 3, 4, 5):
-        monkeypatch.setattr(multiplicity_sim, f"part{i}", lambda rng, i=i: {"part": i})
+    """An explicit results directory controls the default checkpoint path.
 
-    multiplicity_sim.main(results_dir=tmp_path)
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary results directory.
+    """
+    with patch.multiple(
+        multiplicity_sim,
+        **{f"part{i}": Mock(return_value={"part": i}) for i in range(1, 6)},
+    ):
+        multiplicity_sim.main(results_dir=tmp_path)
 
     target = tmp_path / multiplicity_sim.OUT_NAME
     assert target.exists()
@@ -340,13 +358,15 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     assert json.loads(target.read_text())["part5"] == {"part": 5}
 
 
-def test_dump_creates_its_own_results_directory(
-    multiplicity_sim: ModuleType,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Dump creates the ignored results directory on fresh checkouts."""
-    target = tmp_path / "results" / "multiplicity_sim_results.json"
+def test_dump_creates_its_own_results_directory(tmp_path: Path) -> None:
+    """Dump creates the ignored results directory on fresh checkouts.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Parent of the absent results directory.
+    """
+    target = tmp_path / "results" / multiplicity_sim.OUT_NAME
     assert not target.parent.exists()
     multiplicity_sim.dump({"probe": 1}, target, "probe")
 
@@ -354,53 +374,43 @@ def test_dump_creates_its_own_results_directory(
     assert json.loads(target.read_text()) == {"probe": 1}
 
 
-def test_dump_keeps_previous_checkpoint_when_write_fails(
-    multiplicity_sim: ModuleType,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed checkpoint write does not replace the previous JSON."""
-    target = tmp_path / "multiplicity_sim_results.json"
+def test_dump_keeps_previous_checkpoint_when_write_fails(tmp_path: Path) -> None:
+    """A failed checkpoint write does not replace the previous JSON.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary checkpoint directory.
+    """
+    target = tmp_path / multiplicity_sim.OUT_NAME
     multiplicity_sim.dump({"first": 1}, target, "first")
 
-    def fail_dump(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("simulated checkpoint failure")
-
-    monkeypatch.setattr(multiplicity_sim.json, "dump", fail_dump)
-    with pytest.raises(RuntimeError, match="simulated checkpoint failure"):
+    with (
+        patch.object(
+            multiplicity_sim.json,
+            "dump",
+            side_effect=RuntimeError("simulated checkpoint failure"),
+        ),
+        pytest.raises(RuntimeError, match="simulated checkpoint failure"),
+    ):
         multiplicity_sim.dump({"second": 2}, target, "second")
 
     assert json.loads(target.read_text()) == {"first": 1}
     assert [p.name for p in tmp_path.iterdir()] == [target.name]
 
 
-def test_contrast_row_handles_empty_drop_invalid_pairs(
-    paired_analysis: ModuleType,
-    power_analysis: ModuleType,
-) -> None:
+def test_contrast_row_handles_empty_drop_invalid_pairs() -> None:
     """Dropping all invalid marks returns empty accuracies without warnings."""
     key_a = ("model_a", "intens")
     key_b = ("model_b", "noise_intens")
     correct = {
-        key_a: {
-            seed: np.ones(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
-        },
-        key_b: {
-            seed: np.zeros(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
-        },
-    }
-    valid = {
-        key_a: {
-            seed: np.ones(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
-        },
-        key_b: {
-            seed: np.zeros(power_analysis.N_HARMONICS, dtype=bool) for seed in range(2)
-        },
+        key_a: {seed: np.ones(N_HARMONICS, dtype=bool) for seed in range(2)},
+        key_b: {seed: np.zeros(N_HARMONICS, dtype=bool) for seed in range(2)},
     }
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         row = paired_analysis.contrast_row(
-            paired_analysis.CellMarks(correct, valid, {}),
+            paired_analysis.CellMarks(correct, correct, {}),
             key_a,
             key_b,
             drop_invalid=True,
@@ -411,9 +421,7 @@ def test_contrast_row_handles_empty_drop_invalid_pairs(
     assert row["acc_b"] is None
 
 
-def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_part5_prices_the_trend_test_in_the_same_family_as_part4() -> None:
     """Part 5 and part 4 use the same reduced-family correction denominator."""
     alpha = multiplicity_sim.ALPHA
     rng = np.random.default_rng(0)
@@ -432,17 +440,23 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4(
 
 
 def test_replicates_needed_is_memoized_on_its_rate_vectors(
-    power_analysis: ModuleType,
+    sizing_module: ModuleType,
 ) -> None:
-    """Sizing scans cache repeated rate vectors."""
-    fn = power_analysis.replicates_needed
+    """Sizing scans cache repeated rate vectors.
+
+    Parameters
+    ----------
+    sizing_module : ModuleType
+        Analysis module with dynamically attached cache-audit methods.
+    """
+    fn = sizing_module.replicates_needed
     assert hasattr(fn, "cache_info") and hasattr(
         fn, "cache_clear"
     ), "replicates_needed must expose its cache for auditing"
     fn.cache_clear()
 
-    a = np.full(power_analysis.N_HARMONICS, 0.9)
-    b = np.full(power_analysis.N_HARMONICS, 0.5)
+    a = np.full(N_HARMONICS, 0.9)
+    b = np.full(N_HARMONICS, 0.5)
     first = fn(a, b)
     second = fn(a.copy(), b.copy())
     assert first == second
@@ -450,33 +464,27 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors(
     assert info.hits == 1 and info.misses == 1, info
 
 
-def test_equivalence_replicates_does_not_accept_saturated_arms_at_r_one(
-    power_analysis: ModuleType,
-) -> None:
+def test_equivalence_replicates_does_not_accept_saturated_arms_at_r_one() -> None:
     """Agresti–Coull intervals prevent saturated arms from having zero width."""
-    rates = np.ones(power_analysis.N_HARMONICS)
+    rates = np.ones(N_HARMONICS)
     result = power_analysis.equivalence_replicates(
         rates, rates, 0.05, np.random.default_rng(0), n_sims=500
     )
     assert result is None or result > 1
 
 
-def test_equivalence_replicates_finds_generous_margin_quickly(
-    power_analysis: ModuleType,
-) -> None:
+def test_equivalence_replicates_finds_generous_margin_quickly() -> None:
     """A generous equivalence margin remains easy to satisfy."""
-    rates = np.full(power_analysis.N_HARMONICS, 0.5)
+    rates = np.full(N_HARMONICS, 0.5)
     result = power_analysis.equivalence_replicates(
         rates, rates, 0.5, np.random.default_rng(0), n_sims=500
     )
     assert isinstance(result, int) and result <= 5
 
 
-def test_equivalence_power_pools_successes_across_harmonics(
-    power_analysis: ModuleType,
-) -> None:
+def test_equivalence_power_pools_successes_across_harmonics() -> None:
     """Saturated arms pool to total/total; per-harmonic counts would sit near 1/9."""
-    rates = np.ones(power_analysis.N_HARMONICS)
+    rates = np.ones(N_HARMONICS)
     curve = power_analysis._equivalence_power_curve(
         rates, 0.05, np.random.default_rng(0), 0.05, 200
     )
@@ -485,12 +493,12 @@ def test_equivalence_power_pools_successes_across_harmonics(
     assert curve[10] == 1.0
 
 
-def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> None:
+def test_sizing_scan_uses_common_random_numbers() -> None:
     """Nested draws make the power curve reproducible, and the crossing is sustained."""
     fn = power_analysis.replicates_needed
     fn.cache_clear()
-    a = np.full(power_analysis.N_HARMONICS, 0.75)
-    b = np.full(power_analysis.N_HARMONICS, 0.55)
+    a = np.full(N_HARMONICS, 0.75)
+    b = np.full(N_HARMONICS, 0.55)
     needed, curve = fn(a, b)
     fn.cache_clear()
     needed_again, curve_again = fn(a, b)
@@ -509,58 +517,56 @@ def test_sizing_scan_uses_common_random_numbers(power_analysis: ModuleType) -> N
         )
 
 
-def test_sizing_crossing_is_sustained_not_first_hit(
-    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A noisy first crossing is not accepted when later power dips below target."""
+def test_sizing_crossing_is_sustained_not_first_hit() -> None:
+    """A noisy first crossing is rejected when later power dips below target."""
 
     def fake_cmh_stat(_succ_a: np.ndarray, _succ_b: np.ndarray, n: int) -> np.ndarray:
-        fraction = _noisy_curve(n)
-        n_reject = int(round(fraction * power_analysis.N_SIMS))
+        """Inject a known power dip so the sizing scan must reject it.
+
+        Parameters
+        ----------
+        _succ_a, _succ_b : np.ndarray
+            Unused count arrays.
+        n : int
+            Replicate count.
+
+        Returns
+        -------
+        np.ndarray
+            Statistics producing the fixture's rejection fraction.
+        """
+        n_reject = int(round(_noisy_curve(n) * power_analysis.N_SIMS))
         return np.concatenate(
             (np.full(n_reject, 1e6), np.zeros(power_analysis.N_SIMS - n_reject))
         )
 
     power_analysis._sizing_scan.cache_clear()
-    monkeypatch.setattr(power_analysis, "cmh_stat", fake_cmh_stat)
     try:
-        rates = np.full(power_analysis.N_HARMONICS, 0.5)
-        needed, curve = power_analysis.replicates_needed(rates, rates)
-        assert needed[0.80] == 8
-        assert needed[0.90] is None
-        assert curve[5] == pytest.approx(0.85)
-        assert curve[7] == pytest.approx(0.79)
+        with patch.object(power_analysis, "cmh_stat", fake_cmh_stat):
+            rates = np.full(N_HARMONICS, 0.5)
+            needed, curve = power_analysis.replicates_needed(rates, rates)
+            assert needed[0.80] == 8
+            assert needed[0.90] is None
+            assert curve[5] == pytest.approx(0.85)
+            assert curve[7] == pytest.approx(0.79)
     finally:
         power_analysis._sizing_scan.cache_clear()
 
 
-def test_equivalence_crossing_is_sustained_not_first_hit(
-    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_equivalence_crossing_is_sustained_not_first_hit() -> None:
     """Equivalence sizing rejects a noisy first crossing."""
-
-    def fake_power_curve(
-        _common: np.ndarray,
-        _delta: float,
-        _rng: np.random.Generator,
-        _alpha: float,
-        _n_sims: int,
-    ) -> dict[int, float]:
-        return {n: _noisy_curve(n) for n in range(1, power_analysis.MAX_REPLICATES + 1)}
-
-    monkeypatch.setattr(power_analysis, "_equivalence_power_curve", fake_power_curve)
-    rates = np.full(power_analysis.N_HARMONICS, 0.5)
-    assert (
-        power_analysis.equivalence_replicates(
-            rates, rates, 0.5, np.random.default_rng(0), n_sims=500
+    curve = {n: _noisy_curve(n) for n in range(1, power_analysis.MAX_REPLICATES + 1)}
+    rates = np.full(N_HARMONICS, 0.5)
+    with patch.object(power_analysis, "_equivalence_power_curve", return_value=curve):
+        assert (
+            power_analysis.equivalence_replicates(
+                rates, rates, 0.5, np.random.default_rng(0), n_sims=500
+            )
+            == 8
         )
-        == 8
-    )
 
 
-def test_recommended_replicates_carries_censored_contrasts(
-    power_analysis: ModuleType,
-) -> None:
+def test_recommended_replicates_carries_censored_contrasts() -> None:
     """A censored family has no whole-family R, and the render says so instead of dropping them."""
     censored = power_analysis.recommended_replicates(
         {
@@ -575,10 +581,7 @@ def test_recommended_replicates_carries_censored_contrasts(
         censored["n_powered"] == power_analysis.N_PRIMARY - 3
         and censored["n_primary"] == power_analysis.N_PRIMARY
     )
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        power_analysis.render_recommended_replicates(censored)
-    out = buf.getvalue()
+    out = run_captured(lambda: power_analysis.render_recommended_replicates(censored))
     assert (
         "CENSORED" in out
         and f"3 of {power_analysis.N_PRIMARY}" in out
@@ -595,66 +598,80 @@ def test_recommended_replicates_carries_censored_contrasts(
         }
     )
     assert full["family_r"] == 40
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        power_analysis.render_recommended_replicates(full)
-    assert "fully powered" in buf.getvalue()
+    assert "fully powered" in run_captured(
+        lambda: power_analysis.render_recommended_replicates(full)
+    )
 
 
-def test_primary_contrasts_table_reports_the_family_size(
-    power_analysis: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`r_star` covers every powerable contrast and `family_r` is `None` while any is censored."""
+def test_primary_contrasts_table_reports_the_family_size() -> None:
+    """`r_star` covers powerable contrasts; censored ones prevent `family_r`."""
 
-    def fake_results(contrasts: list, *_args: Any) -> list:
-        rows = []
-        for i, (name, _ka, _kb) in enumerate(contrasts):
-            r80 = None if i == 0 else 10 + (i % 5)
-            rows.append((name, None, None, {0.80: r80, 0.90: None}, None))
-        return rows
+    def fake_results(
+        contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]],
+        _rates: dict,
+        _pooled: dict,
+        _alpha: float,
+    ) -> list[power_analysis._SizingResult]:
+        """Keep one contrast censored to exercise whole-family reporting.
 
-    monkeypatch.setattr(power_analysis, "_compute_sizing_results", fake_results)
-    data = power_analysis.primary_contrasts_table({}, {})
+        Parameters
+        ----------
+        contrasts : list[tuple[str, tuple[str, str], tuple[str, str]]]
+            Contrast labels and cell keys.
+        _rates, _pooled : dict
+            Unused rate assumptions.
+        _alpha : float
+            Unused significance threshold.
+
+        Returns
+        -------
+        list[power_analysis._SizingResult]
+            Sizing rows with the first contrast censored.
+        """
+        return [
+            (name, key_a, key_b, {0.80: None if i == 0 else 10 + i % 5, 0.90: None}, {})
+            for i, (name, key_a, key_b) in enumerate(contrasts)
+        ]
+
+    with patch.object(power_analysis, "_compute_sizing_results", fake_results):
+        data = power_analysis.primary_contrasts_table({}, {})
     assert data["n_primary"] == len(data["results"]) == power_analysis.N_PRIMARY
     assert data["n_censored"] == 1 and data["family_r"] is None
     assert data["r_star"] == 14
 
 
-def test_paired_powers_has_a_stats_free_fast_path(multiplicity_sim: ModuleType) -> None:
+def test_paired_powers_has_a_stats_free_fast_path() -> None:
     """Grid searches skip unneeded diagnostics to limit memory."""
-    args = (0.95, 0.05, 0.5, multiplicity_sim.N_REPLICATES, 400)
-    full = multiplicity_sim._paired_powers(*args, np.random.default_rng(11), stats=True)
-    fast = multiplicity_sim._paired_powers(
-        *args, np.random.default_rng(11), stats=False
-    )
+    args = (0.95, 0.05, 0.5, N_REPLICATES, 400)
+    full = _paired_powers(*args, np.random.default_rng(11), stats=True)
+    fast = _paired_powers(*args, np.random.default_rng(11), stats=False)
     assert fast[0] == full[0] and fast[1] == full[1]
     assert fast[2] is None and fast[3] is None
 
 
-def test_icc_zero_is_the_published_simulation_byte_for_byte(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_icc_zero_is_the_published_simulation_byte_for_byte() -> None:
     """`icc=0.0` must draw exactly what the un-clustered simulation drew, including RNG call order."""
 
-    def draw(**kwargs: Any) -> Any:
-        return multiplicity_sim.paired_marks(
-            0.9,
-            0.8,
-            0.5,
-            64,
-            multiplicity_sim.N_REPLICATES,
-            np.random.default_rng(7),
-            **kwargs,
-        )
-
-    plain_a, plain_b = draw()
-    zero_a, zero_b = draw(icc=0.0)
+    args = (0.9, 0.8, 0.5, 64, N_REPLICATES)
+    plain_a, plain_b = paired_marks(*args, np.random.default_rng(7))
+    zero_a, zero_b = paired_marks(*args, np.random.default_rng(7), icc=0.0)
     assert np.array_equal(plain_a, zero_a)
     assert np.array_equal(plain_b, zero_b)
 
 
 def within_replicate_phi(marks: np.ndarray) -> float:
-    """Return mean within-replicate item correlation."""
+    """Return mean within-replicate item correlation.
+
+    Parameters
+    ----------
+    marks : np.ndarray
+        Simulated marks with items on the last axis.
+
+    Returns
+    -------
+    float
+        Mean correlation between distinct items in a replicate.
+    """
     x = marks.reshape(-1, marks.shape[-1]).astype(float)
     mu = x.mean()
     centered = x - mu
@@ -664,17 +681,11 @@ def within_replicate_phi(marks: np.ndarray) -> float:
     return float(cross / (mu * (1 - mu)))
 
 
-def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate() -> None:
     """A replicate latent preserves marginal arm rates."""
-    args = (0.9, 0.8, 0.5, 400, multiplicity_sim.N_REPLICATES)
-    flat_a, flat_b = multiplicity_sim.paired_marks(
-        *args, np.random.default_rng(11), icc=0.0
-    )
-    clustered_a, clustered_b = multiplicity_sim.paired_marks(
-        *args, np.random.default_rng(11), icc=0.4
-    )
+    args = (0.9, 0.8, 0.5, 400, N_REPLICATES)
+    flat_a, flat_b = paired_marks(*args, np.random.default_rng(11), icc=0.0)
+    clustered_a, clustered_b = paired_marks(*args, np.random.default_rng(11), icc=0.4)
 
     assert abs(within_replicate_phi(flat_a)) < 0.02
     assert within_replicate_phi(clustered_a) > 0.10
@@ -686,18 +697,10 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate(
         assert abs(clustered.mean() - rate) < 0.01
 
 
-def test_the_replicate_latent_is_arm_specific_not_shared(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_the_replicate_latent_is_arm_specific_not_shared() -> None:
     """Arm-specific offsets keep independent arms uncorrelated."""
-    marks_a, marks_b = multiplicity_sim.paired_marks(
-        0.9,
-        0.9,
-        0.0,
-        400,
-        multiplicity_sim.N_REPLICATES,
-        np.random.default_rng(13),
-        icc=0.4,
+    marks_a, marks_b = paired_marks(
+        0.9, 0.9, 0.0, 400, N_REPLICATES, np.random.default_rng(13), icc=0.4
     )
     per_replicate_a = marks_a.mean(axis=2).ravel()
     per_replicate_b = marks_b.mean(axis=2).ravel()
@@ -705,68 +708,56 @@ def test_the_replicate_latent_is_arm_specific_not_shared(
     assert within_replicate_phi(marks_a) > 0.10
 
 
-def test_icc_does_not_attenuate_the_requested_cross_arm_correlation(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_icc_does_not_attenuate_the_requested_cross_arm_correlation() -> None:
     """Clustering must not dilute `rho`; the mark-level phi should match the un-clustered draw."""
-
-    def phi(marks_a: np.ndarray, marks_b: np.ndarray) -> float:
-        return float(
-            np.corrcoef(marks_a.ravel().astype(float), marks_b.ravel().astype(float))[
-                0, 1
-            ]
+    correlations = []
+    for rho, seed, icc in ((0.6, 17, 0.0), (0.6, 19, 0.4), (0.36, 17, 0.0)):
+        arms = paired_marks(
+            0.7, 0.7, rho, 400, N_REPLICATES, np.random.default_rng(seed), icc=icc
         )
-
-    args = (0.7, 0.7, 0.6, 400, multiplicity_sim.N_REPLICATES)
-    flat = phi(*multiplicity_sim.paired_marks(*args, np.random.default_rng(17)))
-    clustered = phi(
-        *multiplicity_sim.paired_marks(*args, np.random.default_rng(19), icc=0.4)
-    )
+        correlations.append(
+            np.corrcoef(np.asarray(arms, dtype=float).reshape(2, -1))[0, 1]
+        )
+    flat, clustered, diluted = np.array(correlations)
     assert flat > 0.3
     assert abs(clustered - flat) < 0.03
     # A dilution to (1 - icc) * rho would move phi by far more than that.
-    diluted = phi(
-        *multiplicity_sim.paired_marks(
-            0.7,
-            0.7,
-            0.36,
-            400,
-            multiplicity_sim.N_REPLICATES,
-            np.random.default_rng(17),
-        )
-    )
     assert flat - diluted > 0.1
 
 
-def test_clustering_inflates_the_item_level_mcnemar_type_i_error(
-    multiplicity_sim: ModuleType,
-) -> None:
+def test_clustering_inflates_the_item_level_mcnemar_type_i_error() -> None:
     """Clustering inflates item-level McNemar Type-I error."""
 
-    def type_i(icc: float) -> float:
-        _unpaired, mcnemar, _phi, _agree = multiplicity_sim._paired_powers(
+    flat, clustered = [
+        _paired_powers(
             0.90,
             0.0,
             0.5,
-            multiplicity_sim.N_REPLICATES,
+            N_REPLICATES,
             4000,
             np.random.default_rng(17),
             stats=False,
             icc=icc,
-        )
-        return mcnemar
-
-    flat, clustered = type_i(0.0), type_i(0.4)
+        )[1]
+        for icc in (0.0, 0.4)
+    ]
     assert clustered > flat
     assert clustered > multiplicity_sim.ALPHA_PRIMARY
 
 
-def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
-    """Each ICC has a labeled output block."""
+@pytest.mark.parametrize("seed", (2, 3))
+def test_part2_reports_every_icc_and_its_design_effect(seed: int) -> None:
+    """Each ICC block labels its rows and reports the simulated design effect.
+
+    Parameters
+    ----------
+    seed : int
+        Generator seed for the reporting and design-effect checks.
+    """
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         out = multiplicity_sim.part2(
-            np.random.default_rng(2),
+            np.random.default_rng(seed),
             _power_common.results_dir("induction"),
             n_sims=200,
             search_sims=100,
@@ -779,15 +770,21 @@ def test_part2_reports_every_icc(multiplicity_sim: ModuleType) -> None:
     printed = buf.getvalue()
     for icc in ("0.0", "0.2", "0.4"):
         assert f"icc={icc}" in printed, printed[:400]
+    deffs = [out["icc"][k]["design_effect_simulated"] for k in ("0.0", "0.2", "0.4")]
+    assert all(isinstance(d, float) for d in deffs), deffs
+    assert 0.8 < deffs[0] < 1.3, deffs
+    assert deffs[0] < deffs[1] < deffs[2], deffs
 
 
 @pytest.mark.parametrize("match_rung", (0, 1))
-def test_part2_searches_eq_r_from_the_first_matching_rung(
-    multiplicity_sim: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-    match_rung: int,
-) -> None:
-    """Equivalent-R search records whether it moved beyond study depth."""
+def test_part2_searches_eq_r_from_the_first_matching_rung(match_rung: int) -> None:
+    """Equivalent-R search records whether it moved beyond study depth.
+
+    Parameters
+    ----------
+    match_rung : int
+        First matching equivalent-R grid index.
+    """
 
     def fake_powers(
         _p_a: float,
@@ -799,16 +796,38 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
         stats: bool = True,
         icc: float = 0.0,
     ) -> tuple[float, float, float | None, float | None]:
-        del icc
+        """Control which search rung first matches paired power.
+
+        Parameters
+        ----------
+        _p_a, _delta, _rho, icc : float
+            Unused simulation parameters.
+        reps, _n_sims : int
+            Rung depth and unused simulation count.
+        _rng : np.random.Generator
+            Unused random generator.
+        stats : bool
+            Whether this is the initial power estimate.
+
+        Returns
+        -------
+        tuple[float, float, float | None, float | None]
+            Unpaired power, paired power, and optional diagnostics.
+        """
         if stats:
             return 0.50, 0.80, 0.1, 0.9
-        if match_rung == 1 and reps == multiplicity_sim.N_REPLICATES:
+        if match_rung == 1 and reps == N_REPLICATES:
             return 0.50, 0.0, None, None
         return 0.80 - multiplicity_sim.EQ_R_TOL / 2, 0.0, None, None
 
-    monkeypatch.setattr(multiplicity_sim, "_paired_powers", fake_powers)
-    monkeypatch.setattr(multiplicity_sim, "study_design_effect", lambda _d: None)
-    with contextlib.redirect_stdout(io.StringIO()):
+    with (
+        patch.multiple(
+            multiplicity_sim,
+            _paired_powers=fake_powers,
+            study_design_effect=Mock(return_value=None),
+        ),
+        contextlib.redirect_stdout(io.StringIO()),
+    ):
         out = multiplicity_sim.part2(
             np.random.default_rng(2),
             _power_common.results_dir("induction"),
@@ -822,36 +841,20 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
 
 
 def test_study_design_effect_ignores_checkpoint_without_replicates(
-    multiplicity_sim: ModuleType,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A checkpoint directory is not a measured study lane."""
-    (tmp_path / "multiplicity_sim_results.json").write_text("{}", encoding="utf-8")
+    """A checkpoint directory is not a measured study lane.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary checkpoint-only directory.
+    """
+    (tmp_path / multiplicity_sim.OUT_NAME).write_text("{}", encoding="utf-8")
     assert multiplicity_sim.study_design_effect(tmp_path) is None
 
 
-def test_each_icc_block_reports_the_design_effect_it_produces(
-    multiplicity_sim: ModuleType,
-) -> None:
-    """Each ICC block reports its simulated design effect."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        out = multiplicity_sim.part2(
-            np.random.default_rng(3),
-            _power_common.results_dir("induction"),
-            n_sims=200,
-            search_sims=100,
-        )
-    blocks = out["icc"]
-    deffs = [blocks[k]["design_effect_simulated"] for k in ("0.0", "0.2", "0.4")]
-    assert all(isinstance(d, float) for d in deffs), deffs
-    assert 0.8 < deffs[0] < 1.3, deffs
-    assert deffs[0] < deffs[1] < deffs[2], deffs
-
-
-def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic(
-    paired_analysis: ModuleType,
-) -> None:
+def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic() -> None:
     """Alignment reports original harmonic positions, not retained-item offsets."""
     n = paired_analysis.N_HARMONICS
     seeds = (0, 1, 2)
@@ -859,9 +862,7 @@ def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic(
     invalid = {0: 0, 1: n // 2, 2: n - 1}
     key_a, key_b = ("m", "intens"), ("m", "extens")
     correct = {k: {s: np.ones(n, dtype=bool) for s in seeds} for k in (key_a, key_b)}
-    valid = {}
-    for k in (key_a, key_b):
-        valid[k] = {s: np.ones(n, dtype=bool) for s in seeds}
+    valid = {k: {s: np.ones(n, dtype=bool) for s in seeds} for k in (key_a, key_b)}
     for s, pos in invalid.items():
         valid[key_a][s][pos] = False
 
