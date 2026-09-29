@@ -34,38 +34,35 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from smolbench.deduction.lean import context, corpus, prompt  # noqa: E402
+from smolbench.deduction.lean.corpus import is_linear  # noqa: E402
 from smolbench.deduction.lean.premises import lookup  # noqa: E402
 from smolbench.deduction.lean.runner import slug_rung, slug_theorem  # noqa: E402
 
 RUNG_DOC = {
     "stepk:2": "None: goal, full state, proof so far, file path. No premises.",
-    "hint:N": "Flagged ladder: stepk:2 + 'Premises used in the next tactic' (0), + signatures (1), + full source (2), + (N-2)-hop closure (3+).",
-    "noise:N": "hint:(N-1) whitespace-padded to hint:N's prompt token count.",
     "sig:N": "Unflagged library block, signatures: MPI lemmas + N-hop closure, import order, nothing marked.",
     "proof:N": "Same block as sig:N with full source and proofs.",
-    "signoise:N": "sig:0 padded to sig:N (the hops as blank length).",
-    "proofnoise:N": "sig:N padded to proof:N (the proof bodies as blank length).",
-    "hoponly:N": "sig:N with the MPI lemmas removed: the N-hop closure alone, signatures.",
     "sigpad:N": "sig:N with every non-MPI entry replaced in place by same-token whitespace lines (MPI at the same depth).",
     "proofpad:N": "proof:N with every proof body replaced in place by same-token whitespace lines (signatures at the same depth).",
     "siglorem:N": "sigpad:N with lorem-ipsum prose as the filler instead of whitespace.",
     "prooflorem:N": "proofpad:N with lorem-ipsum prose as the filler instead of whitespace.",
+    "sigfar:N": "sig:N with every non-MPI entry replaced in place by a closest-length signature from outside the MPI's 10-hop closure.",
+    "signear:N": "sig:N with every non-MPI entry replaced in place by a closest-length signature from inside the 10-hop closure but outside the N-hop closure.",
+    "prooffar:N": "proof:N with every non-MPI entry replaced in place by a closest-length full declaration from outside the 10-hop closure.",
+    "proofnear:N": "proof:N with every non-MPI entry replaced in place by a closest-length full declaration from inside the 10-hop closure but outside the N-hop closure.",
 }
 
 
 def _rungs(max_level: int) -> list[str]:
     out = ["stepk:2"]
-    out += [f"hint:{i}" for i in range(0, max_level + 1)]
-    out += [f"noise:{i}" for i in range(1, max_level + 1)]
     out += [f"sig:{i}" for i in range(0, max_level + 1)]
     out += [f"proof:{i}" for i in range(0, max_level + 1)]
-    out += [f"signoise:{i}" for i in range(1, max_level + 1)]
-    out += [f"hoponly:{i}" for i in range(1, max_level + 1)]
     out += [f"sigpad:{i}" for i in range(1, max_level + 1)]
-    out += [f"proofpad:{i}" for i in range(0, max_level + 1)]
     out += [f"siglorem:{i}" for i in range(1, max_level + 1)]
+    out += [f"proofpad:{i}" for i in range(0, max_level + 1)]
     out += [f"prooflorem:{i}" for i in range(0, max_level + 1)]
-    out += [f"proofnoise:{i}" for i in range(0, max_level + 1)]
+    for chain in ("sigfar", "signear", "prooffar", "proofnear"):
+        out += [f"{chain}:{i}" for i in range(1, max_level + 1)]
     return out
 
 
@@ -73,19 +70,6 @@ def _count_tokens(text: str) -> int:
     import tiktoken
 
     return len(tiktoken.get_encoding("cl100k_base").encode(text))
-
-
-def is_linear(theorem: corpus.BenchmarkTheorem) -> bool:
-    """True when every traced tactic starts from the previous tactic's end state.
-
-    LeanDojo records tactics in pre-order and never records ``·`` bullets, so a
-    structured proof's list interleaves nested tactics with top-level ones; its
-    "last tactic" may be the inner step of a case and its prefix may close the
-    goal early. A linear chain is exactly the top-level tactic sequence, so
-    step ``k`` and the replayed prefix mean what the prompt says they mean.
-    """
-    ts = theorem.traced_tactics
-    return all(ts[i].state_before == ts[i - 1].state_after for i in range(1, len(ts)))
 
 
 def select_cells(
@@ -205,6 +189,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="only theorems whose traced tactics form one state chain (no nested tactics)",
     )
+    ap.add_argument(
+        "--rungs",
+        nargs="*",
+        default=None,
+        help="render only these chain:level rungs into an existing tree; index.json records are merged",
+    )
+    ap.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="with --rungs: re-render only cells whose directory name is listed",
+    )
     args = ap.parse_args(argv)
 
     if args.allow_precutoff:
@@ -217,21 +213,36 @@ def main(argv: list[str] | None = None) -> int:
         corpus._from_json = _lenient  # type: ignore[assignment]
         corpus.reset_caches()
 
-    rungs = _rungs(args.max_level)
+    rungs = args.rungs or _rungs(args.max_level)
     cells = select_cells(
         args.n, args.max_tactics, args.seed, args.kind, args.split, linear=args.linear
     )
     args.out.mkdir(parents=True, exist_ok=True)
+    index_path = args.out / "index.json"
+    previous: dict[str, dict] = {}
+    if args.rungs and index_path.exists():
+        previous = {rec["dir"]: rec for rec in json.loads(index_path.read_text())}
+    only = set(args.only or [])
     index = []
     for i, (t, k) in enumerate(cells, 1):
         name = f"{slug_theorem(t.full_name)}__k{k}"
+        if only and name not in only:
+            if name in previous:
+                index.append(previous[name])
+            continue
         rec = render_cell(t, k, rungs, args.out / name)
         rec["dir"] = name
+        if name in previous:
+            merged = dict(previous[name]["rungs"])
+            merged.update(rec["rungs"])
+            rec["rungs"] = merged
         index.append(rec)
-        toks = rec["rungs"].get(f"sig:{args.max_level}", {}).get("prompt_tokens_cl100k")
-        print(f"[{i:3d}/{len(cells)}] {name}  sig:{args.max_level}={toks} tok", flush=True)
-    (args.out / "index.json").write_text(json.dumps(index, indent=1))
-    write_readme(args.out, rungs, len(cells), args.max_level)
+        shown = rungs[-1]
+        toks = rec["rungs"].get(shown, {}).get("prompt_tokens_cl100k")
+        print(f"[{i:3d}/{len(cells)}] {name}  {shown}={toks} tok", flush=True)
+    index_path.write_text(json.dumps(index, indent=1))
+    if not args.rungs:
+        write_readme(args.out, rungs, len(cells), args.max_level)
     print(f"wrote {len(index)} cells x {len(rungs)} rungs under {args.out}")
     return 0
 

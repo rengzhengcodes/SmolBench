@@ -238,6 +238,19 @@ def replay_passing_path(kind: SplitKind, split: Split) -> Path:
     return data_root().parent / f"replay_passing_{kind}_{split}.jsonl"
 
 
+def is_linear(theorem: BenchmarkTheorem) -> bool:
+    """True when every traced tactic starts from the previous tactic's end state.
+
+    LeanDojo records tactics in pre-order and never records ``·`` bullets, so a
+    structured proof's list interleaves nested tactics with top-level ones; its
+    "last tactic" may be the inner step of a case and its prefix may close the
+    goal early. A linear chain is exactly the top-level tactic sequence, so
+    step ``k`` and the replayed prefix mean what the prompt says they mean.
+    """
+    ts = theorem.traced_tactics
+    return all(ts[i].state_before == ts[i - 1].state_after for i in range(1, len(ts)))
+
+
 def iter_replay_passing(
     kind: SplitKind = "random", split: Split = "val"
 ) -> Iterator[BenchmarkTheorem]:

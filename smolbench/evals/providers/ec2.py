@@ -371,6 +371,10 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
         "tp": 8,
         "max_model_len": 131072,
         "vllm_args": [
+            # Experts stay whole per GPU: moe_intermediate_size 1536 sharded
+            # over tp=8 is 192, and the fused-MoE kernel in the pinned image
+            # requires a multiple of 128 (box 2, 2026-09-25 01:07 UTC).
+            "--enable-expert-parallel",
             "--reasoning-parser",
             "glm47",
             "--revision",
@@ -1089,6 +1093,11 @@ def get_model_context_length(model: str) -> int:
     int
         Served context window.
     """
+    # A server started outside the agent (scripts/deduction/packed_box.py) may
+    # run at another length; the client's context guard must use that one.
+    served = os.getenv("EC2_SERVED_CONTEXT_LENGTH", "").strip()
+    if served:
+        return int(served)
     spec = EC2_DEPLOY_SPECS.get(model)
     if spec and "max_model_len" in spec:
         return spec["max_model_len"]

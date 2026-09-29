@@ -65,7 +65,7 @@ def _find_closed_fenced_blocks(s: str) -> list[tuple[str, str]]:
 def extract_tactic_block(text: str) -> str:
     """Extract tactics, preferring the last closed Lean fence after reasoning.
 
-    An unclosed `<think>` block returns empty so truncated reasoning does not inflate `lean_error`.
+    An unclosed `<think>` or `[THINK]` block returns empty so truncated reasoning does not inflate `lean_error`.
 
     Parameters
     ----------
@@ -74,15 +74,19 @@ def extract_tactic_block(text: str) -> str:
     Returns
     -------
     str
-        Extracted tactics; empty for unclosed `<think>`.
+        Extracted tactics; empty for unclosed `<think>` or `[THINK]`.
     """
     s = text.strip()
-    if s.startswith("<think>"):
-        close_idx = s.find("</think>")
-        if close_idx == -1:
-            # Truncated reasoning is a clean miss, not a wrong proof.
-            return ""
-        s = s[close_idx + len("</think>") :].lstrip()
+    # ``<think>`` (most families) and ``[THINK]`` (Ministral, whose reasoning
+    # the vLLM parser does not split out) both wrap reasoning before the answer.
+    for open_tag, close_tag in (("<think>", "</think>"), ("[THINK]", "[/THINK]")):
+        if s.startswith(open_tag):
+            close_idx = s.find(close_tag)
+            if close_idx == -1:
+                # Truncated reasoning is a clean miss, not a wrong proof.
+                return ""
+            s = s[close_idx + len(close_tag) :].lstrip()
+            break
     blocks = _find_closed_fenced_blocks(s)
     candidates = [
         body for fence_tag, body in blocks if fence_tag in _LEANISH_FENCE_TAGS
