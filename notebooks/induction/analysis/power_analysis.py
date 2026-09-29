@@ -29,13 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 import statsmodels.api as sm
-from _power_common import (
-    ALPHA,
-    POWER_TARGETS,
-    SEED,
-    fmt_r,
-    results_dir,
-)
+from _power_common import ALPHA, POWER_TARGETS, SEED, fmt_r, results_dir
 from scipy.stats import binom, chi2, fisher_exact, norm
 from statsmodels.tools.sm_exceptions import (
     PerfectSeparationError,
@@ -64,10 +58,10 @@ N_HARMONICS = 9
 
 # Replicates are the sampling unit; more harmonics would change the task.
 N_SIMS = 10_000  # Monte Carlo SE of a power estimate <= 0.005.
-MAX_REPLICATES = (
-    200  # Search ceiling only: still-unpowered contrasts are censored, not sized.
-)
-SHRINKAGE = 1.0  # c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
+#: Search ceiling only: still-unpowered contrasts are censored, not sized.
+MAX_REPLICATES = 200
+#: c in p_k = (y_k + c*p_bar)/(1+c); c=1 pulls a one-replicate rate halfway to its mean.
+SHRINKAGE = 1.0
 
 # The pre-registered roster as (checkpoint key, tag) pairs. Counts alone would
 # pass a same-family checkpoint swap, so the keys (what the study runs) and
@@ -117,15 +111,18 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 # Degrees of freedom of the model-by-info interaction diagnostic.
 DF_INTERACTION = (len(MODELS) - 1) * (len(INFOS) - 1)
 
+#: One length-`N_HARMONICS` vector per ``(model tag, info)`` cell: pilot marks or per-harmonic rates.
+CellVectors = dict[tuple[str, str], np.ndarray]
+#: ``(label, cell_a, cell_b)``: the two cells a pairwise contrast compares.
+_Contrast = tuple[str, tuple[str, str], tuple[str, str]]
 
-def load_outcomes(
-    results_dir: Path = RESULTS_DIR,
-) -> dict[tuple[str, str], np.ndarray]:
+
+def load_outcomes(results_dir: Path = RESULTS_DIR) -> CellVectors:
     """Load pilot outcomes by model and information type.
 
     ``LocalResultsStore`` excludes trace text from marks.
     """
-    outcomes: dict[tuple[str, str], np.ndarray] = {}
+    outcomes: CellVectors = {}
     store = LocalResultsStore(results_dir)
     for model in MODELS:
         for info in INFOS:
@@ -135,9 +132,8 @@ def load_outcomes(
                 # sync_down() pulls S3 results into the rep_{seed}.yaml layout this script reads.
                 raise SystemExit(
                     f"No pilot replicate for ({model}, {info}) at {path}\n"
-                    f"Run the pilot in notebooks/induction/run_study.py first, "
-                    f"or InductionExperiment.harness.sync_down() if it ran "
-                    "elsewhere."
+                    "Run the pilot in notebooks/induction/run_study.py first, or "
+                    "InductionExperiment.harness.sync_down() if it ran elsewhere."
                 )
             scores = [m.score for m in store.load_marks(addr).marks]
             if len(scores) != N_HARMONICS:
@@ -206,8 +202,7 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.
     m0 = big_n - m1
     expect = m1 * n / big_n
     var = (n * n * m1 * m0) / (big_n * big_n * (big_n - 1))
-    num = np.abs((succ_a - expect).sum(axis=-1)) - 0.5
-    num = np.clip(num, 0.0, None) ** 2
+    num = np.clip(np.abs((succ_a - expect).sum(axis=-1)) - 0.5, 0.0, None) ** 2
     denom = var.sum(axis=-1)
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(denom > 0, num / denom, 0.0)
@@ -241,7 +236,7 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     ValueError
         If the rung axis is not length 3 or counts are invalid.
     """
-    _, n_rungs, _ = succ.shape
+    n_rungs = succ.shape[1]
     if n_rungs != 3:
         raise ValueError(
             f"gcmh_stat assumes 3 rungs (ladder-of-3 families); got axis-1 "
@@ -255,48 +250,29 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     total_n = n_rungs * n
 
     total_succ = succ.sum(axis=1)
-    expected = total_succ / n_rungs
-    resid = succ - expected[:, None, :]
     # Drop the redundant category.
-    t_vec = resid[:, :df, :].sum(axis=2)
+    t_vec = (succ - (total_succ / n_rungs)[:, None, :])[:, :df, :].sum(axis=2)
 
     p = n / total_n
     common = total_succ * (total_n - total_succ) / (total_n - 1.0)
     shape = np.full((df, df), -p * p)
     np.fill_diagonal(shape, p * (1.0 - p))
-    w = common.sum(axis=1)
-    sigma = w[:, None, None] * shape[None, :, :]
-
-    sigma_inv = np.linalg.pinv(sigma)
-    return np.einsum("sd,sde,se->s", t_vec, sigma_inv, t_vec)
+    sigma = common.sum(axis=1)[:, None, None] * shape[None, :, :]
+    return np.einsum("sd,sde,se->s", t_vec, np.linalg.pinv(sigma), t_vec)
 
 
-def gcmh_reject(succ: np.ndarray, n_per_stratum: int, alpha: float) -> np.ndarray:
-    """Return generalized-CMH decisions for three-rung families.
-
-    Parameters
-    ----------
-    succ : np.ndarray
-        Success counts with shape ``(n_sims, 3, K)``.
-    n_per_stratum : int
-        Trials per rung per stratum.
-    alpha : float
-        Test significance threshold.
-
-    Returns
-    -------
-    np.ndarray
-        Whether each simulation rejects.
-
-    Raises
-    ------
-    ValueError
-        If the rung axis is not length 3, or `n_per_stratum` < 1.
-    """
-    return gcmh_stat(succ, n_per_stratum) > chi2.isf(alpha, df=2)
+#: Power target -> smallest R from which power stays at or above it; ``None`` when
+#: the target is not sustained within `MAX_REPLICATES`.
+_Needed = dict[float, int | None]
+_SizingScan = tuple[_Needed, dict[int, float]]
 
 
-_SizingScan = tuple[dict[float, int | None], dict[int, float]]
+def _cumulative_successes(
+    rng: np.random.Generator, rates: np.ndarray, n_sims: int
+) -> np.ndarray:
+    """Cumulative successes of one `MAX_REPLICATES`-long Bernoulli stream per harmonic, ``(n_sims, R, K)``."""
+    trials = rng.random((n_sims, MAX_REPLICATES, rates.size), dtype=np.float32) < rates
+    return np.cumsum(trials, axis=1, dtype=np.int16)
 
 
 @functools.lru_cache(maxsize=None)
@@ -312,23 +288,16 @@ def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
     a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
     crit = chi2.isf(alpha, df=1)
-    trials_a = rng.random((N_SIMS, MAX_REPLICATES, a.size), dtype=np.float32) < a
-    trials_b = rng.random((N_SIMS, MAX_REPLICATES, b.size), dtype=np.float32) < b
-    cum_a = np.cumsum(trials_a, axis=1, dtype=np.int16)
-    cum_b = np.cumsum(trials_b, axis=1, dtype=np.int16)
-    curve = {
-        n_reps: float(
-            (
-                cmh_stat(
-                    cum_a[:, n_reps - 1].astype(np.int64),
-                    cum_b[:, n_reps - 1].astype(np.int64),
-                    n_reps,
-                )
-                > crit
-            ).mean()
+    cum_a = _cumulative_successes(rng, a, N_SIMS)
+    cum_b = _cumulative_successes(rng, b, N_SIMS)
+    curve: dict[int, float] = {}
+    for n_reps in range(1, MAX_REPLICATES + 1):
+        stat = cmh_stat(
+            cum_a[:, n_reps - 1].astype(np.int64),
+            cum_b[:, n_reps - 1].astype(np.int64),
+            n_reps,
         )
-        for n_reps in range(1, MAX_REPLICATES + 1)
-    }
+        curve[n_reps] = float((stat > crit).mean())
     return {t: _sustained_crossing(curve, t) for t in POWER_TARGETS}, curve
 
 
@@ -440,21 +409,14 @@ def _equivalence_power_curve(
 ) -> dict[int, float]:
     """Estimate nested Agresti–Caffo equivalence power at every replicate count."""
     z = norm.isf(alpha)
-    trials_a = (
-        rng.random((n_sims, MAX_REPLICATES, common.size), dtype=np.float32) < common
-    )
-    trials_b = (
-        rng.random((n_sims, MAX_REPLICATES, common.size), dtype=np.float32) < common
-    )
-    cum_a = np.cumsum(trials_a, axis=1, dtype=np.int16)
-    cum_b = np.cumsum(trials_b, axis=1, dtype=np.int16)
+    cum_a = _cumulative_successes(rng, common, n_sims)
+    cum_b = _cumulative_successes(rng, common, n_sims)
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
         total = n_reps * N_HARMONICS
         succ_a = cum_a[:, n_reps - 1].sum(axis=1, dtype=np.int64)
         succ_b = cum_b[:, n_reps - 1].sum(axis=1, dtype=np.int64)
-        adj_a = (succ_a + 1) / (total + 2)
-        adj_b = (succ_b + 1) / (total + 2)
+        adj_a, adj_b = (succ_a + 1) / (total + 2), (succ_b + 1) / (total + 2)
         diff = adj_a - adj_b
         se = np.sqrt(
             adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2)
@@ -508,7 +470,7 @@ def equivalence_replicates(
 
 
 def omnibus_power(
-    rates: dict[tuple[str, str], np.ndarray],
+    rates: CellVectors,
     family: str,
     n_reps: int,
     rng: np.random.Generator,
@@ -521,7 +483,7 @@ def omnibus_power(
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk-toward-mean rates keyed like `load_outcomes`'s return value.
     family : str
         Family whose rungs form the omnibus test.
@@ -547,7 +509,7 @@ def omnibus_power(
     succ = rng.binomial(
         n_reps, cell_rates[None, :, :], size=(n_sims, len(rungs), len(strata))
     )
-    return gcmh_reject(succ, n_reps, alpha).mean()
+    return (gcmh_stat(succ, n_reps) > chi2.isf(alpha, df=2)).mean()
 
 
 #: Diagnostic default: 200 keeps two GLM passes affordable (worst-case MC SE 0.035).
@@ -555,7 +517,7 @@ N_SIMS_OMNIBUS_DIAGNOSTIC = 200
 
 
 def omnibus_interaction_power(
-    rates: dict[tuple[str, str], np.ndarray],
+    rates: CellVectors,
     n_reps: int,
     n_sims: int = N_SIMS_OMNIBUS_DIAGNOSTIC,
 ) -> tuple[float, int]:
@@ -566,7 +528,7 @@ def omnibus_interaction_power(
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Rates keyed by model and info type.
     n_reps : int
         Replicates per cell.
@@ -585,18 +547,17 @@ def omnibus_interaction_power(
 
     def design(interaction: bool) -> np.ndarray:
         cols = [np.ones(len(cells))]
-        for m in MODELS[1:]:
-            cols.append(np.array([c[0] == m for c in cells], float))
-        for i in INFOS[1:]:
-            cols.append(np.array([c[1] == i for c in cells], float))
-        for k in range(1, N_HARMONICS):
-            cols.append(np.array([c[2] == k for c in cells], float))
+        cols += [np.array([c[0] == m for c in cells], float) for m in MODELS[1:]]
+        cols += [np.array([c[1] == i for c in cells], float) for i in INFOS[1:]]
+        cols += [
+            np.array([c[2] == k for c in cells], float) for k in range(1, N_HARMONICS)
+        ]
         if interaction:
-            for m in MODELS[1:]:
-                for i in INFOS[1:]:
-                    cols.append(
-                        np.array([c[0] == m and c[1] == i for c in cells], float)
-                    )
+            cols += [
+                np.array([c[0] == m and c[1] == i for c in cells], float)
+                for m in MODELS[1:]
+                for i in INFOS[1:]
+            ]
         return np.column_stack(cols)
 
     x_null, x_full = design(False), design(True)
@@ -609,19 +570,16 @@ def omnibus_interaction_power(
     crit = chi2.isf(ALPHA, df=df_extra)
     cell_rates = np.array([rates[(m, i)][k] for m, i, k in cells])
 
-    rejections = 0
-    n_skipped = 0
+    rejections = n_skipped = 0
     for _ in range(n_sims):
         succ = rng.binomial(n_reps, cell_rates)
         endog = np.column_stack([succ, n_reps - succ])
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", PerfectSeparationWarning)
-                llf_null = (
-                    sm.GLM(endog, x_null, family=sm.families.Binomial()).fit().llf
-                )
-                llf_full = (
-                    sm.GLM(endog, x_full, family=sm.families.Binomial()).fit().llf
+                llf_null, llf_full = (
+                    sm.GLM(endog, x, family=sm.families.Binomial()).fit().llf
+                    for x in (x_null, x_full)
                 )
         # statsmodels >=0.14 warns on separation and the fit then fails with LinAlgError.
         except (PerfectSeparationError, np.linalg.LinAlgError):
@@ -632,7 +590,7 @@ def omnibus_interaction_power(
     return rejections / n_sims, n_skipped
 
 
-def build_primary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
+def build_primary_contrasts() -> list[_Contrast]:
     """Build PRIMARY ladder and information contrasts.
 
     Keep ladder contrasts first because the report slices at that boundary.
@@ -655,7 +613,7 @@ def build_primary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str
     return ladders + infos
 
 
-def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, str]]]:
+def build_secondary_contrasts() -> list[_Contrast]:
     """Build SECONDARY size-matched, cross-family contrasts.
 
     Use only ``intens`` and group by rung level.
@@ -671,31 +629,22 @@ def build_secondary_contrasts() -> list[tuple[str, tuple[str, str], tuple[str, s
     ]
 
 
-# Both sizing tables use this shared result shape.
-_SizingResult = tuple[
-    str,
-    tuple[str, str],
-    tuple[str, str],
-    dict[float, int | None],
-    dict[float, int | None],
-]
+#: A `_Contrast` with its R per power target under the shrunk, then the pooled, rates.
+_SizingResult = tuple[str, tuple[str, str], tuple[str, str], _Needed, _Needed]
 
 
 def _compute_sizing_results(
-    contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]],
-    rates: dict[tuple[str, str], np.ndarray],
-    pooled: dict[tuple[str, str], np.ndarray],
-    alpha: float,
+    contrasts: list[_Contrast], rates: CellVectors, pooled: CellVectors, alpha: float
 ) -> list[_SizingResult]:
     """Size every contrast under shrunk and pooled assumptions.
 
     Parameters
     ----------
-    contrasts : list[tuple[str, tuple[str, str], tuple[str, str]]]
+    contrasts : list[_Contrast]
         Contrasts to size, in output order.
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk-rate assumption for the headline sizing results.
-    pooled : dict[tuple[str, str], np.ndarray]
+    pooled : CellVectors
         Condition-mean-only sensitivity assumption.
     alpha : float
         Per-test threshold for both sizing runs.
@@ -734,9 +683,7 @@ def _print_sizing_header(label_w: int) -> None:
 
 
 def _print_sizing_rows(
-    results: list[_SizingResult],
-    outcomes: dict[tuple[str, str], np.ndarray],
-    label_w: int,
+    results: list[_SizingResult], outcomes: CellVectors, label_w: int
 ) -> None:
     """Print aligned sizing rows.
 
@@ -744,7 +691,7 @@ def _print_sizing_rows(
     ----------
     results : list[_SizingResult]
         Sizing results to render.
-    outcomes : dict[tuple[str, str], np.ndarray]
+    outcomes : CellVectors
         Pilot marks for the observed-rate columns.
     label_w : int
         Shared width of the contrast-label column.
@@ -786,7 +733,7 @@ def check_design_invariants() -> None:
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
     if MODELS != expected_models:
         raise RuntimeError(
-            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs " f"{expected_models!r}"
+            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs {expected_models!r}"
         )
 
     n_primary = len(build_primary_contrasts())
@@ -810,19 +757,21 @@ def check_design_invariants() -> None:
 check_design_invariants()
 
 
-def observed_accuracy(
-    outcomes: dict[tuple[str, str], np.ndarray],
-) -> list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]:
+#: Per family, per model rung, the ``(info, accuracy)`` pairs, all in report order.
+_AccuracyTable = list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+
+
+def observed_accuracy(outcomes: CellVectors) -> _AccuracyTable:
     """Compute observed pilot accuracy by family, model, and information type.
 
     Parameters
     ----------
-    outcomes : dict[tuple[str, str], np.ndarray]
+    outcomes : CellVectors
         Keyed like `load_outcomes`'s return value.
 
     Returns
     -------
-    list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]]
+    _AccuracyTable
         Nested family, model, and information-type accuracy records.
     """
     return [
@@ -840,9 +789,7 @@ def observed_accuracy(
     ]
 
 
-def render_observed_accuracy(
-    data: list[tuple[str, list[tuple[str, list[tuple[str, float]]]]]],
-) -> None:
+def render_observed_accuracy(data: _AccuracyTable) -> None:
     """Print the observed accuracy table `observed_accuracy` returns."""
     print(
         f"Observed accuracy (n={N_HARMONICS}, one question per harmonic "
@@ -856,57 +803,33 @@ def render_observed_accuracy(
     print()
 
 
-def design_banner() -> dict:
-    """Gather design constants for the report banner."""
-    return {
-        "alpha": ALPHA,
-        "n_families": N_FAMILIES,
-        "n_rungs": N_RUNGS,
-        "n_models": len(MODELS),
-        "alpha_omnibus": ALPHA_OMNIBUS,
-        "n_primary": N_PRIMARY,
-        "alpha_primary": ALPHA_PRIMARY,
-        "n_secondary": N_SECONDARY,
-        "q_secondary": Q_SECONDARY,
-        "alpha_secondary": ALPHA_SECONDARY,
-        "n_sims": N_SIMS,
-        "seed": SEED,
-        "shrinkage": SHRINKAGE,
-    }
-
-
-def render_design_banner(data: dict) -> None:
-    """Print the design banner `design_banner` returns."""
+def render_design_banner() -> None:
+    """Print the design banner: contrast tiers, their thresholds, and the sizing assumptions."""
     print(
         f"Design: three pre-registered contrast tiers over the "
-        f"{data['n_families']}-family x {data['n_rungs']}-rung "
-        f"({data['n_models']}-model) scaling grid (see module docstring):\n"
-        f"  Tier 1 (family omnibus gates):  {data['n_families']} tests, "
-        f"alpha = {data['alpha']}/{data['n_families']} = "
-        f"{data['alpha_omnibus']:.5f} (Bonferroni)\n"
-        f"  Tier 2 (PRIMARY pairwise):      {data['n_primary']} tests, "
-        f"alpha = {data['alpha']}/{data['n_primary']} = "
-        f"{data['alpha_primary']:.6f} (Bonferroni)\n"
-        f"  Tier 3 (SECONDARY pairwise):    {data['n_secondary']} tests, "
-        f"Benjamini-Hochberg q = {data['q_secondary']}, sized at the "
-        f"conservative rank-1 threshold alpha = {data['q_secondary']}/"
-        f"{data['n_secondary']} = {data['alpha_secondary']:.6f} (an UPPER "
-        f"BOUND on the R BH will actually need)\n"
-        f"{data['n_sims']} sims per point, seed={data['seed']}.\n"
+        f"{N_FAMILIES}-family x {N_RUNGS}-rung "
+        f"({len(MODELS)}-model) scaling grid (see module docstring):\n"
+        f"  Tier 1 (family omnibus gates):  {N_FAMILIES} tests, "
+        f"alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f} (Bonferroni)\n"
+        f"  Tier 2 (PRIMARY pairwise):      {N_PRIMARY} tests, "
+        f"alpha = {ALPHA}/{N_PRIMARY} = {ALPHA_PRIMARY:.6f} (Bonferroni)\n"
+        f"  Tier 3 (SECONDARY pairwise):    {N_SECONDARY} tests, "
+        f"Benjamini-Hochberg q = {Q_SECONDARY}, sized at the conservative rank-1 "
+        f"threshold alpha = {Q_SECONDARY}/{N_SECONDARY} = {ALPHA_SECONDARY:.6f} "
+        "(an UPPER BOUND on the R BH will actually need)\n"
+        f"{N_SIMS} sims per point, seed={SEED}.\n"
         "Sizing test: harmonic-stratified CMH on independent per-harmonic "
         "Bernoulli streams (the pre-registered sizing). The PRIMARY inference "
         "is the exact seed-level sign-flip (significance_report.py); all R "
         "figures below are descriptive sensitivity for that test, whose power "
         "also depends on within-seed dependence the R=1 pilot cannot estimate.\n"
         f"Assumed rates: per-harmonic outcomes shrunk toward condition mean "
-        f"(c={data['shrinkage']}); 'pooled' column = sensitivity with "
+        f"(c={SHRINKAGE}); 'pooled' column = sensitivity with "
         "condition-mean rates only.\n"
     )
 
 
-def primary_contrasts_table(
-    rates: dict[tuple[str, str], np.ndarray], pooled: dict[tuple[str, str], np.ndarray]
-) -> dict:
+def primary_contrasts_table(rates: CellVectors, pooled: CellVectors) -> dict:
     """Build PRIMARY sizing data and recommendation inputs.
 
     `r_star` is the smallest R that powers every contrast that is powerable
@@ -915,9 +838,9 @@ def primary_contrasts_table(
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk-rate assumption for PRIMARY sizing.
-    pooled : dict[tuple[str, str], np.ndarray]
+    pooled : CellVectors
         Condition-mean-only sensitivity assumption.
 
     Returns
@@ -957,9 +880,7 @@ def primary_contrasts_table(
     }
 
 
-def render_primary_contrasts_table(
-    data: dict, outcomes: dict[tuple[str, str], np.ndarray]
-) -> None:
+def render_primary_contrasts_table(data: dict, outcomes: CellVectors) -> None:
     """Print the PRIMARY sizing table `primary_contrasts_table` returns."""
     print(f"Tier 2 -- PRIMARY pairwise contrasts ({N_PRIMARY} tests):")
     _print_sizing_header(data["label_w"])
@@ -970,14 +891,12 @@ def render_primary_contrasts_table(
     print()
 
 
-def omnibus_gates(
-    rates: dict[tuple[str, str], np.ndarray], r_star: int
-) -> list[tuple[str, float, float]]:
+def omnibus_gates(rates: CellVectors, r_star: int) -> list[tuple[str, float, float]]:
     """Compute family omnibus-gate power at recommended R and R=1.
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk rates keyed by model and information type.
     r_star : int
         Recommended replicate count.
@@ -1016,16 +935,14 @@ def render_omnibus_gates(rows: list[tuple[str, float, float]], r_star: int) -> N
     print()
 
 
-def secondary_contrasts_table(
-    rates: dict[tuple[str, str], np.ndarray], pooled: dict[tuple[str, str], np.ndarray]
-) -> dict:
+def secondary_contrasts_table(rates: CellVectors, pooled: CellVectors) -> dict:
     """Build SECONDARY sizing data.
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk-rate assumption for SECONDARY sizing.
-    pooled : dict[tuple[str, str], np.ndarray]
+    pooled : CellVectors
         Condition-mean-only sensitivity assumption.
 
     Returns
@@ -1039,9 +956,7 @@ def secondary_contrasts_table(
     return {"results": results, "label_w": max(len(name) for name, *_ in results)}
 
 
-def render_secondary_contrasts_table(
-    data: dict, outcomes: dict[tuple[str, str], np.ndarray]
-) -> None:
+def render_secondary_contrasts_table(data: dict, outcomes: CellVectors) -> None:
     """Print the SECONDARY sizing table `secondary_contrasts_table` returns."""
     print(
         f"Tier 3 -- SECONDARY pairwise contrasts ({N_SECONDARY} tests, "
@@ -1120,9 +1035,7 @@ def render_recommended_replicates(data: dict) -> None:
 
 
 def equivalence_checks(
-    primary_results: list[_SizingResult],
-    rates: dict[tuple[str, str], np.ndarray],
-    r_star: int,
+    primary_results: list[_SizingResult], rates: CellVectors, r_star: int
 ) -> dict:
     """Compute Fisher and TOST checks at recommended R.
 
@@ -1130,7 +1043,7 @@ def equivalence_checks(
     ----------
     primary_results : list[_SizingResult]
         PRIMARY sizing results in input order.
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk rates keyed by model and information type.
     r_star : int
         Replicate count for the Fisher cross-check.
@@ -1144,11 +1057,7 @@ def equivalence_checks(
         (
             name,
             fisher_check(
-                rates[key_a],
-                rates[key_b],
-                r_star,
-                np.random.default_rng(SEED),
-                alpha=ALPHA_PRIMARY,
+                rates[key_a], rates[key_b], r_star, np.random.default_rng(SEED)
             ),
         )
         for name, key_a, key_b, needed, _pooled in primary_results
@@ -1224,13 +1133,13 @@ def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
 
 
 def interaction_diagnostic(
-    rates: dict[tuple[str, str], np.ndarray], r_star: int
+    rates: CellVectors, r_star: int
 ) -> tuple[tuple[float, int], tuple[float, int]]:
     """Compute interaction-diagnostic power at recommended R and R=1.
 
     Parameters
     ----------
-    rates : dict[tuple[str, str], np.ndarray]
+    rates : CellVectors
         Shrunk-toward-mean, keyed like `load_outcomes`'s return value.
     r_star : int
         Recommended replicate count.
@@ -1265,7 +1174,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}
 
     render_observed_accuracy(observed_accuracy(outcomes))  # 1
-    render_design_banner(design_banner())  # 2
+    render_design_banner()  # 2
 
     # Reuse PRIMARY results for gates and recommendation.
     primary = primary_contrasts_table(rates, pooled)
@@ -1279,11 +1188,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     render_recommended_replicates(recommended_replicates(primary))  # 6
 
-    render_equivalence_checks(
-        equivalence_checks(primary["results"], rates, r_star),
-        primary["label_w"],
-        r_star,
-    )  # 7
+    equivalence = equivalence_checks(primary["results"], rates, r_star)
+    render_equivalence_checks(equivalence, primary["label_w"], r_star)  # 7
 
     render_interaction_diagnostic(interaction_diagnostic(rates, r_star), r_star)  # 8
 
