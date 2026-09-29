@@ -18,7 +18,7 @@ A pass rate is the mean over seeds of the per-seed pass@1; its ``±`` is the hal
 of a 95% percentile bootstrap CI over seeds (``--spread sd`` prints the sd over seeds
 instead, as the induction table did). A delta is the mean seed-paired difference in
 points with a 95% bootstrap CI and a sign-flip permutation p-value, both from
-``scripts/deduction/horn/rows_contrast.contrast``.
+``smolbench.deduction.horn.stats.contrast``.
 
 Scoring. ``--scoring iclr`` keeps each row's stored verdict, the rule the ICLR 2027
 submission was scored with. ``--scoring default`` (the default) rescores every finished
@@ -43,13 +43,11 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "scripts" / "deduction" / "horn"))
 sys.path.insert(0, str(REPO))
-
-from rows_contrast import contrast  # noqa: E402
 
 from smolbench.deduction.horn.extract import DEFAULT_SCORING, SCORING_MODES, verdict_fields  # noqa: E402
 from smolbench.deduction.horn.render import Rendered  # noqa: E402
+from smolbench.deduction.horn.stats import contrast  # noqa: E402
 from smolbench.deduction.horn.theory import Theory  # noqa: E402
 
 SCRATCHPAD = Path(

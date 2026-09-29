@@ -33,4 +33,4 @@ for arm, seed, sample, status, answer in rows:
     n_written += 1
 print(f"wrote {n_written} answer files")
 subprocess.run([sys.executable, "-m", "smolbench.deduction.horn.score", str(rung),
-                "--json", str(rung / "scores.jsonl")], cwd=Path(__file__).resolve().parents[3], check=False)
+                "--json", str(rung / "scores.jsonl")], cwd=Path(__file__).resolve().parents[4], check=False)

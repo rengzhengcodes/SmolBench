@@ -38,7 +38,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -52,6 +52,7 @@ from smolbench.deduction.horn.extract import (  # noqa: E402
     strip_reasoning,  # noqa: F401
     verdict_fields,
 )
+from smolbench.deduction.horn.cli import parse_seeds  # noqa: E402
 from smolbench.deduction.horn.render import ARMS, Rendered  # noqa: E402
 from smolbench.deduction.horn.theory import Theory  # noqa: E402
 from smolbench.evals.openai_compat import ChatClient, ChatResult  # noqa: E402
@@ -141,16 +142,25 @@ def _row_key(row: dict) -> tuple:
     return (row["model"], row["rung"], row["arm"], row["seed"], row["rep"])
 
 
-def repair_tail(out: Path) -> None:
-    """Drop a torn last line (a write cut by a kill) so the next row starts clean."""
-    if not out.exists() or out.stat().st_size == 0:
-        return
+def lock_rows(out: Path) -> IO[str] | None:
+    """Open ``out`` for appending under an exclusive lock, then drop a torn last line.
+
+    Returns None when another sweep holds the lock. The torn-line repair runs only
+    after the lock is held, so it can never cut a row that a running sweep is writing.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fh = out.open("a", encoding="utf-8")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
     data = out.read_bytes()
-    if data.endswith(b"\n"):
-        return
-    cut = data.rfind(b"\n") + 1
-    out.write_bytes(data[:cut])
-    logging.warning("%s: dropped a torn last line (%d bytes)", out, len(data) - cut)
+    if data and not data.endswith(b"\n"):
+        cut = data.rfind(b"\n") + 1
+        os.ftruncate(fh.fileno(), cut)
+        logging.warning("%s: dropped a torn last line (%d bytes)", out, len(data) - cut)
+    return fh
 
 
 def done_keys(out: Path) -> set[tuple]:
@@ -360,13 +370,9 @@ def summarize(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _parse_seeds(spec: str | None) -> list[int] | None:
-    if not spec:
-        return None
-    if "-" in spec and "," not in spec:
-        lo, hi = spec.split("-")
-        return list(range(int(lo), int(hi) + 1))
-    return [int(x) for x in spec.split(",") if x.strip()]
+def seed_list(spec: str | None) -> list[int] | None:
+    """``--seeds`` as a list (``cli.parse_seeds``), or None for every seed in the rung."""
+    return parse_seeds(spec) if spec else None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -466,9 +472,13 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
     )
 
     out = Path(a.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    repair_tail(out)
-    all_cells = cells_in(Path(a.rung_dir), a.arms, _parse_seeds(a.seeds), a.replicates)
+    fh = None
+    if not a.dry_run:
+        fh = lock_rows(out)
+        if fh is None:
+            logging.error("%s is locked by another sweep; refusing to run twice", out)
+            return 1
+    all_cells = cells_in(Path(a.rung_dir), a.arms, seed_list(a.seeds), a.replicates)
     done = done_keys(out)
     todo = [c for c in all_cells if (a.model,) + c.key not in done]
     if a.order == "reverse":
@@ -503,12 +513,8 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
     )
     rows: list[dict] = []
     skipped = 0
-    with out.open("a", encoding="utf-8") as fh:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            logging.error("%s is locked by another sweep; refusing to run twice", out)
-            return 1
+    assert fh is not None
+    with fh:
         with ThreadPoolExecutor(a.concurrency) as pool:
             def _run(cell: Cell) -> dict | None:
                 if skip is not None and (a.model,) + cell.key in skip:

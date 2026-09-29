@@ -27,7 +27,8 @@ DEFAULT_ALT_PER_LEMMA = 5
 DEFAULT_HEIGHT = 2
 
 
-def _seeds(spec: str) -> list[int]:
+def parse_seeds(spec: str) -> list[int]:
+    """Seeds from a comma list of numbers and ``a-b`` ranges, e.g. ``100-129,200``."""
     out: list[int] = []
     for part in spec.split(","):
         if "-" in part:
@@ -97,7 +98,7 @@ def cmd_render(a: argparse.Namespace) -> int:
     """Render every seed and arm; print a per-arm summary."""
     tok = Tokenizer()
     rows: list[dict] = []
-    for seed in _seeds(a.seeds):
+    for seed in parse_seeds(a.seeds):
         th = build_theory(seed, a.m, a.height, a.alt_per_lemma)
         rows += write_seed(Path(a.out), th, a.arms, tok)
     by_arm: dict[str, list[dict]] = {}

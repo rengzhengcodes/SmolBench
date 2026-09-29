@@ -102,11 +102,11 @@ def pick(levels: dict[int, tuple[int, int, int]], target: float, min_cells: int)
     rates = {m: v[0] / v[1] for m, v in full.items()}
     if b >= 0 or abs(b) < 1e-6:  # no decreasing trend: fall back to the closest level
         best = min(full, key=lambda m: (abs(rates[m] - target), -m))
-        m70 = None
+        m_fit = None
     else:
-        x70 = (logit_t - a) / b
-        m70 = math.exp(x70)
-        best = min(full, key=lambda m: abs(math.log(m) - x70))
+        x_fit = (logit_t - a) / b
+        m_fit = math.exp(x_fit)
+        best = min(full, key=lambda m: abs(math.log(m) - x_fit))
     status = "ok"
     if max(rates.values()) < target - 0.1 and best == min(full):
         status = "below floor"
@@ -116,7 +116,8 @@ def pick(levels: dict[int, tuple[int, int, int]], target: float, min_cells: int)
         "status": status,
         "chosen_m": best,
         "chosen_rate": round(rates[best], 3),
-        "fitted_m70": None if m70 is None else round(m70, 1),
+        "target": target,
+        "fitted_m": None if m_fit is None else round(m_fit, 1),
         "fit": {"a": round(a, 3), "b": round(b, 3)},
         "levels": {str(m): {"pass": round(rates[m], 3), "n": full[m][1], "length": full[m][2]} for m in sorted(full)},
     }
@@ -133,13 +134,13 @@ def main(argv: list[str] | None = None) -> int:
     levels = load_levels(a.dirs)
     picks = {model: pick(lv, a.target, a.min_cells) for model, lv in sorted(levels.items())}
     ms = sorted({m for lv in levels.values() for m in lv})
-    print(f"{'model':28s}" + "".join(f"{'m'+str(m):>7s}" for m in ms) + "   chosen  fitted m70  status")
+    print(f"{'model':28s}" + "".join(f"{'m'+str(m):>7s}" for m in ms) + "   chosen    fitted m  status")
     for model, p in picks.items():
         cells = []
         for m in ms:
             v = levels[model].get(m)
             cells.append(f"{100*v[0]/v[1]:4.0f}{'L' if v[2] else ' '}{'' if v[1] >= a.min_cells else '?'}" if v else "-")
-        print(f"{model:28s}" + "".join(f"{c:>7s}" for c in cells) + f"   {p.get('chosen_m', '-'):>6}  {p.get('fitted_m70', '-')!s:>10}  {p['status']}")
+        print(f"{model:28s}" + "".join(f"{c:>7s}" for c in cells) + f"   {p.get('chosen_m', '-'):>6}  {p.get('fitted_m', '-')!s:>10}  {p['status']}")
     print("(pass %; L = cap hits; ? = fewer than the minimum cells, not used in the fit)")
     if a.json:
         Path(a.json).write_text(json.dumps(picks, indent=1), encoding="utf-8")
