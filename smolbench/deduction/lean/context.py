@@ -16,6 +16,7 @@ from .corpus import BenchmarkTheorem
 Chain = Literal[
     "stepk", "hint", "noise", "sig", "proof", "signoise", "proofnoise", "hoponly",
     "sigpad", "proofpad", "siglorem", "prooflorem",
+    "sigfar", "signear", "prooffar", "proofnear",
 ]
 
 # ``stepk`` has levels 0..2. ``hint``/``noise`` (flagged ladder) and
@@ -35,7 +36,13 @@ Chain = Literal[
 # ``prooflorem:N`` are the same positional controls with lorem-ipsum prose as
 # the filler instead of whitespace: irrelevant but well-formed text of the same
 # token count, so the two fillers bracket "nothing there" and "something
-# unrelated there".
+# unrelated there". ``sigfar``/``prooffar`` and ``signear``/``proofnear``
+# are DECOY controls: each non-MPI entry of ``sig:N`` / ``proof:N`` is
+# replaced in place by a real corpus declaration of the closest token length,
+# rendered in the same form (signature, or full source with proof). ``far``
+# draws from declarations outside the MPI's 10-hop closure and outside the
+# theorem's file; ``near`` draws from inside the 10-hop closure but outside
+# the N-hop closure, so the decoys are topically adjacent to the target.
 _MAX_LEVEL: dict[str, int] = {
     "stepk": 2,
     "hint": 9,
@@ -49,6 +56,10 @@ _MAX_LEVEL: dict[str, int] = {
     "proofpad": 9,
     "siglorem": 9,
     "prooflorem": 9,
+    "sigfar": 9,
+    "signear": 9,
+    "prooffar": 9,
+    "proofnear": 9,
 }
 
 
@@ -708,6 +719,138 @@ def _render_padded_library_parts(
     return assemble()
 
 
+#: ``far`` decoys must lie outside this many hops of the MPI lemmas.
+_DECOY_FAR_DEPTH = 10
+#: Candidate declarations tokenized per rendering (a deterministic sample of
+#: the pool), from which each slot takes the closest-length unused one.
+_DECOY_CANDIDATES = 1500
+#: A slot stops taking further decoys once it is within this many tokens (or
+#: 10% of its target) of the entry it replaces.
+_DECOY_SLOT_SLACK = 40
+
+
+def _decoy_pool(theorem: BenchmarkTheorem, k: int, depth: int, near: bool) -> list:
+    """Declarations eligible as decoys for ``(theorem, k)`` at ``depth``.
+
+    ``near``: inside the MPI's `_DECOY_FAR_DEPTH`-hop closure, outside its
+    ``depth``-hop closure. Otherwise: every corpus declaration outside the
+    `_DECOY_FAR_DEPTH`-hop closure and outside the theorem's own file. The MPI
+    lemmas themselves are never eligible.
+    """
+    from .premises import _index, lookup, premise_dep_closure  # pylint: disable=cyclic-import
+
+    seeds: list = []
+    seen: set[str] = set()
+    for rec in theorem.traced_tactics[k].premises:
+        p = lookup(rec["full_name"])
+        if p is not None and p.full_name not in seen:
+            seen.add(p.full_name)
+            seeds.append(p)
+    if not seeds:
+        return []
+    far = premise_dep_closure(seeds, _DECOY_FAR_DEPTH)
+    excluded = seen | {p.full_name for p in premise_dep_closure(seeds, depth)}
+    if near:
+        return [p for p in far if p.full_name not in excluded]
+    excluded |= {p.full_name for p in far}
+    return [
+        p
+        for p in _index().values()
+        if p.full_name not in excluded and p.file_path != theorem.file_path
+    ]
+
+
+def _render_decoy_library_parts(
+    theorem: BenchmarkTheorem, k: int, depth: int, mode: str
+) -> list[str]:
+    """``sigfar``/``signear``/``prooffar``/``proofnear``: real declarations as filler.
+
+    Every non-MPI entry of ``sig:depth`` (signatures) or ``proof:depth`` (full
+    source) is replaced in place by an unrelated corpus declaration rendered in
+    the same form, chosen so the running token total tracks the content rung's.
+    Real text cannot be trimmed, so the match is approximate; the rendered
+    prompt's token count is what the example index records.
+
+    Raises
+    ------
+    ValueError
+        Level 0 (no non-MPI entry), or a pool smaller than the slots to fill.
+    """
+    import random
+
+    from smolbench.evals.tokenization import TiktokenTokenizer
+
+    from .premises import (  # pylint: disable=cyclic-import
+        body_with_proof,
+        has_full_source,
+        lookup,
+        signature,
+    )
+
+    if depth < 1:
+        raise ValueError(f"{mode}:{depth} not defined; level 0 has no non-MPI entry to replace")
+    form = "sig" if mode.startswith("sig") else "proof"
+    near = mode.endswith("near")
+    render_one = signature if form == "sig" else body_with_proof
+    content_parts = _render_library_parts(theorem, k, depth, form)
+    premises = _library_premises(theorem, k, depth)
+    if not premises:
+        return content_parts
+    mpi = {
+        p.full_name
+        for rec in theorem.traced_tactics[k].premises
+        if (p := lookup(rec["full_name"])) is not None
+    }
+    slots = [(p, p.full_name in mpi) for p in premises]
+    n_fill = sum(1 for _, keep in slots if not keep)
+    if n_fill == 0:
+        return content_parts
+
+    tokenizer = TiktokenTokenizer()
+
+    def entry(p) -> str:
+        return f"### `{p.full_name}` at `{p.file_path}`\n```lean\n{render_one(p)}\n```"
+
+    block_names = {p.full_name for p in premises}
+    pool = [p for p in _decoy_pool(theorem, k, depth, near) if p.full_name not in block_names]
+    rng = random.Random(f"{mode}:{depth}:{theorem.full_name}:{k}")
+    pool = sorted(pool, key=lambda p: p.full_name)
+    # Enough candidates that late slots still find a close length after the
+    # early ones have taken theirs; otherwise the running total drifts.
+    candidates = rng.sample(pool, min(max(_DECOY_CANDIDATES, 5 * n_fill), len(pool)))
+    if form == "proof":
+        candidates = [p for p in candidates if has_full_source(p)]
+    if len(candidates) < n_fill:
+        raise ValueError(
+            f"{mode}:{depth} for {theorem.full_name!r} at k={k}: {len(candidates)} decoy "
+            f"candidates for {n_fill} slots"
+        )
+    sized = [(tokenizer.count(entry(p)), p) for p in candidates]
+
+    out: list[str] = []
+    carry = 0  # content tokens owed so far (positive: decoys have run short)
+    for p, keep in slots:
+        text = entry(p)
+        if keep:
+            out.append(text)
+            continue
+        want = tokenizer.count(text) + carry
+        remaining = want
+        picked: list[str] = []
+        # A slot whose entry is longer than any candidate takes several
+        # declarations, until it is within the slack of its target.
+        while sized:
+            j = min(range(len(sized)), key=lambda i: (abs(sized[i][0] - remaining), sized[i][1].full_name))
+            got, decoy = sized.pop(j)
+            picked.append(entry(decoy))
+            remaining -= got
+            if remaining <= max(_DECOY_SLOT_SLACK, int(0.1 * want)):
+                break
+        carry = remaining
+        out.append("\n\n".join(picked))
+    return _render_stepk_parts(theorem, k, 2) + ["## Library context\n" + "\n\n".join(out)]
+
+
 def _render_hoponly_parts(theorem: BenchmarkTheorem, k: int, level: int) -> list[str]:
     """``hoponly:N`` = ``sig:N`` minus the MPI lemmas: the N-hop closure alone.
 
@@ -815,6 +958,8 @@ def render(
         if chain in ("sigpad", "siglorem") and level < 1:
             raise ValueError(f"{chain}:0 not defined; sig:0 has no non-MPI entry to pad")
         parts = _render_padded_library_parts(theorem, k, level, chain)
+    elif chain in ("sigfar", "signear", "prooffar", "proofnear"):
+        parts = _render_decoy_library_parts(theorem, k, level, chain)
     else:
         raise ValueError(f"unknown chain {chain!r}")
     return RenderedContext(chain=chain, level=level, text="\n\n".join(parts))
@@ -967,6 +1112,11 @@ def is_trivial_rung(  # the per-rung early exits are the spec; pylint: disable=t
         return _render_padded_library_parts(theorem, k, level, chain) == _render_library_parts(
             theorem, k, level, form
         )
+    if chain in ("sigfar", "signear", "prooffar", "proofnear"):
+        # Trivial exactly when there is no non-MPI entry to replace.
+        if level < 1:
+            return True
+        return not _library_premises(theorem, k, level, exclude_seeds=True)
     if chain == "hoponly":
         # Trivial when the closure minus the MPI is empty, or gains nothing
         # over the level below.

@@ -1,0 +1,52 @@
+# CALIBRATION for sweep_b200.yaml: identical generation settings on 10 cells
+# x 3 rungs, to measure per-model throughput and output length and to confirm
+# the pipeline end to end (generation, spool, Lean verification) before the
+# full run. Run it under its own LEAN_SPOOL_PREFIX and results directory.
+
+temperature: 0.7
+
+# No output cap: the request omits max_tokens, so an answer ends only when
+# the model stops or reaches its own context window (packed_box.py serves each
+# model at its native length). Correctness over cost: a truncated thinking
+# trace scores as a failure the model did not make.
+max_tokens: null
+
+# Seconds per request. Lanes stream (EC2_STREAM_COMPLETIONS=1), so the read
+# timeout applies between chunks; this bounds only a stalled stream.
+request_timeout: 43200
+
+max_retries: 2
+
+dojo_timeout: 300
+
+concurrent_gen: true
+
+skip_trivial: true
+
+k:
+  strategy: last
+
+n_replicates: 3
+
+rungs:
+  - stepk:2
+  - sig:2
+  - proof:2
+
+# Generation only (NullVerifier): no Lean session per worker. 24 theorem
+# workers x 15 rungs keeps ~360 requests in flight, above vLLM's
+# --max-num-seqs 256, so each server stays saturated without a long queue.
+theorem_workers: 24
+
+max_concurrency: 15
+
+theorems:
+  source: replay_passing
+  kind: random
+  # train + val + test: every split of the post-cutoff corpus is held out.
+  split: all
+  # Last step of a proof whose traced tactics form one state chain, and whose
+  # final tactic cites a corpus premise.
+  linear: true
+  require_mpi: true
+  limit: 10

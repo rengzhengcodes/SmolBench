@@ -34,6 +34,7 @@ from .context import validate as validate_rung
 from .corpus import (
     BenchmarkTheorem,
     data_root,
+    is_linear,
     is_postcutoff_corpus,
     iter_replay_passing,
     iter_with_proof,
@@ -279,7 +280,10 @@ def _require_all_postcutoff(pool: list[BenchmarkTheorem]) -> None:
 
 
 def _select_theorems(
-    spec: dict, *, cell_whitelist: frozenset[tuple] | None = None
+    spec: dict,
+    *,
+    cell_whitelist: frozenset[tuple] | None = None,
+    rungs: list[str] | None = None,
 ) -> list[BenchmarkTheorem]:
     """Resolve a config `theorems` block into a concrete BenchmarkTheorem list.
 
@@ -316,13 +320,16 @@ def _select_theorems(
             "it can produce a compliant selection"
         )
 
+    # ``split: all`` pools train, val and test: for a post-cutoff corpus every
+    # split is held out, and one split alone can be too small.
+    splits = ("train", "val", "test") if split == "all" else (split,)
     if source == "replay_passing":
-        pool = list(iter_replay_passing(kind, split))
+        pool = [t for s in splits for t in iter_replay_passing(kind, s)]
     elif source == "with_proof":
-        pool = list(iter_with_proof(kind, split))
+        pool = [t for s in splits for t in iter_with_proof(kind, s)]
     elif source == "explicit":
         names = set(spec["full_names"])
-        pool = [t for t in load_split(kind, split) if t.full_name in names]
+        pool = [t for s in splits for t in load_split(kind, s) if t.full_name in names]
     else:
         raise ValueError(f"unknown theorems.source: {source!r}")
 
@@ -332,6 +339,37 @@ def _select_theorems(
 
     if max_tactics > 0:
         pool = [t for t in pool if 1 <= len(t.traced_tactics) <= max_tactics]
+    # ``linear``: the traced tactics form one state chain, so the last step and
+    # its replayed prefix are the top-level proof (see corpus.is_linear).
+    if spec.get("linear"):
+        pool = [t for t in pool if t.traced_tactics and is_linear(t)]
+    # ``require_mpi``: the final tactic cites at least one corpus premise, so
+    # the library rungs have an MPI to show.
+    if spec.get("require_mpi"):
+        from .premises import lookup  # pylint: disable=cyclic-import
+
+        pool = [
+            t
+            for t in pool
+            if t.traced_tactics
+            and any(lookup(p["full_name"]) is not None for p in t.traced_tactics[-1].premises)
+        ]
+    # ``require_full_ladder``: no rung of the sweep is trivial at the last step,
+    # so every selected theorem contributes a cell to every rung. Needs the
+    # sweep's rung list and a k strategy of ``last``.
+    if spec.get("require_full_ladder"):
+        if not rungs:
+            raise ValueError("theorems.require_full_ladder needs the sweep's rungs")
+        parsed = [(r.split(":")[0], int(r.split(":")[1])) for r in rungs]
+        pool = [
+            t
+            for t in pool
+            if t.traced_tactics
+            and not any(
+                is_trivial_rung(t, len(t.traced_tactics) - 1, chain, level)  # type: ignore[arg-type]
+                for chain, level in parsed
+            )
+        ]
 
     if 0 < limit < len(pool):
         rng = random.Random(seed)
@@ -787,6 +825,10 @@ _CHAIN_ORDER = {
     "proofpad": 9,
     "siglorem": 10,
     "prooflorem": 11,
+    "sigfar": 12,
+    "signear": 13,
+    "prooffar": 14,
+    "proofnear": 15,
 }
 
 
@@ -1133,7 +1175,7 @@ def _run_cells_at_step_concurrent(
     models_cfg: list[dict],
     n_replicates: int,
     temperature: float,
-    max_tokens: int,
+    max_tokens: int | None,
     provider_factory: Callable[[dict], tuple[Any, int]],
     base_seed: int,
     request_timeout: int,
@@ -1291,7 +1333,7 @@ def _run_cells_at_step_concurrent(
                     context_length=ctx_len,
                     extra_args={
                         "temperature": temperature,
-                        "max_tokens": max_tokens,
+                        **({} if max_tokens is None else {"max_tokens": max_tokens}),
                         **(p["extra_params"] or {}),
                     },
                     request_timeout=request_timeout,
@@ -1489,7 +1531,9 @@ def sweep(
         load_cell_whitelist(cell_whitelist_path) if cell_whitelist_path else None
     )
 
-    theorems = _select_theorems(config["theorems"], cell_whitelist=cell_whitelist)
+    theorems = _select_theorems(
+        config["theorems"], cell_whitelist=cell_whitelist, rungs=config.get("rungs")
+    )
     k_strategy = config.get("k", {}).get("strategy", "last")
     rungs: list[str] = list(config.get("rungs", []))
     for r in rungs:
@@ -1504,7 +1548,10 @@ def sweep(
         _provider_for(mc)
     n_replicates = int(config.get("n_replicates", 1))
     temperature = float(config.get("temperature", 0.7))
-    max_tokens = int(config.get("max_tokens", 4096))
+    # ``max_tokens: null`` sends no cap: vLLM then allows whatever context the
+    # prompt leaves, so only the model's own window can end an answer.
+    raw_max_tokens = config.get("max_tokens", 4096)
+    max_tokens = None if raw_max_tokens is None else int(raw_max_tokens)
     dojo_timeout = int(config.get("dojo_timeout", DEFAULT_DOJO_TIMEOUT))
     concurrent_gen = bool(config.get("concurrent_gen", True))
     max_concurrency = int(config.get("max_concurrency", 12))
