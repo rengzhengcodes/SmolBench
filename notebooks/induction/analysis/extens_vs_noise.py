@@ -7,8 +7,8 @@ stay in the primary contrast family because re-correcting after picking the subs
 data-dependent family sizing.
 """
 
-import collections
 import sys
+from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 
@@ -44,12 +44,23 @@ class Mechanism(StrEnum):
 MECHANISMS = tuple(Mechanism)
 
 
-def mechanism(nc_e: float, nc_n: float) -> str:
+def mechanism(nc_e: float, nc_n: float) -> Mechanism:
     """Annotate which arms crossed the collapse threshold.
 
-    The label is a compliance annotation only: it says which arm(s) failed the output
-    contract on the compared seeds, not which arm scored higher. Direction is always
-    read from the measured accuracies (`direction`).
+    The label says only which arm(s) failed the output contract on the compared
+    seeds, never which scored higher; direction is always read from `direction`.
+
+    Parameters
+    ----------
+    nc_e : float
+        Non-compliance rate of the extens arm on the compared seeds.
+    nc_n : float
+        Non-compliance rate of the noise arm on the compared seeds.
+
+    Returns
+    -------
+    Mechanism
+        Compliance annotation for the lane.
     """
     e_bad, n_bad = nc_e >= COLLAPSE_THRESHOLD, nc_n >= COLLAPSE_THRESHOLD
     if e_bad and n_bad:
@@ -90,7 +101,27 @@ def nc(
     key: tuple[str, str],
     seeds: list[int],
 ) -> float:
-    """Return the compared-seed non-compliance rate."""
+    """Return one arm's non-compliance rate over the compared seeds.
+
+    Parameters
+    ----------
+    census : dict[tuple[str, str], dict]
+        `compliance_census` output.
+    key : tuple[str, str]
+        ``(model, info)`` cell of the arm.
+    seeds : list[int]
+        Seeds both arms of the contrast cover.
+
+    Returns
+    -------
+    float
+        Pooled non-compliance rate over `seeds`.
+
+    Raises
+    ------
+    RuntimeError
+        If the arm has no marks on `seeds`.
+    """
     rate = common_seed_rate(census[key], seeds)
     if rate is None:
         raise RuntimeError(f"no compared-seed marks for {key}")
@@ -116,26 +147,18 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     holm_full_item = holm(np.array([r["p_item"] for r in full]), ALPHA)
     full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
 
+    # One lane per model: its family contrast row (``a`` = extens, ``b`` = noise)
+    # plus the family-level Holm decisions and the compliance annotation.
     rows = []
     for model in MODELS:
         ka, kb = (model, "extens"), (model, "noise_intens")
-        # Contrast order matches the table's extens/noise columns.
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
         nc_e, nc_n = nc(census, ka, fr["seeds"]), nc(census, kb, fr["seeds"])
         rows.append(
             {
+                **fr,
                 "model": model,
-                "acc_e": fr["acc_a"],
-                "acc_n": fr["acc_b"],
-                "n": fr["n"],
-                "b": fr["b"],
-                "c": fr["c"],
-                "n_seeds": fr["n_seeds"],
-                "disc": fr["disc"],
-                "p_cluster": fr["p_cluster"],
-                "p_item": fr["p_item"],
-                "p_unp": fr["p_unpaired"],
                 "dir": direction(fr["acc_a"], fr["acc_b"]),
                 "holm_full": bool(holm_full[i_full]),
                 "holm_full_item": bool(holm_full_item[i_full]),
@@ -176,7 +199,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             if v >= COLLAPSE_THRESHOLD:
                 flags.append(f"{lbl} {v:.0%} non-compliant")
         print(
-            f"{r['model']:13s} {r['acc_e']:7.3f} {r['acc_n']:7.3f} "
+            f"{r['model']:13s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
             f"{r['disc']:6.3f} {r['b']:4d}/{r['c']:<4d} "
             f"{r['p_cluster']:10.2e} {r['p_item']:10.2e} "
             f"{star(r['holm_full']):>5s} {star(h_sub[i]):>4s} "
@@ -205,7 +228,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     )
     for r in sorted(sig, key=lambda r: r["p_cluster"]):
         print(
-            f"  {r['model']:13s} {r['acc_e']:.3f} vs {r['acc_n']:.3f}   "
+            f"  {r['model']:13s} {r['acc_a']:.3f} vs {r['acc_b']:.3f}   "
             f"{r['dir']:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}"
         )
 
@@ -255,24 +278,21 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         for r in sorted(sel, key=lambda r: r["p_cluster"]):
             print(
                 f"  {'SIG ' if r['holm_full'] else '  . '}{r['model']:13s} "
-                f"{r['acc_e']:.3f} vs {r['acc_n']:.3f}   {r['dir']:13s} "
+                f"{r['acc_a']:.3f} vs {r['acc_b']:.3f}   {r['dir']:13s} "
                 f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   p={r['p_cluster']:.2e}"
             )
         if sel_sig:
-            sig_dirs = collections.Counter(r["dir"] for r in sel_sig)
-            up = sig_dirs["noise HIGHER"]
-            down = sig_dirs["extens HIGHER"]
+            sig_dirs = Counter(r["dir"] for r in sel_sig)
+            up, down = sig_dirs["noise HIGHER"], sig_dirs["extens HIGHER"]
             print(
                 f"  => direction among the significant ones: {up} "
                 f"noise-higher, {down} extens-higher, "
                 f"{len(sel_sig) - up - down} tied."
             )
 
-    dirs = collections.Counter(r["dir"] for r in rows)
+    dirs = Counter(r["dir"] for r in rows)
     up_all, down_all = dirs["noise HIGHER"], dirs["extens HIGHER"]
-    coll_dirs = collections.Counter(
-        r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION
-    )
+    coll_dirs = Counter(r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION)
     print(
         f"\n{'=' * 78}\nRAW DIRECTION, ALL {len(rows)} LANES, NO SIGNIFICANCE "
         f"FILTER\n{'=' * 78}\n"

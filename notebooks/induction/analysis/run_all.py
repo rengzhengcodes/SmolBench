@@ -1,8 +1,8 @@
-"""Run induction reports, optionally including multiplicity_sim.
+"""Run the induction reports in one process, optionally ending with multiplicity_sim.
 
-Run in process so imports share one results directory. Exclude the costly,
-result-free simulation unless ``--with-sim`` is passed.
-CHAIN order is fixed: each later script import-time-checks invariants against the earlier ones.
+One process so the scripts share one results directory. The costly, result-free
+simulation runs only behind ``--with-sim``. CHAIN order is fixed: each later script
+import-time-checks invariants against the earlier ones.
 """
 
 import argparse
@@ -13,7 +13,6 @@ from pathlib import Path
 # Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# CHAIN order: each module import-time-checks the ones before it.
 # isort: off
 import power_analysis  # noqa: E402
 import paired_analysis  # noqa: E402
@@ -22,17 +21,13 @@ import extens_vs_noise  # noqa: E402
 
 # isort: on
 
-#: Modules permit direct calls and banner names.
+#: Report scripts in dependency order; each exposes ``main(results_dir)``.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
-
-#: Imported only behind ``--with-sim`` so the default chain never pays for it.
-SIM_MODULE = "multiplicity_sim"
 
 
 def _banner(name: str) -> None:
-    """Print a script banner."""
-    rule = "=" * 78
-    print(f"\n{rule}\n{name}\n{rule}", flush=True)
+    """Print a script banner so a long combined log stays attributable."""
+    print(f"\n{'=' * 78}\n{name}\n{'=' * 78}", flush=True)
 
 
 def main(
@@ -45,6 +40,8 @@ def main(
     ----------
     argv : list[str] | None, optional
         Command-line arguments to parse.
+    results_dir : Path
+        Results tree handed to every script.
 
     Returns
     -------
@@ -53,11 +50,8 @@ def main(
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",
-        description=(
-            "Run the induction analysis chain in one process under the "
-            "project venv: power_analysis -> paired_analysis -> "
-            "significance_report -> extens_vs_noise."
-        ),
+        description="Run the induction analysis chain in one process: "
+        + " -> ".join(m.__name__ for m in CHAIN),
     )
     parser.add_argument(
         "--with-sim",
@@ -73,7 +67,8 @@ def main(
         _banner(module.__name__)
         module.main(results_dir)
     if args.with_sim:
-        multiplicity_sim = importlib.import_module(SIM_MODULE)
+        # Imported here so the default chain never pays for it.
+        multiplicity_sim = importlib.import_module("multiplicity_sim")
         _banner(multiplicity_sim.__name__)
         multiplicity_sim.main(results_dir=results_dir)
     return 0
