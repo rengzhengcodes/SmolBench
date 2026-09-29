@@ -7,6 +7,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
+from operator import itemgetter
 from pathlib import Path
 
 # Required when loaded by path rather than as ``__main__``.
@@ -34,14 +35,17 @@ from scipy.stats import chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
+#: ``(model, info)`` naming one condition lane.
+CellKey = tuple[str, str]
+
 
 @dataclass(frozen=True)
 class CellMarks:
     """One map per `(model, info)` cell keyed by seed."""
 
-    correct: dict[tuple[str, str], dict[int, np.ndarray]]
-    valid: dict[tuple[str, str], dict[int, np.ndarray]]
-    compliance: dict[tuple[str, str], dict[int, tuple[str, ...]]]
+    correct: dict[CellKey, dict[int, np.ndarray]]
+    valid: dict[CellKey, dict[int, np.ndarray]]
+    compliance: dict[CellKey, dict[int, tuple[str, ...]]]
 
 
 def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
@@ -49,64 +53,65 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
 
     One parse supplies all views so reports cannot disagree about a replicate.
 
+    Parameters
+    ----------
+    results_dir : Path, optional
+        Root of the synced ``<model>_<info>/rep_<seed>.yaml`` tree.
+
+    Returns
+    -------
+    CellMarks
+        Correct, valid, and compliance maps for every roster cell.
+
     Raises
     ------
     SystemExit
-        If a condition yields no replicate seeds at all.
+        If a lane has no replicate seeds, an unexpected seed, or a short replicate.
     """
-    correct: dict[tuple[str, str], dict[int, np.ndarray]] = {}
-    valid: dict[tuple[str, str], dict[int, np.ndarray]] = {}
-    compliance: dict[tuple[str, str], dict[int, tuple[str, ...]]] = {}
+    correct: dict[CellKey, dict[int, np.ndarray]] = {}
+    valid: dict[CellKey, dict[int, np.ndarray]] = {}
+    compliance: dict[CellKey, dict[int, tuple[str, ...]]] = {}
     store = LocalResultsStore(results_dir)
     expected = set(range(BASE_SEED, BASE_SEED + N_REPLICATES))
     for model in MODELS:
         for info in INFOS:
             seeds = store.list_seeds(None, model, info)
+            lane = store.path(
+                ReplicateAddress(tag=model, info=info, seed=BASE_SEED)
+            ).parent
             if not seeds:
                 # Gate on seeds: missing and empty lanes both lack usable data.
-                cdir = store.path(
-                    ReplicateAddress(tag=model, info=info, seed=BASE_SEED)
-                ).parent
                 raise SystemExit(
                     f"No replicates for ({model}, {info}); no rep_{{seed}}.yaml "
-                    f"files in\n  {cdir}\nCall "
+                    f"files in\n  {lane}\nCall "
                     "InductionExperiment.harness.sync_down() first."
                 )
             unexpected = sorted(set(seeds) - expected)
             if unexpected:
-                lane = store.path(
-                    ReplicateAddress(tag=model, info=info, seed=unexpected[0])
-                ).parent
                 raise SystemExit(
                     f"Unexpected replicate seeds in {lane}: {unexpected}; "
                     f"expected {min(expected)}–{max(expected)}"
                 )
-            c_by_seed, v_by_seed, k_by_seed = {}, {}, {}
+            cell = (model, info)
+            correct[cell], valid[cell], compliance[cell] = {}, {}, {}
             for seed in seeds:
                 # Reuse one load for every view.
                 addr = ReplicateAddress(tag=model, info=info, seed=seed)
-                path = store.path(addr)
                 marks = store.load_marks(addr).marks
                 scores = [m.score for m in marks]
                 if len(scores) != N_HARMONICS:
                     raise SystemExit(
-                        f"Replicate {path} has {len(scores)} marks, expected "
-                        f"{N_HARMONICS}; collection failed"
+                        f"Replicate {store.path(addr)} has {len(scores)} marks, "
+                        f"expected {N_HARMONICS}; collection failed"
                     )
-                c_by_seed[seed] = np.array([s == 1 for s in scores])
-                v_by_seed[seed] = np.array([s is not None for s in scores])
-                k_by_seed[seed] = tuple(m.compliance for m in marks)
-            correct[(model, info)] = c_by_seed
-            valid[(model, info)] = v_by_seed
-            compliance[(model, info)] = k_by_seed
+                correct[cell][seed] = np.array([s == 1 for s in scores])
+                valid[cell][seed] = np.array([s is not None for s in scores])
+                compliance[cell][seed] = tuple(m.compliance for m in marks)
     return CellMarks(correct, valid, compliance)
 
 
 def aligned(
-    marks: CellMarks,
-    key_a: tuple[str, str],
-    key_b: tuple[str, str],
-    drop_invalid: bool,
+    marks: CellMarks, key_a: CellKey, key_b: CellKey, drop_invalid: bool
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build item-matched vectors for one contrast.
 
@@ -114,17 +119,20 @@ def aligned(
     ----------
     marks : CellMarks
         Parsed marks from `load_marks`.
-    key_a : tuple[str, str]
-        First cell key.
-    key_b : tuple[str, str]
-        Second cell key.
+    key_a, key_b : CellKey
+        The two cells being compared.
     drop_invalid : bool
         Drops item-pairs where either arm's mark is invalid (``score: null``).
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        Matched correct, valid, seed-index, and harmonic-index arrays.
+        Matched correct marks of each arm, then seed-index and harmonic-index arrays.
+
+    Raises
+    ------
+    SystemExit
+        If the two cells share no replicate seed.
     """
     seeds = sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
     if not seeds:
@@ -137,12 +145,9 @@ def aligned(
     b = np.array([marks.correct[key_b][s] for s in seeds])
     keep = np.ones_like(a, dtype=bool)
     if drop_invalid:
-        keep = np.array([marks.valid[key_a][s] for s in seeds]) & np.array(
-            [marks.valid[key_b][s] for s in seeds]
-        )
-    seed_idx = np.repeat(np.arange(len(seeds)), N_HARMONICS).reshape(a.shape)
+        keep = np.array([marks.valid[key_a][s] & marks.valid[key_b][s] for s in seeds])
     # Carry the harmonic through the mask: a survivor's position is unrecoverable from the retained count.
-    harm_idx = np.tile(np.arange(N_HARMONICS), (len(seeds), 1))
+    seed_idx, harm_idx = np.indices(a.shape)
     return a[keep], b[keep], seed_idx[keep], harm_idx[keep]
 
 
@@ -163,11 +168,8 @@ def seed_diffs(a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray) -> list[int]:
     list[int]
         Arm differences, one per unique seed.
     """
-    a_i, b_i = a.astype(np.int64), b.astype(np.int64)
-    return [
-        int(a_i[seed_idx == s].sum() - b_i[seed_idx == s].sum())
-        for s in np.unique(seed_idx)
-    ]
+    d = a.astype(np.int64) - b.astype(np.int64)
+    return [int(d[seed_idx == s].sum()) for s in np.unique(seed_idx)]
 
 
 def signflip_exact_p(diffs: Iterable[int]) -> float:
@@ -236,7 +238,7 @@ def rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
     level : float
         Error rate handed to `apply_corrections` (FWER alpha or FDR q).
     method : str
-        Key of the correction to return, e.g. ``"holm"`` or ``"bh"``.
+        Key of the correction to return, e.g. ``"Holm"`` or ``"BH"``.
 
     Returns
     -------
@@ -313,8 +315,7 @@ def design_effect(
     seeds = np.unique(seed_idx)
     if seeds.size < 3:
         return None
-    per_seed_total = np.array([d[seed_idx == s].sum() for s in seeds])
-    observed = per_seed_total.var(ddof=1)
+    observed = np.array([d[seed_idx == s].sum() for s in seeds]).var(ddof=1)
     assumed = float(np.sum([d[harm_idx == k].var(ddof=1) for k in np.unique(harm_idx)]))
     if not np.isfinite(assumed) or assumed <= 0:
         return None
@@ -322,10 +323,7 @@ def design_effect(
 
 
 def contrast_row(
-    marks: CellMarks,
-    key_a: tuple[str, str],
-    key_b: tuple[str, str],
-    drop_invalid: bool = False,
+    marks: CellMarks, key_a: CellKey, key_b: CellKey, drop_invalid: bool = False
 ) -> dict:
     """Compute every paired statistic the reports share for one contrast.
 
@@ -333,8 +331,8 @@ def contrast_row(
     ----------
     marks : CellMarks
         Parsed marks from `load_marks`.
-    key_a, key_b : tuple[str, str]
-        The two ``(model, info)`` cells being compared.
+    key_a, key_b : CellKey
+        The two cells being compared.
     drop_invalid : bool, optional
         Forwarded to `aligned`. Dropping pairs changes the per-seed statistic,
         so ``p_cluster`` is ``None`` in that mode.
@@ -378,7 +376,7 @@ def labeled_rows(
         Loaded per-cell marks.
     contrasts : Iterable[tuple]
         ``(label, key_a, key_b)`` triples as built by `build_primary_contrasts`.
-    drop_invalid : bool
+    drop_invalid : bool, optional
         Forwarded to `contrast_row`.
 
     Returns
@@ -402,20 +400,18 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     print("Loading marks ...", flush=True)
     marks = load_marks(results_dir)
     depths = {k: len(v) for k, v in marks.correct.items()}
-    print(
-        f"  {len(marks.correct)} conditions; replicate depth "
-        f"min={min(depths.values())} max={max(depths.values())}"
-    )
-    short = sorted({m for (m, _), n in depths.items() if n < max(depths.values())})
+    shallow, deep = min(depths.values()), max(depths.values())
+    print(f"  {len(depths)} conditions; replicate depth min={shallow} max={deep}")
+    short = sorted({m for (m, _), n in depths.items() if n < deep})
     if short:
         print(f"  still collecting (compared on their common seeds only): {short}")
     # The shallowest lane sets each shared-seed sign-flip resolution floor.
-    if min(depths.values()) < N_REPLICATES:
+    if shallow < N_REPLICATES:
         print(
-            f"  WARNING: shallowest lane has {min(depths.values())} replicates "
-            f"and the deepest has {max(depths.values())}, but the study "
+            f"  WARNING: shallowest lane has {shallow} replicates "
+            f"and the deepest has {deep}, but the study "
             f"collects {N_REPLICATES}. A contrast is only as deep as its shorter "
-            f"arm, so the sign-flip floor reaches 2/2^{min(depths.values())} "
+            f"arm, so the sign-flip floor reaches 2/2^{shallow} "
             f"and Holm may be unable to reject ANYTHING (including the positive "
             f"controls) on the contrasts that touch a short lane. This is an "
             f"incomplete sync, not a null result.",
@@ -431,25 +427,23 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             "sized at the wrong threshold."
         )
 
-    for drop_invalid in (False, True):
-        tag = (
-            "DROP-INVALID pairs"
-            if drop_invalid
-            else "null == incorrect (pre-registered)"
-        )
+    bonf = ALPHA / N_PRIMARY
+    for drop_invalid, tag in (
+        (False, "null == incorrect (pre-registered)"),
+        (True, "DROP-INVALID pairs"),
+    ):
         print(f"\n{'=' * 78}\nPRIMARY family, {tag}\n{'=' * 78}")
         rows = labeled_rows(marks, contrasts, drop_invalid)
 
         p_pair = np.array([r["p_item"] for r in rows])
         p_unp = np.array([r["p_unpaired"] for r in rows])
         rej_pair, rej_unp = holm(p_pair), holm(p_unp)
-        bonf_pair, bonf_unp = p_pair <= ALPHA / N_PRIMARY, p_unp <= ALPHA / N_PRIMARY
 
         print(
             f"Rejections at FWER {ALPHA} over {N_PRIMARY} contrasts:\n"
-            f"  unpaired CMH  + Bonferroni : {bonf_unp.sum():3d}\n"
+            f"  unpaired CMH  + Bonferroni : {(p_unp <= bonf).sum():3d}\n"
             f"  unpaired CMH  + Holm       : {rej_unp.sum():3d}\n"
-            f"  paired McNemar+ Bonferroni : {bonf_pair.sum():3d}\n"
+            f"  paired McNemar+ Bonferroni : {(p_pair <= bonf).sum():3d}\n"
             f"  paired McNemar+ Holm       : {rej_pair.sum():3d}"
         )
         if not drop_invalid:
@@ -458,8 +452,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             p_cl = np.array([r["p_cluster"] for r in rows])
             rej_cl = holm(p_cl)
             print(
-                f"  seed sign-flip+ Bonferroni : "
-                f"{int((p_cl <= ALPHA / N_PRIMARY).sum()):3d}\n"
+                f"  seed sign-flip+ Bonferroni : {int((p_cl <= bonf).sum()):3d}\n"
                 f"  seed sign-flip+ Holm       : {int(rej_cl.sum()):3d}   "
                 f"<== PRIMARY\n"
                 f"  => vs item-level McNemar: "
@@ -478,7 +471,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             ("GAINED", gained, "p_item"),
             ("LOST  ", lost, "p_unpaired"),
         ):
-            for r in sorted(sel, key=lambda r: r[key])[:20]:
+            for r in sorted(sel, key=itemgetter(key))[:20]:
                 print(
                     f"    {word} {r['label']:52s} {_acc(r['acc_a']):>7s} vs "
                     f"{_acc(r['acc_b']):>7s}  "
@@ -503,7 +496,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                     continue
                 model = r["key_a"][0]
                 flag = ""
-                if r["p_cluster"] <= ALPHA / N_PRIMARY:
+                if r["p_cluster"] <= bonf:
                     flag = "  <== SEPARATES (Bonferroni)"
                 elif r["p_cluster"] <= ALPHA:
                     flag = "  <== p<0.05 uncorrected"

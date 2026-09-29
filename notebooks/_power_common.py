@@ -9,33 +9,44 @@ import numpy as np
 
 from smolbench.evals.results_store import repo_root
 
-# Fixed for reproducible output.
+#: Fixed for reproducible output.
 SEED = 0
+#: Two-sided familywise level; the per-test alphas are Bonferroni shares of it.
 ALPHA = 0.05
+#: Power levels the replicate-count scans report.
 POWER_TARGETS = (0.80, 0.90)
 
 
 def results_dir(study: str) -> Path:
     """Return the study results directory.
 
-    This mirrors ``Experiment.results_dir``; ``notebooks/<study>/results`` is the path
-    ``experiment_name`` parses into the S3 experiment key, so it is derived from the
+    Mirrors ``Experiment.results_dir``: ``notebooks/<study>/results`` is the path
+    ``experiment_name`` parses into the S3 experiment key, so it derives from the
     study name rather than from the caller's file location.
+
+    Parameters
+    ----------
+    study : str
+        Study directory name under ``notebooks/``.
+
+    Returns
+    -------
+    Path
+        ``<repo>/notebooks/<study>/results``.
     """
     return repo_root() / "notebooks" / study / "results"
 
 
-def _stepup(
-    sortedp: np.ndarray, order: np.ndarray, thresholds: np.ndarray
-) -> np.ndarray:
-    """Apply step-up thresholds and restore input order."""
-    m = sortedp.shape[1]
-    ok = sortedp <= thresholds
-    idx = np.where(ok.any(axis=1), m - 1 - ok[:, ::-1].argmax(axis=1), -1)
-    keep = np.arange(m)[None, :] <= idx[:, None]
-    rej = np.zeros_like(sortedp, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    return rej
+def _stepup(ok: np.ndarray) -> np.ndarray:
+    """Reject every sorted position at or below the last threshold-satisfying one."""
+    return np.logical_or.accumulate(ok[:, ::-1], axis=1)[:, ::-1]
+
+
+def _unsort(rejected: np.ndarray, order: np.ndarray) -> np.ndarray:
+    """Scatter a sorted-position mask back to the input column order."""
+    out = np.zeros_like(rejected)
+    np.put_along_axis(out, order, rejected, axis=1)
+    return out
 
 
 def apply_corrections(pv: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
@@ -52,6 +63,11 @@ def apply_corrections(pv: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
     -------
     dict[str, np.ndarray]
         Rejection masks in the original column order.
+
+    Raises
+    ------
+    ValueError
+        If ``pv`` is not two-dimensional.
     """
     if pv.ndim != 2:
         raise ValueError(f"pv must be two-dimensional, got shape {pv.shape}")
@@ -59,17 +75,14 @@ def apply_corrections(pv: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
     order = np.argsort(pv, axis=1)
     sortedp = np.take_along_axis(pv, order, axis=1)
     ranks = np.arange(1, m + 1)
-    out = {"Bonferroni": pv <= alpha / m}
-    thr = alpha / (m - ranks + 1)
-    viol = sortedp > thr
-    first = np.where(viol.any(axis=1), viol.argmax(axis=1), m)
-    keep = np.arange(m)[None, :] < first[:, None]
-    rej = np.zeros_like(pv, dtype=bool)
-    np.put_along_axis(rej, order, keep, axis=1)
-    out["Holm"] = rej
-    out["Hochberg"] = _stepup(sortedp, order, thr)
-    out["BH"] = _stepup(sortedp, order, alpha * ranks / m)
-    return out
+    # Holm steps down and Hochberg steps up through the same thresholds.
+    fwer_ok = sortedp <= alpha / (m - ranks + 1)
+    return {
+        "Bonferroni": pv <= alpha / m,
+        "Holm": _unsort(np.logical_and.accumulate(fwer_ok, axis=1), order),
+        "Hochberg": _unsort(_stepup(fwer_ok), order),
+        "BH": _unsort(_stepup(sortedp <= alpha * ranks / m), order),
+    }
 
 
 def fmt_r(r: int | None, max_replicates: int) -> str:
