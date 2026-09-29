@@ -116,6 +116,23 @@ derives the goal. `examples/` holds a small rendered theory in every arm.
   otherwise, over the valid steps plus the failing step's rule. A `disc` rule counts as a
   tree rule (an attempt to enter a tree); a `junk` rule counts as nothing.
 
+Before `verify`, `extract.extract_answer(content, scoring)` removes inline reasoning and
+takes the final block of step lines. There are two scoring modes:
+
+- `iclr`: the block is the last contiguous run of step lines, so a prose line between two
+  steps drops every step above it. The ICLR 2027 submission's Horn table was scored this
+  way. Rows written before 2026-09-28 carry these verdicts and have no `scoring` field.
+- `default`: prose lines between steps are skipped. A code fence, a reasoning close tag
+  (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
+  still ends the block, so a draft above it is not scored.
+
+The drivers take `--scoring` (default `default`) and store it in each row.
+`notebooks/deduction/analysis/horn_results.py --scoring iclr|default` reports either mode
+from the same rows: `iclr` keeps the stored verdicts, and `default` rescores each finished
+row from its stored content against the served rungs (`--rungs`). On the 16-model roster,
+`default` changes gemma-4-e2b (both 45.7 to 62.3, disc 60.7 to 80.0) and Ministral-3B
+(lem 33.3 to 29.7), and every other model by 1.3 points or less.
+
 `checker.certify(theory, rendered)` runs on every arm before it is written. It checks
 that rule content is unique; the goal is derivable; every library lemma lies on a path to
 the goal and fires for `c`; every fact is a premise of a chain lemma; the lemma route
@@ -146,9 +163,10 @@ returned no proof (contamination by the parent chat) are refilled. See
 `scripts/deduction/horn/README.md`.
 
 Served models: `scripts/deduction/horn/sweep.py` sends each cell as one chat completion
-(system message + prompt) with a 32,768-token output cap, temperature 0.7, the roster
-model's thinking arguments, and no tools; the answer is the last block of `derive` lines
-after the reasoning is stripped. `finish_reason = length` scores as a failure.
+(system message + prompt) with temperature 0.7, the roster model's thinking arguments, and
+no tools. The output cap is `--max-tokens` (default 32,768; the ICLR runs used 131,072),
+cut per cell so that prompt and output fit `--context-length` (131,072). The answer is
+extracted under `--scoring` (section 5). `finish_reason = length` scores as a failure.
 
 Design: 100 theories (seeds 100-199) x 3 samples per arm, paired by theory. Per model,
 the chain length is chosen from `lem` alone on disjoint calibration seeds: `scripts/

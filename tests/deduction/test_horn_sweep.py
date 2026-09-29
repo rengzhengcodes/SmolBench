@@ -440,3 +440,33 @@ def test_cells_in_is_replicate_major(tmp_path):
         (100, "lem"), (100, "pad"), (101, "lem"), (101, "pad"), (102, "lem"), (102, "pad")
     ]
     assert cells[6].key == ("m4", "lem", 100, 1)
+
+
+def test_reverse_order_and_skip_from(tmp_path):
+    """--order reverse starts at the last replicate and highest seed; --skip-from drops
+    cells another file already holds and picks up new ones while running."""
+    mod = _load_sweep()
+    rung = tmp_path / "m4"
+    for seed in (100, 101):
+        for arm in ("lem", "pad"):
+            d = rung / f"s{seed:04d}" / arm
+            d.mkdir(parents=True)
+            (d / "prompt.md").write_text("p")
+    cells = mod.cells_in(rung, ["lem", "pad"], None, 2)
+    cells.reverse()
+    assert cells[0].key == ("m4", "pad", 101, 1)
+    assert cells[-1].key == ("m4", "lem", 100, 0)
+    other = tmp_path / "other.jsonl"
+    other.write_text(
+        json.dumps({"model": "mm", "rung": "m4", "arm": "pad", "seed": 101, "rep": 1, "verdict": "success"}) + "\n"
+    )
+    skip = mod.SkipSet([str(other)], min_interval_s=0)
+    assert ("mm", "m4", "pad", 101, 1) in skip
+    assert ("mm", "m4", "lem", 100, 0) not in skip
+    with other.open("a") as fh:
+        fh.write(json.dumps({"model": "mm", "rung": "m4", "arm": "lem", "seed": 100, "rep": 0, "verdict": "success"}) + "\n")
+    import os
+    os.utime(other, None)
+    assert ("mm", "m4", "lem", 100, 0) in skip
+    assert ("mm", "stage2_m4", "lem", 100, 0) in skip  # rung names differ across boxes
+    assert len(skip) == 2

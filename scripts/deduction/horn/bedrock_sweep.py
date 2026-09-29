@@ -56,6 +56,7 @@ class BedrockSettings:
     timeout: int
     max_retries: int
     context_length: int = 131072
+    scoring: str = sweep.DEFAULT_SCORING
 
     @property
     def sampling(self) -> dict:
@@ -169,7 +170,7 @@ def run_cell(client, cell: sweep.Cell, st: BedrockSettings) -> dict:
         "content": result.content,
         "reasoning": result.reasoning,
     }
-    row.update(sweep.score(theory, rendered, result))
+    row.update(sweep.score(theory, rendered, result, st.scoring))
     return row
 
 
@@ -199,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--max-retries", type=int, default=6)
     ap.add_argument("--concurrency", type=int, default=4)
+    ap.add_argument(
+        "--scoring",
+        choices=list(sweep.SCORING_MODES),
+        default=sweep.DEFAULT_SCORING,
+        help="proof extraction rule (see smolbench/deduction/horn/extract.py); "
+        "iclr reproduces the ICLR 2027 submission",
+    )
     ap.add_argument("--out", required=True)
     ap.add_argument("--dry-run", action="store_true")
     return ap
@@ -218,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         timeout=a.timeout,
         max_retries=a.max_retries,
         context_length=a.context_length,
+        scoring=a.scoring,
     )
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
