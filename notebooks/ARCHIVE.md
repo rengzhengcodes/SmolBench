@@ -10,14 +10,25 @@ Everything is under `s3://smolbench-results-414266451290/` (`us-west-2`):
 
 | Prefix | What |
 | --- | --- |
-| `<study>/<model>/seed=<seed>/<info>--<run_ts>.yaml` | the live append-only experiment log (`smolbench.evals.results_store`); reads are earliest-wins |
-| `deduction/runs/scaling_<spec-key>/` | per-lane deduction spools (`all_rows.jsonl`, `verified_rows.jsonl`) |
-| `analysis/<date>/` | frozen analysis snapshots the report scripts render from (`scripts/results/snapshot_analysis_data.py`) |
+| `<study>/<model>/seed=<seed>/<info>--<run_ts>.yaml` | the live append-only experiment log (`smolbench.evals.results_store`); reads are earliest-wins over runs not retired by a sibling `.superseded` marker (see below) |
+| `deduction_postcutoff/runs/scaling_<spec-key>/` | the re-collection's per-lane deduction spools (`all_rows.jsonl`, `verified_rows.jsonl`); the prefix `rows_source.spool_prefix()` -- and every reader in the tree -- defaults to |
+| `deduction_postcutoff/runs/dojoinit_recovery_2026-08-18/<lane>/recovered_rows.jsonl` | the DojoInit recovery rows for the post-recovery sensitivity pool; read by `notebooks/deduction/analysis/error_bars.py --recovery-dir` and `statistical_analyses.ipynb`'s Section 5, which fetches these rows through `rows_source.resolve_rows_dir` and computes the post-recovery sensitivity pool from them; the same tree also sits inside the `archives/2026-08-25/` unpacked evidence below |
+| `deduction/runs/scaling_<spec-key>/` | the published pre-cutoff study's per-lane spools; no reader defaults here (`LEAN_SPOOL_PREFIX` has to name it explicitly) |
+| `analysis/<date>/` | frozen analysis snapshots (`scripts/results/snapshot_analysis_data.py`); nothing requires one anymore -- the deduction report scripts take a `--s3 [PREFIX]` (via `rows_source.resolve_rows_dir`) and fetch rows straight off the live spool into scratch instead |
 | `archives/<date>/` | dated archives of what left the tree: zips at the prefix root, plus the unpacked evidence tree, data sidecars, LeanDojo corpus (`notebooks/deduction/`), record files (`notebooks/`), and concluded scripts/tests (`scripts/`, `tests/`) |
 | `archives/2026-08-30/notebooks/induction/audits/` | the three concluded induction audit probes (`check_currency.py`, `verify_survivorship.py`, `response_audit.py`); also `pr4_induction_audits_2026-08-30.zip` on the PR #4 release |
 
 Paths inside an archive are the flat layout of the tree on the day it was
 taken; they are never rewritten to match today's grouped layout.
+
+A run in the live log is retired, never edited or deleted in place. On S3,
+`S3ResultsStore.supersede` writes a sibling marker key (`.yaml` swapped for
+`.superseded`, `S3_SUPERSEDED_SUFFIX`) and every reader skips a marked
+`run_ts` before applying earliest-wins; locally `LocalResultsStore.supersede`
+renames `rep_<seed>.yaml` to `rep_<seed>.SUPERSEDED-<run_ts>.yaml`
+(`LOCAL_SUPERSEDED_INFIX`). `ResultsStore.regrade` supersedes every surviving
+run at an address, then appends the replacement with `regraded_from` naming
+the run it replaced.
 
 Tests that pin archived evidence stream it from S3, never a local copy:
 
@@ -29,8 +40,20 @@ SMOLBENCH_ARCHIVE_S3=s3://smolbench-results-414266451290/archives/<date> \
 ## GitHub releases
 
 The same zips are attached to releases created for the pull requests that
-removed them. Releases attach to tags, not PRs: `gh release list` shows every
-archive tag, with sha256s in the release notes.
+removed them (`gh release list` shows every archive tag). The evidence tree
+they hold is not regenerable, so its sha256s live here as well as in the
+release notes:
+
+| Asset | Date | Size (bytes) | sha256 | Contents |
+| --- | --- | --- | --- | --- |
+| `pr4_regenerable_artifacts_2026-08-25.zip` | 2026-08-25 | 133314 | `1642cd34fc9466fc72bdc1cfe38b3cac6b946f0d549134310a9303ff5f33afae` | the four `*_REPORT.txt` files (`notebooks/induction/{EXTENS_VS_NOISE,SIGNIFICANCE}_REPORT.txt`, `notebooks/deduction/{ERROR_BARS,HINT_VS_NOISE}_REPORT.txt`) plus `scripts/arch/{page_data.json,model_architectures.html}` |
+| `pr4_evidence_and_data_2026-08-25.zip` | 2026-08-25 | 7340725 | `8d93a25afbf12c81b9846308034b122028ac3db047c9b4053942f42555b0e24a` | `notebooks/deduction/results/**` (52 files) and `notebooks/deduction/data/*` (4 files), plus the 7 removed pinning tests as `tests/archived_tests_2026-08-25.py` |
+| `pr4_notebook_records_2026-08-25.zip` | 2026-08-25 | 339362 | `e05eff9840c167cdad0387190768ae1bc4c1d4b1432cf0ff0370236c9bbaf889` | the 19 non-code record files under `notebooks/` (dated analysis/plan writeups, the `corrections_2026-08-21/` verdict and re-gate JSONs, five induction audit/multiplicity docs) |
+| `pr4_scripts_2026-08-25.zip` | 2026-08-25 | 151482 | `c75e6e013e49cd583e465914006e9bbb2713e2aa64f76924792db03e469fd677` | 17 files under `scripts/` (concluded determinism/delivery probes, the 2026-08-14/16 incident launchers, `recover_dojoinit_std`, and the three statistical scripts `posterior_power` / `flip_probe` / `flip_free_bound`) plus the 4 test modules that only loaded them |
+| `pr4_induction_audits_2026-08-30.zip` | 2026-08-30 | 5558 | `f5a3079c34656862ccff7c08a5548a6aa76863f1bda93a4d2b67005f4655eccf` | the three concluded induction audit probes `notebooks/induction/audits/{check_currency,response_audit,verify_survivorship}.py` -- same zip named in the S3 table above |
+
+
+All five are mirrored in S3 under `archives/<date>/` (see the S3 table above).
 
 ## What is regenerable, and what is not
 
