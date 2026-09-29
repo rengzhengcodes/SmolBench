@@ -1,4 +1,4 @@
-"""Section 7's bootstrap resolution and clustered-data behavior."""
+"""Posterior bootstrap resolution and clustered-data behavior."""
 
 from __future__ import annotations
 
@@ -20,12 +20,20 @@ def nb() -> dict:
     return load_notebook()
 
 
-def _section_7_markdown(nb: dict[str, Any]) -> str:
-    """Return Section 7 markdown."""
-    sources = ["".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
-               for cell in nb["cells"]]
-    start = next(i for i, s in enumerate(sources) if s.startswith("## Section 7"))
-    end = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
+def _posterior_markdown(nb: dict[str, Any]) -> str:
+    """Return the posterior section markdown."""
+    sources = [
+        "".join(cell["source"]) if cell["cell_type"] == "markdown" else ""
+        for cell in nb["cells"]
+    ]
+    start = next(
+        i
+        for i, s in enumerate(sources)
+        if s.startswith("## Section 4 -- posterior power")
+    )
+    end = next(
+        i for i in range(start + 1, len(sources)) if sources[i].startswith("## ")
+    )
     assert start < end, (start, end)
     return "\n".join(sources[start:end])
 
@@ -79,35 +87,31 @@ def test_boot_resamples_warns_when_it_caps(
     first = capsys.readouterr().out
     assert "200000" in first.replace(",", "").replace("_", ""), first
     assert "966000" in first.replace(",", "").replace("_", ""), first
-    # Section 7's real-data cell calls this 966 times; one warning, not 966.
+    # The real-data cell calls this 966 times; one warning, not 966.
     stats.boot_resamples(alpha)
     assert capsys.readouterr().out == ""
 
 
 def test_paired_diff_ci_defaults_to_the_derived_count(
-    stats: ModuleType, modules: dict[str, Any]
+    stats: ModuleType, modules: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The default uses the derivation, not a second constant."""
     import numpy as np
 
-    error_bars = modules["error_bars"]
     seen: list[int] = []
-    real = error_bars.bootstrap_stats
+    real = stats.bootstrap_stats
 
     def spy(succ: Any, size: Any, B: int, seed: int, alpha: float = 0.05) -> dict:
         seen.append(B)
         return real(succ, size, B, seed, alpha)
 
-    error_bars.bootstrap_stats = spy
-    try:
-        rng = np.random.default_rng(0)
-        n_harm = modules["ind_pa"].N_HARMONICS
-        a = (rng.random((6, n_harm)) < 0.5).reshape(-1)
-        b = (rng.random((6, n_harm)) < 0.5).reshape(-1)
-        seed_idx = np.repeat(np.arange(6), n_harm)
-        stats.paired_diff_ci(a, b, seed_idx, alpha=0.01, error_bars=error_bars)
-    finally:
-        error_bars.bootstrap_stats = real
+    monkeypatch.setattr(stats, "bootstrap_stats", spy)
+    rng = np.random.default_rng(0)
+    n_harm = modules["ind_pa"].N_HARMONICS
+    a = (rng.random((6, n_harm)) < 0.5).reshape(-1)
+    b = (rng.random((6, n_harm)) < 0.5).reshape(-1)
+    seed_idx = np.repeat(np.arange(6), n_harm)
+    stats.paired_diff_ci(a, b, seed_idx, alpha=0.01)
     assert seen == [stats.boot_resamples(0.01)], seen
 
 
@@ -136,6 +140,7 @@ def test_clustered_synth_reaches_the_target_design_effect(
 
     paired = modules["paired"]
     n_harm = modules["ind_pa"].N_HARMONICS
+    harm_idx = np.tile(np.arange(n_harm), 40)
 
     def median_deff(sd: float) -> float:
         gen = np.random.default_rng(3)
@@ -143,7 +148,7 @@ def test_clustered_synth_reaches_the_target_design_effect(
         for _ in range(40):
             a, seed_idx = stats.synth(0.5, 40, gen, sd, n_harm=n_harm)
             b, _ = stats.synth(0.5, 40, gen, sd, n_harm=n_harm)
-            value = paired.design_effect(a, b, seed_idx)
+            value = paired.design_effect(a, b, seed_idx, harm_idx)
             if value is not None:
                 deffs.append(value)
         return float(np.median(deffs))
@@ -158,7 +163,7 @@ def test_clustering_inflates_the_decided_rate_on_a_true_null(
     """A clustered true null is DECIDED more often than alpha allows."""
     n_sim = 60
     kwargs = {"n_harm": modules["ind_pa"].N_HARMONICS,
-              "paired": modules["paired"], "error_bars": modules["error_bars"]}
+              "paired": modules["paired"]}
     iid = stats.verdict_distribution(0.0, n_sim=n_sim, **kwargs)
     clustered = stats.verdict_distribution(stats.CLUSTER_SD, n_sim=n_sim, **kwargs)
     assert sum(iid["verdicts"].values()) == n_sim, iid
@@ -190,11 +195,11 @@ def test_self_test_asserts_no_equivalence_under_clustering(nb: dict[str, Any]) -
     assert not offenders, offenders
 
 
-def test_section_7_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
-    """Section 7 names ``design_effect`` and the PR #12 parallel."""
-    joined = _section_7_markdown(nb)
+def test_posterior_section_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
+    """The posterior section names ``design_effect`` and the PR #12 parallel."""
+    joined = _posterior_markdown(nb)
     for token in ("design_effect", "multiplicity_sim", "PR #12"):
-        assert token in joined, f"section 7 markdown never mentions {token!r}"
+        assert token in joined, f"posterior markdown never mentions {token!r}"
 
 
 def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(
@@ -203,30 +208,32 @@ def test_resample_sweep_shows_the_posterior_alpha_is_not_resolved(
     """No grid B reaches DRIFT_TOL: 500,000 gives 25.9 tail draws, not 50, so cap B."""
     import numpy as np
 
-    error_bars = modules["error_bars"]
     n_harm = modules["ind_pa"].N_HARMONICS
     gen = np.random.default_rng(20260904)
     a, seed_idx = stats.synth(0.5, 30, gen, n_harm=n_harm)
     b, _ = stats.synth(0.5, 30, gen, n_harm=n_harm)
     n_tests = stats.posterior_family(
-        tuple(modules["run_study"].MODELS), tuple(modules["run_study"].INFO_TYPES))
+        tuple(modules["run_study"].MODELS), tuple(modules["run_study"].INFO_TYPES)
+    )
     alpha = 2 * modules["power_common"].ALPHA / n_tests
 
-    rows = stats.resample_sweep(a, b, seed_idx, alpha, error_bars=error_bars)
-    assert [row["B"] for row in rows] == list(error_bars.B_GRID)
-    assert rows[0]["drift"] is None, rows[0]        # nothing to compare against
+    rows = stats.resample_sweep(a, b, seed_idx, alpha)
+    assert [row["B"] for row in rows] == list(stats.B_GRID)
+    assert rows[0]["drift"] is None, rows[0]  # nothing to compare against
     drifts = [row["drift"] for row in rows[1:]]
     assert all(d is not None for d in drifts), rows
-    assert max(drifts) > error_bars.DRIFT_TOL, drifts
+    assert max(drifts) > stats.DRIFT_TOL, drifts
     # the largest B on the grid still under-fills the tail it is asked about
     assert rows[-1]["B"] * alpha / 2 < stats.BOOT_TAIL_TARGET, rows[-1]
 
 
-def test_section_7_markdown_explains_the_block_count_limit(nb: dict[str, Any]) -> None:
+def test_posterior_section_markdown_explains_the_block_count_limit(
+    nb: dict[str, Any],
+) -> None:
     """B adds Monte-Carlo precision; R = 30 bounds inference."""
-    joined = _section_7_markdown(nb)
+    joined = _posterior_markdown(nb)
     for token in ("B_GRID", "DRIFT_TOL", "R = 30"):
-        assert token in joined, f"section 7 markdown never mentions {token!r}"
+        assert token in joined, f"posterior markdown never mentions {token!r}"
 
 
 @pytest.fixture(scope="module")
@@ -330,22 +337,35 @@ def test_the_calibration_prints_beside_the_verdict_table(nb: dict[str, Any]) -> 
     sources = ["".join(cell["source"]) for cell in nb["cells"]]
     table = next(i for i, s in enumerate(sources) if "verdict_distribution =" in s)
     calibration = next(i for i, s in enumerate(sources) if "false_decided_rate =" in s)
-    section_8 = next(i for i, s in enumerate(sources) if s.startswith("## Section 8"))
-    assert table < calibration < section_8, (table, calibration, section_8)
-    between = [i for i in range(table + 1, calibration)
-               if nb["cells"][i]["cell_type"] != "markdown"]
-    assert not between, f"code cells {between} sit between the table and its calibration"
+    posterior = next(
+        i
+        for i, s in enumerate(sources)
+        if s.startswith("## Section 4 -- posterior power")
+    )
+    next_heading = next(
+        i for i in range(posterior + 1, len(sources)) if sources[i].startswith("## ")
+    )
+    assert table < calibration < next_heading, (table, calibration, next_heading)
+    between = [
+        i
+        for i in range(table + 1, calibration)
+        if nb["cells"][i]["cell_type"] != "markdown"
+    ]
+    assert (
+        not between
+    ), f"code cells {between} sit between the table and its calibration"
 
 
-def test_section_7_markdown_states_the_validity_rule_without_a_literal(
+def test_posterior_section_markdown_states_the_validity_rule_without_a_literal(
     nb: dict[str, Any], calibration: tuple[dict[str, Any], str]
 ) -> None:
     """Markdown states the rule because reruns move hardcoded thresholds."""
     namespace, _out = calibration
-    joined = _section_7_markdown(nb)
+    joined = _posterior_markdown(nb)
     lowered = joined.lower()
     for token in ("design effect", "calibrat", "valid"):
-        assert token in lowered, f"section 7 markdown never mentions {token!r}"
+        assert token in lowered, f"posterior markdown never mentions {token!r}"
     literal = f"{namespace['CALIBRATED_DEFF_CEILING']:.2f}"
-    assert literal not in joined, \
-        f"section 7 markdown hardcodes the calibrated ceiling {literal}"
+    assert (
+        literal not in joined
+    ), f"posterior markdown hardcodes the calibrated ceiling {literal}"

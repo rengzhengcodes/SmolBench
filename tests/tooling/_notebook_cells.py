@@ -47,8 +47,10 @@ def load_analysis_modules() -> dict:
     because siblings use bare imports, and restore state because ``load_dotenv`` mutates unknown keys.
     """
     namespace: dict = {}
-    saved_modules = {k: sys.modules.get(k)
-                     for k in ("power_analysis", "error_bars", "rows_source")}
+    saved_modules = {
+        k: sys.modules.get(k)
+        for k in ("power_analysis", "paired_analysis", "significance_report")
+    }
     saved_env = dict(os.environ)
     saved_path = list(sys.path)
     try:
