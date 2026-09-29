@@ -6,7 +6,6 @@
 
 import contextlib
 import hashlib
-import importlib.util
 import io
 import shutil
 import sys
@@ -31,6 +30,18 @@ import paired_analysis  # noqa: E402
 import power_analysis  # noqa: E402
 import run_all  # noqa: E402
 import significance_report  # noqa: E402
+
+_ANALYSIS_MODULES = {
+    m.__name__: m
+    for m in (
+        extens_vs_noise,
+        multiplicity_sim,
+        paired_analysis,
+        power_analysis,
+        run_all,
+        significance_report,
+    )
+}
 
 #: Sign-flip floor 2/2**6 is above the primary correction threshold.
 SHALLOW_DEPTH = 6
@@ -157,68 +168,6 @@ def build_tree(
         shutil.copytree(src_dir, dst_dir)
 
 
-#: Every bare module name the induction analysis scripts import by bare name.
-_BARE_SIBLINGS = (
-    "_power_common",
-    "power_analysis",
-    "paired_analysis",
-    "significance_report",
-    "extens_vs_noise",
-    "multiplicity_sim",
-    "run_all",
-)
-_ANALYSIS_MODULES = {
-    name: sys.modules[name] for name in _BARE_SIBLINGS if name in sys.modules
-}
-
-
-def _owned_by(module: ModuleType, directory: Path) -> bool:
-    """Whether `module` was loaded from a file directly inside `directory`."""
-    file = module.__file__
-    if not file:
-        return False
-    return Path(file).resolve().parent == Path(directory).resolve()
-
-
-def load_analysis(name: str, analysis_dir: Path = ANALYSIS_DIR) -> ModuleType:
-    """Import one ``analysis/`` script by path, under its own bare module name.
-
-    The scripts import each other by bare name off a ``sys.path`` insert they
-    perform themselves, so they must be registered in ``sys.modules`` under
-    exactly that bare name or a sibling import re-executes the module and the
-    two copies disagree about ``RESULTS_DIR``. `analysis_dir` lets both study
-    trees share the same collision-safe loader.
-
-    Parameters
-    ----------
-    name : str
-        Bare module name to load.
-    analysis_dir : Path, optional
-        Directory containing the analysis scripts.
-
-    Returns
-    -------
-    ModuleType
-        Loaded analysis module.
-    """
-    # Reuse the cached module only if this directory owns it, and evict foreign
-    # siblings so bare imports re-resolve against analysis_dir.
-    cached = sys.modules.get(name)
-    if cached is not None and _owned_by(cached, analysis_dir):
-        return cached
-    for sibling in _BARE_SIBLINGS:
-        mod = sys.modules.get(sibling)
-        if mod is not None and not _owned_by(mod, analysis_dir):
-            del sys.modules[sibling]
-    sys.path.insert(0, str(analysis_dir))
-    sys.path.insert(0, str(NOTEBOOKS))
-    spec = importlib.util.spec_from_file_location(name, analysis_dir / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def tree_fixture(
     name: str,
     profile: Callable[[str, str], Cell],
@@ -255,6 +204,7 @@ def tree_fixture(
 
 
 def _analysis_module(name: str) -> ModuleType:
+    """Rebind the bare analysis names, which other test modules may unbind, and return `name`'s module."""
     sys.modules.update(_ANALYSIS_MODULES)
     return _ANALYSIS_MODULES[name]
 

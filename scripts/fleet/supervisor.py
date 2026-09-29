@@ -1,10 +1,10 @@
-"""Supervise fleet launch, monitoring, restart, gating, and induction shutdown.
+"""Supervise fleet launch, monitoring, restart, gating, and shutdown.
 
 Persisted state stops a replacement supervisor from re-granting 21 billing boxes
 fresh relaunch budgets. No AWS SDK is imported at module scope here or in
 ``lane_env.py``, so its dotenv load cannot be followed by a stale frozen value.
-No post-run results sync is performed; successful induction exits shut down
-their boxes. Fleet modules load by path because ``scripts/fleet`` is not a package.
+A lane's box shuts down once its induction phase exits cleanly.
+Fleet modules load by path because ``scripts/fleet`` is not a package.
 """
 
 from __future__ import annotations
@@ -802,7 +802,7 @@ def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = bui
 
 
 def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
-    """Advance clean exits without a post-run sync and shut down after induction."""
+    """Advance clean exits and shut down lanes whose phases are all complete."""
     for key, run in runs.items():
         if run.halted or run.done or run.proc is None:
             continue
@@ -858,7 +858,7 @@ def _run_fleet(
     gate: bool,
     log_dir: Path,
 ) -> None:
-    """Run induction without a post-run sync; shut down each instance on success.
+    """Launch and supervise lanes to completion or halt.
 
     Launch tier D, the scarcest capacity, then tier A, staggered, and wait for selected ``GATE_MODELS``
     before B/C. That wait runs full monitor ticks so gate crashes are retried or halted promptly.
