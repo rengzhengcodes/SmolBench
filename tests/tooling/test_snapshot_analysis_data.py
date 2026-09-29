@@ -1,8 +1,4 @@
-"""Offline contract for snapshot_analysis_data; no AWS.
-
-``MANIFEST.json`` has no hand-written dataset notes; reading rules live in a
-dated provenance document copied beside the data.
-"""
+"""Offline contract for induction snapshots; no AWS."""
 
 import json
 import sys
@@ -12,10 +8,6 @@ from typing import Any
 import pytest
 
 from scripts.results import snapshot_analysis_data as snap
-from tests._paths import REPO_ROOT
-
-#: The dataset-specific figures that must no longer be emitted from Python.
-DATASET_LITERALS = ("74 cells", "232", "712", "68/30/50", "5.9", "24.6")
 
 
 class FakeS3:
@@ -56,11 +48,9 @@ def run_snapshot(
             monkeypatch.setenv("SMOLBENCH_RESULTS_S3", bucket_env)
         fake = FakeS3({
             "induction/": [{"Key": "induction/glm-4.7/seed=0/intens--x.yaml", "Size": 10}],
-            "dp/": [{"Key": "dp/scaling_glm-4.7/all_rows.jsonl", "Size": 20}],
         })
         # A copy still verifies after its skip check, so the second lookup succeeds.
-        sizes = {"analysis/t/induction/glm-4.7/seed=0/intens--x.yaml": 10,
-                 "analysis/t/deduction/glm-4.7/all_rows.jsonl": 20}
+        sizes = {"analysis/t/induction/glm-4.7/seed=0/intens--x.yaml": 10}
         seen: set = set()
 
         def head_object(Bucket: str, Key: str) -> dict[str, int]:
@@ -71,7 +61,6 @@ def run_snapshot(
 
         fake.head_object = head_object
         monkeypatch.setattr(snap, "_s3", lambda: fake)
-        monkeypatch.setenv("LEAN_SPOOL_PREFIX", "dp")
         monkeypatch.setattr(sys, "argv", [
             "snapshot_analysis_data.py", "--dest", "analysis/t", *argv])
         assert snap.main() == 0
@@ -93,27 +82,12 @@ def test_manifest_carries_only_computed_fields(
         "provenance_keys",
     }
     # Compute totals from this run, not constants.
-    assert manifest["total_objects"] == 2 and manifest["total_bytes"] == 30
-    assert manifest["copied"] == 2
-    # Mirror writes so missing docs are not claimed present; duplicate README
-    # basenames can collide to one key, so accept either result.
+    assert manifest["total_objects"] == 1 and manifest["total_bytes"] == 10
+    assert manifest["copied"] == 1
     put_provenance = [key for _b, key, _body in fake.puts if "/provenance/" in key]
     assert manifest["provenance_keys"] == put_provenance
     assert manifest["provenance_docs"] == len(put_provenance)
-    assert "analysis/t/provenance/SNAPSHOT_NOTES.md" in put_provenance
-
-
-def test_the_reading_rules_ship_as_a_dated_document() -> None:
-    """Keep dated, reviewable counts in git."""
-    doc = REPO_ROOT / "notebooks" / "deduction" / "analysis" / "SNAPSHOT_NOTES.md"
-    assert "notebooks/deduction/analysis/SNAPSHOT_NOTES.md" in snap.PROVENANCE_DOCS
-    text = doc.read_text()
-    for literal in ("74", "232", "151", "81", "712", "944", "5.9", "24.6", "68/30/50"):
-        assert literal in text, literal
-    assert "2026-08-16" in text  # These counts describe one dated dataset.
-    source = (REPO_ROOT / "scripts" / "results" / "snapshot_analysis_data.py").read_text()
-    for literal in DATASET_LITERALS:
-        assert literal not in source, literal
+    assert "analysis/t/provenance/ARCHIVE.md" in put_provenance
 
 
 def test_the_bucket_follows_smolbench_results_s3(

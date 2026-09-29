@@ -11,7 +11,7 @@ path to avoid collisions with test-loader module names.
 | --- | --- |
 | `run_fleet.py` | Fleet entry point: arguments, lane selection, dry-run plan. |
 | `lane_env.py` | Roster, per-lane environment/argv, and required `EC2_*` import order. |
-| `supervisor.py` | Live supervision, gates, restarts, spool, shutdown, and resumable state. |
+| `supervisor.py` | Live supervision, gates, restarts, shutdown, and resumable state. |
 | `policy.py` | Shared reclaim/crash classification, relaunch caps, and backoff. |
 | `fleet_status.py` | Read-only live-instance listing; library and standalone CLI. |
 | `fleet_teardown.py` | Lists or terminates instances left by `run_fleet.py`. |
@@ -20,14 +20,9 @@ path to avoid collisions with test-loader module names.
 
 Keep these files together: sibling loading resolves via `Path(__file__).parent`.
 
-## scripts/deduction/ -- the Lean deduction study's sharding and verification passes
+## scripts/deduction/horn/ -- Horn sweep and calibration drivers
 
-`lean_verify_rows.py` alone needs `lean_dojo`; its `--dry-run` does not. Run scripts in `.venv`.
-
-| File | What it's for |
-| --- | --- |
-| `merge_lean_shards.py` | Merges a sharded deduction lane's run directories back into the canonical run the verify pass and analysis read. |
-| `lean_verify_rows.py` | The deferred Lean verification pass: replays recorded generation rows against a real Lean/Dojo session and writes real verdicts. |
+The Horn sweep and calibration drivers live in [`scripts/deduction/horn/`](deduction/horn/); see the [Horn benchmark documentation](../smolbench/deduction/horn/README.md).
 
 ## scripts/results/ -- results-store admin, grading, and audit tooling
 
@@ -35,9 +30,7 @@ Keep these files together: sibling loading resolves via `Path(__file__).parent`.
 | --- | --- |
 | `provision_results_bucket.py` | ADMIN-credentialed, one-time idempotent runbook that provisions the S3-backed results bucket. |
 | `audit_run_completeness.py` | Finds data faults that row/key counts miss. |
-| `audit_lean_pinning.py` | Checks all 21 lanes used the same pinned theorems and prompts. |
 | `snapshot_analysis_data.py` | Publishes current data with its repair audit trail. |
-| `evidence_manifest.py` | Builds and verifies sha256-pinned `EVIDENCE.json`. |
 
 ## scripts/smoke/ -- live AWS smoke tests
 

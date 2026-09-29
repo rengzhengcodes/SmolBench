@@ -63,12 +63,6 @@ def test_lane_env_and_commands() -> None:
         "EC2_INSTANCE_TYPES": "g6e.4xlarge,g6e.8xlarge",
         "EC2_REQUIRE_GPU": "L40S:1", "EC2_MAX_PARALLEL_REQUESTS": "1",
         "EC2_MAX_LIFETIME_MIN": "2160", "EC2_REQUEST_TIMEOUT_SECONDS": "3600"}
-    ded = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
-    assert ded["LEAN_MODEL"] == "glm-4.7"
-    # The driver derives this path, preventing a second fleet spelling.
-    assert "LEAN_STATE_FILE" not in ded
-    assert ded["INDUCTION_STATE_FILE"] == ".ec2_state_scaling_glm-4.7.json"
-    assert ded["EC2_EXPERIMENT_TAG"] == "scaling-glm-4.7"
     before = dict(os.environ)
     result = laneenv.lane_env(laneenv.LANES["deepseek-v4-pro"], "induction")
     assert dict(os.environ) == before
@@ -86,10 +80,10 @@ def test_lane_env_and_commands() -> None:
     python = str(REPO_ROOT / ".venv" / "bin" / "python")
     assert laneenv.lane_command(lane, "induction") == [
         python, str(NOTEBOOKS / "induction" / "run_study.py")]
-    assert laneenv.lane_command(lane, "deduction") == [
-        python, str(NOTEBOOKS / "deduction" / "run_study.py")]
     shutdown = laneenv.lane_command(lane, "shutdown")
     assert shutdown[1] == "-c" and "shutdown_instance" in shutdown[2]
+    with pytest.raises(ValueError, match="expected induction/shutdown"):
+        laneenv.lane_command(lane, "unsupported")
     assert sup.is_serve_healthy(
         "INFO:root:serve_model: 'gemma-4-e2b' is up at http://1.2.3.4:8000/v1")
     assert not sup.is_serve_healthy("INFO:root:serve_model: requesting 'gemma-4-e2b' ...")
@@ -485,7 +479,6 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A gate failure must halt never-launched lanes."""
     import logging
@@ -506,8 +499,7 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(
               "qwen3.5-27b",                                            # tier B
               "glm-4.7")}                                               # tier D
     with caplog.at_level(logging.ERROR):
-        sup._run_fleet(lanes, ("induction",), gate=True, log_dir=tmp_path,
-                         phase_name="induction")  # must TERMINATE, not spin
+        sup._run_fleet(lanes, gate=True, log_dir=tmp_path)  # must TERMINATE, not spin
 
     assert "qwen3.5-27b" not in launches, "tier B must not launch behind a failed gate"
     assert set(launches) >= set(sup.GATE_MODELS) | {"glm-4.7"}
@@ -515,49 +507,11 @@ def test_a_failed_family_gate_halts_the_never_launched_lanes(
     assert "FAMILY GATE FAILED" in text
     assert "qwen3.5-27b" in text and "never launched" in text
     assert "fleet finished with" in text
-    assert "fleet_teardown.py --terminate" in capsys.readouterr().out
-
-
-def test_a_spool_failure_reaches_the_closing_report(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Spool failures must reach the closing report."""
-    import logging
-    from types import SimpleNamespace as NS
-
-    monkeypatch.setattr(sup, "MONITOR_INTERVAL_SECONDS", 0)
-    monkeypatch.setattr(sup, "LAUNCH_STAGGER_SECONDS", 0)
-    spool_ticks = {"n": 0}
-
-    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(spool_ticks))
-    monkeypatch.setattr(sup, "_check_cot", lambda runs, *a, **k: None)
-    monkeypatch.setattr(sup, "_start_phase", _recording_start_phase([], rc=0))
-    shutdowns = []
-    monkeypatch.setattr(sup, "subprocess",
-                        NS(run=lambda cmd, **kw: shutdowns.append(cmd), Popen=None))
-
-    def _boom(run_dir: Path, key: str) -> None:
-        # SystemExit must not be swallowed by exception handling.
-        raise SystemExit(f"EC2_EXPERIMENT_TAG mismatch for {key}")
-
-    monkeypatch.setattr(sup, "_deduction_driver", lambda: NS(spool_to_s3=_boom))
-
-    lanes = {"glm-4.7": laneenv.LANES["glm-4.7"]}
-    with caplog.at_level(logging.ERROR):
-        sup._run_fleet(lanes, ("deduction",), gate=False, log_dir=tmp_path,
-                         phase_name="deduction")
-
-    assert "glm-4.7" in caplog.text and "spool" in caplog.text.lower()
-    assert "SystemExit" in caplog.text
-    assert shutdowns, "the lane still completes and its box is still shut down"
 
 
 def test_no_fleet_script_names_the_results_bucket() -> None:
     """Fleet scripts must not name the results bucket."""
-    banned = ("smolbench-results-414266451290", "sync_deduction_spool",
-              "SPOOL_BUCKET", "SPOOL_REGION")
+    banned = ("smolbench-results-414266451290",)
     for source in (SCRIPTS / "fleet").glob("*.py"):
         text = source.read_text()
         assert not [b for b in banned if b in text], source.name
@@ -705,23 +659,23 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
     assert len(body.splitlines()) < 300, "run_fleet.py is not a thin entry point"
 
 
-def test_the_dry_run_plan_still_renders_every_lane_and_phase(
+def test_the_dry_run_plan_renders_induction_and_shutdown(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Dry-run renders every selected lane phase."""
-    assert fleet.main(["--dry-run", "--phase", "both", "--lanes", "glm-4.7"]) == 0
+    """Dry-run renders induction and the shutdown that follows it."""
+    assert fleet.main(["--dry-run", "--lanes", "glm-4.7"]) == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out and "glm-4.7 (tier D" in out
     assert "EC2_EXPERIMENT_TAG=scaling-glm-4.7" in out
-    assert "[induction] command:" in out and "[deduction] command:" in out
-    assert "[shutdown] command" in out
+    assert "[induction] command:" in out
+    assert "[shutdown] command (after a successful induction exit):" in out
     assert "WIRING preview only" in out
 
 
 def _persisted_runs() -> dict[str, Any]:
     """Build persisted running and halted lanes."""
-    backing_off = sup._LaneRun(lane=laneenv.LANES["glm-4.7"], phases=("induction", "deduction"))
-    backing_off.phase_index = 1
+    backing_off = sup._LaneRun(lane=laneenv.LANES["glm-4.7"], phases=("induction",))
+    backing_off.phase_index = 0
     backing_off.crash_relaunches = 1
     backing_off.reclaim_relaunches = 4
     backing_off.cot_checked = True
@@ -765,13 +719,14 @@ def test_a_resumed_supervisor_continues_with_the_persisted_counters(
     shift = 10_000.0  # a fresh process's arbitrary monotonic origin
     monkeypatch.setattr(sup.time, "monotonic", lambda: real_monotonic() + shift)
 
-    resumed = {key: sup._LaneRun(lane=laneenv.LANES[key], phases=phases)
-               for key, phases in (("glm-4.7", ("induction", "deduction")),
-                                   ("gemma-4-e2b", ("induction",)))}
+    resumed = {
+        key: sup._LaneRun(lane=laneenv.LANES[key], phases=("induction",))
+        for key in ("glm-4.7", "gemma-4-e2b")
+    }
     assert sup.load_fleet_state(resumed, tmp_path) == 2
 
     lane = resumed["glm-4.7"]
-    assert lane.phase_index == 1 and lane.current_phase == "deduction"
+    assert lane.phase_index == 0 and lane.current_phase == "induction"
     assert (lane.crash_relaunches, lane.reclaim_relaunches) == (1, 4)
     assert lane.cot_checked is True and lane.gate_passed is True
     assert lane.gate_scan_offset == 4096
@@ -835,24 +790,37 @@ def test_the_state_file_is_rewritten_every_tick(
     ticks = {"n": 0}
 
     monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(ticks))
-    sup._run_fleet({"glm-4.7": laneenv.LANES["glm-4.7"]}, ("induction",),
-                   gate=False, log_dir=tmp_path, phase_name="induction")
+    sup._run_fleet({"glm-4.7": laneenv.LANES["glm-4.7"]}, gate=False, log_dir=tmp_path)
     assert saves, "the supervisor state was never written"
     assert (tmp_path / "fleet_state.json").is_file()
     assert json.loads((tmp_path / "fleet_state.json").read_text())["lanes"]["glm-4.7"]["done"]
 
 
-def test_the_fleet_no_longer_manages_per_lane_state_files() -> None:
-    """Fleet and deduction share each lane state path."""
-    deduction = laneenv.lane_env(laneenv.LANES["glm-4.7"], "deduction", base_env={})
-    assert "LEAN_STATE_FILE" not in deduction
-    # Matching paths prevent deduction from provisioning a second box.
-    driver = load_by_path(
-        NOTEBOOKS / "deduction" / "run_study.py", "_deduction_driver_probe",
-        snapshot_env=True)
-    derived = driver.lane_env_defaults("glm-4.7", repo_root=Path("/anchor"))["EC2_STATE_FILE"]
-    assert Path(derived).name == deduction["INDUCTION_STATE_FILE"]
-    assert Path(derived).name == laneenv.LANES["glm-4.7"].state_file
+def test_a_completed_induction_lane_shuts_down_its_box(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A successful induction exit runs one shutdown command."""
+    monkeypatch.setattr(sup, "MONITOR_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(sup, "LAUNCH_STAGGER_SECONDS", 0)
+    ticks = {"n": 0}
+    monkeypatch.setattr(sup, "_monitor_tick", _bounded_tick(ticks))
+    monkeypatch.setattr(sup, "_check_cot", lambda runs, *a, **k: None)
+    monkeypatch.setattr(sup, "_start_phase", _recording_start_phase([], rc=0))
+    shutdowns = []
+    monkeypatch.setattr(
+        sup,
+        "subprocess",
+        SimpleNamespace(run=lambda cmd, **kwargs: shutdowns.append(cmd), Popen=None),
+    )
+
+    sup._run_fleet({"glm-4.7": laneenv.LANES["glm-4.7"]}, gate=False, log_dir=tmp_path)
+
+    assert len(shutdowns) == 1
+    assert "shutdown_instance" in " ".join(shutdowns[0])
+    state = json.loads((tmp_path / "fleet_state.json").read_text())
+    assert state["lanes"]["glm-4.7"]["done"] is True
+
 
 def test_teardown_terminates_by_tag_and_deletes_nothing(
     monkeypatch: pytest.MonkeyPatch,

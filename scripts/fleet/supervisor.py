@@ -1,9 +1,10 @@
-"""Supervise fleet launch, monitoring, restart, gating, spooling, and shutdown.
+"""Supervise fleet launch, monitoring, restart, gating, and induction shutdown.
 
 Persisted state stops a replacement supervisor from re-granting 21 billing boxes
 fresh relaunch budgets. No AWS SDK is imported at module scope here or in
 ``lane_env.py``, so its dotenv load cannot be followed by a stale frozen value.
-Fleet modules load by path because ``scripts/fleet`` is not a package.
+No post-run results sync is performed; successful induction exits shut down
+their boxes. Fleet modules load by path because ``scripts/fleet`` is not a package.
 """
 
 from __future__ import annotations
@@ -163,6 +164,7 @@ def build_results_store() -> Any:
 
 # Exact names and values are pinned by tests/tooling/test_run_fleet.py.
 GATE_MODELS = ("gemma-4-e2b", "nemotron-3-nano-4b", "ministral-3-3b")
+PHASES: tuple[str, ...] = ("induction",)
 LAUNCH_STAGGER_SECONDS = 30
 MONITOR_INTERVAL_SECONDS = 60
 DESCRIBE_EVERY_N_TICKS = 5
@@ -245,17 +247,6 @@ def fleet_image_digest() -> Optional[str]:
     return digest
 
 
-# Only _phase_sequence is import-safe for the dry-run plan.
-
-
-def _deduction_driver() -> ModuleType:
-    """Load deduction lazily because its setup requires lane environment."""
-    return _config.load_module_by_path(
-        "run_fleet_deduction_run_study_dep",
-        _lane_env.REPO_ROOT / "notebooks" / "deduction" / "run_study.py",
-    )
-
-
 @dataclass
 class _Presence:
     """Describe sweep state that distinguishes unknown from confirmed empty.
@@ -319,8 +310,6 @@ class _LaneRun:
     halted: bool = False
     halt_reason: str = ""
     done: bool = False
-    #: Post-deduction spool failure; report without halting collected data.
-    spool_error: str = ""
 
     @property
     def current_phase(self) -> Optional[str]:
@@ -345,7 +334,6 @@ _STATE_PLAIN_FIELDS = (
     "halted",
     "halt_reason",
     "done",
-    "spool_error",
 )
 
 #: Monotonic fields use an ``_epoch`` suffix on disk so nobody reads one into a
@@ -577,30 +565,6 @@ def load_fleet_state(runs: dict[str, _LaneRun], log_dir: Path) -> int:
 
     logging.info(f"run_fleet: resumed {resumed} lane(s) from {path}.")
     return resumed
-
-
-def _phase_sequence(phase: str) -> tuple[str, ...]:
-    """Map a CLI phase to ordered subprocess phases.
-
-    Only a completed deduction phase shuts down its instance.
-
-    Parameters
-    ----------
-    phase : str
-        CLI phase.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Ordered phases.
-    """
-    if phase == "induction":
-        return ("induction",)
-    if phase == "deduction":
-        return ("deduction",)
-    if phase == "both":
-        return ("induction", "deduction")
-    raise ValueError(f"run_fleet: unknown --phase {phase!r}; expected induction/deduction/both")
 
 
 def _start_phase(run: "_LaneRun", log_dir: Path) -> None:
@@ -838,38 +802,24 @@ def _check_cot(runs: dict[str, _LaneRun], store_factory: Callable[[], Any] = bui
 
 
 def _advance_finished(runs: dict[str, _LaneRun], log_dir: Path) -> None:
-    """Advance clean exits or shut down completed deduction lanes."""
+    """Advance clean exits without a post-run sync and shut down after induction."""
     for key, run in runs.items():
         if run.halted or run.done or run.proc is None:
             continue
         if run.proc.poll() != 0:
             continue  # not a clean exit (still running, or handled by the restart policy)
 
-        if run.current_phase == "deduction":
-            # Match the lane subprocess's repo-root result path, never the
-            # driver's runner.results_root(), which reads this supervisor's environment.
-            run_dir = (
-                _lane_env.REPO_ROOT / "notebooks" / "deduction" / "results" / "runs"
-                / f"scaling_{run.lane.key}"
-            )
-            try:
-                # Confirm spool before teardown; SystemExit must not kill supervision.
-                _deduction_driver().spool_to_s3(run_dir, run.lane.key)
-            except (Exception, SystemExit) as exc:  # noqa: BLE001 -- see comment above
-                run.spool_error = f"{type(exc).__name__}: {exc}"
-                logging.error(f"run_fleet[{key}]: spool sync failed: {run.spool_error}")
-
         run.phase_index += 1
         if run.current_phase is not None:
             _start_phase(run, log_dir)
             continue
 
-        # Induction-only runs retain boxes for later deduction.
-        if "deduction" in run.phases:
-            logging.info(f"run_fleet[{key}]: all phases complete; shutting down its instance.")
-            cmd = _lane_env.lane_command(run.lane, "shutdown")
-            env = _lane_env.lane_env(run.lane, "shutdown")
-            subprocess.run(cmd, env=env, check=False)
+        logging.info(
+            f"run_fleet[{key}]: all phases complete; shutting down its instance."
+        )
+        cmd = _lane_env.lane_command(run.lane, "shutdown")
+        env = _lane_env.lane_env(run.lane, "shutdown")
+        subprocess.run(cmd, env=env, check=False)
         run.done = True
 
 
@@ -904,13 +854,11 @@ def _all_terminal(runs: dict[str, _LaneRun]) -> bool:
 
 def _run_fleet(
     lanes: dict[str, _lane_env.Lane],
-    phase_sequence: tuple[str, ...],
     *,
     gate: bool,
     log_dir: Path,
-    phase_name: str,
 ) -> None:
-    """Launch and supervise lanes to completion or halt.
+    """Run induction without a post-run sync; shut down each instance on success.
 
     Launch tier D, the scarcest capacity, then tier A, staggered, and wait for selected ``GATE_MODELS``
     before B/C. That wait runs full monitor ticks so gate crashes are retried or halted promptly.
@@ -919,16 +867,12 @@ def _run_fleet(
     ----------
     lanes : dict[str, _lane_env.Lane]
         Lanes by key.
-    phase_sequence : tuple[str, ...]
-        Ordered lane phases.
     gate : bool
         Wait for selected gate lanes before launching tiers B and C.
     log_dir : Path
         Logs and state directory.
-    phase_name : str
-        Requested phase name.
     """
-    runs = {key: _LaneRun(lane=lane, phases=phase_sequence) for key, lane in lanes.items()}
+    runs = {key: _LaneRun(lane=lane, phases=PHASES) for key, lane in lanes.items()}
     # Restore after all lanes exist and before any launch.
     resumed = load_fleet_state(runs, log_dir)
     logging.info(
@@ -975,16 +919,3 @@ def _run_fleet(
     halted = {key: run.halt_reason for key, run in runs.items() if run.halted}
     if halted:
         logging.error(f"run_fleet: fleet finished with {len(halted)} halted lane(s): {halted}")
-    # Spool failure does not halt a lane, so report it separately.
-    spool_errors = {key: run.spool_error for key, run in runs.items() if run.spool_error}
-    if spool_errors:
-        logging.error(
-            f"run_fleet: {len(spool_errors)} lane(s) had a post-deduction spool failure "
-            f"(data is collected locally, NOT confirmed in S3): {spool_errors}"
-        )
-    if phase_name == "induction":
-        print(
-            "\nrun_fleet: induction-only run complete. Boxes are left RUNNING on purpose "
-            "(the deduction phase may reuse them) -- run "
-            "`scripts/fleet/fleet_teardown.py --terminate` when you are done with them."
-        )

@@ -1,9 +1,9 @@
 """21-lane EC2 fleet supervisor for the family-ladder scaling study.
 
 This entry point handles selection and dry runs; split modules own live fleet
-behavior. The family gate limits image risk before tiers B/C; induction leaves
-instances up for ``fleet_teardown.py --terminate``. An ungated launch can bill
-21 spot instances at once.
+behavior. The family gate limits image risk before tiers B/C; each lane's box
+shuts down after a successful induction exit, with no post-run results sync.
+An ungated launch can bill 21 spot instances at once.
 """
 
 from __future__ import annotations
@@ -48,10 +48,6 @@ _supervisor = _config.load_fleet_module("supervisor")
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="21-lane EC2 fleet supervisor for the family-ladder scaling study."
-    )
-    parser.add_argument(
-        "--phase", choices=("induction", "deduction", "both"), default="induction",
-        help="Which subprocess phase(s) each lane runs this invocation (default: induction).",
     )
     parser.add_argument(
         "--lanes", default="",
@@ -112,8 +108,8 @@ _DRY_RUN_NOTICE = (
 )
 
 
-def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane], phase_name: str) -> None:
-    """Print, per lane, its tier, every scheduled phase's command, and full env.
+def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane]) -> None:
+    """Print each lane's induction command and the following shutdown command.
 
     Avoid live checks so dry runs make no network calls.
 
@@ -121,24 +117,21 @@ def _print_dry_run_plan(lanes: dict[str, _lane_env.Lane], phase_name: str) -> No
     ----------
     lanes : dict[str, _lane_env.Lane]
         Lanes for the plan.
-    phase_name : str
-        Requested phases.
     """
-    phases = _supervisor._phase_sequence(phase_name)
-    print(f"run_fleet DRY RUN -- phase={phase_name!r}, {len(lanes)} lane(s) selected\n")
+    print(f"run_fleet DRY RUN -- {len(lanes)} lane(s) selected\n")
     print(_DRY_RUN_NOTICE)
     for key, lane in lanes.items():
         print(f"=== {key} (tier {lane.tier}, budget {lane.budget_hours}h) ===")
-        for phase in phases:
-            print(f"  [{phase}] command: {' '.join(_lane_env.lane_command(lane, phase))}")
-            print(f"  [{phase}] env:")
-            for env_key, env_val in sorted(_lane_env.lane_env(lane, phase).items()):
-                print(f"        {env_key}={env_val}")
-        if "deduction" in phases:
-            print(
-                f"  [shutdown] command (after a successful deduction exit): "
-                f"{' '.join(_lane_env.lane_command(lane, 'shutdown'))}"
-            )
+        print(
+            f"  [induction] command: {' '.join(_lane_env.lane_command(lane, 'induction'))}"
+        )
+        print("  [induction] env:")
+        for env_key, env_val in sorted(_lane_env.lane_env(lane, "induction").items()):
+            print(f"        {env_key}={env_val}")
+        print(
+            "  [shutdown] command (after a successful induction exit): "
+            f"{' '.join(_lane_env.lane_command(lane, 'shutdown'))}"
+        )
         print()
 
 
@@ -159,7 +152,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     lanes = _selected_lanes(args.lanes)
 
     if args.dry_run:
-        _print_dry_run_plan(lanes, args.phase)
+        _print_dry_run_plan(lanes)
         return 0
 
     log_dir = Path(args.log_dir).resolve() if args.log_dir else _supervisor.LOG_DIR
@@ -172,10 +165,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     _supervisor._run_fleet(
         lanes,
-        _supervisor._phase_sequence(args.phase),
         gate=not args.no_gate,
         log_dir=log_dir,
-        phase_name=args.phase,
     )
     return 0
 

@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 VENV_PYTHON: Path = REPO_ROOT / ".venv" / "bin" / "python"
 
-# Load by path because induction and deduction both provide run_study.py.
+# Load the induction driver by path.
 # Its dotenv setup supplies the allowlisted AWS and cache variables.
 _RUN_STUDY_PATH = REPO_ROOT / "notebooks" / "induction" / "run_study.py"
 run_study = _config.load_module_by_path("induction_run_study", _RUN_STUDY_PATH)
@@ -186,10 +186,12 @@ class Lane:
 
     @property
     def state_file(self) -> str:
-        """Return the state basename that must match deduction's ``lane_env_defaults`` or it silently provisions a second box.
+        """Return the state basename used by this lane's EC2 instance.
 
-        The tag's ``scaling-`` and this file's ``scaling_`` prefixes are independent by construction, not a typo.
+        The tag's ``scaling-`` and this file's ``scaling_`` prefixes are
+        independent by construction.
         """
+
         return f".ec2_state_scaling_{self.key}.json"
 
     @property
@@ -268,25 +270,30 @@ def lane_env(
 ) -> dict[str, str]:
     """Build an isolated lane environment.
 
-    Share the derived state-file path so deduction reattaches; lane image pins
-    override operator exports, which override ec2's default. Always return a new
-    dict and never mutate ``base_env``: across 21 lanes, lane N+1 could otherwise
-    inherit lane N's tag and state file and reattach both to one instance.
+    Lane image pins override operator exports, which override ec2's default.
+    Always return a new dict and never mutate ``base_env``: across 21 lanes,
+    lane N+1 could otherwise inherit lane N's tag and state file and reattach to
+    the wrong instance.
 
     Parameters
     ----------
     lane : Lane
         Lane configuration.
     phase : str
-        Subprocess phase.
+        Subprocess phase: induction or shutdown.
     base_env : Optional[Mapping[str, str]], optional
-        Source environment; ``None`` reads ``os.environ``. ``LEAN_RUN_NAME`` must equal the ``scaling_<key>`` path rebuilt by ``supervisor._advance_finished`` or its confirming re-spool silently does nothing.
+        Source environment; ``None`` reads ``os.environ``.
 
     Returns
     -------
     dict[str, str]
         Lane subprocess environment.
     """
+    if phase not in ("induction", "shutdown"):
+        raise ValueError(
+            f"lane_env: unknown phase {phase!r}; expected induction/shutdown"
+        )
+
     if base_env is None:
         base_env = os.environ
 
@@ -312,14 +319,6 @@ def lane_env(
     if lane.key in LANE_IMAGE_OVERRIDES:
         # V4's known-good image must override a fleet-wide export.
         env["EC2_VLLM_IMAGE"] = LANE_IMAGE_OVERRIDES[lane.key]
-    if phase == "deduction":
-        env.update(
-            {
-                # Leave LEAN_STATE_FILE unset to use the shared derivation.
-                "LEAN_MODEL": lane.key,
-                "LEAN_RUN_NAME": f"scaling_{lane.key}",
-            }
-        )
     return env
 
 
@@ -354,12 +353,12 @@ def lane_command(lane: Lane, phase: str) -> list[str]:
     Raises
     ------
     ValueError
-        Phase outside induction, deduction, or shutdown.
+        Phase outside induction or shutdown.
     """
     if phase == "induction":
         return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "induction" / "run_study.py")]
-    if phase == "deduction":
-        return [str(VENV_PYTHON), str(REPO_ROOT / "notebooks" / "deduction" / "run_study.py")]
     if phase == "shutdown":
         return [str(VENV_PYTHON), "-c", _SHUTDOWN_SNIPPET]
-    raise ValueError(f"lane_command: unknown phase {phase!r}; expected induction/deduction/shutdown")
+    raise ValueError(
+        f"lane_command: unknown phase {phase!r}; expected induction/shutdown"
+    )

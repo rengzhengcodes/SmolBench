@@ -1,4 +1,4 @@
-"""Publish an analysis-ready family-ladder snapshot to S3.
+"""Publish an analysis-ready induction snapshot to S3.
 
 Copy into ``<dest>/<leg>/<model>/...`` without modifying sources; matching-size
 objects resume safely. Server-side copying keeps ~4.5 GB across ~55k objects
@@ -16,7 +16,6 @@ import pathlib
 from typing import Any, Dict, List, Tuple
 
 from smolbench.evals.results_store import resolve_results_location
-from smolbench.evals.spool import spool_prefix
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -26,15 +25,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # `bucket` explicitly rather than reaching for a module global.
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
-#: Provenance documents copied alongside the data, so the snapshot explains
-#: itself. Kept as documents rather than `MANIFEST.json` fields: dataset-specific
-#: measured counts belong in a dated, version-controlled document, not code.
-PROVENANCE_DOCS = (
-    "notebooks/README.md",
-    "notebooks/ARCHIVE.md",
-    "notebooks/deduction/README.md",
-    "notebooks/deduction/analysis/SNAPSHOT_NOTES.md",
-)
+#: Provenance documents copied alongside the induction data.
+PROVENANCE_DOCS = ("notebooks/README.md", "notebooks/ARCHIVE.md")
 
 
 def _s3() -> Any:
@@ -44,10 +36,9 @@ def _s3() -> Any:
 
 
 def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, int]]:
-    """Return ``(leg, model, source_key, size)`` per study object, minus `SKIP_SUBSTRINGS`.
+    """Return ``(leg, model, source_key, size)`` per induction object.
 
-    Strip deduction's ``scaling_`` prefix so both legs share a model name. Keep
-    `bucket` parameterized for redirects and derive the prefix from `spool.spool_prefix()`.
+    Exclude `SKIP_SUBSTRINGS`. Keep `bucket` parameterized for redirects.
 
     Parameters
     ----------
@@ -61,23 +52,19 @@ def iter_source_keys(client: Any, *, bucket: str) -> List[Tuple[str, str, str, i
     List[Tuple[str, str, str, int]]
         Leg, model, source key, and size tuples.
     """
-    deduction_prefix = spool_prefix() + "/"
     out: List[Tuple[str, str, str, int]] = []
     paginator = client.get_paginator("list_objects_v2")
-    for prefix, leg in (("induction/", "induction"), (deduction_prefix, "deduction")):
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                if any(s in key for s in SKIP_SUBSTRINGS):
-                    continue
-                rest = key[len(prefix):]
-                model = rest.split("/", 1)[0]
-                if leg == "deduction":
-                    # 'scaling_qwen3.5-27b' -> 'qwen3.5-27b'
-                    model = model[len("scaling_"):] if model.startswith("scaling_") else model
-                if "/" not in rest:
-                    continue  # skip a stray object directly under the prefix
-                out.append((leg, model, key, obj["Size"]))
+    prefix = "induction/"
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if any(s in key for s in SKIP_SUBSTRINGS):
+                continue
+            rest = key[len(prefix) :]
+            model = rest.split("/", 1)[0]
+            if "/" not in rest:
+                continue  # skip a stray object directly under the prefix
+            out.append(("induction", model, key, obj["Size"]))
     return out
 
 
@@ -139,8 +126,6 @@ def main() -> int:
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    deduction_prefix = spool_prefix() + "/"
-
     # Source and destination are the same bucket (a within-bucket server-side
     # copy), resolved here so a redirected SMOLBENCH_RESULTS_S3 isn't missed.
     bucket, _base_prefix = resolve_results_location()
@@ -158,7 +143,7 @@ def main() -> int:
     total_bytes = sum(r[3] for r in rows)
     logging.info(
         f"{total_objects} object(s), {total_bytes/1e9:.2f} GB across "
-        f"{len({m for _l, m in per_model})} model(s), 2 legs -> s3://{bucket}/{args.dest}/"
+        f"{len({m for _l, m in per_model})} model(s), 1 leg -> s3://{bucket}/{args.dest}/"
     )
     for (leg, model), agg in sorted(per_model.items()):
         logging.info(f"  {leg:<10} {model:<30} {agg['objects']:>6} obj  {agg['bytes']/1e6:>9.1f} MB")
@@ -168,13 +153,13 @@ def main() -> int:
         return 0
 
     # Two S3 round trips per copy (copy, then verify) is pure network wait, so
-    # threads are the right tool for 55k objects.
+    # threads are the right tool.
     counts = collections.Counter()
     done = 0
 
     def _one(item: Tuple[str, str, str, int]) -> str:
         leg, model, key, size = item
-        prefix = "induction/" if leg == "induction" else deduction_prefix
+        prefix = "induction/"
         tail = key[len(prefix):].split("/", 1)[1]
         return copy_one(client, bucket, key, f"{args.dest}/{leg}/{model}/{tail}", size)
 
@@ -200,8 +185,6 @@ def main() -> int:
             provenance_keys.append(dest_key)
 
     # No `notes` field: every field here is computed from this run's walk.
-    # Dataset-specific measured counts belong in SNAPSHOT_NOTES.md (copied via
-    # PROVENANCE_DOCS above), not hardcoded here for every future snapshot.
     manifest = {
         "snapshot_prefix": args.dest,
         "source_bucket": bucket,

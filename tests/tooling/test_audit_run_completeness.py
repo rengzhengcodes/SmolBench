@@ -4,8 +4,8 @@ Audit the expected grid so empty cells and extra seeds are reported.
 """
 
 import os
+import sys
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -122,33 +122,44 @@ def test_the_real_roster_is_the_grid() -> None:
     assert {c[0] for c in store.calls} == set(driver.MODELS)
 
 
-# Both S3 seams resolve the bucket from one place.
-def test_both_audits_follow_smolbench_results_s3(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A redirected results store must reach both the induction and deduction halves."""
+def test_the_audit_follows_smolbench_results_s3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redirected results store must reach the induction audit."""
     from smolbench.evals.results_store import DEFAULT_RESULTS_BUCKET
-
-    listed = []
-
-    class FakeS3:
-        def get_paginator(self, name: str) -> "FakeS3":
-            return self
-
-        def paginate(self, Bucket: str, Prefix: str, Delimiter: str) -> Any:
-            listed.append(Bucket)
-            return iter(())
-
-    monkeypatch.setattr(audit, "_s3", FakeS3)
-    monkeypatch.setenv("LEAN_SPOOL_PREFIX", "spool")
 
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/base")
     store = audit._induction_store()
     assert (store.bucket, store.base_prefix) == ("redirected-bucket", "base")
     assert store.experiment == audit.INDUCTION_EXPERIMENT
-    assert list(audit.iter_deduction_lanes(local=False)) == []
-    assert listed == ["redirected-bucket"]
 
     # Unset falls back to the committed default.
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3")
     assert audit._induction_store().bucket == DEFAULT_RESULTS_BUCKET
-    assert list(audit.iter_deduction_lanes(local=False)) == []
-    assert listed == ["redirected-bucket", DEFAULT_RESULTS_BUCKET]
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [("complete", 0), ("missing", 1), ("empty", 1)],
+)
+def test_main_exit_status(
+    case: str,
+    expected: int,
+    fake_driver: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Return success only when the configured induction grid is complete."""
+    if case == "complete":
+        store = FakeStore(default=(0, 1, 2))
+    elif case == "missing":
+        store = FakeStore(
+            seeds_by_cell={("model-a", "intens"): (0, 2)},
+            default=(0, 1, 2),
+        )
+    else:
+        monkeypatch.setattr(fake_driver, "MODELS", {})
+        store = FakeStore()
+
+    monkeypatch.setattr(audit, "_induction_store", lambda: store)
+    monkeypatch.setattr(sys, "argv", ["audit_run_completeness.py"])
+    assert audit.main() == expected
