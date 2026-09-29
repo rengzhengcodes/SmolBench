@@ -143,55 +143,112 @@ added rules never fire and derive nothing new.
 ## 6. Rendering a rung
 
 ```
-M=12 SEED0=100 NSEEDS=30 scripts/deduction/horn/render_rung.sh <out>
+python -m smolbench.deduction.horn.cli render --seeds 100-199 --m 12 --out rungs/m12
 ```
 
 writes `<out>/s<seed>/theory.json` and `<out>/s<seed>/<arm>/{prompt.md,system.md,meta.json}`
-for the four arms of 30 theories (`python -m smolbench.deduction.horn.cli render` does one
-seed). `meta.json` holds what the checker needs (rule ids by line, extra rules, facts,
-goal), the certificate, the lemma route and the tree depths. The chain length `m` is the
-one parameter. The same seed at the same `m` gives the same theory; the same seed at
-different `m` shares nothing beyond the recipe.
+for the four arms of every seed, and certifies each arm before it is written. Seeds are a
+comma list of numbers and `a-b` ranges. `meta.json` holds what the checker needs (rule
+ids by line, facts, goal), the certificate, the designed proof and the tree depths. The
+chain length `m` is the one parameter. Rendering is deterministic: the same seed at the
+same `m` gives the same files, byte for byte, on any machine. The same seed at different
+`m` shares nothing beyond the recipe. `scripts/deduction/horn/render_rung.sh` renders
+seeds in parallel.
 
 ## 7. Running
 
-Haiku (Claude Code): `scripts/deduction/horn/solve_arms.workflow.js` gives one Read-only
-Haiku subagent per cell (arm x theory x sample); the agent reads the prompt file and
-returns the proof. `collect_rung.py` writes the answers into the rung and scores them.
-Cells whose agent used a search tool are listed by `grep_excluded.py`, and cells that
-returned no proof (contamination by the parent chat) are refilled. See
-`scripts/deduction/horn/README.md`.
+Served models: `scripts/deduction/horn/sweep.py` sends each cell (arm x seed x replicate)
+as one chat completion to an OpenAI-compatible endpoint (vLLM), with the system prompt,
+temperature 0.7, the roster model's thinking arguments, and no tools. The output cap is
+`--max-tokens` (default 32,768; the ICLR runs used 131,072), cut per cell so that prompt
+and output fit `--context-length` (131,072). The answer is extracted under `--scoring`
+(section 5), and `finish_reason = length` scores as a failure. Rows go to a JSONL file,
+keyed by (model, rung, arm, seed, replicate); rerunning the same command resumes, and a
+second sweep on the same file is refused. `bedrock_sweep.py` does the same over the AWS
+Bedrock Converse API (`--extra-fields '{"reasoning_effort": "high"}'` switches thinking
+on for GLM-4.7, DeepSeek-V3.1 and Nemotron-3).
 
-Served models: `scripts/deduction/horn/sweep.py` sends each cell as one chat completion
-(system message + prompt) with temperature 0.7, the roster model's thinking arguments, and
-no tools. The output cap is `--max-tokens` (default 32,768; the ICLR runs used 131,072),
-cut per cell so that prompt and output fit `--context-length` (131,072). The answer is
-extracted under `--scoring` (section 5). `finish_reason = length` scores as a failure.
+Design: 100 theories (seeds 100-199) x 3 replicates per arm, paired by theory. Per model,
+the chain length is chosen from `lem` alone on disjoint calibration seeds (200-209):
+`scripts/deduction/horn/calibrate_m.py` starts at a prior (the pick of the closest
+calibrated relative in the same family), steps up the ladder m in {1, 2, 3, 4, 6, 8, 10,
+12, 16, 20, 24, 32, 48, 64, 96, 192} while more than 8 of 10 pass and down while fewer than
+7 pass, and stops when 7 or 8 pass, when the target is bracketed by a level already run,
+or at the ladder's end. The pick is the level nearest the target crossing of a logistic
+fit over the levels run (`calibration_pick.py`; `--target` is 0.75 in `calibrate_m.py`
+and 0.70 in `calibration_pick.py`). The first seven models were calibrated on the full
+ladder with 30 theories per level (seeds 200-229) before this rule was set; their picks
+stand (`notebooks/deduction/HORN_ROSTER_PLAN.md`). The picks are recorded in `iclr.json`.
 
-Design: 100 theories (seeds 100-199) x 3 samples per arm, paired by theory. Per model,
-the chain length is chosen from `lem` alone on disjoint calibration seeds: `scripts/
-deduction/horn/calibrate_m.py` starts at a prior (the pick of the closest calibrated
-relative in the same family), runs 10 theories (seeds 200-209) at that level, steps up
-the ladder m in {1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64, 96, 192} while more than
-8 of 10 pass and down while fewer than 7 pass, and stops when 7 or 8 pass (2 to 3
-failures in 10), when the target is bracketed, or at the ladder's end; the pick is the
-level nearest the 75% crossing of a logistic fit over the levels run
-(`calibration_pick.py`). The first seven models were calibrated on the full ladder with 30
-theories per level (seeds 200-229) before this rule was set; their picks stand
-(`notebooks/deduction/HORN_ROSTER_PLAN.md`). AWS Bedrock models run through
-`bedrock_sweep.py` (Converse API; `reasoning_effort: high` switches thinking on for GLM-4.7
-and Nemotron-3).
+Haiku (Claude Code): `scripts/deduction/horn/haiku/` holds the workflow that gives one
+Read-only Haiku subagent per cell and the scripts that collect and score its answers
+(`scripts/deduction/horn/README.md`).
 
 ## 8. Analysis
 
-Unit: the cell mean over samples, paired by theory seed across arms. Contrasts are
-seed-paired differences in percentage points with a percentile bootstrap over seeds
-(95%) and an exact two-sided sign-flip permutation p-value (`pilot_analysis.py`). The
-primary contrast is `both − pad`; `both − disc` shows the harm is not rule-shaped text
-or dead candidates; `pad − lem` is the length cost. `route_analysis.py`
-reports, per arm, how many attempts used a tree rule and where failures occur.
+Unit: the per-seed pass rate (mean over replicates), paired by seed across arms
+(`stats.py`). A pass rate is the mean over seeds. A contrast is the seed-paired
+difference in percentage points with a 95% percentile bootstrap CI over seeds and a
+two-sided sign-flip permutation p-value (exact up to 16 seeds, else 20,000 Monte Carlo
+draws). The reported contrasts are relative to `both` (low density): `lem − both`,
+`pad − both` and `disc − both`. `scripts/deduction/horn/rows_contrast.py <rows.jsonl>...`
+prints them for any rows files. The paper tables and figures come from
+`notebooks/deduction/analysis/horn_results.py` (section 5 covers `--scoring`).
 
-## 9. Reference result (Haiku, seeds 100-109 x 3)
+## 9. Reproducing the ICLR 2027 results
+
+`iclr.json` records the protocol of the submission's runs: seeds, replicates, sampling,
+scoring, each model's chain length and serving settings (the pinned checkpoint revision
+of every self-hosted model, the Bedrock model id and request fields otherwise), a SHA-256
+digest of every served theory, and the published pass rates under both scoring modes.
+`repro.py` reads it.
+
+1. Check the pipeline offline, with no model (about ten seconds):
+
+   ```
+   python scripts/deduction/horn/demo.py --out /tmp/horn_demo
+   python scripts/deduction/horn/demo.py --out /tmp/horn_demo --style interleaved
+   ```
+
+   The demo renders a small rung, serves the designed proofs from a local
+   OpenAI-compatible server, runs `sweep.py` under both scoring modes and prints the
+   report. With `--style interleaved` the answers carry a prose line between steps; they
+   fail under `iclr` scoring and pass under `default`.
+
+2. List the models and their chain lengths:
+
+   ```
+   python -m smolbench.deduction.horn.repro models
+   ```
+
+3. Render a model's rung (seeds 100-199 at its `m`). The command checks the files
+   against the recorded digests; `OK` means they are byte-identical to the prompts the
+   model was served:
+
+   ```
+   python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
+   python -m smolbench.deduction.horn.repro verify rungs/m48 --m 48
+   ```
+
+4. Print the commands that run the model with the protocol's settings. For a
+   self-hosted model, the first command serves the pinned checkpoint with vLLM (the image
+   digest is in `iclr.json`); for a Bedrock model, the sweep uses your AWS credentials:
+
+   ```
+   python -m smolbench.deduction.horn.repro command --model qwen3.5-27b --rung rungs/m64 --out rows.jsonl
+   ```
+
+5. Compare the rows with the published values:
+
+   ```
+   python -m smolbench.deduction.horn.repro report rows.jsonl
+   ```
+
+Sampling runs at temperature 0.7, so a rerun reproduces the numbers up to sampling noise
+(the published CIs give the scale), not row for row. Serving numerics also differ across
+GPU types and tensor-parallel layouts.
+
+## 10. Reference result (Haiku, seeds 100-109 x 3)
 
 These rungs predate the ratio definition: their library was fitted to 5k tokens of
 lemmas (about 400 at every `m`, so 32 alternatives per chain lemma at m = 12 and 6.8 at
@@ -213,18 +270,21 @@ first lookup, so there is no signal to backtrack), while dead candidates are rej
 after one lookup. Failures assert a derived chain head as a fact or invent a one-premise
 rule inside a tree. Details and history: `notebooks/deduction/HORN_BOTH_VS_PAD.md`.
 
-## 10. Files
+## 11. Files
 
 | file | role |
 |---|---|
 | `theory.py` | `Theory`, `Rule`, `Lemma`, `generate`; JSON round-trip |
 | `render.py` | `ARMS`, `render`, `Rendered`, `Tokenizer`; lorem and disc slot fillers |
 | `checker.py` | `verify`, `certify`, `designed_proof`, `closure`, `route_of` |
-| `cli.py` | `render` (fits the budgets, certifies, writes a rung) and `check` |
-| `score.py` | scores `answer.s<i>.md` files under a rung into `scores.jsonl` |
+| `extract.py` | the two scoring modes: `final_proof_block`, `extract_answer`, `verdict_fields` |
+| `stats.py` | `load_rows` (dedupe by cell), `pass_rate`, `contrast` |
+| `cli.py` | `render` (certifies and writes a rung) and `check` |
+| `repro.py`, `iclr.json` | the ICLR protocol record; `models`, `render`, `verify`, `command`, `report` |
+| `score.py` | scores `answer.s<i>.md` files under a rung (the Haiku harness) |
 | `examples/` | one small theory rendered in every arm, with its designed proofs |
-| `../../../scripts/deduction/horn/` | rung renderer, Haiku workflow, served-model driver, analysis |
-| `../../../tests/deduction/test_horn_bench.py`, `test_horn_sweep.py` | invariants, matching, checker, certificate, driver |
+| `../../../scripts/deduction/horn/` | sweep drivers, calibration, demo, `haiku/` harness (see its README) |
+| `../../../tests/deduction/test_horn_*.py` | generator, checker, certificate, drivers, scoring modes, reproduction |
 
 Compatibility. `Theory.from_json` loads theories written before the setup was fixed when
 they match it (one constant, no derivations below the facts); the retired partial-cut
