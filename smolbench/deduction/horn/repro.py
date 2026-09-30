@@ -83,7 +83,10 @@ def verify_rung(rung: Path, m: int, seeds: list[int] | None = None) -> list[str]
 
 
 def check_data(data: Path) -> list[str]:
-    """Problems found when checking a results folder against its ``MANIFEST.json``."""
+    """Problems found when checking a results folder against its ``MANIFEST.json``.
+
+    Checks every listed file's SHA-256 and every prompt directory's ``seed_digest``.
+    """
     manifest_path = data / "MANIFEST.json"
     if not manifest_path.exists():
         return [f"{manifest_path} not found"]
@@ -100,6 +103,16 @@ def check_data(data: Path) -> list[str]:
                 h.update(chunk)
         if h.hexdigest() != info["sha256"]:
             problems.append(f"{rel}: checksum differs from the MANIFEST")
+    for rung, info in manifest.get("prompts", {}).items():
+        for seed, digest in info["digests"].items():
+            rel = f"horn/prompts/{rung}/s{int(seed):04d}"
+            try:
+                got = seed_digest(data / rel, tuple(info["arms"]))
+            except FileNotFoundError as err:
+                problems.append(f"{rel}: {Path(err.filename).name} missing")
+                continue
+            if got != digest:
+                problems.append(f"{rel}: digest differs from the MANIFEST")
     return problems
 
 

@@ -196,8 +196,9 @@ draws). The reported contrasts are relative to `both` (low density): `lem − bo
 
 ### From the released results (no model runs)
 
-The released results folder holds every model output and verdict behind the paper's
-Horn table (`README.md` in the folder describes the fields). To regenerate the tables and
+The released results folder holds every prompt, model output and verdict behind the
+paper's Horn table, and the calibration runs (`README.md` in the folder describes the
+layout and fields). To regenerate the tables and
 figures:
 
 ```
@@ -236,9 +237,11 @@ digest of every served theory, and the published pass rates under both scoring m
    python -m smolbench.deduction.horn.repro models
    ```
 
-3. Render a model's rung (seeds 100-199 at its `m`). The command checks the files
-   against the recorded digests; `OK` means they are byte-identical to the prompts the
-   model was served:
+3. Get a model's rung (seeds 100-199 at its `m`). The released results folder holds the
+   served prompts (`horn/prompts/m<m>/`, a rung directory the sweep runs directly). To
+   regenerate them instead, render from the seeds; the command checks the files against
+   the recorded digests, and `OK` means they are byte-identical to the prompts the model
+   was served:
 
    ```
    python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48

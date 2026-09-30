@@ -16,8 +16,9 @@ uv sync                   # Python 3.12; add --extra aws for AWS Bedrock runs, -
 
 ## Build the tables and figures from the released results
 
-The released results folder holds every model output and verdict behind the paper's
-Horn table: 16 models x 4 arms x 100 theories x 3 replicates, with full generations.
+The released results folder holds every prompt, model output and verdict behind the
+paper's Horn table: 16 models x 4 arms x 100 theories x 3 replicates, with full
+generations, plus the calibration runs that chose each model's chain length.
 
 ```
 python notebooks/deduction/analysis/make_figures.py --data <results folder> --out results
@@ -40,7 +41,7 @@ sweep driver under both scoring modes, and prints the report.
 
 ```
 python -m smolbench.deduction.horn.repro models                                  # models and chain lengths
-python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48  # prompts, checked against the served ones
+python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48  # or use <results folder>/horn/prompts/m48
 python -m smolbench.deduction.horn.repro command --model glm-4.7 --rung rungs/m48 --out rows.jsonl
 python -m smolbench.deduction.horn.repro report rows.jsonl                       # compare with the published values
 ```

@@ -10,8 +10,9 @@ import sys
 
 import pytest
 
-from smolbench.deduction.horn.render import ARMS
-from smolbench.deduction.horn.repro import check_data
+from smolbench.deduction.horn.cli import build_theory, write_seed
+from smolbench.deduction.horn.render import ARMS, Tokenizer
+from smolbench.deduction.horn.repro import check_data, seed_digest
 from tests._paths import REPO_ROOT
 
 ANALYSIS = REPO_ROOT / "notebooks" / "deduction" / "analysis"
@@ -57,7 +58,12 @@ def data(tmp_path):
     path.parent.mkdir(parents=True)
     body = "".join(json.dumps(r) + "\n" for r in rows).encode()
     path.write_bytes(body)
-    manifest = {"files": {f"horn/rows/{MODEL}.jsonl": {"sha256": hashlib.sha256(body).hexdigest(), "rows": len(rows)}}}
+    prompts = tmp_path / "data" / "horn" / "prompts" / "m6"
+    write_seed(prompts, build_theory(100, 6), list(ARMS), Tokenizer())
+    manifest = {
+        "files": {f"horn/rows/{MODEL}.jsonl": {"sha256": hashlib.sha256(body).hexdigest(), "rows": len(rows)}},
+        "prompts": {"m6": {"arms": list(ARMS), "digests": {"100": seed_digest(prompts / "s0100")}}},
+    }
     (tmp_path / "data" / "MANIFEST.json").write_text(json.dumps(manifest))
     return tmp_path / "data", rows
 
@@ -68,6 +74,10 @@ def test_check_data_catches_a_changed_file(data):
     path = folder / "horn" / "rows" / f"{MODEL}.jsonl"
     path.write_bytes(path.read_bytes() + b"\n")
     assert check_data(folder) == [f"horn/rows/{MODEL}.jsonl: checksum differs from the MANIFEST"]
+    (folder / "horn" / "prompts" / "m6" / "s0100" / "pad" / "prompt.md").write_text("changed")
+    assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: digest differs from the MANIFEST"]
+    (folder / "horn" / "prompts" / "m6" / "s0100" / "disc" / "meta.json").unlink()
+    assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: meta.json missing"]
 
 
 def test_make_figures_writes_both_scorings(data, tmp_path):
