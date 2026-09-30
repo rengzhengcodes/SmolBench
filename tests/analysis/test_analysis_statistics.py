@@ -9,7 +9,6 @@ import sys
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
 from unittest.mock import Mock, patch
 
 #: Subprocesses need the same notebook imports as this module.
@@ -31,22 +30,15 @@ from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks, study_config
 from tests._paths import REPO_ROOT
-
-# pylint: disable=unused-import  # fixture registration
 from tests.analysis._trees import (
     ANALYSIS_DIR,
     N_HARMONICS,
     N_PRIMARY,
     SHALLOW_DEPTH,
     build_tree,
-)
-from tests.analysis._trees import power_analysis as sizing_module
-from tests.analysis._trees import (
     profile_for,
     run_captured,
 )
-
-# pylint: enable=unused-import
 
 
 def _noisy_curve(n: int) -> float:
@@ -439,28 +431,16 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4() -> None:
         assert "trend_studywide" in row and "trend_trend_only_family" in row
 
 
-def test_replicates_needed_is_memoized_on_its_rate_vectors(
-    sizing_module: ModuleType,
-) -> None:
-    """Sizing scans cache repeated rate vectors.
-
-    Parameters
-    ----------
-    sizing_module : ModuleType
-        Analysis module with dynamically attached cache-audit methods.
-    """
-    fn = sizing_module.replicates_needed
-    assert hasattr(fn, "cache_info") and hasattr(
-        fn, "cache_clear"
-    ), "replicates_needed must expose its cache for auditing"
-    fn.cache_clear()
-
+def test_replicates_needed_is_memoized_on_its_rate_vectors() -> None:
+    """Sizing scans cache repeated rate vectors."""
+    power_analysis._sizing_scan.cache_clear()
     a = np.full(N_HARMONICS, 0.9)
     b = np.full(N_HARMONICS, 0.5)
-    first = fn(a, b)
-    second = fn(a.copy(), b.copy())
+    first = power_analysis.replicates_needed(a, b)
+    second = power_analysis.replicates_needed(a.copy(), b.copy())
     assert first == second
-    info = fn.cache_info()
+    # pylint: disable-next=no-value-for-parameter  # lru_cache brain mistypes cache_info
+    info = power_analysis._sizing_scan.cache_info()
     assert info.hits == 1 and info.misses == 1, info
 
 
@@ -495,13 +475,12 @@ def test_equivalence_power_pools_successes_across_harmonics() -> None:
 
 def test_sizing_scan_uses_common_random_numbers() -> None:
     """Nested draws make the power curve reproducible, and the crossing is sustained."""
-    fn = power_analysis.replicates_needed
-    fn.cache_clear()
+    power_analysis._sizing_scan.cache_clear()
     a = np.full(N_HARMONICS, 0.75)
     b = np.full(N_HARMONICS, 0.55)
-    needed, curve = fn(a, b)
-    fn.cache_clear()
-    needed_again, curve_again = fn(a, b)
+    needed, curve = power_analysis.replicates_needed(a, b)
+    power_analysis._sizing_scan.cache_clear()
+    needed_again, curve_again = power_analysis.replicates_needed(a, b)
     assert needed == needed_again and curve == curve_again
 
     reps = sorted(curve)

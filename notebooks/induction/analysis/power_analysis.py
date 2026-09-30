@@ -353,10 +353,6 @@ def replicates_needed(
     return dict(needed), dict(curve)
 
 
-replicates_needed.cache_info = _sizing_scan.cache_info
-replicates_needed.cache_clear = _sizing_scan.cache_clear
-
-
 def fisher_check(
     rates_a: np.ndarray,
     rates_b: np.ndarray,
