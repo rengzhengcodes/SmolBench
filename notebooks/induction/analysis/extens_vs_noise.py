@@ -129,7 +129,18 @@ def nc(
 
 
 def star(ok: bool) -> str:
-    """Render a yes/no table cell."""
+    """Render a yes/no table cell.
+
+    Parameters
+    ----------
+    ok : bool
+        Whether the cell is a rejection.
+
+    Returns
+    -------
+    str
+        Fixed-width ``yes`` or ``.`` cell.
+    """
     return " yes " if ok else "  .  "
 
 
@@ -137,6 +148,11 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     """Print the extens-versus-noise report.
 
     Three-way direction labels keep lane and aggregate tallies consistent.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Results tree read by `paired_analysis.load_marks`.
     """
     marks = load_marks(results_dir)
     census = compliance_census(marks)

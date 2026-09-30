@@ -235,6 +235,7 @@ def _module_fixture(name: str) -> Callable[[], ModuleType]:
 
     @pytest.fixture(scope="session", name=name)
     def fixture() -> ModuleType:
+        """Import the analysis module once per session."""
         return importlib.import_module(name)
 
     return fixture

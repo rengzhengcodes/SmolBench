@@ -284,7 +284,13 @@ def test_missing_family_cell_yields_no_data_gate(
 
 @pytest.fixture
 def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
-    """Pairwise ladder overlaps remain while the family-wide intersection is empty."""
+    """Build a tree whose ladders overlap pairwise but share no family-wide seed.
+
+    Returns
+    -------
+    Path
+        Results root with the steep family's second rung split across seed windows.
+    """
     n_rep = power_analysis.N_REPLICATES
     r2_seeds = {
         "intens": tuple(range(20)),
@@ -447,7 +453,13 @@ shared_seed_noise_tree = tree_fixture(
 def report(
     significance_report: ModuleType,
 ) -> Callable[[Path], str]:
-    """Return captured report output for an explicit result directory."""
+    """Render the significance report for a results root.
+
+    Returns
+    -------
+    Callable[[Path], str]
+        Results root -> captured stdout of `significance_report.main`.
+    """
 
     def _report(root: Path) -> str:
         return run_captured(lambda: significance_report.main(root))
@@ -516,7 +528,14 @@ def padding_control_report(
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[tuple[int, int]], str]:
-    """Render `padding_control_tree` with a fully compliant intens arm and the given noise-arm per-seed counts."""
+    """Render `padding_control_tree` under a stubbed compliance census.
+
+    Returns
+    -------
+    Callable[[tuple[int, int]], str]
+        Noise-arm per-seed ``(non_compliant, total)`` -> report text; the intens
+        arm is fully compliant.
+    """
 
     def render(noise_counts: tuple[int, int]) -> str:
         skewed = _skew_census(

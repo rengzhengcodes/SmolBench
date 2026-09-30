@@ -292,7 +292,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
         census = significance_report.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
-    assert n_cells == power_analysis.N_LADDER_CONTRASTS
+    assert n_cells == len(power_analysis.MODELS) * len(power_analysis.INFOS)
     assert after_load == n_cells * SHALLOW_DEPTH, after_load
     assert len(reads) == after_load, reads[after_load:]
     assert len(census) == n_cells
@@ -445,7 +445,7 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors() -> None:
 
 
 def test_equivalence_replicates_does_not_accept_saturated_arms_at_r_one() -> None:
-    """Agresti–Coull intervals prevent saturated arms from having zero width."""
+    """Agresti–Caffo intervals prevent saturated arms from having zero width."""
     rates = np.ones(N_HARMONICS)
     result = power_analysis.equivalence_replicates(
         rates, rates, 0.05, np.random.default_rng(0), n_sims=500

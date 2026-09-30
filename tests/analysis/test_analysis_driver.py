@@ -30,7 +30,13 @@ driver_tree = tree_fixture(
 def recorded(
     monkeypatch: pytest.MonkeyPatch, run_all: ModuleType, multiplicity_sim: ModuleType
 ) -> list[str]:
-    """Replace every script's ``main`` with a call recorder; return the call log."""
+    """Replace every script's ``main`` with a call recorder.
+
+    Returns
+    -------
+    list[str]
+        Module names in the order their ``main`` was called.
+    """
     calls: list[str] = []
     for module in run_all.CHAIN + (multiplicity_sim,):
         monkeypatch.setattr(
@@ -45,6 +51,7 @@ def test_the_simulation_runs_only_behind_its_flag(
     """The chain runs in order; the simulation only when ``--with-sim`` is passed."""
     assert run_all.main([]) == 0
     assert recorded == [m.__name__ for m in run_all.CHAIN]
+    assert "multiplicity_sim" not in recorded
     recorded.clear()
     run_all.main(["--with-sim"])
     assert recorded == [m.__name__ for m in run_all.CHAIN] + ["multiplicity_sim"]

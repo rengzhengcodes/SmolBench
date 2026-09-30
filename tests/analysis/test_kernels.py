@@ -37,7 +37,18 @@ def test_cmh_stat_matches_statsmodels(paired_analysis: ModuleType) -> None:
 
 
 def landis_gcmh(counts: np.ndarray) -> float:
-    """Landis general-association GCMH for one ``(I, J, K)`` table."""
+    """Landis general-association GCMH for one ``(I, J, K)`` table.
+
+    Parameters
+    ----------
+    counts : np.ndarray
+        Counts indexed ``(row, column, stratum)``.
+
+    Returns
+    -------
+    float
+        Generalized CMH statistic with ``(I - 1)(J - 1)`` degrees of freedom.
+    """
     n_i, n_j, _ = counts.shape
     t_vec = np.zeros((n_i - 1) * (n_j - 1))
     cov = np.zeros((t_vec.size, t_vec.size))

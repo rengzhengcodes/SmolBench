@@ -26,7 +26,13 @@ CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
 
 
 def _banner(name: str) -> None:
-    """Print a script banner so a long combined log stays attributable."""
+    """Print a script banner so a long combined log stays attributable.
+
+    Parameters
+    ----------
+    name : str
+        Script name printed between the rules.
+    """
     print(f"\n{'=' * 78}\n{name}\n{'=' * 78}", flush=True)
 
 
@@ -50,8 +56,8 @@ def main(
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",
-        description="Run the induction analysis chain in one process: "
-        + " -> ".join(m.__name__ for m in CHAIN),
+        description="Run the induction analysis chain in one process under the "
+        "project venv: " + " -> ".join(m.__name__ for m in CHAIN) + ".",
     )
     parser.add_argument(
         "--with-sim",

@@ -33,6 +33,7 @@ from power_analysis import (  # noqa: E402
     MODELS,
     N_FAMILIES,
     N_HARMONICS,
+    N_RUNGS,
     RESULTS_DIR,
     build_primary_contrasts,
     gcmh_stat,
@@ -71,7 +72,25 @@ EXPLORATORY_NOTE = (
 def _gate_row(
     n_seeds: int, stat: float | None, p: float | None, p_perm: float | None
 ) -> dict:
-    """One `omnibus_gates` entry; ``p_gate = max(p, p_perm)`` gates at `ALPHA_OMNIBUS`."""
+    """Build one `omnibus_gates` entry.
+
+    Parameters
+    ----------
+    n_seeds : int
+        Common seeds the family's rungs share.
+    stat : float | None
+        Generalized CMH statistic, or None without data.
+    p : float | None
+        Asymptotic chi-square p-value, or None without data.
+    p_perm : float | None
+        Within-seed permutation p-value, or None without data.
+
+    Returns
+    -------
+    dict
+        ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate = max(p, p_perm)`` and
+        ``reject`` at `ALPHA_OMNIBUS`.
+    """
     p_gate = None if p is None or p_perm is None else max(p, p_perm)
     return {
         "n_seeds": n_seeds,
@@ -100,7 +119,7 @@ def permutation_omnibus_p(
     Parameters
     ----------
     marks_tensor : np.ndarray
-        Correct marks shaped ``(n_seeds, 3, K)``, strata ordered
+        Correct marks shaped ``(n_seeds, N_RUNGS, K)``, strata ordered
         ``(info, k) for info in INFOS for k in range(N_HARMONICS)``.
     stat_obs : float
         Observed `power_analysis.gcmh_stat` value.
@@ -113,7 +132,7 @@ def permutation_omnibus_p(
         Plus-one-corrected Monte-Carlo p-value over `N_GATE_PERMS` draws.
     """
     n_seeds = marks_tensor.shape[0]
-    perms = np.argsort(rng.random((N_GATE_PERMS, n_seeds, 3)), axis=2)
+    perms = np.argsort(rng.random((N_GATE_PERMS, n_seeds, N_RUNGS)), axis=2)
     permuted = np.take_along_axis(marks_tensor[None], perms[..., None], axis=2)
     succ = permuted.sum(axis=1)
     stats = gcmh_stat(succ, n_seeds)
@@ -169,7 +188,7 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         )
         succ = marks_tensor.sum(axis=0)[None]
         stat = float(gcmh_stat(succ, len(seeds))[0])
-        p = float(chi2.sf(stat, df=2))
+        p = float(chi2.sf(stat, df=N_RUNGS - 1))
         rng = np.random.default_rng([GATE_PERM_SEED, i])
         gates[family] = _gate_row(
             len(seeds), stat, p, permutation_omnibus_p(marks_tensor, stat, rng)
@@ -206,7 +225,9 @@ def compliance_census(marks: CellMarks) -> dict:
     Returns
     -------
     dict
-        Cell key -> ``rate``.
+        Cell key -> ``rate`` (pooled non-compliance), ``n`` (marks), ``modes``
+        (`Counter` of non-compliant labels) and ``per_seed``
+        (seed -> ``(non_compliant, total)``), skipping cells without marks.
     """
     out = {}
     for key, by_seed in marks.compliance.items():
@@ -277,9 +298,19 @@ def collapse_note(key: tuple[str, str], rate: float | None, census: dict) -> str
 
 
 def pad_crossing(rate_i: float, rate_n: float) -> bool:
-    """True when padding alone carries a lane over ``COLLAPSE_THRESHOLD``.
+    """Tell whether padding alone carries a lane over `COLLAPSE_THRESHOLD`.
 
-    The unpadded rate is below the threshold and the padded rate is at or above.
+    Parameters
+    ----------
+    rate_i : float
+        Non-compliance rate of the unpadded (intens) arm.
+    rate_n : float
+        Non-compliance rate of the padded (noise) arm.
+
+    Returns
+    -------
+    bool
+        True when `rate_i` is below the threshold and `rate_n` at or above it.
     """
     return rate_i < COLLAPSE_THRESHOLD <= rate_n
 
@@ -302,7 +333,7 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     Raises
     ------
     RuntimeError
-        If the zero arm is ``key_a``.
+        If `key_a` is the zero arm and `key_b` is informative.
     """
     za, zb = key_a[1] == "zero", key_b[1] == "zero"
     if za and zb:
@@ -317,7 +348,17 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
 
 
 def _print_signed(rows: list, sign: str, key: str) -> None:
-    """Print one correction-cost block, sorted on `key` and marked with `sign`."""
+    """Print one correction-cost block.
+
+    Parameters
+    ----------
+    rows : list
+        Contrast rows to print.
+    sign : str
+        Marker prefixed to every line.
+    key : str
+        Row field the block is sorted on.
+    """
     for r in sorted(rows, key=lambda r: r[key]):
         print(
             f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
@@ -444,9 +485,12 @@ class Report:
 
 
 def render(report: Report) -> None:
-    """Run and print the significance report.
+    """Print the significance report; narrative claims stay conditional on shown counts.
 
-    Narrative claims remain conditional on displayed counts.
+    Parameters
+    ----------
+    report : Report
+        Output of `compute`.
     """
     rows, census, m, hp = report.rows, report.census, report.m, report.hp
     p_cl = np.array([r["p_cluster"] for r in rows])
@@ -614,7 +658,7 @@ def render(report: Report) -> None:
     sel, tot = report.findings, report.n_findings_total
     print(
         f"\n{'=' * 78}\nTIER 1 -- family omnibus gates (generalized CMH, "
-        f"df=2; gate p = max(chi2 p, within-seed permutation p) <= "
+        f"df={N_RUNGS - 1}; gate p = max(chi2 p, within-seed permutation p) <= "
         f"alpha = {ALPHA}/{N_FAMILIES} = {ALPHA_OMNIBUS:.5f})\n{'=' * 78}"
     )
     for family, gate in report.gates.items():
@@ -817,7 +861,18 @@ def render(report: Report) -> None:
 
 
 def compute(results_dir: Path = RESULTS_DIR) -> Report:
-    """Compute the significance report without printing."""
+    """Compute the significance report without printing.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Results tree read by `paired_analysis.load_marks`.
+
+    Returns
+    -------
+    Report
+        Every quantity `render` prints.
+    """
     marks = load_marks(results_dir)
     census = compliance_census(marks)
     gates = omnibus_gates(marks)
@@ -970,7 +1025,13 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
 
 
 def main(results_dir: Path = RESULTS_DIR) -> None:
-    """Compute and render the significance report."""
+    """Compute and render the significance report.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Results tree to analyse.
+    """
     render(compute(results_dir))
 
 
