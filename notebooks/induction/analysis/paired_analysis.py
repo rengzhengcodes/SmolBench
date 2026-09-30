@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 from _power_common import apply_corrections
-from power_analysis import (  # noqa: E402
+from power_analysis import (
     ALPHA,
     ALPHA_PRIMARY,
     BASE_SEED,
@@ -38,6 +38,9 @@ from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 #: ``(model, info)`` naming one condition lane.
 CellKey = tuple[str, str]
+
+#: Longest GAINED/LOST listing per block; the count line above each block carries the totals.
+MAX_LISTED = 20
 
 
 @dataclass(frozen=True)
@@ -70,9 +73,7 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
         If a lane has no replicate seeds, an unexpected seed, or a replicate
         without exactly ``N_HARMONICS`` marks.
     """
-    correct: dict[CellKey, dict[int, np.ndarray]] = {}
-    valid: dict[CellKey, dict[int, np.ndarray]] = {}
-    compliance: dict[CellKey, dict[int, tuple[str, ...]]] = {}
+    views = CellMarks({}, {}, {})
     store = LocalResultsStore(results_dir)
     expected = set(range(BASE_SEED, BASE_SEED + N_REPLICATES))
     for model in MODELS:
@@ -95,7 +96,7 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
                     f"expected {min(expected)}–{max(expected)}"
                 )
             cell = (model, info)
-            correct[cell], valid[cell], compliance[cell] = {}, {}, {}
+            views.correct[cell], views.valid[cell], views.compliance[cell] = {}, {}, {}
             for seed in seeds:
                 # Reuse one load for every view.
                 addr = ReplicateAddress(tag=model, info=info, seed=seed)
@@ -106,10 +107,10 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
                         f"Replicate {store.path(addr)} has {len(scores)} marks, "
                         f"expected {N_HARMONICS}; collection failed"
                     )
-                correct[cell][seed] = np.array([s == 1 for s in scores])
-                valid[cell][seed] = np.array([s is not None for s in scores])
-                compliance[cell][seed] = tuple(m.compliance for m in marks)
-    return CellMarks(correct, valid, compliance)
+                views.correct[cell][seed] = np.array([s == 1 for s in scores])
+                views.valid[cell][seed] = np.array([s is not None for s in scores])
+                views.compliance[cell][seed] = tuple(m.compliance for m in marks)
+    return views
 
 
 def _common_seeds(marks: CellMarks, key_a: CellKey, key_b: CellKey) -> list[int]:
@@ -237,22 +238,7 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
 
 
 def _rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
-    """Return one `apply_corrections` mask for a single family of p-values.
-
-    Parameters
-    ----------
-    pvals : np.ndarray
-        Raw p-values of the family.
-    level : float
-        Error rate handed to `apply_corrections` (FWER alpha or FDR q).
-    method : str
-        Key of the correction to return, e.g. ``"Holm"`` or ``"BH"``.
-
-    Returns
-    -------
-    np.ndarray
-        Boolean rejection mask aligned with ``pvals``.
-    """
+    """Return the `apply_corrections` mask named ``method`` at error rate ``level``."""
     return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), level)[method][0]
 
 
@@ -500,7 +486,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             ("GAINED", gained, "p_item"),
             ("LOST  ", lost, "p_unpaired"),
         ):
-            for r in sorted(sel, key=itemgetter(key))[:20]:
+            for r in sorted(sel, key=itemgetter(key))[:MAX_LISTED]:
                 print(
                     f"    {word} {r['label']:52s} {_acc(r['acc_a']):>7s} vs "
                     f"{_acc(r['acc_b']):>7s}  "
@@ -520,13 +506,16 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                 f"(no prior study ever separated these):\n{hdr}\n  "
                 + "-" * (len(hdr) - 2)
             )
-            for r in rows:
+            # The flag follows the PRIMARY procedure printed above (Holm), not
+            # Bonferroni: Holm's step thresholds exceed ALPHA_PRIMARY, so a
+            # Holm-rejected row must not print as merely uncorrected.
+            for r, rej in zip(rows, rej_cl):
                 if {r["key_a"][1], r["key_b"][1]} != {"intens", "noise_intens"}:
                     continue
                 model = r["key_a"][0]
                 flag = ""
-                if r["p_cluster"] <= ALPHA_PRIMARY:
-                    flag = "  <== SEPARATES (Bonferroni)"
+                if rej:
+                    flag = "  <== SEPARATES (Holm, PRIMARY)"
                 elif r["p_cluster"] <= ALPHA:
                     flag = f"  <== p<{ALPHA} uncorrected"
                 print(

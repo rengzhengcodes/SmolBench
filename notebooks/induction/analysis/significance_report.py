@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import apply_corrections  # noqa: E402
-from paired_analysis import CellMarks, labeled_rows, load_marks  # noqa: E402
-from power_analysis import (  # noqa: E402
+from _power_common import SEED, apply_corrections
+from paired_analysis import CellMarks, labeled_rows, load_marks
+from power_analysis import (
     ALPHA,
     ALPHA_OMNIBUS,
     FAMILIES,
@@ -29,6 +29,7 @@ from power_analysis import (  # noqa: E402
     MODELS,
     N_FAMILIES,
     N_HARMONICS,
+    N_INFOS,
     N_RUNGS,
     RESULTS_DIR,
     build_primary_contrasts,
@@ -50,11 +51,12 @@ TOTAL_COLLAPSE = 0.95
 #: Both arms at or above this accuracy are a ceiling pair, not a finding.
 CEILING = 0.95
 
-#: Monte-Carlo permutations per family gate.
+#: Monte-Carlo permutations per family gate: the plus-one floor 1/(N+1) = 2.5e-4 sits
+#: ~29x under ALPHA_OMNIBUS = 7.1e-3 and the MC SE of a p near that threshold is
+#: 1.3e-3, so the gate decision is not resolution-limited.
 N_GATE_PERMS = 4000
-
-#: Fixed RNG seed; the gate is deterministic.
-GATE_PERM_SEED = 20260920
+if 1 / (N_GATE_PERMS + 1) >= ALPHA_OMNIBUS:
+    raise RuntimeError("N_GATE_PERMS too small to resolve ALPHA_OMNIBUS")
 
 #: Rendered twice: under the method note and again under the Tier-1 gate table.
 EXPLORATORY_NOTE = (
@@ -160,8 +162,7 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     Returns
     -------
     dict[str, dict]
-        Family name -> ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate``,
-        ``reject``.
+        Family name -> ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate``, ``reject``.
     """
     gates: dict[str, dict] = {}
     for i, (family, rungs) in enumerate(FAMILIES.items()):
@@ -189,7 +190,8 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
         succ = marks_tensor.sum(axis=0)[None]
         stat = float(gcmh_stat(succ, len(seeds))[0])
         p = float(chi2.sf(stat, df=N_RUNGS - 1))
-        rng = np.random.default_rng([GATE_PERM_SEED, i])
+        # Per-family stream off the analysis seed; the gate is deterministic.
+        rng = np.random.default_rng([SEED, i])
         gates[family] = _gate_row(
             len(seeds), stat, p, permutation_omnibus_p(marks_tensor, stat, rng)
         )
@@ -371,29 +373,6 @@ def _step_boundary(rows: list, n_rej: int) -> None:
         )
 
 
-def collapse_tag(row: dict, census: dict) -> str:
-    """Return the ``[COLLAPSE: ...]`` annotation for a contrast row, or ``""``.
-
-    Parameters
-    ----------
-    row : dict
-        Computed primary-contrast row with ``key_a``/``rate_a`` and ``key_b``/``rate_b``.
-    census : dict
-        Compliance census by cell.
-
-    Returns
-    -------
-    str
-        Joined `collapse_note` annotations of both arms, or ``""`` when neither collapsed.
-    """
-    notes = (
-        collapse_note(row["key_a"], row["rate_a"], census),
-        collapse_note(row["key_b"], row["rate_b"], census),
-    )
-    hits = "; ".join(h for h in notes if h)
-    return f"   [COLLAPSE: {hits}]" if hits else ""
-
-
 def gate_note(row: dict, gates: dict[str, dict]) -> str:
     """Return the ungated annotation for a ladder finding in a non-rejecting family.
 
@@ -407,8 +386,7 @@ def gate_note(row: dict, gates: dict[str, dict]) -> str:
     Returns
     -------
     str
-        Ungated annotation, or ``""`` when the row is not an ungated
-        ladder finding.
+        Ungated annotation, or ``""`` when the row is not an ungated ladder finding.
     """
     if not row["kind_is_ladder"] or row["gated"]:
         return ""
@@ -439,7 +417,6 @@ class Report:
     fails_partial: list[dict]
     fails_unexplained: list[dict]
     zero_vs_zero: list[int]
-    not_significant: list[dict]
     ceiling: list[dict]
     lost: list[dict]
     gained: list[dict]
@@ -486,7 +463,7 @@ def render(report: Report) -> None:
         "PRIMARY TEST: exact seed-level sign-flip randomization over the per-seed arm\n"
         "  differences. The seed is the unit the design randomizes -- one label alphabet\n"
         f"  and ONE SHARED ANSWER VECTOR per replicate, reused by all {N_HARMONICS} "
-        f"harmonic items and\n  by all {len(INFOS)} info arms -- so the {item_max} marks "
+        f"harmonic items and\n  by all {N_INFOS} info arms -- so the {item_max} marks "
         f"are {depth_max} clusters of {N_HARMONICS}, not {item_max}\n  independent pairs. "
         f"Exact (2^{depth_max} assignments enumerated by DP), deterministic,\n"
         "  and equal to exact McNemar when every cluster is a singleton.\n"
@@ -600,8 +577,9 @@ def render(report: Report) -> None:
         )
     else:
         verdict = (
-            "On this tree the pad\n   is inert with respect to the output contract: no "
-            "lane crosses the criterion\n   because of the whitespace alone."
+            "On this tree no lane\n   crosses the criterion because of whitespace "
+            "padding alone; the table above still\n   shows any changes in compliance "
+            "below that threshold."
         )
     print(
         f"\n=> The pad itself pushes {len(pad_lanes)} of {len(pad_rows)} lanes over the "
@@ -626,7 +604,7 @@ def render(report: Report) -> None:
     print(
         f"\n{len(over)} of {len(census)} cells are at or above the {crit} criterion; "
         f"{n_noise_over_cells} of them are noise arms.\nThe criterion is applied "
-        "SYMMETRICALLY to all four arms, so non-noise arms "
+        f"SYMMETRICALLY to all {N_INFOS} arms, so non-noise arms "
         + (
             "appear here beside the noise arms."
             if n_non_noise
@@ -819,9 +797,7 @@ def render(report: Report) -> None:
     # ---- what is NOT significant, which is half the story -------------------
     ceiling = report.ceiling
     n_zero_disc = sum(r["b"] + r["c"] == 0 for r in ceiling)
-    print(
-        f"\n{'=' * 78}\nNOT significant: {len(report.not_significant)} of {tot} findings"
-    )
+    print(f"\n{'=' * 78}\nNOT significant: {tot - len(sel)} of {tot} findings")
     if ceiling:
         print(
             f"  of which CEILING pairs (both arms >= {CEILING}): {len(ceiling)}. "
@@ -873,6 +849,11 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
             common_seed_rate(census[key], row["seeds"]) if key in census else None
             for key in (key_a, key_b)
         )
+        hits = "; ".join(
+            note
+            for key, rate in ((key_a, rate_a), (key_b, rate_b))
+            if (note := collapse_note(key, rate, census))
+        )
         row.update(
             rate_a=rate_a,
             rate_b=rate_b,
@@ -880,18 +861,15 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
             kind_is_ladder=is_ladder,
             family=family,
             gated=gates[family]["reject"] if is_ladder else False,
+            collapse_tag=f"   [COLLAPSE: {hits}]" if hits else "",
         )
-        row["collapse_tag"] = collapse_tag(row, census)
-    p_cl = np.array([r["p_cluster"] for r in rows])
-    p_item = np.array([r["p_item"] for r in rows])
-    p_unp = np.array([r["p_unpaired"] for r in rows])
-    m = len(rows)
     rej_by_test = {}
-    for name, pv in (
-        ("seed sign-flip (PRIMARY)", p_cl),
-        ("item McNemar (descript.)", p_item),
-        ("unpaired CMH (descript.)", p_unp),
+    for name, field in (
+        ("seed sign-flip (PRIMARY)", "p_cluster"),
+        ("item McNemar (descript.)", "p_item"),
+        ("unpaired CMH (descript.)", "p_unpaired"),
     ):
+        pv = np.array([r[field] for r in rows])
         masks = apply_corrections(pv[None], ALPHA)
         # Procedure order is the rejection table's printed column order.
         rej_by_test[name] = (
@@ -902,7 +880,7 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     hp, hb = primary["Holm"], primary["Hochberg"]
     h_item = rej_by_test["item McNemar (descript.)"][1]["Holm"]
     depth_max = max(r["n_seeds"] for r in rows)
-    floor_bound = 2 / 2**depth_max > ALPHA / m
+    floor_bound = 2 / 2**depth_max > ALPHA / len(rows)
     over = sorted(
         (k for k, v in census.items() if v["rate"] >= COLLAPSE_THRESHOLD),
         key=lambda k: -census[k]["rate"],
@@ -957,10 +935,11 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
     else:
         partial_compliance = f"{min(partial_rates):.1%}–{max(partial_rates):.1%}"
     zero_vs_zero = [i for i, r in enumerate(rows) if r["kind"] == "zero-vs-zero"]
-    not_significant = [
-        r for r, rej in zip(rows, hp) if not rej and r["kind"] == "finding"
+    ceiling = [
+        r
+        for r, rej in zip(rows, hp)
+        if not rej and r["kind"] == "finding" and min(r["acc_a"], r["acc_b"]) >= CEILING
     ]
-    ceiling = [r for r in not_significant if min(r["acc_a"], r["acc_b"]) >= CEILING]
     return Report(
         rows=rows,
         hp=hp,
@@ -983,7 +962,6 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
         fails_partial=fails_partial,
         fails_unexplained=fails_unexplained,
         zero_vs_zero=zero_vs_zero,
-        not_significant=not_significant,
         ceiling=ceiling,
         lost=[r for r, item, cl in zip(rows, h_item, hp) if item and not cl],
         gained=[r for r, item, cl in zip(rows, h_item, hp) if cl and not item],

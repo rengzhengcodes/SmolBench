@@ -6,7 +6,12 @@ import numpy as np
 from scipy.stats import binomtest, chi2
 from statsmodels.stats.contingency_tables import StratifiedTable
 
-from tests.analysis._trees import paired_analysis, power_analysis
+from tests.analysis._trees import (
+    N_REPLICATES,
+    multiplicity_sim,
+    paired_analysis,
+    power_analysis,
+)
 
 
 def test_signflip_exact_p_matches_enumeration() -> None:
@@ -72,12 +77,14 @@ def test_gcmh_stat_matches_landis_form() -> None:
 
 
 def test_gcmh_stat_is_calibrated_under_the_null() -> None:
-    """Rejection at alpha .05 against chi2 df=2 stays near nominal."""
+    """Rejection at ALPHA against chi2 df=N_RUNGS-1 stays near nominal."""
     rng = np.random.default_rng(404)
     n_seeds, k, n_sims = 30, 18, 2000
     rates = rng.uniform(0.3, 0.9, size=(1, 1, k))
     succ = rng.binomial(n_seeds, rates, size=(n_sims, 3, k))
-    rejected = power_analysis.gcmh_stat(succ, n_seeds) > chi2.isf(0.05, df=2)
+    rejected = power_analysis.gcmh_stat(succ, n_seeds) > chi2.isf(
+        power_analysis.ALPHA, df=power_analysis.N_RUNGS - 1
+    )
     assert 0.03 <= rejected.mean() <= 0.07, rejected.mean()
 
 
@@ -94,3 +101,18 @@ def test_mcnemar_exact_p_matches_binomtest() -> None:
         power_analysis.mcnemar_exact_p(b, c), expected, atol=1e-12
     )
     assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
+
+
+def test_trend_stat_matches_the_single_stratum_closed_form() -> None:
+    """With one stratum the Mantel trend statistic is ``(N - 1) r**2`` for rung scores 1..N_RUNGS."""
+    rng = np.random.default_rng(5)
+    n = N_REPLICATES
+    shape = (1, power_analysis.N_RUNGS, 1)
+    scores = np.arange(1, power_analysis.N_RUNGS + 1)
+    for _ in range(20):
+        succ = rng.binomial(n, rng.uniform(0.2, 0.9, size=shape), size=shape)
+        x = np.repeat(scores, n)
+        y = np.concatenate([[1] * int(s) + [0] * (n - int(s)) for s in succ[0, :, 0]])
+        r = np.corrcoef(x, y)[0, 1]
+        ours = multiplicity_sim.trend_stat(succ, n)[0]
+        assert np.isclose(ours, (x.size - 1) * r * r, atol=1e-9), (ours, succ)

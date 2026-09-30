@@ -4,18 +4,18 @@ PART 2 prints the study's measured design effect (`study_design_effect`) beside 
 simulated `icc` block's; they differ in kind because `icc` is a latent share and
 `design_effect` an observed variance ratio.
 
-Rejection boundary: a p-value rejects when ``p <= alpha`` (the statsmodels convention
-`paired_analysis.holm` and `paired_analysis.hochberg` follow). Tests decided on a
-chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
+Rejection boundary: a p-value rejects when ``p <= alpha``
+(`_power_common.apply_corrections`, which the `paired_analysis` wrappers call and
+which ``test_apply_corrections_matches_statsmodels`` pins to statsmodels' inclusive
+boundary). Tests decided on a chi-square statistic use ``stat > crit``, equivalent
+for a continuous statistic.
 """
 
 from __future__ import annotations
 
 import functools
 import json
-import os
 import sys
-import tempfile
 import time
 from itertools import combinations, product
 from pathlib import Path
@@ -36,6 +36,7 @@ from power_analysis import (
     MODELS,
     N_FAMILIES,
     N_HARMONICS,
+    N_INFO_CONTRASTS,
     N_INFOS,
     N_LADDER_CONTRASTS,
     N_LADDERS,
@@ -86,22 +87,23 @@ def dump(out: dict, path: Path, tag: str) -> None:
         Checkpoint label written to the log.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=path.name + ".", suffix=".tmp", dir=path.parent
-    )
+    tmp = path.with_name(path.name + ".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with tmp.open("w", encoding="utf-8") as fh:
             json.dump(out, fh, indent=2, default=float)
-        os.replace(tmp_name, path)
+        tmp.replace(path)
     finally:
-        Path(tmp_name).unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
     print(f"[checkpoint written after {tag}]", flush=True)
+
+
+def _reject_rate(stat: np.ndarray, alpha: float, df: int) -> float:
+    """Fraction of simulations whose chi-square statistic exceeds the `alpha` critical value."""
+    return float((stat > chi2.isf(alpha, df)).mean())
 
 
 def trend_stat(succ: np.ndarray, n: int) -> np.ndarray:
     """Compute the 1-df CMH linear trend across the three rungs.
-
-    Rung scores are 1..N_RUNGS.
 
     Parameters
     ----------
@@ -129,6 +131,17 @@ def trend_stat(succ: np.ndarray, n: int) -> np.ndarray:
     v = v_j.sum(axis=-1)
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(v > 0, (t - e) ** 2 / v, 0.0)
+
+
+def _binary_phi(marks: np.ndarray) -> float:
+    """Mean within-replicate correlation between distinct items on the last axis."""
+    x = marks.astype(np.float64)
+    mu = x.mean()
+    cx = x - mu
+    # mean over k<k' of E[cx_k cx_k'] / var
+    k = x.shape[-1]
+    cross = (cx.sum(axis=-1) ** 2 - (cx**2).sum(axis=-1)).mean() / (k * (k - 1))
+    return float(cross / (mu * (1 - mu)))
 
 
 def paired_marks(
@@ -200,7 +213,10 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     dict
         Simulation count, grid step, and minimum-detectable-difference rows.
     """
-    print("\n=== PART 1: minimum detectable difference (80% power) ===", flush=True)
+    print(
+        f"\n=== PART 1: minimum detectable difference ({POWER_TARGETS[0]:.0%} power) ===",
+        flush=True,
+    )
     rows = []
     for p_a in (0.99, 0.97, 0.95, 0.90, 0.70, 0.50):
         found = {}
@@ -212,9 +228,9 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
             st = cmh_stat(sa, sb, N_REPLICATES)
             for a_lab, a in _MDD_ALPHAS:
                 if a_lab not in found:
-                    pw = (st > chi2.isf(a, df=1)).mean()
+                    pw = _reject_rate(st, a, 1)
                     if pw >= POWER_TARGETS[0]:
-                        found[a_lab] = (round(d, 4), float(pw))
+                        found[a_lab] = (round(d, 4), pw)
             d += step
         row = {"p_a": p_a}
         for a_lab, _ in _MDD_ALPHAS:
@@ -279,18 +295,8 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
             # Three chunks suffice for the empirical binary within-replicate
             # correlation; later chunks feed only the rejection counts.
             if len(phis) < 3:
-                x = ma.astype(np.float64)
-                mu = x.mean()
-                cx = x - mu
-                # mean over k<k' of E[cx_k cx_k'] / var
-                ssum = cx.sum(axis=2)
-                cross = (ssum**2 - (cx**2).sum(axis=2)).mean() / (
-                    N_HARMONICS * (N_HARMONICS - 1)
-                )
-                phis.append(cross / (mu * (1 - mu)))
-            sa = ma.sum(axis=1)
-            sb = mb.sum(axis=1)
-            st = cmh_stat(sa, sb, N_REPLICATES)
+                phis.append(_binary_phi(ma))
+            st = cmh_stat(ma.sum(axis=1), mb.sum(axis=1), N_REPLICATES)
             r05 += int((st > crit05).sum())
             rb += int((st > critb).sum())
             done += s
@@ -320,7 +326,8 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
     """Compare the 1-df trend test against the 2-df omnibus and 3 pairwise tests.
 
     Six monotone/non-monotone scenarios span small, mid and ceiling effects.
-    Local uncorrected-family alphas isolate test choice from correction.
+    Family-local alphas (Bonferroni over the three pairwise tests, uncorrected
+    trend and omnibus) isolate test choice from correction.
     `trend_studywide` uses PART 4's ``ALPHA / N_REDUCED`` family;
     ``ALPHA / N_LADDERS`` is sensitivity-only because it is not pre-registered.
 
@@ -360,24 +367,21 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
             cmh_stat(succ[:, i, :], succ[:, j, :], N_REPLICATES)
             for i, j in combinations(range(N_RUNGS), 2)
         ]
-        res = {"label": label, "rates": rates}
-        res["trend_studywide"] = float((tr > chi2.isf(alpha_trend_studywide, 1)).mean())
-        # Same statistic at the narrower, not pre-registered, trend-only alpha.
-        res["trend_trend_only_family"] = float(
-            (tr > chi2.isf(alpha_trend_only, 1)).mean()
-        )
-        res["gcmh_studywide"] = float((gc > chi2.isf(ALPHA_OMNIBUS, 2)).mean())
-        res["pairwise_any_studywide"] = float(
-            np.any([s > chi2.isf(ALPHA_PRIMARY, 1) for s in pair_stats], axis=0).mean()
-        )
-        # local, uncorrected-family alphas (test choice isolated from correction)
-        res["trend_local05"] = float((tr > chi2.isf(ALPHA, 1)).mean())
-        res["gcmh_local05"] = float((gc > chi2.isf(ALPHA, 2)).mean())
-        res["pairwise_any_local"] = float(
-            np.any(
-                [s > chi2.isf(ALPHA / N_RUNGS, 1) for s in pair_stats], axis=0
-            ).mean()
-        )
+        # "Any pairwise rejects" is "the largest pairwise statistic rejects".
+        pair_max = np.max(pair_stats, axis=0)
+        res = {
+            "label": label,
+            "rates": rates,
+            "trend_studywide": _reject_rate(tr, alpha_trend_studywide, 1),
+            # Same statistic at the narrower, not pre-registered, trend-only alpha.
+            "trend_trend_only_family": _reject_rate(tr, alpha_trend_only, 1),
+            "gcmh_studywide": _reject_rate(gc, ALPHA_OMNIBUS, N_RUNGS - 1),
+            "pairwise_any_studywide": _reject_rate(pair_max, ALPHA_PRIMARY, 1),
+            # Family-local alphas: Bonferroni over the pairwise tests only.
+            "trend_local05": _reject_rate(tr, ALPHA, 1),
+            "gcmh_local05": _reject_rate(gc, ALPHA, N_RUNGS - 1),
+            "pairwise_any_local": _reject_rate(pair_max, ALPHA / len(pair_stats), 1),
+        }
         rows.append(res)
         print(
             f"  {label}\n"
@@ -437,13 +441,11 @@ def _paired_powers(
         ``(power_unpaired, power_paired, phi_binary, agreement)``.
     """
     ma, mb = paired_marks(p_a, p_a - delta, rho, n_sims, reps, rng, icc=icc)
-    unp = (
-        cmh_stat(ma.sum(axis=1), mb.sum(axis=1), reps) > chi2.isf(ALPHA_PRIMARY, 1)
-    ).mean()
+    unp = _reject_rate(cmh_stat(ma.sum(axis=1), mb.sum(axis=1), reps), ALPHA_PRIMARY, 1)
     b = (ma & ~mb).sum(axis=(1, 2))
     c = (~ma & mb).sum(axis=(1, 2))
     pv = mcnemar_exact_p(b, c)
-    powers = float(unp), float((pv <= ALPHA_PRIMARY).mean())
+    powers = unp, float((pv <= ALPHA_PRIMARY).mean())
     if not stats:
         # ``None`` distinguishes unmeasured diagnostics from zero.
         return *powers, None, None
@@ -498,8 +500,9 @@ def part2(
     compare each simulated design effect with the study estimate.
     Search only for power gaps above `EQ_R_TOL` (Monte-Carlo error).
     Unpaired power within `EQ_R_TOL` counts as matching; an initial gap within
-    `EQ_R_TOL` is reported unsearched at `N_REPLICATES`, and ``eq_searched`` is
-    also False when the search matches at the first rung.
+    `EQ_R_TOL` is reported unsearched at `N_REPLICATES`. ``eq_r_advanced`` says
+    whether ``eq_R`` moved beyond study depth, so it is also False when the
+    search matches at its first rung.
 
     Parameters
     ----------
@@ -547,8 +550,8 @@ def part2(
             # Smallest R where the unpaired test matches paired power at study depth.
             within_tol = pair <= unp + EQ_R_TOL
             eq_r = N_REPLICATES if within_tol else None
-            searched = not within_tol
-            if searched:
+            advanced = not within_tol
+            if advanced:
                 for rr in EQ_R_GRID:
                     # stats=False: only unpaired power is read here.
                     u2 = _paired_powers(
@@ -556,8 +559,9 @@ def part2(
                     )[0]
                     if u2 >= pair - EQ_R_TOL:
                         eq_r = rr
-                        # eq_searched records whether eq_R moved beyond study depth.
-                        searched = rr != N_REPLICATES
+                        # The flag records whether eq_R moved beyond study depth,
+                        # not whether the search ran.
+                        advanced = rr != N_REPLICATES
                         break
             rows.append(
                 {
@@ -567,7 +571,7 @@ def part2(
                     "power_unpaired": unp,
                     "power_paired": pair,
                     "eq_R": eq_r,
-                    "eq_searched": searched,
+                    "eq_r_advanced": advanced,
                     "cap": EQ_R_GRID[-1],
                     "phi_binary": phi,
                     "agreement": agree,
@@ -608,21 +612,17 @@ def part2(
             for i in range(n_sims)
         ]
         measurable = [d for d in deffs if d is not None]
-        if measurable:
-            deff_sim = float(np.median(measurable))
-            print(
-                f"  icc={icc} design_effect_simulated: {deff_sim:.3f} "
-                f"(median of {len(measurable)}/{n_sims} measurable)",
-                flush=True,
-            )
-        else:
-            # An unmeasurable block must not report a placeholder number.
-            deff_sim = None
-            print(
-                f"  icc={icc} design_effect_simulated: no measurable ratio "
-                f"in {n_sims} simulations",
-                flush=True,
-            )
+        # An unmeasurable block must not report a placeholder number.
+        deff_sim = float(np.median(measurable)) if measurable else None
+        print(
+            f"  icc={icc} design_effect_simulated: "
+            + (
+                f"{deff_sim:.3f} (median of {len(measurable)}/{n_sims} measurable)"
+                if measurable
+                else f"no measurable ratio in {n_sims} simulations"
+            ),
+            flush=True,
+        )
 
         icc_blocks[str(icc)] = {
             "rows": rows,
@@ -662,8 +662,10 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
         If contrast counts disagree with the study correction denominators.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
-    # Family 0 is a ceiling ladder at every info; ladders (1, info 1) and (2, info 1)
-    # plant mid-range effects; every other contrast is null.
+    # Family 0 is a ceiling ladder at every info (12 ladder effects). Ladders (1, info 1)
+    # and (2, info 1) plant mid-range effects (6 ladder effects), and because only
+    # info 1 moves there, the info-arm contrasts of rungs 1 and 2 that touch info 1
+    # are also true effects (12); the remaining 180 contrasts are null.
     rates = np.empty((N_FAMILIES, N_RUNGS, N_INFOS))
     # Broadcasting raises if the family count ever disagrees with these rates.
     rates[:] = np.array([0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62])[:, None, None]
@@ -689,10 +691,12 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     true_diff = np.array([abs(rates[c[:3]] - rates[c[3:]]) for c in contrasts])
     is_null = true_diff == 0.0
     n_true = int((~is_null).sum())
+    n_true_ladder = int((~is_null[:N_LADDER_CONTRASTS]).sum())
     ladder_rates = rates.transpose(0, 2, 1).reshape(N_LADDERS, N_RUNGS)
     ladder_nonflat = ~np.all(ladder_rates == ladder_rates[:, :1], axis=1)
     print(
-        f"  config: {n_true} true effects / {int(is_null.sum())} true nulls; "
+        f"  config: {n_true} true effects ({n_true_ladder} ladder, "
+        f"{n_true - n_true_ladder} info-arm) / {int(is_null.sum())} true nulls; "
         f"non-flat ladders = {int(ladder_nonflat.sum())}/{N_LADDERS}\n"
         f"  true-effect deltas: {np.sort(true_diff[~is_null])}",
         flush=True,
@@ -725,22 +729,15 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
         )
 
     summaries = {}
-    for key, name, rejmap, nullmask, tests_per_ladder in (
-        (
-            "full",
-            f"m={N_PRIMARY}",
-            apply_corrections(pv, ALPHA),
-            is_null,
-            N_LADDER_CONTRASTS // N_LADDERS,
-        ),
-        ("reduced", f"m={N_REDUCED}", apply_corrections(pv_red, ALPHA), null_red, 1),
+    for key, name, rejmap, nullmask in (
+        ("full", f"m={N_PRIMARY}", apply_corrections(pv, ALPHA), is_null),
+        ("reduced", f"m={N_REDUCED}", apply_corrections(pv_red, ALPHA), null_red),
         # Fixed size isolates test choice from correction size.
         (
             "test_swap_fixed_alpha",
             f"test-swap only (alpha={ALPHA_PRIMARY:.2e})",
             {f"Bonferroni@{N_PRIMARY}": pv_red <= ALPHA_PRIMARY},
             null_red,
-            1,
         ),
     ):
         res = {}
@@ -748,11 +745,12 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
             v = (rej & nullmask).sum(axis=1)
             s = (rej & ~nullmask).sum(axis=1)
             tot = rej.sum(axis=1)
-            # `contrasts` is ladder-major: the leading columns are contiguous blocks of
-            # `tests_per_ladder` rung pairs, one block per ladder.
+            # `contrasts` is ladder-major: the leading columns are one contiguous block
+            # of rung-pair tests per ladder (3 in the full family, 1 trend test in the
+            # reduced one); the trailing N_INFO_CONTRASTS columns are the same in both.
             ladders = (
-                rej[:, : N_LADDERS * tests_per_ladder]
-                .reshape(n_sims, N_LADDERS, tests_per_ladder)
+                rej[:, : rej.shape[1] - N_INFO_CONTRASTS]
+                .reshape(n_sims, N_LADDERS, -1)
                 .any(axis=2)
             )
             res[proc] = {

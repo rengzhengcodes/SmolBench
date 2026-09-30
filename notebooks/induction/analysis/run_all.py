@@ -7,7 +7,6 @@ invariants when it is imported.
 """
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
 from typing import Optional
@@ -16,10 +15,10 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # isort: off
-import power_analysis  # noqa: E402
-import paired_analysis  # noqa: E402
-import significance_report  # noqa: E402
-import extens_vs_noise  # noqa: E402
+import power_analysis
+import paired_analysis
+import significance_report
+import extens_vs_noise
 
 # isort: on
 
@@ -28,20 +27,14 @@ CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
 
 
 def _banner(name: str) -> None:
-    """Print a script banner so a long combined log stays attributable.
-
-    Parameters
-    ----------
-    name : str
-        Script name printed between the rules.
-    """
+    """Print a script banner so a long combined log stays attributable."""
     print(f"\n{'=' * 78}\n{name}\n{'=' * 78}", flush=True)
 
 
 def main(
     argv: Optional[list[str]] = None,
     results_dir: Path = power_analysis.RESULTS_DIR,
-) -> None:
+) -> int:
     """Run analysis scripts in dependency order.
 
     Parameters
@@ -50,6 +43,11 @@ def main(
         Command-line arguments to parse.
     results_dir : Path
         Results tree handed to every script.
+
+    Returns
+    -------
+    int
+        Zero; every failure propagates as an exception.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",
@@ -71,10 +69,12 @@ def main(
         module.main(results_dir)
     if args.with_sim:
         # Imported here so the default chain never pays for it.
-        multiplicity_sim = importlib.import_module("multiplicity_sim")
+        import multiplicity_sim
+
         _banner(multiplicity_sim.__name__)
         multiplicity_sim.main(results_dir=results_dir)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

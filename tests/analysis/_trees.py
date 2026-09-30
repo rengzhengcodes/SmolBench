@@ -108,24 +108,7 @@ def profile_for(
 def _marks_for(
     rate: float, noncompliance: float, rng: np.random.Generator, invalid: float = 0.0
 ) -> Marks:
-    """Build one replicate with independent score, validity, and compliance axes.
-
-    Parameters
-    ----------
-    rate : float
-        Probability that a mark scores 1.
-    noncompliance : float
-        Probability that a mark is non-compliant (``EMPTY``).
-    rng : np.random.Generator
-        Source of the three independent draws.
-    invalid : float
-        Probability that a mark is unscored (``score=None``).
-
-    Returns
-    -------
-    Marks
-        One replicate of `N_HARMONICS` marks.
-    """
+    """Draw one `N_HARMONICS`-mark replicate; `rate`, `noncompliance` and `invalid` are independent per-mark probabilities."""
     scores = rng.random(N_HARMONICS) < rate
     bad = rng.random(N_HARMONICS) < noncompliance
     null = rng.random(N_HARMONICS) < invalid

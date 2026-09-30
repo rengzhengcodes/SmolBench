@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import hochberg, holm, labeled_rows, load_marks  # noqa: E402
-from power_analysis import (  # noqa: E402
+from paired_analysis import hochberg, holm, labeled_rows, load_marks
+from power_analysis import (
     ALPHA,
     MODELS,
     N_HARMONICS,
@@ -24,7 +24,7 @@ from power_analysis import (  # noqa: E402
     RESULTS_DIR,
     build_primary_contrasts,
 )
-from significance_report import (  # noqa: E402
+from significance_report import (
     COLLAPSE_THRESHOLD,
     common_seed_rate,
     compliance_census,
@@ -133,18 +133,7 @@ def noncompliance_rate(
 
 
 def _star(ok: bool) -> str:
-    """Render a yes/no table cell.
-
-    Parameters
-    ----------
-    ok : bool
-        Whether the cell is a rejection.
-
-    Returns
-    -------
-    str
-        Fixed-width ``yes`` or ``.`` cell.
-    """
+    """Render a fixed-width ``yes`` / ``.`` rejection cell."""
     return " yes " if ok else "  .  "
 
 
@@ -174,9 +163,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         ka, kb = (model, "extens"), (model, "noise_intens")
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        nc_e, nc_n = noncompliance_rate(census, ka, fr["seeds"]), noncompliance_rate(
-            census, kb, fr["seeds"]
-        )
+        nc_e, nc_n = (noncompliance_rate(census, k, fr["seeds"]) for k in (ka, kb))
         rows.append(
             {
                 **fr,
@@ -195,6 +182,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     p_sub_item = np.array([r["p_item"] for r in rows])
 
     n_models = len(MODELS)
+    n_seed_min = min(r["n_seeds"] for r in rows)
+    n_seed_max = max(r["n_seeds"] for r in rows)
     hdr = (
         f"{'model':13s} {'extens':>7s} {'noise':>7s} {'disc':>6s} {'b/c':>9s} "
         f"{'p_seed':>10s} {'p_item':>10s} {f'H{N_PRIMARY}':>5s} "
@@ -209,8 +198,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         "column says which, from measured non-compliance on both arms over the seeds the\n"
         "two arms share. It annotates compliance only; the direction of every row is the\n"
         "measured one.\n"
-        f"PRIMARY p = exact seed-level sign-flip over {min(r['n_seeds'] for r in rows)} "
-        f"replicates (the independent unit;\n  the {N_HARMONICS} harmonics inside a seed "
+        f"PRIMARY p = exact seed-level sign-flip over {n_seed_min}-{n_seed_max} "
+        f"replicates per lane (the independent unit;\n  the {N_HARMONICS} harmonics inside a seed "
         f"share one answer vector). Item-level exact\n  McNemar on "
         f"{min(r['n'] for r in rows)}-{max(r['n'] for r in rows)} matched marks is "
         f"shown beside it as a DESCRIPTIVE figure.\n\n{hdr}\n" + "-" * len(hdr)

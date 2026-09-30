@@ -24,35 +24,44 @@ driver_tree = tree_fixture(
 
 
 @pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
     """Replace every script's ``main`` with a call recorder.
 
     Returns
     -------
-    list[str]
-        Module names in the order their ``main`` was called.
+    list[tuple[str, Path]]
+        ``(module name, results_dir)`` in the order each ``main`` was called.
     """
-    calls: list[str] = []
+    calls: list[tuple[str, Path]] = []
     for module in run_all.CHAIN + (multiplicity_sim,):
         monkeypatch.setattr(
-            module, "main", lambda *a, name=module.__name__, **k: calls.append(name)
+            module,
+            "main",
+            lambda *a, name=module.__name__, **k: calls.append(
+                (name, (a + tuple(k.values()))[0])
+            ),
         )
     return calls
 
 
-def test_the_simulation_runs_only_behind_its_flag(recorded: list[str]) -> None:
-    """The chain runs in order; the simulation only when ``--with-sim`` is passed."""
-    run_all.main([])
-    assert recorded == [m.__name__ for m in run_all.CHAIN]
+def test_the_simulation_runs_only_behind_its_flag(
+    recorded: list[tuple[str, Path]], tmp_path: Path
+) -> None:
+    """The chain runs in order on the given tree; the simulation only when ``--with-sim`` is passed."""
+    chain = [(m.__name__, tmp_path) for m in run_all.CHAIN]
+    assert run_all.main([], results_dir=tmp_path) == 0
+    assert recorded == chain
     recorded.clear()
-    run_all.main(["--with-sim"])
-    assert recorded == [m.__name__ for m in run_all.CHAIN] + ["multiplicity_sim"]
+    run_all.main(["--with-sim"], results_dir=tmp_path)
+    assert recorded == chain + [("multiplicity_sim", tmp_path)]
 
 
 def test_the_driver_really_runs_the_chain_in_one_process(
     driver_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Run the chain against a synthetic tree; banners appear in chain order."""
+    # power_analysis.main runs the 10,000-sim sizing scans and two GLM diagnostics
+    # (minutes); the banner check needs only its slot in the chain.
     monkeypatch.setattr(power_analysis, "main", lambda *a, **k: None)
     out = run_captured(lambda: run_all.main([], results_dir=driver_tree))
     positions = [out.find(m.__name__) for m in run_all.CHAIN]
