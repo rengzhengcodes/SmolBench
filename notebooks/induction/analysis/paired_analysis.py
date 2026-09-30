@@ -1,24 +1,24 @@
 """Paired re-analysis of the family-ladder induction study.
 
 Seed-level sign-flips carry inference because items share seeds; CMH and McNemar are comparisons.
+Also owns the parsed-marks views (`CellMarks`) and the compliance census both later reports read.
 """
 
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
 from typing import Optional
 
-# Required when loaded by path rather than as ``__main__``.
+# Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import apply_corrections
-from power_analysis import (
-    ALPHA,
+from _power_common import ALPHA, apply_corrections
+from study_design import (
     ALPHA_PRIMARY,
     BASE_SEED,
     INFOS,
@@ -34,6 +34,7 @@ from power_analysis import (
     mcnemar_exact_p,
 )
 
+from smolbench.evals.quiz import COMPLIANT
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
 #: ``(model, info)`` naming one condition lane.
@@ -113,9 +114,87 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
     return views
 
 
-def _common_seeds(marks: CellMarks, key_a: CellKey, key_b: CellKey) -> list[int]:
-    """Sorted replicate seeds both cells carry."""
-    return sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
+#: Non-compliance rate at or above which a census cell counts as collapsed; both reports annotate at it.
+COLLAPSE_THRESHOLD = 0.25
+#: The criterion as the reports print it.
+COLLAPSE_CRITERION = f"{COLLAPSE_THRESHOLD:.0%}"
+
+
+def compliance_census(marks: CellMarks) -> dict:
+    """Measure non-compliance per parsed ``(model, info)`` cell.
+
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `load_marks`.
+
+    Returns
+    -------
+    dict
+        Cell key -> ``rate`` (pooled non-compliance), ``n`` (marks), ``modes``
+        (`Counter` of non-compliant labels) and ``per_seed``
+        (seed -> ``(non_compliant, total)``), skipping cells without marks.
+    """
+    out = {}
+    for key, by_seed in marks.compliance.items():
+        per_seed = {
+            seed: (sum(v != COMPLIANT for v in vals), len(vals))
+            for seed, vals in by_seed.items()
+        }
+        n = sum(t for _nc, t in per_seed.values())
+        if not n:
+            continue
+        out[key] = {
+            "rate": sum(nc for nc, _t in per_seed.values()) / n,
+            "n": n,
+            "modes": Counter(
+                v for vals in by_seed.values() for v in vals if v != COMPLIANT
+            ),
+            "per_seed": per_seed,
+        }
+    return out
+
+
+def common_seed_rate(cell: dict, seeds: Iterable[int]) -> Optional[float]:
+    """Return a census cell's non-compliance rate over ``seeds``.
+
+    Pool counts before division so unequal seed sizes retain their weight.
+
+    Parameters
+    ----------
+    cell : dict
+        Census entry for one cell.
+    seeds : Iterable[int]
+        Replicate seeds to include.
+
+    Returns
+    -------
+    Optional[float]
+        ``None`` when the subset has no marks; otherwise its non-compliance rate.
+    """
+    counts = [cell["per_seed"][s] for s in seeds if s in cell["per_seed"]]
+    total = sum(t for _nc, t in counts)
+    if total == 0:
+        return None
+    return sum(nc for nc, _t in counts) / total
+
+
+def common_seeds(marks: CellMarks, *keys: CellKey) -> list[int]:
+    """Sorted replicate seeds every one of `keys` carries.
+
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `load_marks`.
+    *keys : CellKey
+        Cells to intersect; at least one.
+
+    Returns
+    -------
+    list[int]
+        Seeds present in every cell, ascending.
+    """
+    return sorted(set.intersection(*(set(marks.correct[k]) for k in keys)))
 
 
 def aligned(
@@ -142,7 +221,7 @@ def aligned(
     SystemExit
         If the two cells share no replicate seed.
     """
-    seeds = _common_seeds(marks, key_a, key_b)
+    seeds = common_seeds(marks, key_a, key_b)
     if not seeds:
         # Empty overlap is a data failure, not a NumPy error.
         raise SystemExit(
@@ -250,7 +329,7 @@ def rejections(pvals: np.ndarray, method: str, level: float = ALPHA) -> np.ndarr
     pvals : np.ndarray
         P-values in the family.
     method : str
-        ``"Holm"``, ``"Hochberg"`` or ``"BH"``.
+        ``"Holm"``, ``"Hochberg"``, ``"Bonferroni"`` or ``"BH"``.
     level : float, optional
         Familywise error rate, or the false-discovery rate for ``"BH"``.
 
@@ -336,7 +415,7 @@ def labeled_rows(
                 "b": nb,
                 "c": nc,
                 "disc": (nb + nc) / max(a.size, 1),
-                "seeds": _common_seeds(marks, key_a, key_b),
+                "seeds": common_seeds(marks, key_a, key_b),
                 "n_seeds": int(np.unique(sidx).size),
                 "p_item": mcnemar_exact_p(nb, nc),
                 "p_unpaired": cmh_unpaired_p(a, b, hidx),
@@ -354,10 +433,8 @@ def _acc(x: Optional[float]) -> str:
     return "  n/a" if x is None else f"{x:.3f}"
 
 
-def main(results_dir: Path = RESULTS_DIR) -> None:
-    """Run the paired re-analysis report."""
-    print("Loading marks ...", flush=True)
-    marks = load_marks(results_dir)
+def _print_depth(marks: CellMarks) -> None:
+    """Print replicate depth per lane and the incomplete-sync warning."""
     depths = {k: len(v) for k, v in marks.correct.items()}
     shallow, deep = min(depths.values()), max(depths.values())
     print(f"  {len(depths)} conditions; replicate depth min={shallow} max={deep}")
@@ -376,6 +453,72 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             f"incomplete sync, not a null result.",
             file=sys.stderr,
         )
+
+
+def _print_standing_question(rows: list[dict], rej_cl: np.ndarray) -> None:
+    """Print the intens-vs-noise_intens row per model.
+
+    Each row is flagged by the Holm (PRIMARY) decision in `rej_cl`.
+    """
+    hdr = (
+        f"  {'model':14s} {'intens':>7s} {'noise':>7s} {'disc':>7s} "
+        f"{'b/c':>9s} {'p_paired':>10s} {'p_unpaired':>11s} "
+        f"{'p_signflip':>11s}"
+    )
+    print(
+        "\nStanding question -- intens vs noise_intens, per model "
+        f"(no prior study ever separated these):\n{hdr}\n  " + "-" * (len(hdr) - 2)
+    )
+    # The flag follows the PRIMARY procedure printed above (Holm), not
+    # Bonferroni: Holm's step thresholds exceed ALPHA_PRIMARY, so a
+    # Holm-rejected row must not print as merely uncorrected.
+    for r, rej in zip(rows, rej_cl):
+        if {r["key_a"][1], r["key_b"][1]} != {"intens", "noise_intens"}:
+            continue
+        model = r["key_a"][0]
+        flag = ""
+        if rej:
+            flag = "  <== SEPARATES (Holm, PRIMARY)"
+        elif r["p_cluster"] <= ALPHA:
+            flag = f"  <== p<{ALPHA} uncorrected"
+        print(
+            f"  {model:14s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
+            f"{r['disc']:7.3f} {r['b']:4d}/{r['c']:<4d} "
+            f"{r['p_item']:10.2e} {r['p_unpaired']:11.2e} "
+            f"{r['p_cluster']:11.2e}{flag}"
+        )
+
+
+def _print_design_effects(des: np.ndarray) -> None:
+    """Print the design-effect summary over the measurable PRIMARY contrasts.
+
+    Prints the no-measurable line instead when `des` is empty.
+    """
+    if des.size == 0:
+        print(
+            "Clustering / cross-stratum covariance: no measurable PRIMARY "
+            "contrasts (every contrast has zero independence-assumed "
+            "variance), so no design effect is reported."
+        )
+    else:
+        print(
+            f"\nClustering / cross-stratum covariance, over {des.size} measurable "
+            f"PRIMARY contrasts:\n"
+            f"  design effect = Var(per-seed total diff) / sum_k Var_k  "
+            f"(>1 anticonservative, <1 conservative)\n"
+            f"    median {np.median(des):.3f}   mean {des.mean():.3f}   "
+            f"p10 {np.percentile(des, 10):.3f}   p90 {np.percentile(des, 90):.3f}   "
+            f"max {des.max():.3f}\n"
+            f"    fraction > 1.0 : {(des > 1.0).mean():.3f}   "
+            f"fraction > 1.5 : {(des > 1.5).mean():.3f}"
+        )
+
+
+def main(results_dir: Path = RESULTS_DIR) -> None:
+    """Run the paired re-analysis report."""
+    print("Loading marks ...", flush=True)
+    marks = load_marks(results_dir)
+    _print_depth(marks)
 
     contrasts = build_primary_contrasts()
 
@@ -431,55 +574,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                 )
 
         if not drop_invalid:
-            # --- the standing question: does intens ever separate from noise? --
-            hdr = (
-                f"  {'model':14s} {'intens':>7s} {'noise':>7s} {'disc':>7s} "
-                f"{'b/c':>9s} {'p_paired':>10s} {'p_unpaired':>11s} "
-                f"{'p_signflip':>11s}"
-            )
-            print(
-                "\nStanding question -- intens vs noise_intens, per model "
-                f"(no prior study ever separated these):\n{hdr}\n  "
-                + "-" * (len(hdr) - 2)
-            )
-            # The flag follows the PRIMARY procedure printed above (Holm), not
-            # Bonferroni: Holm's step thresholds exceed ALPHA_PRIMARY, so a
-            # Holm-rejected row must not print as merely uncorrected.
-            for r, rej in zip(rows, rej_cl):
-                if {r["key_a"][1], r["key_b"][1]} != {"intens", "noise_intens"}:
-                    continue
-                model = r["key_a"][0]
-                flag = ""
-                if rej:
-                    flag = "  <== SEPARATES (Holm, PRIMARY)"
-                elif r["p_cluster"] <= ALPHA:
-                    flag = f"  <== p<{ALPHA} uncorrected"
-                print(
-                    f"  {model:14s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
-                    f"{r['disc']:7.3f} {r['b']:4d}/{r['c']:<4d} "
-                    f"{r['p_item']:10.2e} {r['p_unpaired']:11.2e} "
-                    f"{r['p_cluster']:11.2e}{flag}"
-                )
-
-            # --- clustering sign ---
-            if des.size == 0:
-                print(
-                    "Clustering / cross-stratum covariance: no measurable PRIMARY "
-                    "contrasts (every contrast has zero independence-assumed "
-                    "variance), so no design effect is reported."
-                )
-            else:
-                print(
-                    f"\nClustering / cross-stratum covariance, over {des.size} measurable "
-                    f"PRIMARY contrasts:\n"
-                    f"  design effect = Var(per-seed total diff) / sum_k Var_k  "
-                    f"(>1 anticonservative, <1 conservative)\n"
-                    f"    median {np.median(des):.3f}   mean {des.mean():.3f}   "
-                    f"p10 {np.percentile(des, 10):.3f}   p90 {np.percentile(des, 90):.3f}   "
-                    f"max {des.max():.3f}\n"
-                    f"    fraction > 1.0 : {(des > 1.0).mean():.3f}   "
-                    f"fraction > 1.5 : {(des > 1.5).mean():.3f}"
-                )
+            _print_standing_question(rows, rej_cl)
+            _print_design_effects(des)
 
     # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()

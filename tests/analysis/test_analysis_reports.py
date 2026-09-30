@@ -5,7 +5,6 @@ Synthetic trees keep reported claims conditional on their supporting data.
 
 import math
 import re
-import shutil
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -14,11 +13,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from smolbench.evals import Marks
 from smolbench.evals.parsing import EMPTY
 from tests.analysis._trees import (
     DEEP_DEPTH,
     FAMILIES,
+    FIRST_CELL,
     INFOS,
     MODELS,
     N_HARMONICS,
@@ -26,13 +25,15 @@ from tests.analysis._trees import (
     N_REPLICATES,
     SHALLOW_DEPTH,
     Cell,
+    _power_common,
     build_tree,
+    copies_from,
     extens_vs_noise,
     paired_analysis,
-    power_analysis,
     profile_for,
     run_captured,
     significance_report,
+    study_design,
     tree_fixture,
 )
 
@@ -46,6 +47,8 @@ SKEW_MODEL = "exaone_32b"
 TIED_MODEL = "nemo3_30b"
 #: Lane the single-lane fixtures perturb: reversed control, non-pad collapse, copied padding control.
 LANE_MODEL = "ds_flash"
+if not {COLLAPSE_MODEL, WEAK_MODEL, SKEW_MODEL, TIED_MODEL, LANE_MODEL} <= set(MODELS):
+    raise RuntimeError("a fixture tag is no longer on the pre-registered roster")
 
 #: Seeds below this are SKEW_MODEL's noise coverage; its intens non-compliance starts here.
 _SKEW_SPLIT = 10
@@ -136,8 +139,8 @@ def test_omnibus_gates_reject_on_a_steep_ladder(ladder_tree: Path) -> None:
     gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
     assert gate["n_seeds"] == DEEP_DEPTH
     assert gate["reject"] is True
-    assert gate["p"] < power_analysis.ALPHA_OMNIBUS
-    assert gate["p_perm"] < power_analysis.ALPHA_OMNIBUS
+    assert gate["p"] < study_design.ALPHA_OMNIBUS
+    assert gate["p_perm"] < study_design.ALPHA_OMNIBUS
 
 
 def test_omnibus_gates_do_not_reject_flat_family(clean_tree: Path) -> None:
@@ -146,7 +149,7 @@ def test_omnibus_gates_do_not_reject_flat_family(clean_tree: Path) -> None:
     gates = significance_report.omnibus_gates(marks)
     assert gates
     for gate in gates.values():
-        assert gate["p_gate"] > power_analysis.ALPHA_OMNIBUS
+        assert gate["p_gate"] > study_design.ALPHA_OMNIBUS
         assert gate["reject"] is False
 
 
@@ -274,9 +277,9 @@ def test_permutation_p_is_deterministic_and_bounded() -> None:
     """Same tensor and seed give the same p; the plus-one keeps it in (0, 1]."""
     rng = np.random.default_rng(0)
     tensor = (
-        rng.random((8, power_analysis.N_RUNGS, N_HARMONICS * len(INFOS))) < 0.9
+        rng.random((8, study_design.N_RUNGS, N_HARMONICS * len(INFOS))) < 0.9
     ).astype(np.int64)
-    stat = float(power_analysis.gcmh_stat(tensor.sum(axis=0)[None], 8)[0])
+    stat = float(study_design.gcmh_stat(tensor.sum(axis=0)[None], 8)[0])
     p1, p2 = (
         significance_report.permutation_omnibus_p(
             tensor, stat, np.random.default_rng([significance_report.SEED, 0])
@@ -294,16 +297,16 @@ def test_gate_requires_both_p_values(tmp_path: Path) -> None:
     gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
     assert gate["n_seeds"] == 2
     # The asymptotic p alone would gate; only the within-seed permutation blocks it.
-    assert gate["p"] <= power_analysis.ALPHA_OMNIBUS
+    assert gate["p"] <= study_design.ALPHA_OMNIBUS
     # (N_RUNGS!)**n_seeds per-seed labellings, but gcmh_stat is invariant under a joint
     # relabelling, so N_RUNGS! of them tie the observed statistic: the exact p-value is
     # at least 1 / N_RUNGS!**(n_seeds - 1) (exactly that on this tree), far above the
     # +1 floor; the slack is three Monte-Carlo standard errors over N_GATE_PERMS draws.
-    floor = 1 / math.factorial(power_analysis.N_RUNGS) ** (gate["n_seeds"] - 1)
+    floor = 1 / math.factorial(study_design.N_RUNGS) ** (gate["n_seeds"] - 1)
     assert gate["p_perm"] >= floor - 3 * math.sqrt(
         floor * (1 - floor) / significance_report.N_GATE_PERMS
     )
-    assert gate["p_perm"] > power_analysis.ALPHA_OMNIBUS
+    assert gate["p_perm"] > study_design.ALPHA_OMNIBUS
     assert gate["p_gate"] == max(gate["p"], gate["p_perm"])
     assert gate["reject"] is False
 
@@ -335,17 +338,11 @@ collapse_tree = tree_fixture(
     "16 seeds, with the four engineered anomalies this module's constants name.",
     copies={(TIED_MODEL, "noise_intens"): (TIED_MODEL, "extens")},
 )
-_CLEAN_SOURCE = (MODELS[0], "intens")
 clean_tree = tree_fixture(
     "clean_tree",
     profile_for(rate=0.99),
     "16 seeds, every informative arm at 0.99 and compliant: all ties, no collapse.",
-    copies={
-        (model, info): _CLEAN_SOURCE
-        for model in MODELS
-        for info in INFOS
-        if info != "zero" and (model, info) != _CLEAN_SOURCE
-    },
+    copies=copies_from(FIRST_CELL, [info for info in INFOS if info != "zero"]),
 )
 reversed_tree = tree_fixture(
     "reversed_tree",
@@ -401,6 +398,26 @@ def rendered(tree: Path) -> Rendered:
     return _RENDERED[tree]
 
 
+#: ``skewed_report(tree, per_seed)``: the report on `tree` under a `_skew_census` of `per_seed`; never cached.
+SkewedReport = Callable[[Path, Mapping[tuple[str, str], Mapping[int, int]]], Rendered]
+
+
+@pytest.fixture
+def skewed_report(monkeypatch: pytest.MonkeyPatch) -> SkewedReport:
+    """Compute and render the report with `significance_report.compliance_census` replaced by `_skew_census(per_seed)`."""
+
+    def report(
+        tree: Path, per_seed: Mapping[tuple[str, str], Mapping[int, int]]
+    ) -> Rendered:
+        monkeypatch.setattr(
+            significance_report, "compliance_census", _skew_census(per_seed)
+        )
+        computed = significance_report.compute(tree)
+        return run_captured(lambda: significance_report.render(computed)), computed
+
+    return report
+
+
 # The shallow fixture pins the incomplete-sync guard and control messaging.
 
 
@@ -451,24 +468,16 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
 
 @pytest.fixture
 def padding_control_report(
-    padding_control_tree: Path, monkeypatch: pytest.MonkeyPatch
+    padding_control_tree: Path, skewed_report: SkewedReport
 ) -> Callable[[int], Rendered]:
     """Render `padding_control_tree` with `noise_nc` of every noise-arm seed's marks non-compliant and the intens arm compliant."""
-
-    def render(noise_nc: int) -> Rendered:
-        skewed = _skew_census(
-            {
-                (LANE_MODEL, "intens"): dict.fromkeys(range(DEEP_DEPTH), 0),
-                (LANE_MODEL, "noise_intens"): dict.fromkeys(
-                    range(DEEP_DEPTH), noise_nc
-                ),
-            },
-        )
-        monkeypatch.setattr(significance_report, "compliance_census", skewed)
-        computed = significance_report.compute(padding_control_tree)
-        return run_captured(lambda: significance_report.render(computed)), computed
-
-    return render
+    return lambda noise_nc: skewed_report(
+        padding_control_tree,
+        {
+            (LANE_MODEL, "intens"): dict.fromkeys(range(DEEP_DEPTH), 0),
+            (LANE_MODEL, "noise_intens"): dict.fromkeys(range(DEEP_DEPTH), noise_nc),
+        },
+    )
 
 
 def test_partial_pad_crossing_is_not_called_near_total(
@@ -533,35 +542,12 @@ def test_reports_handle_invalid_marks(tmp_path: Path) -> None:
     assert run_captured(lambda: significance_report.main(tmp_path))
     out = run_captured(lambda: paired_analysis.main(tmp_path))
     marks = paired_analysis.load_marks(tmp_path)
-    contrasts = power_analysis.build_primary_contrasts()
+    contrasts = study_design.build_primary_contrasts()
 
     assert sum(
         r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, True)
     ) < sum(r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, False))
     assert "DROP-INVALID pairs" in out
-
-
-def _copied_replicate(shallow_tree: Path, tmp_path: Path) -> Path:
-    """Copy `shallow_tree` into `tmp_path` (so corruption never leaks) and return its first cell's ``rep_0.yaml``."""
-    shutil.copytree(shallow_tree, tmp_path, dirs_exist_ok=True)
-    return tmp_path / f"{MODELS[0]}_{INFOS[0]}" / "rep_0.yaml"
-
-
-def test_extra_replicate_seed_is_rejected(shallow_tree: Path, tmp_path: Path) -> None:
-    """A lane outside the registered seed range is a collection failure."""
-    source = _copied_replicate(shallow_tree, tmp_path)
-    source.rename(source.with_name(f"rep_{N_REPLICATES}.yaml"))
-    with pytest.raises(SystemExit, match=str(N_REPLICATES)):
-        paired_analysis.load_marks(tmp_path)
-
-
-def test_partial_replicate_is_rejected(shallow_tree: Path, tmp_path: Path) -> None:
-    """A replicate with too few marks is a collection failure."""
-    path = _copied_replicate(shallow_tree, tmp_path)
-    marks = Marks.load(path)
-    replace(marks, marks=marks.marks[:-1]).dump(path)
-    with pytest.raises(SystemExit, match=rf"{path}.*{N_HARMONICS}"):
-        paired_analysis.load_marks(tmp_path)
 
 
 # The PADDING EFFECT table subtracts both arms' rates over their common seeds only.
@@ -598,7 +584,7 @@ def test_padding_table_reports_the_seed_count_it_used(collapse_tree: Path) -> No
 
 
 def test_padding_verdict_names_the_arm_that_crossed(
-    collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
+    collapse_tree: Path, skewed_report: SkewedReport
 ) -> None:
     """COLLAPSE needs a clean intens arm and a noise arm at or above the criterion; a lane already collapsed unpadded is not padding-specific."""
     verdicts = {r["model"]: r["verdict"] for r in rendered(collapse_tree)[1].pad_rows}
@@ -606,14 +592,13 @@ def test_padding_verdict_names_the_arm_that_crossed(
     # LANE_MODEL has no override on this tree: both arms are compliant, so the pad crossed nothing.
     assert verdicts[LANE_MODEL] == "contract holds"
     # Both arms fully non-compliant: the lane collapsed, but not because of the pad.
-    skewed = _skew_census(
+    _, computed = skewed_report(
+        collapse_tree,
         {
             (LANE_MODEL, info): dict.fromkeys(range(DEEP_DEPTH), N_HARMONICS)
             for info in ("intens", "noise_intens")
-        }
+        },
     )
-    monkeypatch.setattr(significance_report, "compliance_census", skewed)
-    computed = significance_report.compute(collapse_tree)
     verdict = next(r["verdict"] for r in computed.pad_rows if r["model"] == LANE_MODEL)
     assert verdict == "collapsed, but not padding-specific"
     assert LANE_MODEL not in computed.pad_lanes
@@ -630,7 +615,7 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
     out = run_captured(lambda: significance_report.render(short))
     n_rows = len(MODELS) - 1
     n_over = sum(
-        r["rate_n"] >= significance_report.COLLAPSE_THRESHOLD for r in short.pad_rows
+        r["rate_n"] >= paired_analysis.COLLAPSE_THRESHOLD for r in short.pad_rows
     )
     assert f"In {n_over} of {n_rows} lanes with both arms measured" in out
     assert (
@@ -639,30 +624,24 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
 
 
 def test_all_cells_noise_count_uses_whole_cell_rates(
-    shared_seed_noise_tree: Path, monkeypatch: pytest.MonkeyPatch
+    shared_seed_noise_tree: Path, skewed_report: SkewedReport
 ) -> None:
     """The all-cells census count must not reuse common-seed padding rates."""
-    monkeypatch.setattr(
-        significance_report,
-        "compliance_census",
-        _skew_census(
-            {
-                (SKEW_MODEL, "intens"): dict.fromkeys(range(_SKEW_SPLIT), 0),
-                (SKEW_MODEL, "noise_intens"): dict.fromkeys(range(3), N_HARMONICS),
-            },
-        ),
+    out, computed = skewed_report(
+        shared_seed_noise_tree,
+        {
+            (SKEW_MODEL, "intens"): dict.fromkeys(range(_SKEW_SPLIT), 0),
+            (SKEW_MODEL, "noise_intens"): dict.fromkeys(range(3), N_HARMONICS),
+        },
     )
-    computed = significance_report.compute(shared_seed_noise_tree)
-    out = run_captured(lambda: significance_report.render(computed))
     assert sum(k[1] == "noise_intens" for k in computed.over) == 0
     assert (
         sum(
-            r["rate_n"] >= significance_report.COLLAPSE_THRESHOLD
-            for r in computed.pad_rows
+            r["rate_n"] >= paired_analysis.COLLAPSE_THRESHOLD for r in computed.pad_rows
         )
         == 1
     )
-    crit = f"{significance_report.COLLAPSE_THRESHOLD:.0%}"
+    crit = paired_analysis.COLLAPSE_CRITERION
     assert (
         f"{len(computed.over)} of {len(computed.census)} cells are at or above the "
         f"{crit} criterion; 0 of them are noise arms." in out
@@ -827,9 +806,7 @@ def test_standing_question_flag_follows_holm_not_bonferroni(
     target = paired_analysis.seed_diffs(a, b, sidx)
     # Above Bonferroni's ALPHA/m but within Holm's second step ALPHA/(m - 1); the floor
     # contrasts at 2/2**DEEP_DEPTH rank ahead of it and carry it past that step.
-    p_between = (
-        power_analysis.ALPHA_PRIMARY + power_analysis.ALPHA / (N_PRIMARY - 1)
-    ) / 2
+    p_between = (study_design.ALPHA_PRIMARY + _power_common.ALPHA / (N_PRIMARY - 1)) / 2
     real = paired_analysis.signflip_exact_p
     monkeypatch.setattr(
         paired_analysis,
@@ -879,7 +856,7 @@ def test_collapsed_lane_buckets_as_collapse(collapse_tree: Path) -> None:
 
 def test_mechanism_annotates_collapse_without_asserting_direction() -> None:
     """Every collapse pattern gets its own label and none encodes a direction."""
-    thr = extens_vs_noise.COLLAPSE_THRESHOLD
+    thr = paired_analysis.COLLAPSE_THRESHOLD
     assert extens_vs_noise.mechanism(0.0, 0.0) == "information"
     assert extens_vs_noise.mechanism(0.0, thr) == "noise COLLAPSED"
     assert extens_vs_noise.mechanism(thr, 0.0) == "extens COLLAPSED"
@@ -918,7 +895,7 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
 
 
 def test_collapse_tags_use_the_compared_seeds(
-    collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
+    collapse_tree: Path, skewed_report: SkewedReport
 ) -> None:
     """Collapse tags use only seeds shared by the compared contrast arms."""
     label = f"[{SKEW_MODEL}] noise_intens vs zero"
@@ -932,9 +909,9 @@ def test_collapse_tags_use_the_compared_seeds(
         # Fully non-compliant on the compared seeds: tagged.
         (dict.fromkeys(compared, N_HARMONICS), True),
     ):
-        skewed = _skew_census({(SKEW_MODEL, "noise_intens"): noise_census})
-        monkeypatch.setattr(significance_report, "compliance_census", skewed)
-        out = run_captured(lambda: significance_report.main(collapse_tree))
+        out, _ = skewed_report(
+            collapse_tree, {(SKEW_MODEL, "noise_intens"): noise_census}
+        )
         lines = [line for line in out.splitlines() if label in line]
         assert lines, out[:3000]
         assert any("[COLLAPSE:" in line for line in lines) is tagged, lines

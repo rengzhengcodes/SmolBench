@@ -22,15 +22,15 @@ from itertools import combinations, product
 from pathlib import Path
 from typing import Optional
 
-# Anchor paths to this file so sibling imports do not depend on invocation.
+# Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-import paired_analysis
-import power_analysis
 from _power_common import ALPHA, POWER_TARGETS, SEED, apply_corrections
-from power_analysis import (
+from paired_analysis import aligned, design_effect, load_marks
+from scipy.stats import chi2, norm
+from study_design import (
     ALPHA_OMNIBUS,
     ALPHA_PRIMARY,
     INFOS,
@@ -45,12 +45,12 @@ from power_analysis import (
     N_REPLICATES,
     N_RUNGS,
     RESULTS_DIR,
+    build_primary_contrasts,
     cmh_p,
     cmh_stat,
     gcmh_stat,
     mcnemar_exact_p,
 )
-from scipy.stats import chi2, norm
 
 from smolbench.evals.results_store import LocalResultsStore
 
@@ -360,14 +360,15 @@ def part5(rng: np.random.Generator, n_sims: int = 20000) -> dict:
     # Sensitivity only: correcting the trend tests among themselves.
     alpha_trend_only = ALPHA / N_LADDERS
     rows = []
-    for label, rates in (
-        ("monotone 0.60/0.75/0.88", (0.60, 0.75, 0.88)),
-        ("non-monotone 0.60/0.88/0.75", (0.60, 0.88, 0.75)),
-        ("monotone-small 0.60/0.66/0.72", (0.60, 0.66, 0.72)),
-        ("non-monotone-small 0.60/0.72/0.66", (0.60, 0.72, 0.66)),
-        ("monotone-ceiling 0.99/0.96/0.93", (0.99, 0.96, 0.93)),
-        ("non-monotone-ceiling 0.99/0.93/0.96", (0.99, 0.93, 0.96)),
+    for kind, rates in (
+        ("monotone", (0.60, 0.75, 0.88)),
+        ("non-monotone", (0.60, 0.88, 0.75)),
+        ("monotone-small", (0.60, 0.66, 0.72)),
+        ("non-monotone-small", (0.60, 0.72, 0.66)),
+        ("monotone-ceiling", (0.99, 0.96, 0.93)),
+        ("non-monotone-ceiling", (0.99, 0.93, 0.96)),
     ):
+        label = f"{kind} " + "/".join(f"{r:.2f}" for r in rates)
         succ = np.stack(
             [rng.binomial(N_REPLICATES, r, (n_sims, N_HARMONICS)) for r in rates],
             axis=1,
@@ -487,15 +488,116 @@ def study_design_effect(results_dir: Path) -> Optional[float]:
         store.list_seeds(None, model, info) for model in MODELS for info in INFOS
     ):
         return None
-    marks = paired_analysis.load_marks(results_dir)
+    marks = load_marks(results_dir)
     deffs = []
-    for _label, key_a, key_b in power_analysis.build_primary_contrasts():
-        d = paired_analysis.design_effect(
-            *paired_analysis.aligned(marks, key_a, key_b, drop_invalid=False)
-        )
+    for _label, key_a, key_b in build_primary_contrasts():
+        d = design_effect(*aligned(marks, key_a, key_b, drop_invalid=False))
         if d is not None:
             deffs.append(d)
     return float(np.median(deffs)) if deffs else None
+
+
+def _pairing_gain_rows(
+    rng: np.random.Generator, icc: float, n_sims: int, search_sims: int
+) -> list[dict]:
+    """Power rows for one `icc`, each with its eq_R grid search, printed as computed."""
+    rows = []
+    for p_a, delta, rho in product(
+        (0.95, 0.70), (0.05, 0.10), (0.0, 0.3, 0.5, 0.7, 0.9)
+    ):
+        # p_A=0.70 checks that the ceiling-rate pairing gain persists off
+        # the ceiling; two mid rhos suffice, and each extra row costs an
+        # eq_R search per icc block.
+        if p_a == 0.70 and rho not in (0.5, 0.7):
+            continue
+        unp, pair, phi, agree = _paired_powers(
+            p_a, delta, rho, N_REPLICATES, n_sims, rng, icc=icc
+        )
+        # Smallest R where the unpaired test matches paired power at study depth.
+        within_tol = pair <= unp + EQ_R_TOL
+        eq_r = N_REPLICATES if within_tol else None
+        if not within_tol:
+            for rr in EQ_R_GRID:
+                # stats=False: only unpaired power is read here.
+                u2 = _paired_powers(
+                    p_a, delta, rho, rr, search_sims, rng, stats=False, icc=icc
+                )[0]
+                if u2 >= pair - EQ_R_TOL:
+                    eq_r = rr
+                    break
+        rows.append(
+            {
+                "p_a": p_a,
+                "delta": delta,
+                "rho": rho,
+                "power_unpaired": unp,
+                "power_paired": pair,
+                "eq_R": eq_r,
+                # Whether a matching depth beyond study depth was found, not
+                # whether the search ran.
+                "eq_r_advanced": eq_r is not None and eq_r != N_REPLICATES,
+                "cap": EQ_R_GRID[-1],
+                "phi_binary": phi,
+                "agreement": agree,
+                "eq_ratio": None if eq_r is None else eq_r / N_REPLICATES,
+                "icc": icc,
+            }
+        )
+        suffix = f" (gap <= {EQ_R_TOL}, unsearched)" if within_tol else ""
+        print(
+            f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
+            f"phi_bin={phi:.3f} agree={agree:.3f} "
+            f"unpaired={unp:.4f} paired(item-McNemar)={pair:.4f} "
+            f"eqR={eq_r}{suffix}",
+            flush=True,
+        )
+    return rows
+
+
+def _null_calibration(
+    rng: np.random.Generator, icc: float, null_sims: int
+) -> dict[float, dict[str, float]]:
+    """Unpaired and item-McNemar Type-I rates at p_a = p_b = 0.90 for rho in (0.0, 0.5, 0.9), printed as computed."""
+    nulls = {}
+    for rho in (0.0, 0.5, 0.9):
+        # 60000 draws give ~14 expected null rejections at ALPHA_PRIMARY,
+        # enough to resolve the McNemar inflation.
+        u, p = _paired_powers(
+            0.90, 0.0, rho, N_REPLICATES, null_sims, rng, stats=False, icc=icc
+        )[:2]
+        nulls[rho] = {"unpaired_t1": u, "mcnemar_t1": p}
+        print(
+            f"  icc={icc} NULL rho={rho}: unpaired T1={u:.6f} mcnemar T1={p:.6f}",
+            flush=True,
+        )
+    return nulls
+
+
+def _simulated_design_effect(
+    rng: np.random.Generator, icc: float, n_sims: int
+) -> Optional[float]:
+    """Median measurable design effect of null marks at rho=0.5, printed; ``None`` when none is measurable."""
+    # Match the null calibration at p_a=p_b=0.90, rho=0.5.
+    ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, N_REPLICATES, rng, icc=icc)
+    seed_idx = np.repeat(np.arange(N_REPLICATES), N_HARMONICS)
+    harm_idx = np.tile(np.arange(N_HARMONICS), N_REPLICATES)
+    deffs = [
+        design_effect(ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx)
+        for i in range(n_sims)
+    ]
+    measurable = [d for d in deffs if d is not None]
+    # An unmeasurable block must not report a placeholder number.
+    deff_sim = float(np.median(measurable)) if measurable else None
+    print(
+        f"  icc={icc} design_effect_simulated: "
+        + (
+            f"{deff_sim:.3f} (median of {len(measurable)}/{n_sims} measurable)"
+            if measurable
+            else f"no measurable ratio in {n_sims} simulations"
+        ),
+        flush=True,
+    )
+    return deff_sim
 
 
 def part2(
@@ -550,93 +652,10 @@ def part2(
     icc_blocks = {}
     for icc in ICC_GRID:
         print(f"\n--- PART 2 table, icc={icc} ---", flush=True)
-        rows = []
-        for p_a, delta, rho in product(
-            (0.95, 0.70), (0.05, 0.10), (0.0, 0.3, 0.5, 0.7, 0.9)
-        ):
-            # p_A=0.70 checks that the ceiling-rate pairing gain persists off
-            # the ceiling; two mid rhos suffice, and each extra row costs an
-            # eq_R search per icc block.
-            if p_a == 0.70 and rho not in (0.5, 0.7):
-                continue
-            unp, pair, phi, agree = _paired_powers(
-                p_a, delta, rho, N_REPLICATES, n_sims, rng, icc=icc
-            )
-            # Smallest R where the unpaired test matches paired power at study depth.
-            within_tol = pair <= unp + EQ_R_TOL
-            eq_r = N_REPLICATES if within_tol else None
-            if not within_tol:
-                for rr in EQ_R_GRID:
-                    # stats=False: only unpaired power is read here.
-                    u2 = _paired_powers(
-                        p_a, delta, rho, rr, search_sims, rng, stats=False, icc=icc
-                    )[0]
-                    if u2 >= pair - EQ_R_TOL:
-                        eq_r = rr
-                        break
-            rows.append(
-                {
-                    "p_a": p_a,
-                    "delta": delta,
-                    "rho": rho,
-                    "power_unpaired": unp,
-                    "power_paired": pair,
-                    "eq_R": eq_r,
-                    # Whether a matching depth beyond study depth was found, not
-                    # whether the search ran.
-                    "eq_r_advanced": eq_r is not None and eq_r != N_REPLICATES,
-                    "cap": EQ_R_GRID[-1],
-                    "phi_binary": phi,
-                    "agreement": agree,
-                    "eq_ratio": None if eq_r is None else eq_r / N_REPLICATES,
-                    "icc": icc,
-                }
-            )
-            suffix = f" (gap <= {EQ_R_TOL}, unsearched)" if within_tol else ""
-            print(
-                f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
-                f"phi_bin={phi:.3f} agree={agree:.3f} "
-                f"unpaired={unp:.4f} paired(item-McNemar)={pair:.4f} "
-                f"eqR={eq_r}{suffix}",
-                flush=True,
-            )
-        nulls = {}
-        for rho in (0.0, 0.5, 0.9):
-            # 60000 draws give ~14 expected null rejections at ALPHA_PRIMARY,
-            # enough to resolve the McNemar inflation.
-            u, p = _paired_powers(
-                0.90, 0.0, rho, N_REPLICATES, null_sims, rng, stats=False, icc=icc
-            )[:2]
-            nulls[rho] = {"unpaired_t1": u, "mcnemar_t1": p}
-            print(
-                f"  icc={icc} NULL rho={rho}: unpaired T1={u:.6f} "
-                f"mcnemar T1={p:.6f}",
-                flush=True,
-            )
-
-        # Match the null calibration at p_a=p_b=0.90, rho=0.5.
-        ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, N_REPLICATES, rng, icc=icc)
-        seed_idx = np.repeat(np.arange(N_REPLICATES), N_HARMONICS)
-        harm_idx = np.tile(np.arange(N_HARMONICS), N_REPLICATES)
-        deffs = [
-            paired_analysis.design_effect(
-                ma[i].ravel(), mb[i].ravel(), seed_idx, harm_idx
-            )
-            for i in range(n_sims)
-        ]
-        measurable = [d for d in deffs if d is not None]
-        # An unmeasurable block must not report a placeholder number.
-        deff_sim = float(np.median(measurable)) if measurable else None
-        print(
-            f"  icc={icc} design_effect_simulated: "
-            + (
-                f"{deff_sim:.3f} (median of {len(measurable)}/{n_sims} measurable)"
-                if measurable
-                else f"no measurable ratio in {n_sims} simulations"
-            ),
-            flush=True,
-        )
-
+        # Rows, nulls, then the design effect: the RNG draw order main() checkpoints.
+        rows = _pairing_gain_rows(rng, icc, n_sims, search_sims)
+        nulls = _null_calibration(rng, icc, null_sims)
+        deff_sim = _simulated_design_effect(rng, icc, n_sims)
         icc_blocks[str(icc)] = {
             "rows": rows,
             "nulls": nulls,
@@ -649,6 +668,31 @@ def part2(
         "alpha": ALPHA_PRIMARY,
         "grid_r": list(EQ_R_GRID),
         "icc": icc_blocks,
+    }
+
+
+def _correction_summary(
+    rej: np.ndarray, nullmask: np.ndarray, ladder_nonflat: np.ndarray
+) -> dict[str, float]:
+    """True/false rejections, FWER, FDR, flagged ladders and per-true power of one rejection mask."""
+    v = (rej & nullmask).sum(axis=1)
+    s = (rej & ~nullmask).sum(axis=1)
+    tot = rej.sum(axis=1)
+    # `contrasts` is ladder-major: the leading columns are one contiguous block
+    # of rung-pair tests per ladder (3 in the full family, 1 trend test in the
+    # reduced one); the trailing N_INFO_CONTRASTS columns are the same in both.
+    ladders = (
+        rej[:, : rej.shape[1] - N_INFO_CONTRASTS]
+        .reshape(rej.shape[0], N_LADDERS, -1)
+        .any(axis=2)
+    )
+    return {
+        "true_rej": float(s.mean()),
+        "false_rej": float(v.mean()),
+        "fwer": float((v > 0).mean()),
+        "fdr": float(np.where(tot > 0, v / np.maximum(tot, 1), 0.0).mean()),
+        "ladders_flagged": float(ladders[:, ladder_nonflat].sum(axis=1).mean()),
+        "power_per_true": float(s.mean() / max((~nullmask).sum(), 1)),
     }
 
 
@@ -755,25 +799,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     ):
         res = {}
         for proc, rej in rejmap.items():
-            v = (rej & nullmask).sum(axis=1)
-            s = (rej & ~nullmask).sum(axis=1)
-            tot = rej.sum(axis=1)
-            # `contrasts` is ladder-major: the leading columns are one contiguous block
-            # of rung-pair tests per ladder (3 in the full family, 1 trend test in the
-            # reduced one); the trailing N_INFO_CONTRASTS columns are the same in both.
-            ladders = (
-                rej[:, : rej.shape[1] - N_INFO_CONTRASTS]
-                .reshape(n_sims, N_LADDERS, -1)
-                .any(axis=2)
-            )
-            res[proc] = {
-                "true_rej": float(s.mean()),
-                "false_rej": float(v.mean()),
-                "fwer": float((v > 0).mean()),
-                "fdr": float(np.where(tot > 0, v / np.maximum(tot, 1), 0.0).mean()),
-                "ladders_flagged": float(ladders[:, ladder_nonflat].sum(axis=1).mean()),
-                "power_per_true": float(s.mean() / max((~nullmask).sum(), 1)),
-            }
+            res[proc] = _correction_summary(rej, nullmask, ladder_nonflat)
             print(
                 f"  [{name}] {proc:12s} trueRej={res[proc]['true_rej']:.2f} "
                 f"FWER={res[proc]['fwer']:.4f} FDR={res[proc]['fdr']:.4f} "

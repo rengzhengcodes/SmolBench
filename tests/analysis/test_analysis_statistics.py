@@ -1,4 +1,4 @@
-"""Contracts for induction-analysis statistical plumbing."""
+"""Contracts for the design gates, the marks loader, the sizing scans and the multiplicity simulation."""
 
 import contextlib
 import inspect
@@ -8,19 +8,19 @@ import shutil
 import subprocess
 import sys
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pytest
 from scipy.stats import chi2, norm
-from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks, study_config
 from tests._paths import NOTEBOOKS, REPO_ROOT
 from tests.analysis._trees import (
     ANALYSIS_DIR,
-    DEEP_DEPTH,
+    FIRST_CELL,
     INFOS,
     MODELS,
     N_HARMONICS,
@@ -29,17 +29,15 @@ from tests.analysis._trees import (
     SHALLOW_DEPTH,
     _power_common,
     build_tree,
+    copies_from,
     extens_vs_noise,
     multiplicity_sim,
     paired_analysis,
     power_analysis,
     profile_for,
     run_captured,
-    significance_report,
+    study_design,
 )
-
-#: First roster cell: the copy source of the all-identical tree, and the cell small_tree's rep_bogus.yaml sits in.
-_FIRST_CELL = (MODELS[0], "intens")
 
 
 def _noisy_curve(n: int) -> float:
@@ -47,128 +45,49 @@ def _noisy_curve(n: int) -> float:
     return 0.79 if n == 7 else 0.85 if n >= 5 else 0.1
 
 
-def test_apply_corrections_matches_statsmodels() -> None:
-    """Batched masks agree with statsmodels row by row away from exact ties."""
-    alpha = _power_common.ALPHA
-    rng = np.random.default_rng(7)
-    pv = np.vstack(
-        [
-            rng.uniform(0, 1, size=(40, 6)),
-            rng.uniform(0, 0.02, size=(10, 6)),
-            np.array([[0.001, 0.011, 0.021, 0.031, 0.041, 0.9]]),
-        ]
-    )
-    got = _power_common.apply_corrections(pv, alpha)
-    methods = {
-        "Bonferroni": "bonferroni",
-        "Holm": "holm",
-        "Hochberg": "simes-hochberg",
-        "BH": "fdr_bh",
-    }
-    for name, method in methods.items():
-        for row, mask in zip(pv, got[name]):
-            expected = multipletests(row, alpha=alpha, method=method)[0]
-            assert list(mask) == list(expected), (name, row.tolist())
-
-
-def test_apply_corrections_share_one_inclusive_boundary() -> None:
-    """Every procedure rejects a p-value sitting exactly on its threshold."""
-    alpha = _power_common.ALPHA
-    m = 4
-    pv = np.array(
-        [
-            [alpha / m, alpha / (m - 1), 0.5, 0.9],
-            [alpha * 1 / m, alpha * 2 / m, alpha * 3 / m, alpha * 4 / m],
-        ]
-    )
-    got = _power_common.apply_corrections(pv, alpha)
-    assert list(got["Bonferroni"][0]) == [True, False, False, False]
-    assert list(got["Holm"][0]) == [True, True, False, False]
-    assert list(got["Hochberg"][0]) == [True, True, False, False]
-    assert list(got["BH"][1]) == [True, True, True, True]
-
-
-def test_power_analysis_roster_comes_from_the_study_config() -> None:
+def test_roster_comes_from_the_study_config() -> None:
     """Analysis roster derives from the study configuration."""
-    assert power_analysis.MODELS == tuple(
+    assert study_design.MODELS == tuple(
         study_config.tag_for(key) for key in study_config.roster_keys()
     )
-    assert power_analysis.FAMILIES == {
+    assert study_design.FAMILIES == {
         family: tuple(study_config.tag_for(key) for key in rungs)
         for family, rungs in study_config.families().items()
     }
 
 
-@pytest.mark.parametrize("method", ("Holm", "Hochberg", "BH"))
-def test_rejection_sets_do_not_depend_on_contrast_build_order(method: str) -> None:
-    """Tie ordering cannot change `method`'s rank-monotone rejection decisions."""
-    alpha = _power_common.ALPHA
-    rng = np.random.default_rng(7)
-    tie_rng = np.random.default_rng(20260905)
-    # Sign-flip floors at study and deep depth, ALPHA, the primary share, and tie-prone values.
-    pool = np.array(
-        [
-            2 / 2**N_REPLICATES,
-            2 / 2**DEEP_DEPTH,
-            1.0,
-            alpha,
-            alpha / N_PRIMARY,
-            1e-8,
-            0.5,
-            0.02,
-        ]
-    )
-    for i in range(60):
-        m = int(tie_rng.integers(2, 80))
-        pvals = (
-            np.round(tie_rng.random(m), 2)
-            if i % 3 == 0
-            else tie_rng.choice(pool, size=m)
-        )
-        perm = rng.permutation(pvals.size)
-        base = paired_analysis.rejections(pvals, method, alpha)
-        permuted = paired_analysis.rejections(pvals[perm], method, alpha)
-        assert np.array_equal(permuted, base[perm]), (pvals, perm)
-
-
-def test_mcnemar_is_defined_once() -> None:
-    """One implementation serves every call site."""
-    assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
-    assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
-
-
 def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """A same-family checkpoint swap keeps every count but must still fail."""
-    power_analysis.check_design_invariants()
-    old, new = power_analysis.MODELS[0], "qwen35_9b"
+    study_design.check_design_invariants()
+    old, new = study_design.MODELS[0], "qwen35_9b"
     monkeypatch.setattr(
-        power_analysis,
+        study_design,
         "FAMILIES",
         {
             fam: tuple(new if t == old else t for t in rungs)
-            for fam, rungs in power_analysis.FAMILIES.items()
+            for fam, rungs in study_design.FAMILIES.items()
         },
     )
     monkeypatch.setattr(
-        power_analysis,
+        study_design,
         "MODELS",
-        tuple(new if t == old else t for t in power_analysis.MODELS),
+        tuple(new if t == old else t for t in study_design.MODELS),
     )
-    assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
+    assert len(study_design.build_primary_contrasts()) == study_design.N_PRIMARY
     with pytest.raises(RuntimeError, match="pre-registered roster"):
-        power_analysis.check_design_invariants()
+        study_design.check_design_invariants()
 
 
 def test_design_invariants_pin_roster_keys_not_only_tags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A checkpoint swap that keeps the old tag must still fail on the key."""
-    keys = list(power_analysis.ROSTER_KEYS)
+    keys = list(study_design.ROSTER_KEYS)
     keys[0] = "qwen3.5-9b"
-    monkeypatch.setattr(power_analysis, "ROSTER_KEYS", tuple(keys))
-    assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
+    monkeypatch.setattr(study_design, "ROSTER_KEYS", tuple(keys))
+    assert study_design.MODELS == study_design.PREREGISTERED_MODELS
     with pytest.raises(RuntimeError, match="pre-registered roster"):
-        power_analysis.check_design_invariants()
+        study_design.check_design_invariants()
 
 
 def test_design_invariants_survive_python_dash_o() -> None:
@@ -177,10 +96,10 @@ def test_design_invariants_survive_python_dash_o() -> None:
         "import sys;"
         f"sys.path.insert(0, {str(ANALYSIS_DIR)!r});"
         f"sys.path.insert(0, {str(NOTEBOOKS)!r});"
-        "import power_analysis as pa;"
+        "import study_design as sd;"
         "assert False, 'asserts are live -- this subprocess is not under -O';"
-        "pa.N_PRIMARY = pa.N_PRIMARY - 1;"
-        "pa.check_design_invariants()"
+        "sd.N_PRIMARY = sd.N_PRIMARY - 1;"
+        "sd.check_design_invariants()"
     )
     result = subprocess.run(
         [sys.executable, "-O", "-c", code],
@@ -195,10 +114,10 @@ def test_design_invariants_survive_python_dash_o() -> None:
 
 @pytest.fixture(scope="module")
 def small_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build a 6-seed tree with one unparsable replicate filename in `_FIRST_CELL`."""
+    """Build a 6-seed tree with one unparsable replicate filename in `FIRST_CELL`."""
     tmp_path = tmp_path_factory.mktemp("small-tree")
     build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH))
-    cell_dir = tmp_path / f"{_FIRST_CELL[0]}_{_FIRST_CELL[1]}"
+    cell_dir = tmp_path / f"{FIRST_CELL[0]}_{FIRST_CELL[1]}"
     shutil.copyfile(cell_dir / "rep_0.yaml", cell_dir / "rep_bogus.yaml")
     return tmp_path
 
@@ -206,21 +125,38 @@ def small_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_walkers_skip_an_unparsable_replicate_filename(small_tree: Path) -> None:
     """The loader skips a non-replicate filename and the census inherits its seed set."""
     loaded = paired_analysis.load_marks(small_tree)
-    assert sorted(loaded.correct[_FIRST_CELL]) == list(range(SHALLOW_DEPTH))
+    assert sorted(loaded.correct[FIRST_CELL]) == list(range(SHALLOW_DEPTH))
 
-    census = significance_report.compliance_census(loaded)
-    assert census[_FIRST_CELL]["n"] == SHALLOW_DEPTH * N_HARMONICS
+    census = paired_analysis.compliance_census(loaded)
+    assert census[FIRST_CELL]["n"] == SHALLOW_DEPTH * N_HARMONICS
+
+
+def _copied_replicate(small_tree: Path, tmp_path: Path) -> Path:
+    """Copy `small_tree` into `tmp_path` (so corruption never leaks) and return `FIRST_CELL`'s ``rep_0.yaml``."""
+    shutil.copytree(small_tree, tmp_path, dirs_exist_ok=True)
+    return tmp_path / f"{FIRST_CELL[0]}_{FIRST_CELL[1]}" / "rep_0.yaml"
+
+
+def test_extra_replicate_seed_is_rejected(small_tree: Path, tmp_path: Path) -> None:
+    """A lane outside the registered seed range is a collection failure."""
+    source = _copied_replicate(small_tree, tmp_path)
+    source.rename(source.with_name(f"rep_{N_REPLICATES}.yaml"))
+    with pytest.raises(SystemExit, match=str(N_REPLICATES)):
+        paired_analysis.load_marks(tmp_path)
+
+
+def test_partial_replicate_is_rejected(small_tree: Path, tmp_path: Path) -> None:
+    """A replicate with too few marks is a collection failure."""
+    path = _copied_replicate(small_tree, tmp_path)
+    marks = Marks.load(path)
+    replace(marks, marks=marks.marks[:-1]).dump(path)
+    with pytest.raises(SystemExit, match=rf"{path}.*{N_HARMONICS}"):
+        paired_analysis.load_marks(tmp_path)
 
 
 def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> None:
     """Identical cells produce no measurable design effects but report cleanly."""
-    copies = {
-        (model, info): _FIRST_CELL
-        for model in MODELS
-        for info in INFOS
-        if (model, info) != _FIRST_CELL
-    }
-    build_tree(tmp_path, lambda _m, _i: (0.90, 0.0, range(SHALLOW_DEPTH)), copies)
+    build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH), copies_from(FIRST_CELL))
     assert (
         "Clustering / cross-stratum covariance: no measurable PRIMARY contrasts "
         "(every contrast has zero independence-assumed variance), so no design "
@@ -241,7 +177,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     )
     loaded = paired_analysis.load_marks(small_tree)
     after_load = len(reads)
-    census = significance_report.compliance_census(loaded)
+    census = paired_analysis.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
     assert n_cells == len(MODELS) * len(INFOS)
@@ -365,24 +301,22 @@ def test_replicates_needed_is_memoized_on_its_rate_vectors() -> None:
     assert info.hits == 1 and info.misses == 1, info
 
 
-def test_equivalence_replicates_does_not_accept_saturated_arms_at_r_one() -> None:
-    """Agresti–Caffo intervals prevent saturated arms from having zero width."""
-    rates = np.ones(N_HARMONICS)
+@pytest.mark.parametrize(
+    "rate, delta, upper",
+    [(1.0, 0.05, 10), (0.5, 0.5, 5)],
+    ids=["saturated-arms", "generous-margin"],
+)
+def test_equivalence_replicates_sizes_true_ties(
+    rate: float, delta: float, upper: int
+) -> None:
+    """A true tie at `rate` needs more than one replicate (Agresti-Caffo gives saturated arms a nonzero width) and no more than `upper` at margin `delta`."""
+    rates = np.full(N_HARMONICS, rate)
     result = power_analysis.equivalence_replicates(
-        rates, rates, 0.05, np.random.default_rng(0), n_sims=500
+        rates, rates, delta, np.random.default_rng(0), n_sims=500
     )
     # test_equivalence_power_pools_successes_across_harmonics shows power is 1.0 by R=10
-    # at this margin, so the scan can neither return 1 nor censor.
-    assert 1 < result <= 10
-
-
-def test_equivalence_replicates_finds_generous_margin_quickly() -> None:
-    """A generous equivalence margin remains easy to satisfy."""
-    rates = np.full(N_HARMONICS, 0.5)
-    result = power_analysis.equivalence_replicates(
-        rates, rates, 0.5, np.random.default_rng(0), n_sims=500
-    )
-    assert isinstance(result, int) and result <= 5
+    # at the 0.05 margin, so the scan can neither return 1 nor censor.
+    assert isinstance(result, int) and 1 < result <= upper
 
 
 def test_equivalence_power_pools_successes_across_harmonics() -> None:
@@ -413,9 +347,9 @@ def test_sizing_scan_uses_common_random_numbers(
     needed, curve = power_analysis.replicates_needed(a, b)
     assert len(streams) == 2, len(streams)
     cum_a, cum_b = streams[0], streams[1]
-    crit = chi2.isf(power_analysis.ALPHA_PRIMARY, df=1)
+    crit = chi2.isf(study_design.ALPHA_PRIMARY, df=1)
     for r in (1, 5, N_REPLICATES, power_analysis.MAX_REPLICATES):
-        stat = power_analysis.cmh_stat(
+        stat = study_design.cmh_stat(
             cum_a[:, r - 1].astype(np.int64), cum_b[:, r - 1].astype(np.int64), r
         )
         assert curve[r] == float((stat > crit).mean()), r

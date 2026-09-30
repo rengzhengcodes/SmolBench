@@ -32,6 +32,7 @@ import paired_analysis
 import power_analysis
 import run_all
 import significance_report
+import study_design
 
 # pylint: enable=wrong-import-order,unused-import
 
@@ -39,13 +40,39 @@ import significance_report
 SHALLOW_DEPTH = 6
 #: 2/2**16 is below the primary correction threshold.
 DEEP_DEPTH = 16
+if not 2 / 2**DEEP_DEPTH <= study_design.ALPHA_PRIMARY < 2 / 2**SHALLOW_DEPTH:
+    raise RuntimeError("SHALLOW_DEPTH and DEEP_DEPTH must straddle ALPHA_PRIMARY")
 
-N_HARMONICS = power_analysis.N_HARMONICS
-N_PRIMARY = power_analysis.N_PRIMARY
-N_REPLICATES = power_analysis.N_REPLICATES
-MODELS = power_analysis.MODELS
-FAMILIES = power_analysis.FAMILIES
-INFOS = power_analysis.INFOS
+N_HARMONICS = study_design.N_HARMONICS
+N_PRIMARY = study_design.N_PRIMARY
+N_REPLICATES = study_design.N_REPLICATES
+MODELS = study_design.MODELS
+FAMILIES = study_design.FAMILIES
+INFOS = study_design.INFOS
+
+#: First roster cell: copy source of the all-identical trees, and the lane the loader tests corrupt.
+FIRST_CELL: tuple[str, str] = (MODELS[0], INFOS[0])
+
+
+def copies_from(
+    source: tuple[str, str], infos: Sequence[str] = INFOS
+) -> dict[tuple[str, str], tuple[str, str]]:
+    """Byte-copy map for `build_tree`: every cell whose info is in `infos`, except `source`, copied from `source`.
+
+    Parameters
+    ----------
+    source : tuple[str, str]
+        Cell the listed cells are copied from.
+    infos : Sequence[str], optional
+        Arms to copy; every arm by default.
+
+    Returns
+    -------
+    dict[tuple[str, str], tuple[str, str]]
+        ``{destination: source}`` in `build_tree`'s ``copies`` shape.
+    """
+    return {(m, i): source for m in MODELS for i in infos if (m, i) != source}
+
 
 #: ``(rate, noncompliance, seeds[, invalid])``; `noncompliance` may be a per-seed function.
 Cell = (

@@ -2,9 +2,9 @@
 
 One process so the scripts share one results directory. The costly simulation,
 which reads the tree only for PART 2's measured design effect and writes its
-checkpoint beside it, runs only behind ``--with-sim``. CHAIN order is the
-dependency order: each later script imports the earlier ones, and
-``power_analysis`` checks the design invariants when it is first imported.
+checkpoint beside it, runs only behind ``--with-sim``. CHAIN order is report
+order: every report imports ``study_design`` (which checks the design invariants
+when it is first imported) and the later ones import ``paired_analysis``.
 """
 
 import argparse
@@ -12,13 +12,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add sibling scripts when imported outside ``__main__``.
+# Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import extens_vs_noise
 import paired_analysis
 import power_analysis
 import significance_report
+import study_design
 
 #: Report scripts in dependency order; each exposes ``main(results_dir)``.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
@@ -31,7 +32,7 @@ def _banner(name: str) -> None:
 
 def main(
     argv: Optional[list[str]] = None,
-    results_dir: Path = power_analysis.RESULTS_DIR,
+    results_dir: Path = study_design.RESULTS_DIR,
 ) -> int:
     """Run analysis scripts in dependency order.
 

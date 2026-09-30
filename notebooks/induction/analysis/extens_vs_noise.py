@@ -12,22 +12,28 @@ from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 
+# Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from paired_analysis import labeled_rows, load_marks, rejections
-from power_analysis import (
-    ALPHA,
+from _power_common import ALPHA
+from paired_analysis import (
+    COLLAPSE_CRITERION,
+    COLLAPSE_THRESHOLD,
+    CellMarks,
+    common_seed_rate,
+    compliance_census,
+    labeled_rows,
+    load_marks,
+    rejections,
+)
+from study_design import (
     MODELS,
     N_HARMONICS,
     N_PRIMARY,
     RESULTS_DIR,
     build_primary_contrasts,
-)
-from significance_report import (
-    COLLAPSE_THRESHOLD,
-    common_seed_rate,
-    compliance_census,
 )
 
 
@@ -105,19 +111,28 @@ def _star(ok: bool) -> str:
     return " yes " if ok else "  .  "
 
 
-def main(results_dir: Path = RESULTS_DIR) -> None:
-    """Print the extens-versus-noise report.
-
-    Three-way direction labels keep lane and aggregate tallies consistent.
+def lane_rows(marks: CellMarks, census: dict) -> list[dict]:
+    """Build one extens-vs-noise row per model from the full PRIMARY family.
 
     Parameters
     ----------
-    results_dir : Path
-        Results tree read by `paired_analysis.load_marks`.
-    """
-    marks = load_marks(results_dir)
-    census = compliance_census(marks)
+    marks : CellMarks
+        Parsed marks from `paired_analysis.load_marks`.
+    census : dict
+        Compliance census from `compliance_census`.
 
+    Returns
+    -------
+    list[dict]
+        Each family row for ``(model, extens)`` vs ``(model, noise_intens)`` plus
+        ``model``, ``dir``, ``holm_full``, ``holm_full_item``, ``nc_e``, ``nc_n``
+        and ``mech``.
+
+    Raises
+    ------
+    RuntimeError
+        If a lane has no compared-seed marks on either arm.
+    """
     # Keep the full family: the displayed subset is selected after measurement.
     full = labeled_rows(marks, build_primary_contrasts())
     holm_full = rejections(np.array([r["p_cluster"] for r in full]), "Holm", ALPHA)
@@ -146,6 +161,121 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                 "mech": mechanism(nc_e, nc_n),
             }
         )
+    return rows
+
+
+def _print_mechanisms(rows: list[dict]) -> None:
+    """Print each mechanism bucket with its gloss, its lanes and the significant-direction tally."""
+    print(f"\n{'=' * 78}\nTHE TWO MECHANISMS\n{'=' * 78}")
+    for mech, title, gloss in (
+        (
+            Mechanism.INFORMATION,
+            "INFORMATION / LABEL-DENSITY (both arms well-formed)",
+            "the noise arm obeys the output contract, so the comparison is not "
+            "about whether\n  the model could answer at all. CAVEAT: the "
+            "compliance criterion is a FORMAT gate --\n  `parse_numeric` accepts "
+            "any bare integer, so an answer that is well-formed and\n  "
+            "systematically wrong is invisible to it. A lane can therefore be "
+            "clean and directionally\n  correct while its effect is one "
+            "saturated failure mode repeated, not graded induction difficulty",
+        ),
+        (
+            Mechanism.NOISE_COLLAPSED,
+            "PADDING-ROBUSTNESS COLLAPSE (noise arm >= "
+            f"{COLLAPSE_CRITERION} non-compliant, extens arm intact)",
+            "the pad broke the output contract on the noise arm, so this row "
+            "measures\n  what whitespace padding does to compliance as much as "
+            "to accuracy. Direction is\n  reported as measured, not inferred "
+            "from the compliance gap",
+        ),
+        (
+            Mechanism.EXTENS_COLLAPSED,
+            f"EXTENS ARM >= {COLLAPSE_CRITERION} NON-COMPLIANT (noise arm intact)",
+            "the enumeration, not the pad, is what broke the format -- so the "
+            "accuracy\n  contrast here is partly a format effect too",
+        ),
+        (
+            Mechanism.BOTH_COLLAPSED,
+            f"BOTH ARMS >= {COLLAPSE_CRITERION} NON-COMPLIANT",
+            "neither arm is a working control; the row is a compliance result "
+            "on both\n  sides and its accuracy direction is not attributable to "
+            "either mechanism",
+        ),
+    ):
+        sel = [r for r in rows if r["mech"] == mech]
+        sel_sig = [r for r in sel if r["holm_full"]]
+        print(
+            f"\n-- {title}: {len(sel)} lane{'' if len(sel) == 1 else 's'}, "
+            f"{len(sel_sig)} significant\n  {gloss}."
+        )
+        for r in sorted(sel, key=lambda r: r["p_cluster"]):
+            print(
+                f"  {'SIG ' if r['holm_full'] else '  . '}{r['model']:13s} "
+                f"{r['acc_a']:.3f} vs {r['acc_b']:.3f}   {r['dir']:13s} "
+                f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   p={r['p_cluster']:.2e}"
+            )
+        if sel_sig:
+            sig_dirs = Counter(r["dir"] for r in sel_sig)
+            up, down = sig_dirs[Direction.NOISE], sig_dirs[Direction.EXTENS]
+            print(
+                f"  => direction among the significant ones: {up} "
+                f"noise-higher, {down} extens-higher, "
+                f"{len(sel_sig) - up - down} tied."
+            )
+
+
+def _print_raw_direction(rows: list[dict]) -> None:
+    """Print the unfiltered direction tally and the well-formed extens-higher counter-examples."""
+    n_models = len(MODELS)
+    dirs = Counter(r["dir"] for r in rows)
+    up_all, down_all = dirs[Direction.NOISE], dirs[Direction.EXTENS]
+    coll_dirs = Counter(r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION)
+    print(
+        f"\n{'=' * 78}\nRAW DIRECTION, ALL {n_models} LANES, NO SIGNIFICANCE "
+        f"FILTER\n{'=' * 78}\n"
+        f"  {up_all} noise-higher, {down_all} extens-higher, "
+        f"{n_models - up_all - down_all} exactly tied.\n"
+        f"  {coll_dirs[Direction.EXTENS]} of the {down_all} extens-higher and "
+        f"{coll_dirs[Direction.NOISE]} of the {up_all} noise-higher lanes have at least "
+        f"one\n  arm over the {COLLAPSE_CRITERION} non-compliance threshold."
+        # The retention rationale describes collapsed lanes, so it prints only
+        # when there is at least one.
+        + (
+            " Those lanes are kept and annotated rather\n  than removed: dropping "
+            "them would select on a covariate of the outcome."
+            if coll_dirs.total()
+            else ""
+        )
+    )
+    clean_down = [
+        r
+        for r in rows
+        if r["dir"] == Direction.EXTENS and r["mech"] == Mechanism.INFORMATION
+    ]
+    if clean_down:
+        print(
+            f"  Extens-higher on WELL-FORMED arms: "
+            f"{', '.join(r['model'] for r in clean_down)} -- the genuine "
+            f"counter-example(s),\n  reported at their own p: "
+            + "; ".join(f"{r['model']} p={r['p_cluster']:.2e}" for r in clean_down)
+            + "."
+        )
+
+
+def main(results_dir: Path = RESULTS_DIR) -> None:
+    """Print the extens-versus-noise report.
+
+    Three-way direction labels keep lane and aggregate tallies consistent.
+
+    Parameters
+    ----------
+    results_dir : Path
+        Results tree read by `paired_analysis.load_marks`.
+    """
+    marks = load_marks(results_dir)
+    census = compliance_census(marks)
+
+    rows = lane_rows(marks, census)
 
     p_sub = np.array([r["p_cluster"] for r in rows])
     p_sub_item = np.array([r["p_item"] for r in rows])
@@ -221,97 +351,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             f"{r['dir']:13s}  [{r['mech']}]   p={r['p_cluster']:.2e}"
         )
 
-    print(f"\n{'=' * 78}\nTHE TWO MECHANISMS\n{'=' * 78}")
-    for mech, title, gloss in (
-        (
-            Mechanism.INFORMATION,
-            "INFORMATION / LABEL-DENSITY (both arms well-formed)",
-            "the noise arm obeys the output contract, so the comparison is not "
-            "about whether\n  the model could answer at all. CAVEAT: the "
-            "compliance criterion is a FORMAT gate --\n  `parse_numeric` accepts "
-            "any bare integer, so an answer that is well-formed and\n  "
-            "systematically wrong is invisible to it. A lane can therefore be "
-            "clean and directionally\n  correct while its effect is one "
-            "saturated failure mode repeated, not graded induction difficulty",
-        ),
-        (
-            Mechanism.NOISE_COLLAPSED,
-            "PADDING-ROBUSTNESS COLLAPSE (noise arm >= "
-            f"{COLLAPSE_THRESHOLD:.0%} non-compliant, extens arm intact)",
-            "the pad broke the output contract on the noise arm, so this row "
-            "measures\n  what whitespace padding does to compliance as much as "
-            "to accuracy. Direction is\n  reported as measured, not inferred "
-            "from the compliance gap",
-        ),
-        (
-            Mechanism.EXTENS_COLLAPSED,
-            f"EXTENS ARM >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT (noise arm "
-            f"intact)",
-            "the enumeration, not the pad, is what broke the format -- so the "
-            "accuracy\n  contrast here is partly a format effect too",
-        ),
-        (
-            Mechanism.BOTH_COLLAPSED,
-            f"BOTH ARMS >= {COLLAPSE_THRESHOLD:.0%} NON-COMPLIANT",
-            "neither arm is a working control; the row is a compliance result "
-            "on both\n  sides and its accuracy direction is not attributable to "
-            "either mechanism",
-        ),
-    ):
-        sel = [r for r in rows if r["mech"] == mech]
-        sel_sig = [r for r in sel if r["holm_full"]]
-        print(
-            f"\n-- {title}: {len(sel)} lane{'' if len(sel) == 1 else 's'}, "
-            f"{len(sel_sig)} significant\n  {gloss}."
-        )
-        for r in sorted(sel, key=lambda r: r["p_cluster"]):
-            print(
-                f"  {'SIG ' if r['holm_full'] else '  . '}{r['model']:13s} "
-                f"{r['acc_a']:.3f} vs {r['acc_b']:.3f}   {r['dir']:13s} "
-                f"nc {r['nc_e']:.0%}/{r['nc_n']:.0%}   p={r['p_cluster']:.2e}"
-            )
-        if sel_sig:
-            sig_dirs = Counter(r["dir"] for r in sel_sig)
-            up, down = sig_dirs[Direction.NOISE], sig_dirs[Direction.EXTENS]
-            print(
-                f"  => direction among the significant ones: {up} "
-                f"noise-higher, {down} extens-higher, "
-                f"{len(sel_sig) - up - down} tied."
-            )
-
-    dirs = Counter(r["dir"] for r in rows)
-    up_all, down_all = dirs[Direction.NOISE], dirs[Direction.EXTENS]
-    coll_dirs = Counter(r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION)
-    print(
-        f"\n{'=' * 78}\nRAW DIRECTION, ALL {n_models} LANES, NO SIGNIFICANCE "
-        f"FILTER\n{'=' * 78}\n"
-        f"  {up_all} noise-higher, {down_all} extens-higher, "
-        f"{n_models - up_all - down_all} exactly tied.\n"
-        f"  {coll_dirs[Direction.EXTENS]} of the {down_all} extens-higher and "
-        f"{coll_dirs[Direction.NOISE]} of the {up_all} noise-higher lanes have at least "
-        f"one\n  arm over the {COLLAPSE_THRESHOLD:.0%} non-compliance threshold."
-        # The retention rationale describes collapsed lanes, so it prints only
-        # when there is at least one.
-        + (
-            " Those lanes are kept and annotated rather\n  than removed: dropping "
-            "them would select on a covariate of the outcome."
-            if coll_dirs.total()
-            else ""
-        )
-    )
-    clean_down = [
-        r
-        for r in rows
-        if r["dir"] == Direction.EXTENS and r["mech"] == Mechanism.INFORMATION
-    ]
-    if clean_down:
-        print(
-            f"  Extens-higher on WELL-FORMED arms: "
-            f"{', '.join(r['model'] for r in clean_down)} -- the genuine "
-            f"counter-example(s),\n  reported at their own p: "
-            + "; ".join(f"{r['model']} p={r['p_cluster']:.2e}" for r in clean_down)
-            + "."
-        )
+    _print_mechanisms(rows)
+    _print_raw_direction(rows)
 
 
 if __name__ == "__main__":
