@@ -7,6 +7,8 @@ included, plus the calibration rows that chose each model's chain length:
     <out>/MANIFEST.json                    file list, SHA-256, row counts, chain lengths
     <out>/horn/rows/<model>.jsonl          1,200 cells: 4 arms x 100 seeds x 3 replicates
     <out>/horn/calibration/<model>.jsonl   lem-only calibration rows (seeds 200-229)
+    <out>/horn/prompts/m<m>/               the served prompts of each chain length
+    <out>/horn/prompts/calib_m<m>/         the lem prompts behind the calibration rows
 
 The main rows are selected by ``notebooks/deduction/analysis/horn_results.py`` exactly as
 the paper table was: merged across run sources, one row per cell, at the model's chosen
@@ -25,6 +27,7 @@ import collections
 import hashlib
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,10 +39,10 @@ for p in (REPO_ROOT, REPO_ROOT / "notebooks" / "deduction" / "analysis"):
 # pylint: disable=wrong-import-position
 import horn_results as hr  # noqa: E402
 
-from smolbench.deduction.horn.cli import build_theory  # noqa: E402
+from smolbench.deduction.horn.cli import build_theory, write_seed  # noqa: E402
 from smolbench.deduction.horn.extract import verdict_fields  # noqa: E402
-from smolbench.deduction.horn.render import Tokenizer, render  # noqa: E402
-from smolbench.deduction.horn.repro import load_protocol  # noqa: E402
+from smolbench.deduction.horn.render import ARMS, Tokenizer, render  # noqa: E402
+from smolbench.deduction.horn.repro import ARM_FILES, load_protocol, seed_digest  # noqa: E402
 
 VERDICT_FIELDS = ("answer", "verdict", "steps", "route", "reason", "ignored_lines")
 CALIB_RUNG = re.compile(r"^calib_m(\d+)$")
@@ -133,6 +136,48 @@ def calibration_rows(calib_dir: Path, models: list[str]) -> tuple[dict[str, list
     return out, stats
 
 
+def write_prompts(out: Path, rungs: Path, levels: set[int], calib: dict[str, list[dict]]) -> dict:
+    """Copy the served rungs and render the calibration rungs under ``out/horn/prompts``.
+
+    Returns ``{rung: {"arms": [...], "digests": {seed: seed_digest}}}``. A served rung is
+    copied as it was served (its four arms only) and must match the digests in
+    ``iclr.json``; a calibration rung is rendered with the current generator, which the
+    calibration rows were checked against.
+    """
+    proto = load_protocol()
+    root = out / "horn" / "prompts"
+    record: dict = {}
+    for m in sorted(levels):
+        rung = f"m{m}"
+        digests = {}
+        for seed_dir in sorted((rungs / rung).glob("s[0-9]*")):
+            dst = root / rung / seed_dir.name
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(seed_dir / "theory.json", dst / "theory.json")
+            for arm in ARMS:
+                (dst / arm).mkdir(exist_ok=True)
+                for f in ARM_FILES:
+                    shutil.copy2(seed_dir / arm / f, dst / arm / f)
+            seed = str(int(seed_dir.name[1:]))
+            digests[seed] = seed_digest(dst)
+            if digests[seed] != proto["rung_digests"][str(m)][seed]:
+                raise RuntimeError(f"{dst}: differs from the digest recorded in iclr.json")
+        record[rung] = {"arms": list(ARMS), "digests": digests}
+    tok = Tokenizer()
+    wanted: dict[int, set[int]] = collections.defaultdict(set)
+    for rows in calib.values():
+        for r in rows:
+            wanted[int(CALIB_RUNG.match(r["rung"]).group(1))].add(int(r["seed"]))
+    for m, seeds in sorted(wanted.items()):
+        rung = f"calib_m{m}"
+        digests = {}
+        for seed in sorted(seeds):
+            write_seed(root / rung, build_theory(seed, m, proto["height"], proto["alt_per_lemma"]), ["lem"], tok)
+            digests[str(seed)] = seed_digest(root / rung / f"s{seed:04d}", ("lem",))
+        record[rung] = {"arms": ["lem"], "digests": digests}
+    return record
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows).encode("utf-8")
@@ -152,7 +197,15 @@ folder is `smolbench.deduction.horn` (branch `release/iclr2027` of the SmolBench
   model's chain length m.
 - `horn/calibration/<model>.jsonl`: lem-only rows on the calibration seeds (200-229) at
   the chain lengths tried while choosing m.
-- `MANIFEST.json`: every file with its SHA-256, row count and size, and each model's m.
+- `horn/prompts/m<m>/s<seed>/`: the prompts the models were served, one directory per
+  theory: `theory.json` and, per arm, `prompt.md`, `system.md` (the system prompt) and
+  `meta.json` (what the checker needs, the certificate and the designed proof). Each
+  `horn/prompts/m<m>/` is a rung directory that `scripts/deduction/horn/sweep.py
+  --rung-dir` runs directly.
+- `horn/prompts/calib_m<m>/s<seed>/`: the same for the lem-only calibration rungs.
+- `MANIFEST.json`: every JSONL file with its SHA-256, row count and size; each model's m;
+  and a digest of every prompt directory (`smolbench.deduction.horn.repro.seed_digest`).
+  `python -m smolbench.deduction.horn.repro check-data <folder>` verifies all of them.
 
 ## Row fields
 
@@ -167,8 +220,9 @@ folder is `smolbench.deduction.horn` (branch `release/iclr2027` of the SmolBench
 Verdicts: `success` is the only pass; `invalid_step`, `incomplete`, `given_up`, `no_answer`,
 `length` (output cap hit) and `missing` (a cell that never produced an answer) are failures.
 
-The prompts are not included: `python -m smolbench.deduction.horn.repro render --model <model>`
-regenerates them from their seeds and checks them against recorded digests.
+The prompts regenerate from their seeds as well:
+`python -m smolbench.deduction.horn.repro render --model <model>` renders a model's rung and
+checks it against the digests recorded in the code.
 """
 
 
@@ -191,11 +245,14 @@ def main(argv: list[str] | None = None) -> int:
         manifest["files"][f"horn/calibration/{model}.jsonl"] = _write_jsonl(
             a.out / "horn" / "calibration" / f"{model}.jsonl", calib[model]
         )
+    manifest["prompts"] = write_prompts(a.out, a.rungs or a.scratchpad / "roster2", set(chosen.values()), calib)
     (a.out / "README.md").write_text(README.format(version=DATA_VERSION), encoding="utf-8")
     (a.out / "MANIFEST.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     for line in anomalies:
         print(f"note: {line}")
     print(f"calibration rows: {dict(cstats)}")
+    for rung, info in manifest["prompts"].items():
+        print(f"prompts {rung}: {len(info['digests'])} theories, arms {info['arms']}")
     for model, info in manifest["models"].items():
         print(f"{model:28s} m={info['m']:<3d} cells={info['cells']} missing={info['missing']} "
               f"calibration={manifest['files'][f'horn/calibration/{model}.jsonl']['rows']}")

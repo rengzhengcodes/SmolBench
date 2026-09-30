@@ -5,6 +5,7 @@
     python -m smolbench.deduction.horn.repro verify rungs/m48 --m 48
     python -m smolbench.deduction.horn.repro command --model glm-4.7 --rung rungs/m48 --out rows.jsonl
     python -m smolbench.deduction.horn.repro report rows.jsonl
+    python -m smolbench.deduction.horn.repro check-data <results folder>
 
 ``iclr.json`` (next to this file) records the protocol: seeds, replicates, sampling, the
 chain length ``m`` and serving settings of every model, a SHA-256 digest of every
@@ -78,6 +79,40 @@ def verify_rung(rung: Path, m: int, seeds: list[int] | None = None) -> list[str]
                 continue
             if got != recorded[str(s)]:
                 problems.append(f"s{s:04d}: digest differs from the served rung")
+    return problems
+
+
+def check_data(data: Path) -> list[str]:
+    """Problems found when checking a results folder against its ``MANIFEST.json``.
+
+    Checks every listed file's SHA-256 and every prompt directory's ``seed_digest``.
+    """
+    manifest_path = data / "MANIFEST.json"
+    if not manifest_path.exists():
+        return [f"{manifest_path} not found"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    problems = []
+    for rel, info in manifest["files"].items():
+        path = data / rel
+        if not path.exists():
+            problems.append(f"{rel}: missing")
+            continue
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        if h.hexdigest() != info["sha256"]:
+            problems.append(f"{rel}: checksum differs from the MANIFEST")
+    for rung, info in manifest.get("prompts", {}).items():
+        for seed, digest in info["digests"].items():
+            rel = f"horn/prompts/{rung}/s{int(seed):04d}"
+            try:
+                got = seed_digest(data / rel, tuple(info["arms"]))
+            except FileNotFoundError as err:
+                problems.append(f"{rel}: {Path(err.filename).name} missing")
+                continue
+            if got != digest:
+                problems.append(f"{rel}: digest differs from the MANIFEST")
     return problems
 
 
@@ -262,6 +297,15 @@ def cmd_command(a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check_data(a: argparse.Namespace) -> int:
+    """Check a results folder against its MANIFEST checksums."""
+    problems = check_data(Path(a.data))
+    for p in problems:
+        print(f"  {p}")
+    print(f"FAIL: {len(problems)} problems" if problems else f"OK: {a.data} matches its MANIFEST")
+    return 1 if problems else 0
+
+
 def cmd_report(a: argparse.Namespace) -> int:
     """Summarize result rows next to the published values."""
     print(report([Path(p) for p in a.rows]))
@@ -292,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--endpoint", default=None, help="vLLM base URL (default http://127.0.0.1:8000/v1)")
     pc.add_argument("--api-key", default=None)
     pc.set_defaults(func=cmd_command)
+    pd = sub.add_parser("check-data", help="check a results folder against its MANIFEST")
+    pd.add_argument("data")
+    pd.set_defaults(func=cmd_check_data)
     prep = sub.add_parser("report", help="summarize rows next to the published values")
     prep.add_argument("rows", nargs="+")
     prep.set_defaults(func=cmd_report)
