@@ -4,14 +4,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
 from tests._paths import REPO_ROOT
-
-# pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import (  # noqa: F401 -- imported for the fixtures
+from tests.analysis._trees import (
     ANALYSIS_DIR,
     multiplicity_sim,
     power_analysis,
@@ -27,9 +24,7 @@ driver_tree = tree_fixture(
 
 
 @pytest.fixture
-def recorded(
-    monkeypatch: pytest.MonkeyPatch, run_all: ModuleType, multiplicity_sim: ModuleType
-) -> list[str]:
+def recorded(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Replace every script's ``main`` with a call recorder.
 
     Returns
@@ -45,9 +40,7 @@ def recorded(
     return calls
 
 
-def test_the_simulation_runs_only_behind_its_flag(
-    run_all: ModuleType, recorded: list[str]
-) -> None:
+def test_the_simulation_runs_only_behind_its_flag(recorded: list[str]) -> None:
     """The chain runs in order; the simulation only when ``--with-sim`` is passed."""
     assert run_all.main([]) == 0
     assert recorded == [m.__name__ for m in run_all.CHAIN]
@@ -58,10 +51,7 @@ def test_the_simulation_runs_only_behind_its_flag(
 
 
 def test_the_driver_really_runs_the_chain_in_one_process(
-    run_all: ModuleType,
-    power_analysis: ModuleType,
-    driver_tree: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    driver_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Run the chain against a synthetic tree; banners appear in chain order."""
     monkeypatch.setattr(power_analysis, "main", lambda *a, **k: None)

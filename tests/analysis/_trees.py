@@ -2,14 +2,12 @@
 
 import contextlib
 import hashlib
-import importlib
 import io
 import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType
 
 import numpy as np
 import pytest
@@ -20,19 +18,29 @@ from tests._paths import NOTEBOOKS
 
 ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
 sys.path[:0] = [str(NOTEBOOKS), str(ANALYSIS_DIR)]
-# The module fixtures below take the bare names, so the module itself is bound privately.
-_power_analysis = importlib.import_module("power_analysis")
+
+# pylint: disable=wrong-import-order,unused-import  # sys.path scripts read as third party; re-exported to the tests
+import _power_common  # noqa: E402
+import extens_vs_noise  # noqa: E402
+import multiplicity_sim  # noqa: E402
+import paired_analysis  # noqa: E402
+import power_analysis  # noqa: E402
+import run_all  # noqa: E402
+import significance_report  # noqa: E402
+
+# pylint: enable=wrong-import-order,unused-import
 
 #: Sign-flip floor 2/2**6 is above the primary correction threshold.
 SHALLOW_DEPTH = 6
 #: 2/2**16 is below the primary correction threshold.
 DEEP_DEPTH = 16
 
-N_HARMONICS = _power_analysis.N_HARMONICS
-N_PRIMARY = _power_analysis.N_PRIMARY
-MODELS = _power_analysis.MODELS
-FAMILIES = _power_analysis.FAMILIES
-INFOS = _power_analysis.INFOS
+N_HARMONICS = power_analysis.N_HARMONICS
+N_PRIMARY = power_analysis.N_PRIMARY
+N_REPLICATES = multiplicity_sim.N_REPLICATES
+MODELS = power_analysis.MODELS
+FAMILIES = power_analysis.FAMILIES
+INFOS = power_analysis.INFOS
 
 #: ``(rate, noncompliance, mode, seeds[, invalid])``; `noncompliance` may be a per-seed function.
 Cell = (
@@ -217,33 +225,3 @@ def tree_fixture(
 
     fixture.__doc__ = doc
     return fixture
-
-
-def _module_fixture(name: str) -> Callable[[], ModuleType]:
-    """Return a session fixture named `name` that yields that analysis module.
-
-    Parameters
-    ----------
-    name : str
-        Module name under `ANALYSIS_DIR`; also the fixture name.
-
-    Returns
-    -------
-    Callable[[], ModuleType]
-        The fixture function, to be bound at module scope.
-    """
-
-    @pytest.fixture(scope="session", name=name)
-    def fixture() -> ModuleType:
-        """Import the analysis module once per session."""
-        return importlib.import_module(name)
-
-    return fixture
-
-
-extens_vs_noise = _module_fixture("extens_vs_noise")
-multiplicity_sim = _module_fixture("multiplicity_sim")
-paired_analysis = _module_fixture("paired_analysis")
-power_analysis = _module_fixture("power_analysis")
-run_all = _module_fixture("run_all")
-significance_report = _module_fixture("significance_report")

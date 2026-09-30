@@ -1,18 +1,16 @@
 """Pin the analysis' statistical kernels against brute force and reference libraries."""
 
 from itertools import product
-from types import ModuleType
 
 import numpy as np
 import pytest
 from scipy.stats import binomtest, chi2
 from statsmodels.stats.contingency_tables import StratifiedTable
 
-# pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import paired_analysis, power_analysis  # noqa: F401
+from tests.analysis._trees import paired_analysis, power_analysis
 
 
-def test_signflip_exact_p_matches_enumeration(paired_analysis: ModuleType) -> None:
+def test_signflip_exact_p_matches_enumeration() -> None:
     """The convolution equals enumerating every one of the 2^n sign assignments."""
     rng = np.random.default_rng(101)
     signs = np.array(list(product((-1, 1), repeat=8)))
@@ -23,7 +21,7 @@ def test_signflip_exact_p_matches_enumeration(paired_analysis: ModuleType) -> No
         assert paired_analysis.signflip_exact_p(diffs) == expected
 
 
-def test_cmh_stat_matches_statsmodels(paired_analysis: ModuleType) -> None:
+def test_cmh_stat_matches_statsmodels() -> None:
     """The batched 2x2xK CMH equals statsmodels' continuity-corrected statistic."""
     rng = np.random.default_rng(202)
     for _ in range(10):
@@ -63,7 +61,7 @@ def landis_gcmh(counts: np.ndarray) -> float:
     return float(t_vec @ np.linalg.solve(cov, t_vec))
 
 
-def test_gcmh_stat_matches_landis_form(power_analysis: ModuleType) -> None:
+def test_gcmh_stat_matches_landis_form() -> None:
     """The fixed-covariance shortcut equals the general Landis statistic."""
     rng = np.random.default_rng(303)
     for _ in range(10):
@@ -74,7 +72,7 @@ def test_gcmh_stat_matches_landis_form(power_analysis: ModuleType) -> None:
         assert np.isclose(ours, landis_gcmh(counts), atol=1e-8), (ours, counts)
 
 
-def test_gcmh_stat_is_calibrated_under_the_null(power_analysis: ModuleType) -> None:
+def test_gcmh_stat_is_calibrated_under_the_null() -> None:
     """Rejection at alpha .05 against chi2 df=2 stays near nominal."""
     rng = np.random.default_rng(404)
     n_seeds, k, n_sims = 30, 18, 2000
@@ -85,9 +83,7 @@ def test_gcmh_stat_is_calibrated_under_the_null(power_analysis: ModuleType) -> N
 
 
 @pytest.mark.parametrize(("b", "c"), ((0, 0), (3, 3), (0, 5), (2, 9), (7, 1)))
-def test_mcnemar_exact_p_matches_binomtest(
-    paired_analysis: ModuleType, b: int, c: int
-) -> None:
+def test_mcnemar_exact_p_matches_binomtest(b: int, c: int) -> None:
     """Exact McNemar equals the two-sided binomial test; no discordant pairs give 1.0."""
     expected = 1.0 if b + c == 0 else binomtest(b, b + c, 0.5).pvalue
     assert np.isclose(paired_analysis.mcnemar_exact_p(b, c), expected, atol=1e-12)

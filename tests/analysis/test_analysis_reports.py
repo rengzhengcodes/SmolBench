@@ -15,10 +15,7 @@ import numpy as np
 import pytest
 
 from smolbench.evals import Marks
-
-# Pytest discovers imported fixtures from module globals.
-# pylint: disable=unused-import  # fixture names register pytest fixtures
-from tests.analysis._trees import (  # noqa: F401
+from tests.analysis._trees import (
     DEEP_DEPTH,
     FAMILIES,
     INFOS,
@@ -82,7 +79,7 @@ def _skew_census(
     return skewed
 
 
-def test_collapse_note_uses_the_supplied_rate(significance_report: ModuleType) -> None:
+def test_collapse_note_uses_the_supplied_rate() -> None:
     """Collapse annotations use the compared-seed rate, not the whole-cell rate."""
     key = ("model", "noise_intens")
     census = {key: {"modes": Counter({"empty": 3})}}
@@ -92,9 +89,7 @@ def test_collapse_note_uses_the_supplied_rate(significance_report: ModuleType) -
     )
 
 
-def test_gate_note_handles_no_data_and_numeric_gates(
-    significance_report: ModuleType,
-) -> None:
+def test_gate_note_handles_no_data_and_numeric_gates() -> None:
     """Ungated ladder findings render both available and unavailable gate p-values."""
     row = {"kind_is_ladder": True, "gated": False, "family": "family"}
     assert (
@@ -117,14 +112,12 @@ def test_gate_note_handles_no_data_and_numeric_gates(
     ("rate_i", "rate_n", "expected"),
     ((0.30, 0.60, False), (0.10, 0.25, True), (0.10, 0.20, False)),
 )
-def test_pad_crossing(
-    significance_report: ModuleType, rate_i: float, rate_n: float, expected: bool
-) -> None:
+def test_pad_crossing(rate_i: float, rate_n: float, expected: bool) -> None:
     """Only a threshold crossing is attributed to padding."""
     assert significance_report.pad_crossing(rate_i, rate_n) is expected
 
 
-def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> None:
+def test_classify_rejects_a_zero_first_pair() -> None:
     """A zero arm in `key_a` would invert the arm-vs-floor reading; refuse it."""
     with pytest.raises(RuntimeError, match="zero arm must be key_b"):
         significance_report.classify(("m", "zero"), ("m", "intens"))
@@ -165,9 +158,7 @@ ladder_tree = tree_fixture(
 )
 
 
-def test_omnibus_gates_reject_on_a_steep_ladder(
-    ladder_tree: Path, significance_report: ModuleType, power_analysis: ModuleType
-) -> None:
+def test_omnibus_gates_reject_on_a_steep_ladder(ladder_tree: Path) -> None:
     """A clearly rising family trips its Tier-1 gate."""
     marks = significance_report.load_marks(ladder_tree)
     gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
@@ -177,9 +168,7 @@ def test_omnibus_gates_reject_on_a_steep_ladder(
     assert gate["p_perm"] < power_analysis.ALPHA_OMNIBUS
 
 
-def test_omnibus_gates_do_not_reject_flat_family(
-    clean_tree: Path, significance_report: ModuleType
-) -> None:
+def test_omnibus_gates_do_not_reject_flat_family(clean_tree: Path) -> None:
     """Equal rung rates leave every gate unrejected."""
     marks = significance_report.load_marks(clean_tree)
     gates = significance_report.omnibus_gates(marks)
@@ -190,9 +179,7 @@ def test_omnibus_gates_do_not_reject_flat_family(
         assert not gate["reject"]
 
 
-def test_omnibus_gate_permutation_isolated_by_family(
-    ladder_tree: Path, significance_report: ModuleType, paired_analysis: ModuleType
-) -> None:
+def test_omnibus_gate_permutation_isolated_by_family(ladder_tree: Path) -> None:
     """A family gate's permutation p-value ignores unrelated family cells."""
     marks = significance_report.load_marks(ladder_tree)
     full = significance_report.omnibus_gates(marks)
@@ -210,9 +197,7 @@ def test_omnibus_gate_permutation_isolated_by_family(
             assert gate == significance_report.GATE_NO_DATA
 
 
-def test_omnibus_gate_uses_only_common_seeds(
-    tmp_path: Path, significance_report: ModuleType
-) -> None:
+def test_omnibus_gate_uses_only_common_seeds(tmp_path: Path) -> None:
     """A cell missing seeds shrinks the gate's seed set to the intersection."""
     narrow = (_STEEP_RUNGS[0], "intens")
     build_tree(tmp_path, profile_for({narrow: (0.90, 0.0, "empty", range(10))}))
@@ -225,10 +210,7 @@ def test_omnibus_gate_uses_only_common_seeds(
 
 
 def test_ungated_ladder_findings_are_labelled_exploratory(
-    ladder_tree: Path,
-    significance_report: ModuleType,
-    report: Callable[[Path], str],
-    monkeypatch: pytest.MonkeyPatch,
+    ladder_tree: Path, report: Callable[[Path], str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A significant ladder contrast in a non-rejecting family is marked UNGATED."""
     computed = significance_report.compute(ladder_tree)
@@ -254,10 +236,7 @@ def test_ungated_ladder_findings_are_labelled_exploratory(
 
 
 def test_missing_family_cell_yields_no_data_gate(
-    clean_tree: Path,
-    significance_report: ModuleType,
-    report: Callable[[Path], str],
-    monkeypatch: pytest.MonkeyPatch,
+    clean_tree: Path, report: Callable[[Path], str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An absent cell reports the no-data gate entry, and render prints it."""
     marks = significance_report.load_marks(clean_tree)
@@ -283,7 +262,7 @@ def test_missing_family_cell_yields_no_data_gate(
 
 
 @pytest.fixture
-def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
+def no_data_gate_tree(tmp_path: Path) -> Path:
     """Build a tree whose ladders overlap pairwise but share no family-wide seed.
 
     Returns
@@ -311,9 +290,7 @@ def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
     return tmp_path
 
 
-def test_no_data_gate_renders_ungated(
-    no_data_gate_tree: Path, significance_report: ModuleType
-) -> None:
+def test_no_data_gate_renders_ungated(no_data_gate_tree: Path) -> None:
     """An ungated significant ladder finding renders a no-data explanation."""
     computed = significance_report.compute(no_data_gate_tree)
     ungated = [
@@ -327,9 +304,7 @@ def test_no_data_gate_renders_ungated(
     assert "omnibus has no common-seed data" in out
 
 
-def test_permutation_p_is_deterministic_and_bounded(
-    significance_report: ModuleType, power_analysis: ModuleType
-) -> None:
+def test_permutation_p_is_deterministic_and_bounded() -> None:
     """Same tensor and seed give the same p; the plus-one keeps it in (0, 1]."""
     rng = np.random.default_rng(0)
     tensor = (rng.random((8, 3, N_HARMONICS * len(INFOS))) < 0.9).astype(np.int64)
@@ -344,9 +319,7 @@ def test_permutation_p_is_deterministic_and_bounded(
     assert 0 < p1 <= 1
 
 
-def test_gate_requires_both_p_values(
-    tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
-) -> None:
+def test_gate_requires_both_p_values(tmp_path: Path) -> None:
     """With 2 seeds the permutation p floors above ALPHA_OMNIBUS, so the asymptotic reject does not gate."""
     build_tree(tmp_path, _steep_profile(2))
     marks = significance_report.load_marks(tmp_path)
@@ -358,9 +331,7 @@ def test_gate_requires_both_p_values(
     assert gate["reject"] is False
 
 
-def test_steep_ladder_rejects_under_both_p(
-    ladder_tree: Path, significance_report: ModuleType, power_analysis: ModuleType
-) -> None:
+def test_steep_ladder_rejects_under_both_p(ladder_tree: Path) -> None:
     """A deep steep ladder clears both the asymptotic and permutation p."""
     marks = significance_report.load_marks(ladder_tree)
     gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
@@ -369,9 +340,7 @@ def test_steep_ladder_rejects_under_both_p(
     assert gate["reject"] is True
 
 
-def test_flat_family_permutation_p_is_large(
-    clean_tree: Path, significance_report: ModuleType
-) -> None:
+def test_flat_family_permutation_p_is_large(clean_tree: Path) -> None:
     """Flat families stay far from rejection under the permutation p too."""
     marks = significance_report.load_marks(clean_tree)
     for gate in significance_report.omnibus_gates(marks).values():
@@ -450,9 +419,7 @@ shared_seed_noise_tree = tree_fixture(
 
 
 @pytest.fixture
-def report(
-    significance_report: ModuleType,
-) -> Callable[[Path], str]:
+def report() -> Callable[[Path], str]:
     """Render the significance report for a results root.
 
     Returns
@@ -471,9 +438,7 @@ def report(
 
 
 def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
-    report: Callable[[Path], str],
-    shallow_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], shallow_tree: Path
 ) -> None:
     """At 6 seeds nothing is rejectable, so the report must say `INCOMPLETE SYNC` and suppress the padding exoneration."""
     out = report(shallow_tree)
@@ -490,9 +455,7 @@ def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
 
 
 def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
     """Collapsed noise controls are split from compliant failures."""
     out = report(collapse_tree)
@@ -524,7 +487,6 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
 @pytest.fixture
 def padding_control_report(
     report: Callable[[Path], str],
-    significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Callable[[tuple[int, int]], str]:
@@ -556,9 +518,7 @@ def padding_control_report(
 
 
 def test_partial_pad_crossing_is_not_called_near_total(
-    padding_control_report: Callable[[tuple[int, int]], str],
-    significance_report: ModuleType,
-    padding_control_tree: Path,
+    padding_control_report: Callable[[tuple[int, int]], str], padding_control_tree: Path
 ) -> None:
     """A partial compliance collapse is reported as a caveat, not control causation."""
     out = padding_control_report((4, N_HARMONICS))
@@ -573,9 +533,7 @@ def test_partial_pad_crossing_is_not_called_near_total(
 
 
 def test_total_pad_crossing_keeps_near_total_exoneration(
-    padding_control_report: Callable[[tuple[int, int]], str],
-    significance_report: ModuleType,
-    padding_control_tree: Path,
+    padding_control_report: Callable[[tuple[int, int]], str], padding_control_tree: Path
 ) -> None:
     """A total compliance collapse retains the padding exoneration."""
     out = padding_control_report((N_HARMONICS, N_HARMONICS))
@@ -586,9 +544,7 @@ def test_total_pad_crossing_keeps_near_total_exoneration(
 
 
 def test_reversed_controls_are_not_counted_as_passing(
-    report: Callable[[Path], str],
-    reversed_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], reversed_tree: Path
 ) -> None:
     """A significant control below its floor is reported as reversed, not ahead."""
     out = report(reversed_tree)
@@ -612,9 +568,7 @@ def test_reversed_controls_are_not_counted_as_passing(
     assert "scores no better" not in controls
 
 
-def test_replicate_depth_gate_uses_the_shallowest_lane(
-    tmp_path: Path, paired_analysis: ModuleType, power_analysis: ModuleType
-) -> None:
+def test_replicate_depth_gate_uses_the_shallowest_lane(tmp_path: Path) -> None:
     """The shallowest lane controls the depth warning."""
     deep = (0.90, 0.0, "empty", range(power_analysis.N_REPLICATES))
     overrides = {(MODELS[0], "intens"): deep}
@@ -624,12 +578,7 @@ def test_replicate_depth_gate_uses_the_shallowest_lane(
     assert str(SHALLOW_DEPTH) in out
 
 
-def test_reports_handle_invalid_marks(
-    tmp_path: Path,
-    paired_analysis: ModuleType,
-    power_analysis: ModuleType,
-    significance_report: ModuleType,
-) -> None:
+def test_reports_handle_invalid_marks(tmp_path: Path) -> None:
     """Invalid marks are excluded from paired comparisons without breaking reports."""
     build_tree(tmp_path, profile_for(invalid=0.25))
     assert run_captured(lambda: significance_report.main(tmp_path))
@@ -662,9 +611,7 @@ def _copied_replicate(shallow_tree: Path, tmp_path: Path) -> Path:
     return tmp_path / f"{MODELS[0]}_{INFOS[0]}" / "rep_0.yaml"
 
 
-def test_extra_replicate_seed_is_rejected(
-    shallow_tree: Path, paired_analysis: ModuleType, tmp_path: Path
-) -> None:
+def test_extra_replicate_seed_is_rejected(shallow_tree: Path, tmp_path: Path) -> None:
     """A lane outside the registered seed range is a collection failure."""
     source = _copied_replicate(shallow_tree, tmp_path)
     source.rename(source.with_name("rep_30.yaml"))
@@ -672,9 +619,7 @@ def test_extra_replicate_seed_is_rejected(
         paired_analysis.load_marks(tmp_path)
 
 
-def test_partial_replicate_is_rejected(
-    shallow_tree: Path, paired_analysis: ModuleType, tmp_path: Path
-) -> None:
+def test_partial_replicate_is_rejected(shallow_tree: Path, tmp_path: Path) -> None:
     """A replicate with too few marks is a collection failure."""
     path = _copied_replicate(shallow_tree, tmp_path)
     marks = Marks.load(path)
@@ -708,9 +653,7 @@ def _padding_table(out: str) -> dict[str, str]:
 
 
 def test_padding_table_subtracts_over_the_common_seeds_only(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
     """The delta is a within-lane difference, so both rates must be computed over the same seeds."""
     out = report(collapse_tree)
@@ -725,9 +668,7 @@ def test_padding_table_subtracts_over_the_common_seeds_only(
 
 
 def test_padding_table_reports_the_seed_count_it_used(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
     """Every row carries the n it was computed over, so a 10-seed comparison isn't mistaken for a 16-seed one."""
     out = report(collapse_tree)
@@ -741,10 +682,7 @@ def test_padding_table_reports_the_seed_count_it_used(
 
 
 def test_padding_table_counts_come_from_the_rows_it_actually_built(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    power_analysis: ModuleType,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
     """Every count in the section comes from the table's own row count, not a hard-coded lane total."""
     out = report(collapse_tree)
@@ -761,9 +699,7 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
 
 
 def test_padding_intro_numerator_comes_from_the_common_seed_table(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path
 ) -> None:
     """`In X of Y lanes` counts table rows whose common-seed noise rate crosses the criterion."""
     out = report(collapse_tree)
@@ -779,7 +715,6 @@ def test_padding_intro_numerator_comes_from_the_common_seed_table(
 
 def test_all_cells_noise_count_uses_whole_cell_rates(
     report: Callable[[Path], str],
-    significance_report: ModuleType,
     shared_seed_noise_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -808,10 +743,7 @@ def test_all_cells_noise_count_uses_whole_cell_rates(
 
 
 def test_zero_vs_zero_controls_report_the_measured_count_only(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    shallow_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path, shallow_tree: Path
 ) -> None:
     """The report neither asserts nor assumes a zero rejection count for cross-model floors."""
     for tree in (collapse_tree, shallow_tree):
@@ -830,10 +762,7 @@ def test_zero_vs_zero_controls_report_the_measured_count_only(
 
 
 def test_the_ladder_claim_is_conditional_on_its_own_count(
-    report: Callable[[Path], str],
-    shallow_tree: Path,
-    collapse_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], shallow_tree: Path, collapse_tree: Path
 ) -> None:
     """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
     # The one-sided claim must never print, whatever n_lad is.
@@ -873,9 +802,7 @@ def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
 
 
 def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
-    report: Callable[[Path], str],
-    caveat_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], caveat_tree: Path
 ) -> None:
     """A collapse annotation without a pad crossing cannot support two mechanisms."""
     out = report(caveat_tree)
@@ -890,11 +817,7 @@ def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
 
 
 def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    clean_tree: Path,
-    power_analysis: ModuleType,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], collapse_tree: Path, clean_tree: Path
 ) -> None:
     """`CEILING pairs` needs at least one ceiling pair, and its zero-discordant count must be measured, not asserted as "many"."""
     collapse = report(collapse_tree)
@@ -912,9 +835,7 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
 
 
 def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
-    report: Callable[[Path], str],
-    ceiling_tree: Path,
-    significance_report: ModuleType,
+    report: Callable[[Path], str], ceiling_tree: Path
 ) -> None:
     """Ceiling non-rejections distinguish exact ties from unresolved pairs."""
     out = report(ceiling_tree)
@@ -929,9 +850,7 @@ def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
 # Exact ties retain a distinct direction label.
 
 
-def test_exact_ties_are_labelled_tied_not_extens_higher(
-    extens_vs_noise: ModuleType, collapse_tree: Path
-) -> None:
+def test_exact_ties_are_labelled_tied_not_extens_higher(collapse_tree: Path) -> None:
     """A byte-identical pair of arms must be labelled tied, not awarded to either side."""
     out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     tied_rows = [ln for ln in out.splitlines() if TIED_MODEL in ln]
@@ -945,9 +864,7 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
     assert re.search(r"\b1 exactly tied", raw), raw[:400]
 
 
-def test_collapsed_lane_buckets_as_collapse(
-    extens_vs_noise: ModuleType, power_analysis: ModuleType, collapse_tree: Path
-) -> None:
+def test_collapsed_lane_buckets_as_collapse(collapse_tree: Path) -> None:
     """A lane whose noise arm is broken must carry a `COLLAPSED` annotation, so it is never read as information."""
     out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     # The per-model table only: detail rows take their mechanism from the bucket heading.
@@ -965,9 +882,7 @@ def test_collapsed_lane_buckets_as_collapse(
     assert "forced" not in out.lower(), out
 
 
-def test_mechanism_annotates_collapse_without_asserting_direction(
-    extens_vs_noise: ModuleType,
-) -> None:
+def test_mechanism_annotates_collapse_without_asserting_direction() -> None:
     """Every collapse pattern gets its own label and none encodes a direction."""
     thr = extens_vs_noise.COLLAPSE_THRESHOLD
     assert extens_vs_noise.mechanism(0.0, 0.0) == "information"
@@ -982,9 +897,7 @@ def test_mechanism_annotates_collapse_without_asserting_direction(
 
 
 def test_extens_vs_noise_rates_use_the_aligned_seed_population(
-    extens_vs_noise: ModuleType,
-    collapse_tree: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Non-compliance outside the seeds the noise arm covers must not colour the contrast."""
     # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
@@ -1011,10 +924,7 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
 
 
 def test_collapse_tags_use_the_compared_seeds(
-    report: Callable[[Path], str],
-    collapse_tree: Path,
-    significance_report: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
+    report: Callable[[Path], str], collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Collapse tags use only seeds shared by the compared contrast arms."""
     skewed = _skew_census(
