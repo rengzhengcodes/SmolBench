@@ -395,14 +395,13 @@ def test_contrast_row_handles_empty_drop_invalid_pairs() -> None:
     """Dropping all invalid marks returns empty accuracies without warnings."""
     key_a = ("model_a", "intens")
     key_b = ("model_b", "noise_intens")
-    correct = {
-        key_a: {seed: np.ones(N_HARMONICS, dtype=bool) for seed in range(2)},
-        key_b: {seed: np.zeros(N_HARMONICS, dtype=bool) for seed in range(2)},
-    }
+    ones = {seed: np.ones(N_HARMONICS, dtype=bool) for seed in range(2)}
+    correct = {key_a: ones, key_b: ones}
+    valid = {key_a: ones, key_b: {seed: ~v for seed, v in ones.items()}}
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         row = paired_analysis.contrast_row(
-            paired_analysis.CellMarks(correct, correct, {}),
+            paired_analysis.CellMarks(correct, valid, {}),
             key_a,
             key_b,
             drop_invalid=True,
