@@ -193,8 +193,26 @@ def test_a_checkpoint_cannot_appear_in_two_families(tmp_path: Path) -> None:
             ).replace('b = "b_tag"', 'b = "b_tag"\nc = "c_tag"'),
             "unequal rung counts",
         ),
+        # A ladder needs two rungs to contrast.
+        (
+            lambda t: t.replace('fam = ["a", "b"]', 'fam = ["a"]').replace(
+                'b = "b_tag"\n', ""
+            ),
+            "at least two rungs",
+        ),
+        # The roster needs a family.
+        (
+            lambda t: t.replace('fam = ["a", "b"]\n', "")
+            .replace('a = "a_tag"\n', "")
+            .replace('b = "b_tag"\n', ""),
+            "no family",
+        ),
         # Study parameters are positive integers.
         (lambda t: t.replace("n_replicates = 30", "n_replicates = 0"), "n_replicates"),
+        # Seeds are non-negative integers; ``true`` is a typo, not a seed.
+        (lambda t: t.replace("seed = 0\nalpha", "seed = -1\nalpha"), "seed"),
+        (lambda t: t.replace("seed = 0\nalpha", "seed = true\nalpha"), "seed"),
+        (lambda t: t.replace("base_seed = 0", "base_seed = -1"), "base_seed"),
         # Alpha is a probability.
         (lambda t: t.replace("alpha = 0.05", "alpha = 1.5"), "alpha"),
         # Power levels ascend.

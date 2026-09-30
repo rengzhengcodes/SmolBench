@@ -65,6 +65,10 @@ def test_design_comes_from_the_study_config() -> None:
     assert (_power_common.SEED, _power_common.ALPHA) == (analysis.seed, analysis.alpha)
     assert _power_common.POWER_TARGETS == analysis.power_targets
     assert study_design.EQUIVALENCE_DELTAS == analysis.equivalence_deltas
+    # The eq_R search starts at study depth and only ever advances beyond it.
+    grid = multiplicity_sim.EQ_R_GRID
+    assert grid[0] == study.n_replicates
+    assert list(grid) == sorted(set(grid))
 
 
 def test_design_invariants_survive_python_dash_o() -> None:

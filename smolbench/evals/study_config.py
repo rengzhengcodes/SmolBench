@@ -172,33 +172,38 @@ def _parse_study_config(data: dict) -> StudyConfig:
             )
         seen_by_tag[tag] = key
 
-    # One rung count for the whole ladder: the contrast tiers assume it.
+    # One rung count for the whole ladder: the contrast tiers assume it, and a
+    # ladder contrast needs two rungs to compare.
     rung_counts = {name: len(rungs) for name, rungs in families.items()}
+    if not rung_counts:
+        raise ValueError("study_config.toml [roster.families] declares no family")
     if len(set(rung_counts.values())) != 1:
         raise ValueError(
             f"study_config.toml [roster.families] lists unequal rung counts "
             f"{rung_counts}; every family must have the same number of rungs"
         )
+    n_rungs = next(iter(rung_counts.values()))
+    if n_rungs < 2:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists {n_rungs} rung per family; "
+            "a ladder needs at least two rungs"
+        )
     roster = RosterConfig(
         families=MappingProxyType(families),
         tags=MappingProxyType(tags),
-        n_rungs=next(iter(rung_counts.values())),
+        n_rungs=n_rungs,
     )
 
     study_raw = _require(data, "[study]")
     study = StudyParams(
-        n_replicates=_positive_int(study_raw, "n_replicates", " [study]"),
-        base_seed=_require(study_raw, "base_seed", " [study]"),
-        n_harmonics=_positive_int(study_raw, "n_harmonics", " [study]"),
+        n_replicates=_int_at_least(study_raw, "n_replicates", " [study]", 1),
+        base_seed=_int_at_least(study_raw, "base_seed", " [study]", 0),
+        n_harmonics=_int_at_least(study_raw, "n_harmonics", " [study]", 1),
     )
-    if not isinstance(study.base_seed, int) or study.base_seed < 0:
-        raise ValueError(
-            "study_config.toml [study] base_seed must be a non-negative integer"
-        )
 
     analysis_raw = _require(data, "[analysis]")
     analysis = AnalysisParams(
-        seed=_require(analysis_raw, "seed", " [analysis]"),
+        seed=_int_at_least(analysis_raw, "seed", " [analysis]", 0),
         alpha=_require(analysis_raw, "alpha", " [analysis]"),
         power_targets=_ascending_unit_floats(
             analysis_raw, "power_targets", " [analysis]"
@@ -223,8 +228,8 @@ def _parse_study_config(data: dict) -> StudyConfig:
     )
 
 
-def _positive_int(mapping: dict, name: str, within: str) -> int:
-    """Return `mapping[name]` after checking it is a positive integer.
+def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
+    """Return `mapping[name]` after checking it is an integer of at least `floor`.
 
     Parameters
     ----------
@@ -234,6 +239,8 @@ def _positive_int(mapping: dict, name: str, within: str) -> int:
         Key to read.
     within : str
         TOML section suffix for the error message.
+    floor : int
+        Smallest accepted value.
 
     Returns
     -------
@@ -241,9 +248,11 @@ def _positive_int(mapping: dict, name: str, within: str) -> int:
         The validated value.
     """
     value = _require(mapping, name, within)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+    # bool is an int subclass, and ``seed = true`` is a typo, not a seed.
+    if not isinstance(value, int) or isinstance(value, bool) or value < floor:
         raise ValueError(
-            f"study_config.toml{within} {name} must be a positive integer, got {value!r}"
+            f"study_config.toml{within} {name} must be an integer >= {floor}, "
+            f"got {value!r}"
         )
     return value
 

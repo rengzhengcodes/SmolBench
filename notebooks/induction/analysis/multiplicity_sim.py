@@ -54,9 +54,20 @@ from study_design import (
 
 from smolbench.evals.results_store import LocalResultsStore
 
-#: Start at study depth so "pairing bought nothing" stays reachable.
-EQ_R_GRID = (N_REPLICATES, 35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250)
-EQ_R_GRID += (300, 360, 430, 520, 620, 750, 900)
+#: Depths the eq_R search may advance to; the last is its ceiling.
+_EQ_R_DEPTHS = (35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250)
+_EQ_R_DEPTHS += (300, 360, 430, 520, 620, 750, 900)
+#: Start at study depth so "pairing bought nothing" stays reachable, then
+#: ascend through the depths beyond it (none when the study is at the ceiling).
+EQ_R_GRID = (N_REPLICATES, *(depth for depth in _EQ_R_DEPTHS if depth > N_REPLICATES))
+
+#: PART 4's planted ladders and PART 5's rate triples are written per rung.
+SCENARIO_RUNGS = 3
+if N_RUNGS != SCENARIO_RUNGS:
+    raise RuntimeError(
+        f"multiplicity_sim's scenarios are written for {SCENARIO_RUNGS}-rung "
+        f"ladders; study_config.toml declares {N_RUNGS} rungs per family"
+    )
 
 #: Paired-vs-unpaired power gap treated as equal in the eq_R search: about one
 #: Monte-Carlo standard error of a power estimate near 0.8 at N_SIMS.
