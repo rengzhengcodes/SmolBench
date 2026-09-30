@@ -9,35 +9,29 @@ import sys
 import warnings
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import Mock, patch
 
-#: Subprocesses need the same notebook imports as this module.
-NOTEBOOKS_DIR = Path(__file__).resolve().parents[2] / "notebooks"
-sys.path.insert(0, str(NOTEBOOKS_DIR))
-sys.path.insert(0, str(NOTEBOOKS_DIR / "induction" / "analysis"))
-
-import _power_common
-import extens_vs_noise
-import multiplicity_sim
 import numpy as np
-import paired_analysis
-import power_analysis
 import pytest
-import significance_report
-from multiplicity_sim import N_REPLICATES, _paired_powers, paired_marks
 from scipy.stats import binom
 from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks, study_config
-from tests._paths import REPO_ROOT
+from tests._paths import NOTEBOOKS, REPO_ROOT
 from tests.analysis._trees import (
     ANALYSIS_DIR,
     N_HARMONICS,
     N_PRIMARY,
+    N_REPLICATES,
     SHALLOW_DEPTH,
+    _power_common,
     build_tree,
+    extens_vs_noise,
+    multiplicity_sim,
+    paired_analysis,
+    power_analysis,
     profile_for,
     run_captured,
+    significance_report,
 )
 
 
@@ -153,31 +147,50 @@ def test_mcnemar_is_defined_once() -> None:
     assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
-def test_design_invariants_pin_roster_identity() -> None:
-    """A same-family checkpoint swap keeps every count but must still fail."""
+def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A same-family checkpoint swap keeps every count but must still fail.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Swaps one checkpoint in the roster tables.
+    """
     power_analysis.check_design_invariants()
     old, new = power_analysis.MODELS[0], "qwen35_9b"
-    with patch.multiple(
+    monkeypatch.setattr(
         power_analysis,
-        FAMILIES={
+        "FAMILIES",
+        {
             fam: tuple(new if t == old else t for t in rungs)
             for fam, rungs in power_analysis.FAMILIES.items()
         },
-        MODELS=tuple(new if t == old else t for t in power_analysis.MODELS),
-    ):
-        assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
-        with pytest.raises(RuntimeError, match="pre-registered tags"):
-            power_analysis.check_design_invariants()
+    )
+    monkeypatch.setattr(
+        power_analysis,
+        "MODELS",
+        tuple(new if t == old else t for t in power_analysis.MODELS),
+    )
+    assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
+    with pytest.raises(RuntimeError, match="pre-registered tags"):
+        power_analysis.check_design_invariants()
 
 
-def test_design_invariants_pin_roster_keys_not_only_tags() -> None:
-    """A checkpoint swap that keeps the old tag must still fail on the key."""
+def test_design_invariants_pin_roster_keys_not_only_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A checkpoint swap that keeps the old tag must still fail on the key.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Swaps one roster key while keeping its tag.
+    """
     keys = list(power_analysis.ROSTER_KEYS)
     keys[0] = "qwen3.5-9b"
-    with patch.object(power_analysis, "ROSTER_KEYS", tuple(keys)):
-        assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
-        with pytest.raises(RuntimeError, match="pre-registered roster"):
-            power_analysis.check_design_invariants()
+    monkeypatch.setattr(power_analysis, "ROSTER_KEYS", tuple(keys))
+    assert power_analysis.MODELS == power_analysis.PREREGISTERED_MODELS
+    with pytest.raises(RuntimeError, match="pre-registered roster"):
+        power_analysis.check_design_invariants()
 
 
 def test_design_invariants_survive_python_dash_o() -> None:
@@ -185,7 +198,7 @@ def test_design_invariants_survive_python_dash_o() -> None:
     code = (
         "import sys;"
         f"sys.path.insert(0, {str(ANALYSIS_DIR)!r});"
-        f"sys.path.insert(0, {str(NOTEBOOKS_DIR)!r});"
+        f"sys.path.insert(0, {str(NOTEBOOKS)!r});"
         "import power_analysis as pa;"
         "assert False, 'asserts are live -- this subprocess is not under -O';"
         "pa.N_PRIMARY = pa.N_PRIMARY - 1;"
@@ -270,7 +283,7 @@ def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> N
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
-    small_tree: tuple[Path, tuple[str, str]],
+    small_tree: tuple[Path, tuple[str, str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Contrasts and census share one loader pass.
 
@@ -278,18 +291,20 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     ----------
     small_tree : tuple[Path, tuple[str, str]]
         Tree root and cell with the unparsable filename.
+    monkeypatch : pytest.MonkeyPatch
+        Patches the loader with a read recorder.
     """
     root, _cell = small_tree
     reads = []
     original = Marks.load.__func__
-    with patch.object(
+    monkeypatch.setattr(
         Marks,
         "load",
         classmethod(lambda cls, path: reads.append(str(path)) or original(cls, path)),
-    ):
-        loaded = paired_analysis.load_marks(root)
-        after_load = len(reads)
-        census = significance_report.compliance_census(loaded)
+    )
+    loaded = paired_analysis.load_marks(root)
+    after_load = len(reads)
+    census = significance_report.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
     assert n_cells == len(power_analysis.MODELS) * len(power_analysis.INFOS)
@@ -299,7 +314,7 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
 
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
-    small_tree: tuple[Path, tuple[str, str]],
+    small_tree: tuple[Path, tuple[str, str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Focused contrasts reuse family p-values.
 
@@ -307,16 +322,18 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     ----------
     small_tree : tuple[Path, tuple[str, str]]
         Tree root and cell with the unparsable filename.
+    monkeypatch : pytest.MonkeyPatch
+        Patches the sign-flip kernel with a call counter.
     """
     root, _cell = small_tree
     calls = []
     real = paired_analysis.signflip_exact_p
-    with patch.object(
+    monkeypatch.setattr(
         paired_analysis,
         "signflip_exact_p",
         lambda diffs: calls.append(1) or real(diffs),
-    ):
-        run_captured(lambda: extens_vs_noise.main(root))
+    )
+    run_captured(lambda: extens_vs_noise.main(root))
 
     assert len(calls) == power_analysis.N_PRIMARY, len(calls)
 
@@ -329,7 +346,7 @@ def test_monte_carlo_output_lands_in_the_results_dir() -> None:
 
 
 def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An explicit results directory controls the default checkpoint path.
 
@@ -337,12 +354,14 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     ----------
     tmp_path : Path
         Temporary results directory.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces every simulation part with a stub.
     """
-    with patch.multiple(
-        multiplicity_sim,
-        **{f"part{i}": Mock(return_value={"part": i}) for i in range(1, 6)},
-    ):
-        multiplicity_sim.main(results_dir=tmp_path)
+    for i in range(1, 6):
+        monkeypatch.setattr(
+            multiplicity_sim, f"part{i}", lambda *_a, part=i, **_k: {"part": part}
+        )
+    multiplicity_sim.main(results_dir=tmp_path)
 
     target = tmp_path / multiplicity_sim.OUT_NAME
     assert target.exists()
@@ -366,25 +385,33 @@ def test_dump_creates_its_own_results_directory(tmp_path: Path) -> None:
     assert json.loads(target.read_text()) == {"probe": 1}
 
 
-def test_dump_keeps_previous_checkpoint_when_write_fails(tmp_path: Path) -> None:
+def test_dump_keeps_previous_checkpoint_when_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A failed checkpoint write does not replace the previous JSON.
 
     Parameters
     ----------
     tmp_path : Path
         Temporary checkpoint directory.
+    monkeypatch : pytest.MonkeyPatch
+        Makes ``json.dump`` fail before writing.
     """
     target = tmp_path / multiplicity_sim.OUT_NAME
     multiplicity_sim.dump({"first": 1}, target, "first")
 
-    with (
-        patch.object(
-            multiplicity_sim.json,
-            "dump",
-            side_effect=RuntimeError("simulated checkpoint failure"),
-        ),
-        pytest.raises(RuntimeError, match="simulated checkpoint failure"),
-    ):
+    def failing_dump(*_args: object, **_kwargs: object) -> None:
+        """Stand in for ``json.dump``.
+
+        Raises
+        ------
+        RuntimeError
+            Always, before anything reaches the file.
+        """
+        raise RuntimeError("simulated checkpoint failure")
+
+    monkeypatch.setattr(multiplicity_sim.json, "dump", failing_dump)
+    with pytest.raises(RuntimeError, match="simulated checkpoint failure"):
         multiplicity_sim.dump({"second": 2}, target, "second")
 
     assert json.loads(target.read_text()) == {"first": 1}
@@ -495,8 +522,16 @@ def test_sizing_scan_uses_common_random_numbers() -> None:
         )
 
 
-def test_sizing_crossing_is_sustained_not_first_hit() -> None:
-    """A noisy first crossing is rejected when later power dips below target."""
+def test_sizing_crossing_is_sustained_not_first_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A noisy first crossing is rejected when later power dips below target.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the CMH kernel with the noisy curve.
+    """
 
     def fake_cmh_stat(_succ_a: np.ndarray, _succ_b: np.ndarray, n: int) -> np.ndarray:
         """Inject a known power dip so the sizing scan must reject it.
@@ -520,28 +555,38 @@ def test_sizing_crossing_is_sustained_not_first_hit() -> None:
 
     power_analysis._sizing_scan.cache_clear()
     try:
-        with patch.object(power_analysis, "cmh_stat", fake_cmh_stat):
-            rates = np.full(N_HARMONICS, 0.5)
-            needed, curve = power_analysis.replicates_needed(rates, rates)
-            assert needed[0.80] == 8
-            assert needed[0.90] is None
-            assert curve[5] == pytest.approx(0.85)
-            assert curve[7] == pytest.approx(0.79)
+        monkeypatch.setattr(power_analysis, "cmh_stat", fake_cmh_stat)
+        rates = np.full(N_HARMONICS, 0.5)
+        needed, curve = power_analysis.replicates_needed(rates, rates)
+        assert needed[0.80] == 8
+        assert needed[0.90] is None
+        assert curve[5] == pytest.approx(0.85)
+        assert curve[7] == pytest.approx(0.79)
     finally:
         power_analysis._sizing_scan.cache_clear()
 
 
-def test_equivalence_crossing_is_sustained_not_first_hit() -> None:
-    """Equivalence sizing rejects a noisy first crossing."""
+def test_equivalence_crossing_is_sustained_not_first_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Equivalence sizing rejects a noisy first crossing.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the equivalence power curve with the noisy curve.
+    """
     curve = {n: _noisy_curve(n) for n in range(1, power_analysis.MAX_REPLICATES + 1)}
     rates = np.full(N_HARMONICS, 0.5)
-    with patch.object(power_analysis, "_equivalence_power_curve", return_value=curve):
-        assert (
-            power_analysis.equivalence_replicates(
-                rates, rates, 0.5, np.random.default_rng(0), n_sims=500
-            )
-            == 8
+    monkeypatch.setattr(
+        power_analysis, "_equivalence_power_curve", lambda *_a, **_k: curve
+    )
+    assert (
+        power_analysis.equivalence_replicates(
+            rates, rates, 0.5, np.random.default_rng(0), n_sims=500
         )
+        == 8
+    )
 
 
 def test_recommended_replicates_carries_censored_contrasts() -> None:
@@ -581,8 +626,16 @@ def test_recommended_replicates_carries_censored_contrasts() -> None:
     )
 
 
-def test_primary_contrasts_table_reports_the_family_size() -> None:
-    """`r_star` covers powerable contrasts; censored ones prevent `family_r`."""
+def test_primary_contrasts_table_reports_the_family_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`r_star` covers powerable contrasts; censored ones prevent `family_r`.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the sizing scan with censored rows.
+    """
 
     def fake_results(
         contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]],
@@ -611,8 +664,8 @@ def test_primary_contrasts_table_reports_the_family_size() -> None:
             for i, (name, key_a, key_b) in enumerate(contrasts)
         ]
 
-    with patch.object(power_analysis, "_compute_sizing_results", fake_results):
-        data = power_analysis.primary_contrasts_table({}, {})
+    monkeypatch.setattr(power_analysis, "_compute_sizing_results", fake_results)
+    data = power_analysis.primary_contrasts_table({}, {})
     assert data["n_primary"] == len(data["results"]) == power_analysis.N_PRIMARY
     assert data["n_censored"] == 1 and data["family_r"] is None
     assert data["r_star"] == 14
@@ -621,8 +674,10 @@ def test_primary_contrasts_table_reports_the_family_size() -> None:
 def test_paired_powers_has_a_stats_free_fast_path() -> None:
     """Grid searches skip unneeded diagnostics to limit memory."""
     args = (0.95, 0.05, 0.5, N_REPLICATES, 400)
-    full = _paired_powers(*args, np.random.default_rng(11), stats=True)
-    fast = _paired_powers(*args, np.random.default_rng(11), stats=False)
+    full = multiplicity_sim._paired_powers(*args, np.random.default_rng(11), stats=True)
+    fast = multiplicity_sim._paired_powers(
+        *args, np.random.default_rng(11), stats=False
+    )
     assert fast[0] == full[0] and fast[1] == full[1]
     assert fast[2] is None and fast[3] is None
 
@@ -631,8 +686,10 @@ def test_icc_zero_is_the_published_simulation_byte_for_byte() -> None:
     """`icc=0.0` must draw exactly what the un-clustered simulation drew, including RNG call order."""
 
     args = (0.9, 0.8, 0.5, 64, N_REPLICATES)
-    plain_a, plain_b = paired_marks(*args, np.random.default_rng(7))
-    zero_a, zero_b = paired_marks(*args, np.random.default_rng(7), icc=0.0)
+    plain_a, plain_b = multiplicity_sim.paired_marks(*args, np.random.default_rng(7))
+    zero_a, zero_b = multiplicity_sim.paired_marks(
+        *args, np.random.default_rng(7), icc=0.0
+    )
     assert np.array_equal(plain_a, zero_a)
     assert np.array_equal(plain_b, zero_b)
 
@@ -662,8 +719,12 @@ def within_replicate_phi(marks: np.ndarray) -> float:
 def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate() -> None:
     """A replicate latent preserves marginal arm rates."""
     args = (0.9, 0.8, 0.5, 400, N_REPLICATES)
-    flat_a, flat_b = paired_marks(*args, np.random.default_rng(11), icc=0.0)
-    clustered_a, clustered_b = paired_marks(*args, np.random.default_rng(11), icc=0.4)
+    flat_a, flat_b = multiplicity_sim.paired_marks(
+        *args, np.random.default_rng(11), icc=0.0
+    )
+    clustered_a, clustered_b = multiplicity_sim.paired_marks(
+        *args, np.random.default_rng(11), icc=0.4
+    )
 
     assert abs(within_replicate_phi(flat_a)) < 0.02
     assert within_replicate_phi(clustered_a) > 0.10
@@ -677,8 +738,14 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate() ->
 
 def test_the_replicate_latent_is_arm_specific_not_shared() -> None:
     """Arm-specific offsets keep independent arms uncorrelated."""
-    marks_a, marks_b = paired_marks(
-        0.9, 0.9, 0.0, 400, N_REPLICATES, np.random.default_rng(13), icc=0.4
+    marks_a, marks_b = multiplicity_sim.paired_marks(
+        0.9,
+        0.9,
+        0.0,
+        400,
+        N_REPLICATES,
+        np.random.default_rng(13),
+        icc=0.4,
     )
     per_replicate_a = marks_a.mean(axis=2).ravel()
     per_replicate_b = marks_b.mean(axis=2).ravel()
@@ -690,8 +757,14 @@ def test_icc_does_not_attenuate_the_requested_cross_arm_correlation() -> None:
     """Clustering must not dilute `rho`; the mark-level phi should match the un-clustered draw."""
     correlations = []
     for rho, seed, icc in ((0.6, 17, 0.0), (0.6, 19, 0.4), (0.36, 17, 0.0)):
-        arms = paired_marks(
-            0.7, 0.7, rho, 400, N_REPLICATES, np.random.default_rng(seed), icc=icc
+        arms = multiplicity_sim.paired_marks(
+            0.7,
+            0.7,
+            rho,
+            400,
+            N_REPLICATES,
+            np.random.default_rng(seed),
+            icc=icc,
         )
         correlations.append(
             np.corrcoef(np.asarray(arms, dtype=float).reshape(2, -1))[0, 1]
@@ -707,7 +780,7 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error() -> None:
     """Clustering inflates item-level McNemar Type-I error."""
 
     flat, clustered = [
-        _paired_powers(
+        multiplicity_sim._paired_powers(
             0.90,
             0.0,
             0.5,
@@ -755,13 +828,17 @@ def test_part2_reports_every_icc_and_its_design_effect(seed: int) -> None:
 
 
 @pytest.mark.parametrize("match_rung", (0, 1))
-def test_part2_searches_eq_r_from_the_first_matching_rung(match_rung: int) -> None:
+def test_part2_searches_eq_r_from_the_first_matching_rung(
+    match_rung: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Equivalent-R search records whether it moved beyond study depth.
 
     Parameters
     ----------
     match_rung : int
         First matching equivalent-R grid index.
+    monkeypatch : pytest.MonkeyPatch
+        Replaces the paired-power simulation and design-effect lookup.
     """
 
     def fake_powers(
@@ -798,14 +875,9 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(match_rung: int) -> No
             return 0.50, 0.0, None, None
         return 0.80 - multiplicity_sim.EQ_R_TOL / 2, 0.0, None, None
 
-    with (
-        patch.multiple(
-            multiplicity_sim,
-            _paired_powers=fake_powers,
-            study_design_effect=Mock(return_value=None),
-        ),
-        contextlib.redirect_stdout(io.StringIO()),
-    ):
+    monkeypatch.setattr(multiplicity_sim, "_paired_powers", fake_powers)
+    monkeypatch.setattr(multiplicity_sim, "study_design_effect", lambda *_a, **_k: None)
+    with contextlib.redirect_stdout(io.StringIO()):
         out = multiplicity_sim.part2(
             np.random.default_rng(2),
             _power_common.results_dir("induction"),
