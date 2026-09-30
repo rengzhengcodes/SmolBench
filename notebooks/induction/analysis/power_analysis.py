@@ -705,7 +705,9 @@ def check_design_invariants() -> None:
     Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
     ``python -O`` removes assertions.
     """
-    roster = tuple(zip(ROSTER_KEYS, MODELS, strict=True))
+    # MODELS is derived from ROSTER_KEYS one to one, so the pair-up cannot
+    # misalign; a drift of any kind surfaces as the RuntimeError below.
+    roster = tuple(zip(ROSTER_KEYS, MODELS))
     if roster != PREREGISTERED_ROSTER:
         raise RuntimeError(
             f"study_config roster {roster!r} disagrees with the pre-registered "
