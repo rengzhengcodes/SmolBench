@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import importlib
 import io
 import shutil
 import sys
@@ -18,26 +19,22 @@ from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS
 
 ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
-sys.path.insert(0, str(ANALYSIS_DIR))
-sys.path.insert(0, str(NOTEBOOKS))
-import extens_vs_noise  # noqa: E402
-import multiplicity_sim  # noqa: E402
-import paired_analysis  # noqa: E402
-import power_analysis  # noqa: E402
-import run_all  # noqa: E402
-import significance_report  # noqa: E402
+sys.path[:0] = [str(NOTEBOOKS), str(ANALYSIS_DIR)]
+# The module fixtures below take the bare names, so the module itself is bound privately.
+_power_analysis = importlib.import_module("power_analysis")
 
 #: Sign-flip floor 2/2**6 is above the primary correction threshold.
 SHALLOW_DEPTH = 6
 #: 2/2**16 is below the primary correction threshold.
 DEEP_DEPTH = 16
 
-N_HARMONICS = power_analysis.N_HARMONICS
-N_PRIMARY = power_analysis.N_PRIMARY
-MODELS = power_analysis.MODELS
-FAMILIES = power_analysis.FAMILIES
-INFOS = power_analysis.INFOS
+N_HARMONICS = _power_analysis.N_HARMONICS
+N_PRIMARY = _power_analysis.N_PRIMARY
+MODELS = _power_analysis.MODELS
+FAMILIES = _power_analysis.FAMILIES
+INFOS = _power_analysis.INFOS
 
+#: ``(rate, noncompliance, mode, seeds[, invalid])``; `noncompliance` may be a per-seed function.
 Cell = (
     tuple[float, float | Callable[[int], float], str, Sequence[int]]
     | tuple[float, float | Callable[[int], float], str, Sequence[int], float]
@@ -67,6 +64,7 @@ def profile_for(
     overrides: Mapping[tuple[str, str], Cell] | None = None,
     rate: float = 0.90,
     depth: int = DEEP_DEPTH,
+    invalid: float = 0.0,
 ) -> Callable[[str, str], Cell]:
     """Build a cell profile: `rate` everywhere (0.10 on the zero arm) unless overridden.
 
@@ -78,6 +76,8 @@ def profile_for(
         Accuracy of the default non-zero cells.
     depth : int
         Number of seeds in the default cells.
+    invalid : float
+        Fraction of unscored (invalid) marks in the default cells.
 
     Returns
     -------
@@ -86,7 +86,13 @@ def profile_for(
     """
 
     def profile(model: str, info: str) -> Cell:
-        base: Cell = (0.10 if info == "zero" else rate), 0.0, "empty", range(depth)
+        base: Cell = (
+            (0.10 if info == "zero" else rate),
+            0.0,
+            "empty",
+            range(depth),
+            invalid,
+        )
         return (overrides or {}).get((model, info), base)
 
     return profile
@@ -99,7 +105,26 @@ def _marks_for(
     rng: np.random.Generator,
     invalid: float = 0.0,
 ) -> Marks:
-    """Build one replicate with independent score, validity, and compliance axes."""
+    """Build one replicate with independent score, validity, and compliance axes.
+
+    Parameters
+    ----------
+    rate : float
+        Probability that a mark scores 1.
+    noncompliance : float
+        Probability that a mark carries the non-compliance `mode`.
+    mode : str
+        Compliance label given to non-compliant marks.
+    rng : np.random.Generator
+        Source of the three independent draws.
+    invalid : float
+        Probability that a mark is unscored (``score=None``).
+
+    Returns
+    -------
+    Marks
+        One replicate of `N_HARMONICS` marks.
+    """
     scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
     bad = rng.random(N_HARMONICS) < noncompliance
     null = rng.random(N_HARMONICS) < invalid
@@ -124,16 +149,21 @@ def build_tree(
     profile: Callable[[str, str], Cell],
     copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
 ) -> None:
-    """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root` for every study cell."""
+    """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root` for every study cell.
+
+    Parameters
+    ----------
+    root : Path
+        Results directory to populate.
+    profile : Callable[[str, str], Cell]
+        ``profile(model, info)`` giving each cell's generating parameters.
+    copies : Mapping[tuple[str, str], tuple[str, str]] | None
+        ``{destination: source}`` cells overwritten with a byte copy after generation.
+    """
     for model in MODELS:
         for info in INFOS:
             rate, noncompliance, mode, seeds, *rest = profile(model, info)
             invalid = rest[0] if rest else 0.0
-            rate_of = (
-                noncompliance
-                if callable(noncompliance)
-                else (lambda _seed, _v=noncompliance: _v)
-            )
             cdir = root / f"{model}_{info}"
             cdir.mkdir(parents=True, exist_ok=True)
             for seed in seeds:
@@ -142,14 +172,16 @@ def build_tree(
                     f"{model}/{info}/{seed}".encode(), digest_size=4
                 ).digest()
                 rng = np.random.default_rng(int.from_bytes(digest, "big"))
-                _marks_for(rate, rate_of(seed), mode, rng, invalid=invalid).dump(
+                seed_nc = (
+                    noncompliance(seed) if callable(noncompliance) else noncompliance
+                )
+                _marks_for(rate, seed_nc, mode, rng, invalid).dump(
                     cdir / f"rep_{seed}.yaml"
                 )
     for dst, src in (copies or {}).items():
         dst_dir = root / f"{dst[0]}_{dst[1]}"
-        src_dir = root / f"{src[0]}_{src[1]}"
         shutil.rmtree(dst_dir, ignore_errors=True)
-        shutil.copytree(src_dir, dst_dir)
+        shutil.copytree(root / f"{src[0]}_{src[1]}", dst_dir)
 
 
 def tree_fixture(
@@ -187,37 +219,30 @@ def tree_fixture(
     return fixture
 
 
-@pytest.fixture(scope="session")
-def power_analysis() -> ModuleType:
-    """Return the power-analysis module."""
-    return sys.modules["power_analysis"]
+def _module_fixture(name: str) -> Callable[[], ModuleType]:
+    """Return a session fixture named `name` that yields that analysis module.
+
+    Parameters
+    ----------
+    name : str
+        Module name under `ANALYSIS_DIR`; also the fixture name.
+
+    Returns
+    -------
+    Callable[[], ModuleType]
+        The fixture function, to be bound at module scope.
+    """
+
+    @pytest.fixture(scope="session", name=name)
+    def fixture() -> ModuleType:
+        return importlib.import_module(name)
+
+    return fixture
 
 
-@pytest.fixture(scope="session")
-def run_all() -> ModuleType:
-    """Return the analysis driver module."""
-    return sys.modules["run_all"]
-
-
-@pytest.fixture(scope="session")
-def multiplicity_sim() -> ModuleType:
-    """Return the multiplicity-simulation module."""
-    return sys.modules["multiplicity_sim"]
-
-
-@pytest.fixture(scope="session")
-def paired_analysis() -> ModuleType:
-    """Return the paired-analysis module."""
-    return sys.modules["paired_analysis"]
-
-
-@pytest.fixture(scope="session")
-def significance_report() -> ModuleType:
-    """Return the significance-report module."""
-    return sys.modules["significance_report"]
-
-
-@pytest.fixture(scope="session")
-def extens_vs_noise() -> ModuleType:
-    """Return the extens-versus-noise module."""
-    return sys.modules["extens_vs_noise"]
+extens_vs_noise = _module_fixture("extens_vs_noise")
+multiplicity_sim = _module_fixture("multiplicity_sim")
+paired_analysis = _module_fixture("paired_analysis")
+power_analysis = _module_fixture("power_analysis")
+run_all = _module_fixture("run_all")
+significance_report = _module_fixture("significance_report")

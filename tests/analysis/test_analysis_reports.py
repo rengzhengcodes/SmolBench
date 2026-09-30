@@ -7,6 +7,7 @@ import re
 import shutil
 from collections import Counter
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -53,7 +54,20 @@ def _skew_census(
     module: ModuleType,
     per_seed: Mapping[tuple[str, str], dict[int, tuple[int, int]]],
 ) -> Callable[[dict], dict]:
-    """Wrap the census so selected per-seed counts are overwritten."""
+    """Wrap the census so selected per-seed counts are overwritten.
+
+    Parameters
+    ----------
+    module : ModuleType
+        Report module whose `compliance_census` is wrapped.
+    per_seed : Mapping[tuple[str, str], dict[int, tuple[int, int]]]
+        Per-cell ``{seed: (non_compliant, total)}`` replacements.
+
+    Returns
+    -------
+    Callable[[dict], dict]
+        Drop-in census whose overwritten cells have their rate recomputed.
+    """
     real = module.compliance_census
 
     def skewed(marks: object) -> dict:
@@ -116,11 +130,23 @@ def test_classify_rejects_a_zero_first_pair(significance_report: ModuleType) -> 
         significance_report.classify(("m", "zero"), ("m", "intens"))
 
 
-_STEEP_RUNGS = next(iter(FAMILIES.values()))
+#: The family `_steep_profile` makes rise; every other family stays flat.
+_STEEP_FAMILY, _STEEP_RUNGS = next(iter(FAMILIES.items()))
 
 
 def _steep_profile(depth: int) -> Callable[[str, str], Cell]:
-    """First family's rungs rise 0.2/0.5/0.9 over `depth` seeds; all else default."""
+    """First family's rungs rise 0.2/0.5/0.9 over `depth` seeds; all else default.
+
+    Parameters
+    ----------
+    depth : int
+        Number of seeds in every cell.
+
+    Returns
+    -------
+    Callable[[str, str], Cell]
+        Profile for `build_tree`.
+    """
     return profile_for(
         {
             (rung, info): (rate, 0.0, "empty", range(depth))
@@ -139,22 +165,12 @@ ladder_tree = tree_fixture(
 )
 
 
-@pytest.fixture(scope="session")
-def gated_steep_family(power_analysis: ModuleType) -> str:
-    """The family `ladder_tree` makes steep."""
-    return next(iter(power_analysis.FAMILIES))
-
-
 def test_omnibus_gates_reject_on_a_steep_ladder(
-    ladder_tree: Path,
-    gated_steep_family: str,
-    significance_report: ModuleType,
-    power_analysis: ModuleType,
+    ladder_tree: Path, significance_report: ModuleType, power_analysis: ModuleType
 ) -> None:
     """A clearly rising family trips its Tier-1 gate."""
     marks = significance_report.load_marks(ladder_tree)
-    gates = significance_report.omnibus_gates(marks)
-    gate = gates[gated_steep_family]
+    gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
     assert gate["n_seeds"] == DEEP_DEPTH
     assert gate["reject"]
     assert gate["p"] < power_analysis.ALPHA_OMNIBUS
@@ -175,15 +191,12 @@ def test_omnibus_gates_do_not_reject_flat_family(
 
 
 def test_omnibus_gate_permutation_isolated_by_family(
-    ladder_tree: Path,
-    significance_report: ModuleType,
-    power_analysis: ModuleType,
-    paired_analysis: ModuleType,
+    ladder_tree: Path, significance_report: ModuleType, paired_analysis: ModuleType
 ) -> None:
     """A family gate's permutation p-value ignores unrelated family cells."""
     marks = significance_report.load_marks(ladder_tree)
     full = significance_report.omnibus_gates(marks)
-    family, rungs = list(power_analysis.FAMILIES.items())[-1]
+    family, rungs = list(FAMILIES.items())[-1]
     filtered = paired_analysis.CellMarks(
         {k: v for k, v in marks.correct.items() if k[0] in rungs},
         marks.valid,
@@ -198,31 +211,28 @@ def test_omnibus_gate_permutation_isolated_by_family(
 
 
 def test_omnibus_gate_uses_only_common_seeds(
-    tmp_path: Path, power_analysis: ModuleType, significance_report: ModuleType
+    tmp_path: Path, significance_report: ModuleType
 ) -> None:
     """A cell missing seeds shrinks the gate's seed set to the intersection."""
-    family, rungs = next(iter(power_analysis.FAMILIES.items()))
-    narrow = (rungs[0], "intens")
-
+    narrow = (_STEEP_RUNGS[0], "intens")
     build_tree(tmp_path, profile_for({narrow: (0.90, 0.0, "empty", range(10))}))
     marks = significance_report.load_marks(tmp_path)
     gates = significance_report.omnibus_gates(marks)
-    assert gates[family]["n_seeds"] == 10
+    assert gates[_STEEP_FAMILY]["n_seeds"] == 10
     for other, gate in gates.items():
-        if other != family:
+        if other != _STEEP_FAMILY:
             assert gate["n_seeds"] == DEEP_DEPTH
 
 
 def test_ungated_ladder_findings_are_labelled_exploratory(
     ladder_tree: Path,
-    gated_steep_family: str,
     significance_report: ModuleType,
     report: Callable[[Path], str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A significant ladder contrast in a non-rejecting family is marked UNGATED."""
     computed = significance_report.compute(ladder_tree)
-    assert computed.gates[gated_steep_family]["reject"]
+    assert computed.gates[_STEEP_FAMILY]["reject"]
     gated_ladders = [r for r in computed.findings if r["kind_is_ladder"] and r["gated"]]
     assert gated_ladders, "ladder_tree should yield gated ladder findings"
     out = report(ladder_tree)
@@ -245,32 +255,29 @@ def test_ungated_ladder_findings_are_labelled_exploratory(
 
 def test_missing_family_cell_yields_no_data_gate(
     clean_tree: Path,
-    gated_steep_family: str,
     significance_report: ModuleType,
     report: Callable[[Path], str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An absent cell reports the no-data gate entry, and render prints it."""
     marks = significance_report.load_marks(clean_tree)
-    rungs = significance_report.FAMILIES[gated_steep_family]
-    del marks.correct[(rungs[0], "intens")]
+    del marks.correct[(_STEEP_RUNGS[0], "intens")]
     gates = significance_report.omnibus_gates(marks)
-    assert gates[gated_steep_family] == significance_report.GATE_NO_DATA
+    assert gates[_STEEP_FAMILY] == significance_report.GATE_NO_DATA
 
-    # load_marks cannot produce a missing cell, so render is checked against a
-    # patched gate entry on a complete (flat) tree -- flat families add no
-    # findings, so no ungated row ever formats the missing p.
+    # load_marks cannot produce a missing cell, so render is checked against a patched
+    # gate on a flat tree, whose families add no findings that would format the missing p.
     real = significance_report.omnibus_gates
 
     def fake(marks: object) -> dict:
         gates = real(marks)
-        gates[gated_steep_family] = dict(significance_report.GATE_NO_DATA)
+        gates[_STEEP_FAMILY] = dict(significance_report.GATE_NO_DATA)
         return gates
 
     monkeypatch.setattr(significance_report, "omnibus_gates", fake)
     out = report(clean_tree)
     assert (
-        f"{gated_steep_family:12s} n_seeds=  0 stat=     n/a p_chi2=      n/a "
+        f"{_STEEP_FAMILY:12s} n_seeds=  0 stat=     n/a p_chi2=      n/a "
         "p_perm=      n/a  no data" in out
     )
 
@@ -278,7 +285,6 @@ def test_missing_family_cell_yields_no_data_gate(
 @pytest.fixture
 def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
     """Pairwise ladder overlaps remain while the family-wide intersection is empty."""
-    rungs = next(iter(FAMILIES.values()))
     n_rep = power_analysis.N_REPLICATES
     r2_seeds = {
         "intens": tuple(range(20)),
@@ -290,9 +296,9 @@ def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
         (rung, info): (rate, 0.0, "empty", seeds)
         for info in INFOS
         for rung, rate, seeds in (
-            (rungs[0], 0.0, range(n_rep)),
-            (rungs[1], 1.0, range(n_rep)),
-            (rungs[2], 0.9, r2_seeds[info]),
+            (_STEEP_RUNGS[0], 0.0, range(n_rep)),
+            (_STEEP_RUNGS[1], 1.0, range(n_rep)),
+            (_STEEP_RUNGS[2], 0.9, r2_seeds[info]),
         )
     }
     build_tree(tmp_path, profile_for(overrides, depth=n_rep))
@@ -300,20 +306,17 @@ def no_data_gate_tree(tmp_path: Path, power_analysis: ModuleType) -> Path:
 
 
 def test_no_data_gate_renders_ungated(
-    no_data_gate_tree: Path,
-    power_analysis: ModuleType,
-    significance_report: ModuleType,
+    no_data_gate_tree: Path, significance_report: ModuleType
 ) -> None:
     """An ungated significant ladder finding renders a no-data explanation."""
-    family = next(iter(power_analysis.FAMILIES))
     computed = significance_report.compute(no_data_gate_tree)
     ungated = [
         row
         for row in computed.findings
-        if row["kind_is_ladder"] and row["family"] == family and not row["gated"]
+        if row["kind_is_ladder"] and row["family"] == _STEEP_FAMILY and not row["gated"]
     ]
     assert ungated
-    assert computed.gates[family]["p"] is None
+    assert computed.gates[_STEEP_FAMILY]["p"] is None
     out = run_captured(lambda: significance_report.render(computed))
     assert "omnibus has no common-seed data" in out
 
@@ -323,8 +326,7 @@ def test_permutation_p_is_deterministic_and_bounded(
 ) -> None:
     """Same tensor and seed give the same p; the plus-one keeps it in (0, 1]."""
     rng = np.random.default_rng(0)
-    tensor = rng.random((8, 3, power_analysis.N_HARMONICS * len(INFOS))) < 0.9
-    tensor = tensor.astype(np.int64)
+    tensor = (rng.random((8, 3, N_HARMONICS * len(INFOS))) < 0.9).astype(np.int64)
     stat = float(power_analysis.gcmh_stat(tensor.sum(axis=0)[None], 8)[0])
     p1 = significance_report.permutation_omnibus_p(
         tensor, stat, np.random.default_rng(significance_report.GATE_PERM_SEED)
@@ -342,9 +344,7 @@ def test_gate_requires_both_p_values(
     """With 2 seeds the permutation p floors above ALPHA_OMNIBUS, so the asymptotic reject does not gate."""
     build_tree(tmp_path, _steep_profile(2))
     marks = significance_report.load_marks(tmp_path)
-    gates = significance_report.omnibus_gates(marks)
-    family = next(iter(power_analysis.FAMILIES))
-    gate = gates[family]
+    gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
     assert gate["n_seeds"] == 2
     assert gate["p_perm"] >= 1 / (significance_report.N_GATE_PERMS + 1)
     assert gate["p_perm"] > power_analysis.ALPHA_OMNIBUS
@@ -353,14 +353,11 @@ def test_gate_requires_both_p_values(
 
 
 def test_steep_ladder_rejects_under_both_p(
-    ladder_tree: Path,
-    gated_steep_family: str,
-    significance_report: ModuleType,
-    power_analysis: ModuleType,
+    ladder_tree: Path, significance_report: ModuleType, power_analysis: ModuleType
 ) -> None:
     """A deep steep ladder clears both the asymptotic and permutation p."""
     marks = significance_report.load_marks(ladder_tree)
-    gate = significance_report.omnibus_gates(marks)[gated_steep_family]
+    gate = significance_report.omnibus_gates(marks)[_STEEP_FAMILY]
     assert gate["p"] < power_analysis.ALPHA_OMNIBUS
     assert gate["p_perm"] < power_analysis.ALPHA_OMNIBUS
     assert gate["reject"] is True
@@ -505,25 +502,24 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
     )
 
     assert "NOT explained by padding" in controls
-    explained, _, unexplained = controls.partition("NOT explained by padding")
+    explained = controls.split("NOT explained by padding", 1)[0]
     # The partial-collapse caveat sits above the split ...
     assert "caveat, not a demonstrated cause of the failed control" in explained
     # ... and the compliant, non-noise failure is named below it.
     assert any(WEAK_MODEL in row["label"] for row in computed.fails_unexplained)
 
 
-def _padding_control_report(
+@pytest.fixture
+def padding_control_report(
     report: Callable[[Path], str],
     significance_report: ModuleType,
     padding_control_tree: Path,
     monkeypatch: pytest.MonkeyPatch,
-    noise_counts: tuple[int, int],
-) -> str:
-    """Return a report with matched-seed intens/noise compliance rates overridden."""
-    monkeypatch.setattr(
-        significance_report,
-        "compliance_census",
-        _skew_census(
+) -> Callable[[tuple[int, int]], str]:
+    """Render `padding_control_tree` with a fully compliant intens arm and the given noise-arm per-seed counts."""
+
+    def render(noise_counts: tuple[int, int]) -> str:
+        skewed = _skew_census(
             significance_report,
             {
                 (PAD_MODEL, "intens"): dict.fromkeys(
@@ -533,25 +529,20 @@ def _padding_control_report(
                     range(DEEP_DEPTH), noise_counts
                 ),
             },
-        ),
-    )
-    return report(padding_control_tree)
+        )
+        monkeypatch.setattr(significance_report, "compliance_census", skewed)
+        return report(padding_control_tree)
+
+    return render
 
 
 def test_partial_pad_crossing_is_not_called_near_total(
-    report: Callable[[Path], str],
+    padding_control_report: Callable[[tuple[int, int]], str],
     significance_report: ModuleType,
     padding_control_tree: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A partial compliance collapse is reported as a caveat, not control causation."""
-    out = _padding_control_report(
-        report,
-        significance_report,
-        padding_control_tree,
-        monkeypatch,
-        (4, N_HARMONICS),
-    )
+    out = padding_control_report((4, N_HARMONICS))
     computed = significance_report.compute(padding_control_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     assert computed.fails_partial
@@ -563,19 +554,12 @@ def test_partial_pad_crossing_is_not_called_near_total(
 
 
 def test_total_pad_crossing_keeps_near_total_exoneration(
-    report: Callable[[Path], str],
+    padding_control_report: Callable[[tuple[int, int]], str],
     significance_report: ModuleType,
     padding_control_tree: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A total compliance collapse retains the padding exoneration."""
-    out = _padding_control_report(
-        report,
-        significance_report,
-        padding_control_tree,
-        monkeypatch,
-        (N_HARMONICS, N_HARMONICS),
-    )
+    out = padding_control_report((N_HARMONICS, N_HARMONICS))
     computed = significance_report.compute(padding_control_tree)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     assert computed.fails_total
@@ -610,17 +594,13 @@ def test_reversed_controls_are_not_counted_as_passing(
 
 
 def test_replicate_depth_gate_uses_the_shallowest_lane(
-    paired_analysis: ModuleType,
-    tmp_path_factory: pytest.TempPathFactory,
-    power_analysis: ModuleType,
+    tmp_path: Path, paired_analysis: ModuleType, power_analysis: ModuleType
 ) -> None:
     """The shallowest lane controls the depth warning."""
-    deep_cell = (power_analysis.MODELS[0], "intens")
-    root = tmp_path_factory.mktemp("mixed_depth")
-
     deep = (0.90, 0.0, "empty", range(power_analysis.N_REPLICATES))
-    build_tree(root, profile_for({deep_cell: deep}, depth=SHALLOW_DEPTH))
-    out = run_captured(lambda: paired_analysis.main(root))
+    overrides = {(MODELS[0], "intens"): deep}
+    build_tree(tmp_path, profile_for(overrides, depth=SHALLOW_DEPTH))
+    out = run_captured(lambda: paired_analysis.main(tmp_path))
     assert "WARNING" in out
     assert str(SHALLOW_DEPTH) in out
 
@@ -632,14 +612,7 @@ def test_reports_handle_invalid_marks(
     significance_report: ModuleType,
 ) -> None:
     """Invalid marks are excluded from paired comparisons without breaking reports."""
-    profile = lambda _model, info: (
-        0.10 if info == "zero" else 0.90,
-        0.0,
-        "empty",
-        range(DEEP_DEPTH),
-        0.25,
-    )
-    build_tree(tmp_path, profile)
+    build_tree(tmp_path, profile_for(invalid=0.25))
     assert run_captured(lambda: significance_report.main(tmp_path))
     out = run_captured(lambda: paired_analysis.main(tmp_path))
     marks = paired_analysis.load_marks(tmp_path)
@@ -651,62 +624,68 @@ def test_reports_handle_invalid_marks(
     assert "DROP-INVALID pairs" in out
 
 
+def _copied_replicate(shallow_tree: Path, tmp_path: Path) -> Path:
+    """Copy `shallow_tree` into `tmp_path` and return one replicate file to corrupt.
+
+    Parameters
+    ----------
+    shallow_tree : Path
+        Session tree to copy so the corruption never leaks into other tests.
+    tmp_path : Path
+        Destination root, which the corrupted tree is then loaded from.
+
+    Returns
+    -------
+    Path
+        ``rep_0.yaml`` of the first study cell in the copy.
+    """
+    shutil.copytree(shallow_tree, tmp_path, dirs_exist_ok=True)
+    return tmp_path / f"{MODELS[0]}_{INFOS[0]}" / "rep_0.yaml"
+
+
 def test_extra_replicate_seed_is_rejected(
-    shallow_tree: Path,
-    power_analysis: ModuleType,
-    paired_analysis: ModuleType,
-    tmp_path: Path,
+    shallow_tree: Path, paired_analysis: ModuleType, tmp_path: Path
 ) -> None:
     """A lane outside the registered seed range is a collection failure."""
-    root = tmp_path / "extra-seed"
-    shutil.copytree(shallow_tree, root)
-    cell = (power_analysis.MODELS[0], power_analysis.INFOS[0])
-    source = root / f"{cell[0]}_{cell[1]}" / "rep_0.yaml"
+    source = _copied_replicate(shallow_tree, tmp_path)
     source.rename(source.with_name("rep_30.yaml"))
     with pytest.raises(SystemExit, match="30"):
-        paired_analysis.load_marks(root)
+        paired_analysis.load_marks(tmp_path)
 
 
 def test_partial_replicate_is_rejected(
-    shallow_tree: Path,
-    power_analysis: ModuleType,
-    paired_analysis: ModuleType,
-    tmp_path: Path,
+    shallow_tree: Path, paired_analysis: ModuleType, tmp_path: Path
 ) -> None:
     """A replicate with too few marks is a collection failure."""
-    root = tmp_path / "partial-replicate"
-    shutil.copytree(shallow_tree, root)
-    cell = (power_analysis.MODELS[0], power_analysis.INFOS[0])
-    path = root / f"{cell[0]}_{cell[1]}" / "rep_0.yaml"
+    path = _copied_replicate(shallow_tree, tmp_path)
     marks = Marks.load(path)
-    Marks(
-        model=marks.model,
-        marks=marks.marks[:-1],
-        date=marks.date,
-        server_config=marks.server_config,
-        regraded_from=marks.regraded_from,
-    ).dump(path)
-    with pytest.raises(
-        SystemExit,
-        match=rf"{path}.*{power_analysis.N_HARMONICS}",
-    ):
-        paired_analysis.load_marks(root)
+    replace(marks, marks=marks.marks[:-1]).dump(path)
+    with pytest.raises(SystemExit, match=rf"{path}.*{N_HARMONICS}"):
+        paired_analysis.load_marks(tmp_path)
 
 
-# ===========================================================================
-# the padding table subtracted rates over different seed sets
-# ===========================================================================
+# The PADDING EFFECT table subtracts both arms' rates over their common seeds only.
 
 
-def _padding_table(out: str) -> "dict[str, str]":
-    """Parse the PADDING EFFECT table into ``{lane: row text}``."""
+def _padding_table(out: str) -> dict[str, str]:
+    """Parse the PADDING EFFECT table into ``{lane: row text}``.
+
+    Parameters
+    ----------
+    out : str
+        Rendered significance report.
+
+    Returns
+    -------
+    dict[str, str]
+        Table rows keyed by lane (model) name.
+    """
     block = out.split("PADDING EFFECT", 1)[1].split("=> The pad", 1)[0]
-    rows = {}
-    for line in block.splitlines():
-        parts = line.split()
-        if len(parts) >= 4 and parts[1].endswith("%"):
-            rows[parts[0]] = line
-    return rows
+    return {
+        parts[0]: line
+        for line in block.splitlines()
+        if len(parts := line.split()) >= 4 and parts[1].endswith("%")
+    }
 
 
 def test_padding_table_subtracts_over_the_common_seeds_only(
@@ -737,7 +716,6 @@ def test_padding_table_reports_the_seed_count_it_used(
     header = [ln for ln in out.splitlines() if "delta" in ln and "noise" in ln]
     assert header, out[:2000]
     assert re.search(r"\bn\b", header[0]), header[0]
-    rows = _padding_table(out)
     n_common = {r["model"]: r["n_common"] for r in computed.pad_rows}
     assert n_common[SKEW_MODEL] == _SKEW_SPLIT
     assert n_common[COLLAPSE_MODEL] == DEEP_DEPTH
@@ -839,7 +817,7 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     significance_report: ModuleType,
 ) -> None:
     """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
-    # The one-sided claim that must never print again, whatever n_lad is.
+    # The one-sided claim must never print, whatever n_lad is.
     one_sided = "bites the family-scaling story, not the info-arm story"
 
     # Floor-bound: Holm rejects nothing, so no story claim is earned.
@@ -910,13 +888,13 @@ def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
     assert ceiling_line, clean[-2000:]
     assert len(computed.ceiling) == power_analysis.N_INFO_CONTRASTS
     assert f"CEILING pairs (both arms >= 0.95): {len(computed.ceiling)}" in clean
+    assert computed.n_zero_discordant == len(computed.ceiling)
     assert f"{computed.n_zero_discordant} of them have ZERO discordant items" in clean
 
 
 def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
     report: Callable[[Path], str],
     ceiling_tree: Path,
-    clean_tree: Path,
     significance_report: ModuleType,
 ) -> None:
     """Ceiling non-rejections distinguish exact ties from unresolved pairs."""
@@ -927,14 +905,6 @@ def test_ceiling_non_rejections_are_split_into_ties_and_unresolved(
     assert "UNRESOLVED" in out
     assert "ties by construction" not in out
     assert computed.n_zero_discordant < len(computed.ceiling)
-
-    clean = report(clean_tree)
-    clean_computed = significance_report.compute(clean_tree)
-    assert clean_computed.n_zero_discordant == len(clean_computed.ceiling)
-    assert (
-        f"{clean_computed.n_zero_discordant} of them have ZERO discordant items"
-        in clean
-    )
 
 
 # Exact ties retain a distinct direction label.
@@ -950,7 +920,7 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(
     for line in tied_rows:
         assert "extens HIGHER" not in line, line
         assert "noise HIGHER" not in line, line
-    assert any("tied" in ln.lower() or "TIED" in ln for ln in tied_rows), tied_rows
+    assert any("tied" in ln.lower() for ln in tied_rows), tied_rows
     # The bucket counter must agree with the RAW DIRECTION block's tally.
     raw = out.split("RAW DIRECTION", 1)[1]
     assert re.search(r"\b1 exactly tied", raw), raw[:400]
