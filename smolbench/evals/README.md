@@ -15,7 +15,7 @@ smolbench/evals/
   _aws.py           shared AWS primitives
   parsing.py  tokenization.py  replicates.py  results_store.py
   study_config.py   loads study_config.toml
-  study_config.toml committed results bucket/fleet/roster config
+  study_config.toml committed results bucket/fleet/roster/study/analysis config
   payloads/         byte-exact EC2 assets
 ```
 

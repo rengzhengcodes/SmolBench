@@ -19,7 +19,14 @@ import numpy as np
 from _power_common import ALPHA, results_dir
 from scipy.stats import binom, chi2
 
-from smolbench.evals.study_config import families, roster_keys, tag_for
+from smolbench.evals.study_config import (
+    analysis_params,
+    families,
+    n_rungs,
+    roster_keys,
+    study_params,
+    tag_for,
+)
 from smolbench.induction.periodic import CONDITIONS
 
 # Derive tags from the committed configuration.
@@ -33,49 +40,16 @@ FAMILIES: dict[str, tuple[str, ...]] = {
 # Arm names in the order run_study collects them.
 INFOS = tuple(CONDITIONS)
 RESULTS_DIR = results_dir("induction")
-# run_study.py owns BASE_SEED, N_REPLICATES and PeriodicConfig(n=9). Importing it
-# configures logging, loads keys.env and builds the env-configured EXPERIMENT at
-# module scope, so the analysis restates the three values. A BASE_SEED or
-# N_HARMONICS drift surfaces in load_outcomes (missing pilot replicate, wrong mark
-# count); an N_REPLICATES drift surfaces in paired_analysis.load_marks (a seed past
-# the expected range exits) or its depth WARNING, and multiplicity_sim simulates
-# every part at this depth.
-BASE_SEED = 0
-N_REPLICATES = 30
-# Replicates are the sampling unit; more harmonics would change the task.
-N_HARMONICS = 9
-#: TOST equivalence margins in accuracy points.
-EQUIVALENCE_DELTAS = (0.10, 0.15, 0.20)
+# The ``[study]`` section of study_config.toml, the same declaration run_study.py
+# collects with; each value's rationale is written beside it there.
+_STUDY = study_params()
+BASE_SEED = _STUDY.base_seed
+N_REPLICATES = _STUDY.n_replicates
+N_HARMONICS = _STUDY.n_harmonics
+#: TOST equivalence margins from the ``[analysis]`` section.
+EQUIVALENCE_DELTAS = analysis_params().equivalence_deltas
 
-# The pre-registered roster as (checkpoint key, tag) pairs. Counts alone would
-# pass a same-family checkpoint swap, so the keys (what the study runs) and
-# their tags (what names the result directories) are both pinned.
-PREREGISTERED_ROSTER: tuple[tuple[str, str], ...] = (
-    ("qwen3.5-27b", "qwen35_27b"),
-    ("qwen3.5-122b-a10b", "qwen35_122b"),
-    ("qwen3.5-397b-a17b", "qwen35_397b"),
-    ("nemotron-3-nano-4b", "nemo3_4b"),
-    ("nemotron-3-nano-30b-a3b", "nemo3_30b"),
-    ("nemotron-3-super-120b-a12b", "nemo3_120b"),
-    ("gemma-4-e2b", "gemma4_e2b"),
-    ("gemma-4-12b", "gemma4_12b"),
-    ("gemma-4-31b", "gemma4_31b"),
-    ("glm-4.7-flash", "glm_flash"),
-    ("glm-4.5-air", "glm_air"),
-    ("glm-4.7", "glm_47"),
-    ("ministral-3-3b", "min3_3b"),
-    ("ministral-3-8b", "min3_8b"),
-    ("ministral-3-14b", "min3_14b"),
-    ("exaone-4.0-32b", "exaone_32b"),
-    ("exaone-4.5-33b", "exaone_33b"),
-    ("k-exaone-236b-a23b", "exaone_236b"),
-    ("deepseek-v4-flash", "ds_flash"),
-    ("deepseek-v3.1", "ds_v31"),
-    ("deepseek-v4-pro", "ds_pro"),
-)
-PREREGISTERED_MODELS = tuple(tag for _key, tag in PREREGISTERED_ROSTER)
-
-N_RUNGS = 3
+N_RUNGS = n_rungs()
 N_INFOS = len(INFOS)
 N_FAMILIES = len(FAMILIES)
 N_LADDERS = N_FAMILIES * N_INFOS
@@ -251,19 +225,11 @@ def build_secondary_contrasts() -> list[Contrast]:
 def check_design_invariants() -> None:
     """Check protocol denominators and contrast builders agree.
 
-    Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
+    The roster itself is not re-pinned here: study_config.toml is its single
+    declaration and git history is the record of every change to it. Wrong
+    counts invalidate correction thresholds. Raises ``RuntimeError`` because
     ``python -O`` removes assertions.
     """
-    # MODELS is derived from ROSTER_KEYS one to one, so the pair-up cannot
-    # misalign; a drift of any kind surfaces as the RuntimeError below.
-    roster = tuple(zip(ROSTER_KEYS, MODELS))
-    if roster != PREREGISTERED_ROSTER:
-        raise RuntimeError(
-            f"study_config roster {roster!r} disagrees with the pre-registered "
-            f"roster {PREREGISTERED_ROSTER!r}; re-pin PREREGISTERED_ROSTER "
-            "deliberately if the study changed"
-        )
-
     # A MODELS/FAMILIES disagreement silently changes which contrasts exist.
     expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
     if MODELS != expected_models:

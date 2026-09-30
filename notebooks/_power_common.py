@@ -9,13 +9,13 @@ from pathlib import Path
 import numpy as np
 
 from smolbench.evals.results_store import repo_root
+from smolbench.evals.study_config import analysis_params
 
-#: Fixed for reproducible output.
-SEED = 0
-#: Two-sided familywise level; the per-test alphas are Bonferroni shares of it.
-ALPHA = 0.05
-#: Power levels the replicate-count scans report.
-POWER_TARGETS = (0.80, 0.90)
+#: The ``[analysis]`` section of study_config.toml, where each knob's rationale lives.
+ANALYSIS = analysis_params()
+SEED = ANALYSIS.seed
+ALPHA = ANALYSIS.alpha
+POWER_TARGETS = ANALYSIS.power_targets
 
 
 def results_dir(study: str) -> Path:

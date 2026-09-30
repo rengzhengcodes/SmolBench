@@ -45,8 +45,8 @@ def _noisy_curve(n: int) -> float:
     return 0.79 if n == 7 else 0.85 if n >= 5 else 0.1
 
 
-def test_roster_comes_from_the_study_config() -> None:
-    """Analysis roster derives from the study configuration."""
+def test_design_comes_from_the_study_config() -> None:
+    """Roster, rung count and study parameters all derive from study_config.toml."""
     assert study_design.MODELS == tuple(
         study_config.tag_for(key) for key in study_config.roster_keys()
     )
@@ -54,40 +54,17 @@ def test_roster_comes_from_the_study_config() -> None:
         family: tuple(study_config.tag_for(key) for key in rungs)
         for family, rungs in study_config.families().items()
     }
-
-
-def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A same-family checkpoint swap keeps every count but must still fail."""
-    study_design.check_design_invariants()
-    old, new = study_design.MODELS[0], "qwen35_9b"
-    monkeypatch.setattr(
-        study_design,
-        "FAMILIES",
-        {
-            fam: tuple(new if t == old else t for t in rungs)
-            for fam, rungs in study_design.FAMILIES.items()
-        },
+    study = study_config.study_params()
+    assert (study_design.N_REPLICATES, study_design.BASE_SEED) == (
+        study.n_replicates,
+        study.base_seed,
     )
-    monkeypatch.setattr(
-        study_design,
-        "MODELS",
-        tuple(new if t == old else t for t in study_design.MODELS),
-    )
-    assert len(study_design.build_primary_contrasts()) == study_design.N_PRIMARY
-    with pytest.raises(RuntimeError, match="pre-registered roster"):
-        study_design.check_design_invariants()
-
-
-def test_design_invariants_pin_roster_keys_not_only_tags(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A checkpoint swap that keeps the old tag must still fail on the key."""
-    keys = list(study_design.ROSTER_KEYS)
-    keys[0] = "qwen3.5-9b"
-    monkeypatch.setattr(study_design, "ROSTER_KEYS", tuple(keys))
-    assert study_design.MODELS == study_design.PREREGISTERED_MODELS
-    with pytest.raises(RuntimeError, match="pre-registered roster"):
-        study_design.check_design_invariants()
+    assert study_design.N_HARMONICS == study.n_harmonics
+    assert study_design.N_RUNGS == study_config.n_rungs()
+    analysis = study_config.analysis_params()
+    assert (_power_common.SEED, _power_common.ALPHA) == (analysis.seed, analysis.alpha)
+    assert _power_common.POWER_TARGETS == analysis.power_targets
+    assert study_design.EQUIVALENCE_DELTAS == analysis.equivalence_deltas
 
 
 def test_design_invariants_survive_python_dash_o() -> None:

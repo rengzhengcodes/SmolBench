@@ -48,7 +48,7 @@ TIED_MODEL = "nemo3_30b"
 #: Lane the single-lane fixtures perturb: reversed control, non-pad collapse, copied padding control.
 LANE_MODEL = "ds_flash"
 if not {COLLAPSE_MODEL, WEAK_MODEL, SKEW_MODEL, TIED_MODEL, LANE_MODEL} <= set(MODELS):
-    raise RuntimeError("a fixture tag is no longer on the pre-registered roster")
+    raise RuntimeError("a fixture tag is no longer on the study roster")
 
 #: Seeds below this are SKEW_MODEL's noise coverage; its intens non-compliance starts here.
 _SKEW_SPLIT = 10

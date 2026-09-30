@@ -41,9 +41,10 @@ to the store, so a script's depth affects only where it reads from.
 
 Each chained script inserts a `__file__`-anchored directory on `sys.path` --
 its own, or `notebooks/` for the ones importing `_power_common` -- and imports
-its siblings by bare name. `study_design.py` roots that chain: it owns the
-pre-registered roster, contrast tiers, correction thresholds, test kernels and
-`RESULTS_DIR`, and checks the design invariants when it is first imported. All
+its siblings by bare name. `study_design.py` roots that chain: it reads the
+roster and the `[study]` / `[analysis]` parameters from `study_config.toml`,
+derives the contrast tiers and correction thresholds, owns the test kernels
+and `RESULTS_DIR`, and checks the design invariants when it is first imported. All
 read marks through `Marks.load`, never scraped, and exit with a `sync_down()`
 hint when a replicate is missing.
 
@@ -53,7 +54,7 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 
 | File | What it's for |
 | --- | --- |
-| `study_design.py` | The pre-registered design: roster, contrast tiers, correction thresholds, the CMH/McNemar/GCMH kernels, and the import-time invariant check. Owns `MODELS`, `INFOS` and `RESULTS_DIR` for the whole `analysis/` chain. |
+| `study_design.py` | The study design as read from `smolbench/evals/study_config.toml` (roster, `[study]` parameters, `[analysis]` knobs), the contrast tiers and correction thresholds derived from it, the CMH/McNemar/GCMH kernels, and the import-time invariant check. Owns `MODELS`, `INFOS` and `RESULTS_DIR` for the whole `analysis/` chain. |
 | `power_analysis.py` | Sizing scans and the power report for the family-ladder scaling study. |
 | `paired_analysis.py` | Paired re-analysis of the family-ladder induction study. |
 | `significance_report.py` | Holm and Hochberg significance report over the primary contrast family. |
