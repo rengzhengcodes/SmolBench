@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import holm, labeled_rows, load_marks  # noqa: E402
+from paired_analysis import hochberg, holm, labeled_rows, load_marks  # noqa: E402
 from power_analysis import (  # noqa: E402
     ALPHA,
     MODELS,
@@ -28,7 +28,6 @@ from significance_report import (  # noqa: E402
     COLLAPSE_THRESHOLD,
     common_seed_rate,
     compliance_census,
-    hochberg,
 )
 
 
@@ -41,7 +40,12 @@ class Mechanism(StrEnum):
     BOTH_COLLAPSED = "both COLLAPSED"
 
 
-MECHANISMS = tuple(Mechanism)
+class Direction(StrEnum):
+    """Which arm scored higher on the compared seeds."""
+
+    NOISE = "noise HIGHER"
+    EXTENS = "extens HIGHER"
+    TIED = "exactly tied"
 
 
 def mechanism(nc_e: float, nc_n: float) -> Mechanism:
@@ -72,7 +76,7 @@ def mechanism(nc_e: float, nc_n: float) -> Mechanism:
     return Mechanism.INFORMATION
 
 
-def direction(acc_e: float, acc_n: float) -> str:
+def direction(acc_e: float, acc_n: float) -> Direction:
     """Label the higher-scoring arm or an exact tie.
 
     Ties need their own branch so tallies do not award them to ``extens``.
@@ -86,17 +90,17 @@ def direction(acc_e: float, acc_n: float) -> str:
 
     Returns
     -------
-    str
+    Direction
         Label for the higher-scoring arm or an exact tie.
     """
     if acc_n > acc_e:
-        return "noise HIGHER"
+        return Direction.NOISE
     if acc_n < acc_e:
-        return "extens HIGHER"
-    return "exactly tied"
+        return Direction.EXTENS
+    return Direction.TIED
 
 
-def nc(
+def noncompliance_rate(
     census: dict[tuple[str, str], dict],
     key: tuple[str, str],
     seeds: list[int],
@@ -128,7 +132,7 @@ def nc(
     return rate
 
 
-def star(ok: bool) -> str:
+def _star(ok: bool) -> str:
     """Render a yes/no table cell.
 
     Parameters
@@ -170,7 +174,9 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         ka, kb = (model, "extens"), (model, "noise_intens")
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        nc_e, nc_n = nc(census, ka, fr["seeds"]), nc(census, kb, fr["seeds"])
+        nc_e, nc_n = noncompliance_rate(census, ka, fr["seeds"]), noncompliance_rate(
+            census, kb, fr["seeds"]
+        )
         rows.append(
             {
                 **fr,
@@ -188,11 +194,12 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     h_sub, hb_sub = holm(p_sub, ALPHA), hochberg(p_sub, ALPHA)
     p_sub_item = np.array([r["p_item"] for r in rows])
 
+    n_models = len(MODELS)
     hdr = (
         f"{'model':13s} {'extens':>7s} {'noise':>7s} {'disc':>6s} {'b/c':>9s} "
         f"{'p_seed':>10s} {'p_item':>10s} {f'H{N_PRIMARY}':>5s} "
-        f"{f'H{len(MODELS)}':>4s} "
-        f"{f'Hoch{len(MODELS)}':>7s}  mechanism / non-compliance"
+        f"{f'H{n_models}':>4s} "
+        f"{f'Hoch{n_models}':>7s}  mechanism / non-compliance"
     )
     print(
         "EXTENSIONAL vs NOISE-PADDED INTENSIONAL, per model\n"
@@ -218,11 +225,10 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             f"{r['model']:13s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
             f"{r['disc']:6.3f} {r['b']:4d}/{r['c']:<4d} "
             f"{r['p_cluster']:10.2e} {r['p_item']:10.2e} "
-            f"{star(r['holm_full']):>5s} {star(h_sub[i]):>4s} "
-            f"{star(hb_sub[i]):>7s}  {'; '.join(flags)}"
+            f"{_star(r['holm_full']):>5s} {_star(h_sub[i]):>4s} "
+            f"{_star(hb_sub[i]):>7s}  {'; '.join(flags)}"
         )
 
-    n_models = len(MODELS)
     sig = [r for r in rows if r["holm_full"]]
     print(
         f"\nH{N_PRIMARY} = Holm over the pre-registered {N_PRIMARY}-contrast family, "
@@ -231,7 +237,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         "the family to a subset chosen after seeing the data\n  is not a valid primary "
         "analysis.\n"
         f"  agreement: H{N_PRIMARY} {len(sig)}, H{n_models} {int(h_sub.sum())}, "
-        f"Hoch{n_models} {int(hb_sub.sum())} of {len(rows)}\n"
+        f"Hoch{n_models} {int(hb_sub.sum())} of {n_models}\n"
         f"  the same family under the DESCRIPTIVE item-level p: H{N_PRIMARY} "
         f"{sum(r['holm_full_item'] for r in rows)}, H{n_models} "
         f"{int(holm(p_sub_item, ALPHA).sum())}, Hoch{n_models} "
@@ -240,7 +246,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         f"{sum(1 for r in rows if r['holm_full'] != r['holm_full_item'])} of "
         f"these {n_models} primary decisions.\n"
         f"\nSIGNIFICANT under the primary (m={N_PRIMARY}, seed-level) "
-        f"correction: {len(sig)} of {len(rows)}"
+        f"correction: {len(sig)} of {n_models}"
     )
     for r in sorted(sig, key=lambda r: r["p_cluster"]):
         print(
@@ -299,7 +305,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             )
         if sel_sig:
             sig_dirs = Counter(r["dir"] for r in sel_sig)
-            up, down = sig_dirs["noise HIGHER"], sig_dirs["extens HIGHER"]
+            up, down = sig_dirs[Direction.NOISE], sig_dirs[Direction.EXTENS]
             print(
                 f"  => direction among the significant ones: {up} "
                 f"noise-higher, {down} extens-higher, "
@@ -307,23 +313,29 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             )
 
     dirs = Counter(r["dir"] for r in rows)
-    up_all, down_all = dirs["noise HIGHER"], dirs["extens HIGHER"]
+    up_all, down_all = dirs[Direction.NOISE], dirs[Direction.EXTENS]
     coll_dirs = Counter(r["dir"] for r in rows if r["mech"] != Mechanism.INFORMATION)
     print(
-        f"\n{'=' * 78}\nRAW DIRECTION, ALL {len(rows)} LANES, NO SIGNIFICANCE "
+        f"\n{'=' * 78}\nRAW DIRECTION, ALL {n_models} LANES, NO SIGNIFICANCE "
         f"FILTER\n{'=' * 78}\n"
         f"  {up_all} noise-higher, {down_all} extens-higher, "
-        f"{len(rows) - up_all - down_all} exactly tied.\n"
-        f"  {coll_dirs['extens HIGHER']} of the {down_all} extens-higher and "
-        f"{coll_dirs['noise HIGHER']} of the {up_all} noise-higher lanes have at least "
-        f"one\n  arm over the {COLLAPSE_THRESHOLD:.0%} non-compliance threshold. Those "
-        "lanes are kept and annotated rather\n  than removed: dropping them would "
-        "select on a covariate of the outcome."
+        f"{n_models - up_all - down_all} exactly tied.\n"
+        f"  {coll_dirs[Direction.EXTENS]} of the {down_all} extens-higher and "
+        f"{coll_dirs[Direction.NOISE]} of the {up_all} noise-higher lanes have at least "
+        f"one\n  arm over the {COLLAPSE_THRESHOLD:.0%} non-compliance threshold."
+        # The retention rationale describes collapsed lanes, so it prints only
+        # when there is at least one.
+        + (
+            " Those lanes are kept and annotated rather\n  than removed: dropping "
+            "them would select on a covariate of the outcome."
+            if coll_dirs.total()
+            else ""
+        )
     )
     clean_down = [
         r
         for r in rows
-        if r["dir"] == "extens HIGHER" and r["mech"] == Mechanism.INFORMATION
+        if r["dir"] == Direction.EXTENS and r["mech"] == Mechanism.INFORMATION
     ]
     if clean_down:
         print(

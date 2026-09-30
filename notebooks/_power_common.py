@@ -1,6 +1,7 @@
 """Shared analysis constants and result-path helpers.
 
-Kept dependency-light (numpy plus smolbench) so either study can import it.
+Kept dependency-light (numpy plus smolbench) so any study's analysis scripts can
+import it (the deduction leg lands in slice 3).
 """
 
 from pathlib import Path
@@ -52,6 +53,11 @@ def _unsort(rejected: np.ndarray, order: np.ndarray) -> np.ndarray:
 def apply_corrections(pv: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
     """Apply Bonferroni, Holm, Hochberg, and BH corrections.
 
+    Vectorized over rows because multiplicity_sim corrects thousands of simulated
+    families per call, which ``statsmodels.stats.multitest.multipletests`` (one
+    family per call) cannot do at that volume;
+    ``test_apply_corrections_matches_statsmodels`` pins row-wise agreement.
+
     Parameters
     ----------
     pv : np.ndarray
@@ -83,21 +89,3 @@ def apply_corrections(pv: np.ndarray, alpha: float) -> dict[str, np.ndarray]:
         "Hochberg": _unsort(_stepup(fwer_ok), order),
         "BH": _unsort(_stepup(sortedp <= alpha * ranks / m), order),
     }
-
-
-def fmt_r(r: int | None, max_replicates: int) -> str:
-    """Format a replicate count.
-
-    Parameters
-    ----------
-    r : int | None
-        ``None`` means the scan cap was reached without hitting the target.
-    max_replicates : int
-        Scan cap displayed when the target was not reached.
-
-    Returns
-    -------
-    str
-        Formatted replicate count.
-    """
-    return f">{max_replicates}" if r is None else str(r)

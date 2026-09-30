@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from operator import itemgetter
 from pathlib import Path
+from typing import Optional
 
 # Required when loaded by path rather than as ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -18,6 +19,7 @@ import numpy as np
 from _power_common import apply_corrections
 from power_analysis import (  # noqa: E402
     ALPHA,
+    ALPHA_PRIMARY,
     BASE_SEED,
     INFOS,
     MODELS,
@@ -28,10 +30,9 @@ from power_analysis import (  # noqa: E402
     RESULTS_DIR,
     build_primary_contrasts,
     build_secondary_contrasts,
-    cmh_stat,
+    cmh_p,
     mcnemar_exact_p,
 )
-from scipy.stats import chi2
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 
@@ -41,7 +42,7 @@ CellKey = tuple[str, str]
 
 @dataclass(frozen=True)
 class CellMarks:
-    """One map per `(model, info)` cell keyed by seed."""
+    """Three views of the parsed marks, each keyed ``(model, info)`` then seed."""
 
     correct: dict[CellKey, dict[int, np.ndarray]]
     valid: dict[CellKey, dict[int, np.ndarray]]
@@ -66,7 +67,8 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
     Raises
     ------
     SystemExit
-        If a lane has no replicate seeds, an unexpected seed, or a short replicate.
+        If a lane has no replicate seeds, an unexpected seed, or a replicate
+        without exactly ``N_HARMONICS`` marks.
     """
     correct: dict[CellKey, dict[int, np.ndarray]] = {}
     valid: dict[CellKey, dict[int, np.ndarray]] = {}
@@ -110,6 +112,11 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
     return CellMarks(correct, valid, compliance)
 
 
+def _common_seeds(marks: CellMarks, key_a: CellKey, key_b: CellKey) -> list[int]:
+    """Sorted replicate seeds both cells carry."""
+    return sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
+
+
 def aligned(
     marks: CellMarks, key_a: CellKey, key_b: CellKey, drop_invalid: bool
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -134,7 +141,7 @@ def aligned(
     SystemExit
         If the two cells share no replicate seed.
     """
-    seeds = sorted(set(marks.correct[key_a]) & set(marks.correct[key_b]))
+    seeds = _common_seeds(marks, key_a, key_b)
     if not seeds:
         # Empty overlap is a data failure, not a NumPy error.
         raise SystemExit(
@@ -226,10 +233,10 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     counts = np.array([(harm_idx == k).sum() for k in strata])
     succ_a = np.array([a[harm_idx == k].sum() for k in strata])
     succ_b = np.array([b[harm_idx == k].sum() for k in strata])
-    return float(chi2.sf(cmh_stat(succ_a, succ_b, counts), df=1))
+    return float(cmh_p(succ_a, succ_b, counts))
 
 
-def rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
+def _rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
     """Return one `apply_corrections` mask for a single family of p-values.
 
     Parameters
@@ -266,7 +273,27 @@ def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    return rejection_mask(pvals, alpha, "Holm")
+    return _rejection_mask(pvals, alpha, "Holm")
+
+
+def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
+    """Return Hochberg step-up rejections at familywise level ``alpha``.
+
+    Sensitivity-only: its positive-dependence condition is unverified.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    alpha : float, optional
+        Familywise error-rate level.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask.
+    """
+    return _rejection_mask(pvals, alpha, "Hochberg")
 
 
 def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
@@ -286,12 +313,12 @@ def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
     np.ndarray
         Rejection mask.
     """
-    return rejection_mask(pvals, q, "BH")
+    return _rejection_mask(pvals, q, "BH")
 
 
 def design_effect(
     a: np.ndarray, b: np.ndarray, seed_idx: np.ndarray, harm_idx: np.ndarray
-) -> float | None:
+) -> Optional[float]:
     """Return observed over independence-assumed variance.
 
     ``None`` represents every unmeasurable case, preventing NaNs from passing filters.
@@ -309,14 +336,16 @@ def design_effect(
 
     Returns
     -------
-    float | None
+    Optional[float]
         Observed / independence-assumed variance ratio.
     """
-    d = a.astype(float) - b.astype(float)
-    seeds = np.unique(seed_idx)
-    if seeds.size < 3:
+    diffs = seed_diffs(a, b, seed_idx)
+    # A two-seed variance has one degree of freedom: the ratio would be noise,
+    # not a measurement, so it is reported as unmeasurable.
+    if len(diffs) < 3:
         return None
-    observed = np.array([d[seed_idx == s].sum() for s in seeds]).var(ddof=1)
+    observed = np.var(diffs, ddof=1)
+    d = a.astype(float) - b.astype(float)
     assumed = float(np.sum([d[harm_idx == k].var(ddof=1) for k in np.unique(harm_idx)]))
     if not np.isfinite(assumed) or assumed <= 0:
         return None
@@ -357,7 +386,7 @@ def contrast_row(
         "b": nb,
         "c": nc,
         "disc": (nb + nc) / max(a.size, 1),
-        "seeds": sorted(set(marks.correct[key_a]) & set(marks.correct[key_b])),
+        "seeds": _common_seeds(marks, key_a, key_b),
         "n_seeds": int(np.unique(sidx).size),
         "p_item": mcnemar_exact_p(nb, nc),
         "p_unpaired": cmh_unpaired_p(a, b, hidx),
@@ -391,7 +420,7 @@ def labeled_rows(
     ]
 
 
-def _acc(x: float | None) -> str:
+def _acc(x: Optional[float]) -> str:
     """Format an accuracy, including an empty-comparison marker."""
     return "  n/a" if x is None else f"{x:.3f}"
 
@@ -428,7 +457,6 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             "sized at the wrong threshold."
         )
 
-    bonf = ALPHA / N_PRIMARY
     for drop_invalid, tag in (
         (False, "null == incorrect (pre-registered)"),
         (True, "DROP-INVALID pairs"),
@@ -442,9 +470,9 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
         print(
             f"Rejections at FWER {ALPHA} over {N_PRIMARY} contrasts:\n"
-            f"  unpaired CMH  + Bonferroni : {(p_unp <= bonf).sum():3d}\n"
+            f"  unpaired CMH  + Bonferroni : {(p_unp <= ALPHA_PRIMARY).sum():3d}\n"
             f"  unpaired CMH  + Holm       : {rej_unp.sum():3d}\n"
-            f"  paired McNemar+ Bonferroni : {(p_pair <= bonf).sum():3d}\n"
+            f"  paired McNemar+ Bonferroni : {(p_pair <= ALPHA_PRIMARY).sum():3d}\n"
             f"  paired McNemar+ Holm       : {rej_pair.sum():3d}"
         )
         if not drop_invalid:
@@ -453,7 +481,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             p_cl = np.array([r["p_cluster"] for r in rows])
             rej_cl = holm(p_cl)
             print(
-                f"  seed sign-flip+ Bonferroni : {int((p_cl <= bonf).sum()):3d}\n"
+                f"  seed sign-flip+ Bonferroni : {int((p_cl <= ALPHA_PRIMARY).sum()):3d}\n"
                 f"  seed sign-flip+ Holm       : {int(rej_cl.sum()):3d}   "
                 f"<== PRIMARY\n"
                 f"  => vs item-level McNemar: "
@@ -497,10 +525,10 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
                     continue
                 model = r["key_a"][0]
                 flag = ""
-                if r["p_cluster"] <= bonf:
+                if r["p_cluster"] <= ALPHA_PRIMARY:
                     flag = "  <== SEPARATES (Bonferroni)"
                 elif r["p_cluster"] <= ALPHA:
-                    flag = "  <== p<0.05 uncorrected"
+                    flag = f"  <== p<{ALPHA} uncorrected"
                 print(
                     f"  {model:14s} {r['acc_a']:7.3f} {r['acc_b']:7.3f} "
                     f"{r['disc']:7.3f} {r['b']:4d}/{r['c']:<4d} "
@@ -538,7 +566,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     print(
         f"\n{'=' * 78}\nSECONDARY family ({len(sec)} cross-family size-matched "
-        f"contrasts, intens only), Benjamini-Hochberg q=0.05\n{'=' * 78}\n"
+        f"contrasts, intens only), Benjamini-Hochberg q={Q_SECONDARY}\n{'=' * 78}\n"
         f"  seed sign-flip (inferential) : {n_disc['p_cluster']:3d} discoveries\n"
         f"  unpaired CMH (descriptive)   : {n_disc['p_unpaired']:3d} discoveries\n"
         f"  paired McNemar (descriptive) : {n_disc['p_item']:3d} discoveries"

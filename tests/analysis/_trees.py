@@ -1,4 +1,8 @@
-"""Sibling test directories import root conftest by bare name; a second conftest here would shadow it."""
+"""Synthetic results trees, capture helpers, and script handles shared by the analysis tests.
+
+Not a conftest: sibling test directories import the root conftest by bare name and a
+second one here would shadow it.
+"""
 
 import contextlib
 import hashlib
@@ -6,13 +10,14 @@ import io
 import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pytest
 
 from smolbench.evals import Mark, Marks
+from smolbench.evals.parsing import EMPTY
 from smolbench.evals.quiz import COMPLIANT
 from tests._paths import NOTEBOOKS
 
@@ -42,10 +47,10 @@ MODELS = power_analysis.MODELS
 FAMILIES = power_analysis.FAMILIES
 INFOS = power_analysis.INFOS
 
-#: ``(rate, noncompliance, mode, seeds[, invalid])``; `noncompliance` may be a per-seed function.
+#: ``(rate, noncompliance, seeds[, invalid])``; `noncompliance` may be a per-seed function.
 Cell = (
-    tuple[float, float | Callable[[int], float], str, Sequence[int]]
-    | tuple[float, float | Callable[[int], float], str, Sequence[int], float]
+    tuple[float, float | Callable[[int], float], Sequence[int]]
+    | tuple[float, float | Callable[[int], float], Sequence[int], float]
 )
 
 
@@ -69,7 +74,7 @@ def run_captured(fn: Callable[[], object]) -> str:
 
 
 def profile_for(
-    overrides: Mapping[tuple[str, str], Cell] | None = None,
+    overrides: Optional[Mapping[tuple[str, str], Cell]] = None,
     rate: float = 0.90,
     depth: int = DEEP_DEPTH,
     invalid: float = 0.0,
@@ -78,7 +83,7 @@ def profile_for(
 
     Parameters
     ----------
-    overrides : Mapping[tuple[str, str], Cell] | None
+    overrides : Optional[Mapping[tuple[str, str], Cell]]
         Explicit cells keyed by ``(model, info)``; all others use the default.
     rate : float
         Accuracy of the default non-zero cells.
@@ -94,24 +99,14 @@ def profile_for(
     """
 
     def profile(model: str, info: str) -> Cell:
-        base: Cell = (
-            (0.10 if info == "zero" else rate),
-            0.0,
-            "empty",
-            range(depth),
-            invalid,
-        )
+        base: Cell = ((0.10 if info == "zero" else rate), 0.0, range(depth), invalid)
         return (overrides or {}).get((model, info), base)
 
     return profile
 
 
 def _marks_for(
-    rate: float,
-    noncompliance: float,
-    mode: str,
-    rng: np.random.Generator,
-    invalid: float = 0.0,
+    rate: float, noncompliance: float, rng: np.random.Generator, invalid: float = 0.0
 ) -> Marks:
     """Build one replicate with independent score, validity, and compliance axes.
 
@@ -120,9 +115,7 @@ def _marks_for(
     rate : float
         Probability that a mark scores 1.
     noncompliance : float
-        Probability that a mark carries the non-compliance `mode`.
-    mode : str
-        Compliance label given to non-compliant marks.
+        Probability that a mark is non-compliant (``EMPTY``).
     rng : np.random.Generator
         Source of the three independent draws.
     invalid : float
@@ -133,7 +126,7 @@ def _marks_for(
     Marks
         One replicate of `N_HARMONICS` marks.
     """
-    scores = (rng.random(N_HARMONICS) < rate).astype(int).tolist()
+    scores = rng.random(N_HARMONICS) < rate
     bad = rng.random(N_HARMONICS) < noncompliance
     null = rng.random(N_HARMONICS) < invalid
     return Marks(
@@ -144,18 +137,17 @@ def _marks_for(
                 answer=i,
                 response=str(i),
                 score=None if nl else int(s),
-                compliance=(mode if b else COMPLIANT),
+                compliance=(EMPTY if b else COMPLIANT),
             )
             for i, (s, b, nl) in enumerate(zip(scores, bad, null))
         ),
-        date=datetime(2026, 7, 1, tzinfo=timezone.utc),
     )
 
 
 def build_tree(
     root: Path,
     profile: Callable[[str, str], Cell],
-    copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
+    copies: Optional[Mapping[tuple[str, str], tuple[str, str]]] = None,
 ) -> None:
     """Write a ``{model}_{info}/rep_{seed}.yaml`` tree under `root` for every study cell.
 
@@ -165,12 +157,12 @@ def build_tree(
         Results directory to populate.
     profile : Callable[[str, str], Cell]
         ``profile(model, info)`` giving each cell's generating parameters.
-    copies : Mapping[tuple[str, str], tuple[str, str]] | None
+    copies : Optional[Mapping[tuple[str, str], tuple[str, str]]]
         ``{destination: source}`` cells overwritten with a byte copy after generation.
     """
     for model in MODELS:
         for info in INFOS:
-            rate, noncompliance, mode, seeds, *rest = profile(model, info)
+            rate, noncompliance, seeds, *rest = profile(model, info)
             invalid = rest[0] if rest else 0.0
             cdir = root / f"{model}_{info}"
             cdir.mkdir(parents=True, exist_ok=True)
@@ -183,9 +175,7 @@ def build_tree(
                 seed_nc = (
                     noncompliance(seed) if callable(noncompliance) else noncompliance
                 )
-                _marks_for(rate, seed_nc, mode, rng, invalid).dump(
-                    cdir / f"rep_{seed}.yaml"
-                )
+                _marks_for(rate, seed_nc, rng, invalid).dump(cdir / f"rep_{seed}.yaml")
     for dst, src in (copies or {}).items():
         dst_dir = root / f"{dst[0]}_{dst[1]}"
         shutil.rmtree(dst_dir, ignore_errors=True)
@@ -196,7 +186,7 @@ def tree_fixture(
     name: str,
     profile: Callable[[str, str], Cell],
     doc: str,
-    copies: Mapping[tuple[str, str], tuple[str, str]] | None = None,
+    copies: Optional[Mapping[tuple[str, str], tuple[str, str]]] = None,
 ) -> Callable[[pytest.TempPathFactory], Path]:
     """Return a session fixture named `name` that builds `profile` once.
 
@@ -208,7 +198,7 @@ def tree_fixture(
         Cell profile handed to `build_tree`.
     doc : str
         Docstring given to the generated fixture.
-    copies : Mapping[tuple[str, str], tuple[str, str]] | None
+    copies : Optional[Mapping[tuple[str, str], tuple[str, str]]]
         Forwarded to `build_tree`.
 
     Returns

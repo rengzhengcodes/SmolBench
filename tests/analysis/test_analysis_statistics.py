@@ -9,16 +9,19 @@ import sys
 import warnings
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pytest
-from scipy.stats import binom
 from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks, study_config
 from tests._paths import NOTEBOOKS, REPO_ROOT
 from tests.analysis._trees import (
     ANALYSIS_DIR,
+    DEEP_DEPTH,
+    INFOS,
+    MODELS,
     N_HARMONICS,
     N_PRIMARY,
     N_REPLICATES,
@@ -33,6 +36,9 @@ from tests.analysis._trees import (
     run_captured,
     significance_report,
 )
+
+#: Cell that also holds the unparsable rep_bogus.yaml.
+_BOGUS_CELL = (MODELS[0], "intens")
 
 
 def _noisy_curve(n: int) -> float:
@@ -104,7 +110,7 @@ def test_power_analysis_roster_comes_from_the_study_config() -> None:
 
 
 @pytest.mark.parametrize(
-    "correct", (paired_analysis.holm, significance_report.hochberg, paired_analysis.bh)
+    "correct", (paired_analysis.holm, paired_analysis.hochberg, paired_analysis.bh)
 )
 def test_rejection_sets_do_not_depend_on_contrast_build_order(
     correct: Callable[[np.ndarray, float], np.ndarray],
@@ -116,10 +122,21 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(
     correct : Callable[[np.ndarray, float], np.ndarray]
         Correction procedure under test.
     """
+    alpha = _power_common.ALPHA
     rng = np.random.default_rng(7)
     tie_rng = np.random.default_rng(20260905)
+    # Sign-flip floors at study and deep depth, ALPHA, the primary share, and tie-prone values.
     pool = np.array(
-        [2 / 2**30, 2 / 2**16, 1.0, 0.05, 0.05 / N_PRIMARY, 1e-8, 0.5, 0.02]
+        [
+            2 / 2**N_REPLICATES,
+            2 / 2**DEEP_DEPTH,
+            1.0,
+            alpha,
+            alpha / N_PRIMARY,
+            1e-8,
+            0.5,
+            0.02,
+        ]
     )
     for i in range(60):
         m = int(tie_rng.integers(2, 80))
@@ -129,22 +146,15 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(
             else tie_rng.choice(pool, size=m)
         )
         perm = rng.permutation(pvals.size)
-        base = correct(pvals, 0.05)
-        permuted = correct(pvals[perm], 0.05)
+        base = correct(pvals, alpha)
+        permuted = correct(pvals[perm], alpha)
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
 def test_mcnemar_is_defined_once() -> None:
-    """One broadcasting implementation serves the scalar and batched call sites."""
+    """One implementation serves every call site."""
     assert paired_analysis.mcnemar_exact_p is power_analysis.mcnemar_exact_p
     assert multiplicity_sim.mcnemar_exact_p is power_analysis.mcnemar_exact_p
-    assert power_analysis.mcnemar_exact_p(np.array([0]), np.array([0]))[0] == 1.0
-    assert power_analysis.mcnemar_exact_p(0, 0) == 1.0
-    rng = np.random.default_rng(3)
-    b, c = rng.integers(0, 40, 300), rng.integers(0, 40, 300)
-    ref = np.minimum(1.0, 2 * binom.cdf(np.minimum(b, c), b + c, 0.5))
-    np.testing.assert_allclose(power_analysis.mcnemar_exact_p(b, c), ref, rtol=1e-12)
-    assert power_analysis.mcnemar_exact_p(4, 4) == 1.0
 
 
 def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,10 +214,8 @@ def test_design_invariants_survive_python_dash_o() -> None:
 
 
 @pytest.fixture(scope="module")
-def small_tree(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[Path, tuple[str, str]]:
-    """Build a 6-seed tree with one unparsable replicate filename.
+def small_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a 6-seed tree with one unparsable replicate filename in `_BOGUS_CELL`.
 
     Parameters
     ----------
@@ -216,33 +224,29 @@ def small_tree(
 
     Returns
     -------
-    tuple[Path, tuple[str, str]]
-        Tree root and cell with the unparsable filename.
+    Path
+        Tree root.
     """
     tmp_path = tmp_path_factory.mktemp("small-tree")
     build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH))
-    cell = power_analysis.MODELS[0], "intens"
-    cell_dir = tmp_path / f"{cell[0]}_{cell[1]}"
+    cell_dir = tmp_path / f"{_BOGUS_CELL[0]}_{_BOGUS_CELL[1]}"
     shutil.copyfile(cell_dir / "rep_0.yaml", cell_dir / "rep_bogus.yaml")
-    return tmp_path, cell
+    return tmp_path
 
 
-def test_walkers_skip_an_unparsable_replicate_filename(
-    small_tree: tuple[Path, tuple[str, str]],
-) -> None:
-    """Both the loader and census skip a non-replicate filename.
+def test_walkers_skip_an_unparsable_replicate_filename(small_tree: Path) -> None:
+    """The loader skips a non-replicate filename and the census inherits its seed set.
 
     Parameters
     ----------
-    small_tree : tuple[Path, tuple[str, str]]
-        Tree root and cell with the unparsable filename.
+    small_tree : Path
+        Tree root.
     """
-    root, cell = small_tree
-    loaded = paired_analysis.load_marks(root)
-    assert sorted(loaded.correct[cell]) == list(range(SHALLOW_DEPTH))
+    loaded = paired_analysis.load_marks(small_tree)
+    assert sorted(loaded.correct[_BOGUS_CELL]) == list(range(SHALLOW_DEPTH))
 
     census = significance_report.compliance_census(loaded)
-    assert census[cell]["n"] == SHALLOW_DEPTH * N_HARMONICS
+    assert census[_BOGUS_CELL]["n"] == SHALLOW_DEPTH * N_HARMONICS
 
 
 def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> None:
@@ -253,16 +257,13 @@ def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> N
     tmp_path : Path
         Temporary results tree.
     """
-    source = (power_analysis.MODELS[0], power_analysis.INFOS[0])
     copies = {
-        (model, info): source
-        for model in power_analysis.MODELS
-        for info in power_analysis.INFOS
-        if (model, info) != source
+        (model, info): _BOGUS_CELL
+        for model in MODELS
+        for info in INFOS
+        if (model, info) != _BOGUS_CELL
     }
-    build_tree(
-        tmp_path, lambda _m, _i: (0.90, 0.0, "empty", range(SHALLOW_DEPTH)), copies
-    )
+    build_tree(tmp_path, lambda _m, _i: (0.90, 0.0, range(SHALLOW_DEPTH)), copies)
     assert (
         "Clustering / cross-stratum covariance: no measurable PRIMARY contrasts "
         "(every contrast has zero independence-assumed variance), so no design "
@@ -271,16 +272,15 @@ def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> N
 
 
 def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
-    small_tree: tuple[Path, tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+    small_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Contrasts and census share one loader pass.
 
     Parameters
     ----------
-    small_tree : tuple[Path, tuple[str, str]]
-        Tree root and cell with the unparsable filename.
+    small_tree : Path
+        Tree root.
     """
-    root, _cell = small_tree
     reads = []
     original = Marks.load.__func__
     monkeypatch.setattr(
@@ -288,28 +288,27 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
         "load",
         classmethod(lambda cls, path: reads.append(str(path)) or original(cls, path)),
     )
-    loaded = paired_analysis.load_marks(root)
+    loaded = paired_analysis.load_marks(small_tree)
     after_load = len(reads)
     census = significance_report.compliance_census(loaded)
 
     n_cells = len(loaded.correct)
-    assert n_cells == len(power_analysis.MODELS) * len(power_analysis.INFOS)
+    assert n_cells == len(MODELS) * len(INFOS)
     assert after_load == n_cells * SHALLOW_DEPTH, after_load
     assert len(reads) == after_load, reads[after_load:]
     assert len(census) == n_cells
 
 
 def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
-    small_tree: tuple[Path, tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+    small_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Focused contrasts reuse family p-values.
 
     Parameters
     ----------
-    small_tree : tuple[Path, tuple[str, str]]
-        Tree root and cell with the unparsable filename.
+    small_tree : Path
+        Tree root.
     """
-    root, _cell = small_tree
     calls = []
     real = paired_analysis.signflip_exact_p
     monkeypatch.setattr(
@@ -317,16 +316,27 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
         "signflip_exact_p",
         lambda diffs: calls.append(1) or real(diffs),
     )
-    run_captured(lambda: extens_vs_noise.main(root))
+    run_captured(lambda: extens_vs_noise.main(small_tree))
 
-    assert len(calls) == power_analysis.N_PRIMARY, len(calls)
+    assert len(calls) == N_PRIMARY, len(calls)
 
 
-def test_monte_carlo_output_lands_in_the_results_dir() -> None:
-    """Checkpoint JSON uses the general ignored results directory."""
-    expected = _power_common.results_dir("induction")
-    assert multiplicity_sim.OUT_PATH.parent == expected
-    assert multiplicity_sim.OUT_PATH.name.endswith(".json")
+def test_monte_carlo_output_lands_in_the_results_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """main()'s default checkpoint lands in the general ignored results directory."""
+    for i in range(1, 6):
+        monkeypatch.setattr(multiplicity_sim, f"part{i}", lambda *_a, **_k: {})
+    written: list[Path] = []
+    monkeypatch.setattr(
+        multiplicity_sim, "dump", lambda _out, path, _tag: written.append(path)
+    )
+    multiplicity_sim.main()
+
+    assert written and all(
+        p == _power_common.results_dir("induction") / multiplicity_sim.OUT_NAME
+        for p in written
+    )
 
 
 def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
@@ -347,7 +357,7 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
 
     target = tmp_path / multiplicity_sim.OUT_NAME
     assert target.exists()
-    assert target != multiplicity_sim.OUT_PATH
+    assert target != multiplicity_sim.RESULTS_DIR / multiplicity_sim.OUT_NAME
     assert json.loads(target.read_text())["part5"] == {"part": 5}
 
 
@@ -557,40 +567,25 @@ def test_equivalence_crossing_is_sustained_not_first_hit(
     )
 
 
-def test_recommended_replicates_carries_censored_contrasts() -> None:
+def test_render_recommended_replicates_carries_censored_contrasts() -> None:
     """A censored family has no whole-family R, and the render says so instead of dropping them."""
-    censored = power_analysis.recommended_replicates(
-        {
-            "r_star": 40,
-            "family_r": None,
-            "n_censored": 3,
-            "n_primary": power_analysis.N_PRIMARY,
-        }
+    results = [()] * N_PRIMARY
+    out = run_captured(
+        lambda: power_analysis.render_recommended_replicates(
+            {"results": results, "r_star": 40, "family_r": None, "n_censored": 3}
+        )
     )
-    assert censored["family_r"] is None
-    assert (
-        censored["n_powered"] == power_analysis.N_PRIMARY - 3
-        and censored["n_primary"] == power_analysis.N_PRIMARY
-    )
-    out = run_captured(lambda: power_analysis.render_recommended_replicates(censored))
     assert (
         "CENSORED" in out
-        and f"3 of {power_analysis.N_PRIMARY}" in out
-        and f"{power_analysis.N_PRIMARY - 3} of {power_analysis.N_PRIMARY}" in out
+        and f"3 of {N_PRIMARY}" in out
+        and f"{N_PRIMARY - 3} of {N_PRIMARY}" in out
     ), out
     assert "excluded" not in out.lower(), out
 
-    full = power_analysis.recommended_replicates(
-        {
-            "r_star": 40,
-            "family_r": 40,
-            "n_censored": 0,
-            "n_primary": power_analysis.N_PRIMARY,
-        }
-    )
-    assert full["family_r"] == 40
     assert "fully powered" in run_captured(
-        lambda: power_analysis.render_recommended_replicates(full)
+        lambda: power_analysis.render_recommended_replicates(
+            {"results": results, "r_star": 40, "family_r": 40, "n_censored": 0}
+        )
     )
 
 
@@ -628,7 +623,7 @@ def test_primary_contrasts_table_reports_the_family_size(
 
     monkeypatch.setattr(power_analysis, "_compute_sizing_results", fake_results)
     data = power_analysis.primary_contrasts_table({}, {})
-    assert data["n_primary"] == len(data["results"]) == power_analysis.N_PRIMARY
+    assert len(data["results"]) == N_PRIMARY
     assert data["n_censored"] == 1 and data["family_r"] is None
     assert data["r_star"] == 14
 
@@ -759,31 +754,33 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error() -> None:
 
 
 @pytest.mark.parametrize("seed", (2, 3))
-def test_part2_reports_every_icc_and_its_design_effect(seed: int) -> None:
+def test_part2_reports_every_icc_and_its_design_effect(
+    seed: int, tmp_path: Path
+) -> None:
     """Each ICC block labels its rows and reports the simulated design effect.
 
     Parameters
     ----------
     seed : int
         Generator seed for the reporting and design-effect checks.
+    tmp_path : Path
+        Empty results tree, so no synced study lane can enter the design effect.
     """
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         out = multiplicity_sim.part2(
-            np.random.default_rng(seed),
-            _power_common.results_dir("induction"),
-            n_sims=200,
-            search_sims=100,
+            np.random.default_rng(seed), tmp_path, n_sims=200, search_sims=100
         )
 
-    assert set(out["icc"]) == {"0.0", "0.2", "0.4"}
+    icc_keys = [str(icc) for icc in multiplicity_sim.ICC_GRID]
+    assert set(out["icc"]) == set(icc_keys)
     for icc_key, block in out["icc"].items():
         assert block["rows"] and "nulls" in block
         assert {row["icc"] for row in block["rows"]} == {float(icc_key)}
     printed = buf.getvalue()
-    for icc in ("0.0", "0.2", "0.4"):
+    for icc in icc_keys:
         assert f"icc={icc}" in printed, printed[:400]
-    deffs = [out["icc"][k]["design_effect_simulated"] for k in ("0.0", "0.2", "0.4")]
+    deffs = [out["icc"][k]["design_effect_simulated"] for k in icc_keys]
     assert all(isinstance(d, float) for d in deffs), deffs
     assert 0.8 < deffs[0] < 1.3, deffs
     assert deffs[0] < deffs[1] < deffs[2], deffs
@@ -791,7 +788,7 @@ def test_part2_reports_every_icc_and_its_design_effect(seed: int) -> None:
 
 @pytest.mark.parametrize("match_rung", (0, 1))
 def test_part2_searches_eq_r_from_the_first_matching_rung(
-    match_rung: int, monkeypatch: pytest.MonkeyPatch
+    match_rung: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Equivalent-R search records whether it moved beyond study depth.
 
@@ -799,6 +796,8 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
     ----------
     match_rung : int
         First matching equivalent-R grid index.
+    tmp_path : Path
+        Empty results tree; the design effect is stubbed anyway.
     """
 
     def fake_powers(
@@ -810,7 +809,7 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
         _rng: np.random.Generator,
         stats: bool = True,
         icc: float = 0.0,
-    ) -> tuple[float, float, float | None, float | None]:
+    ) -> tuple[float, float, Optional[float], Optional[float]]:
         """Control which search rung first matches paired power.
 
         Parameters
@@ -826,7 +825,7 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
 
         Returns
         -------
-        tuple[float, float, float | None, float | None]
+        tuple[float, float, Optional[float], Optional[float]]
             Unpaired power, paired power, and optional diagnostics.
         """
         if stats:
@@ -839,10 +838,7 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
     monkeypatch.setattr(multiplicity_sim, "study_design_effect", lambda *_a, **_k: None)
     with contextlib.redirect_stdout(io.StringIO()):
         out = multiplicity_sim.part2(
-            np.random.default_rng(2),
-            _power_common.results_dir("induction"),
-            n_sims=50,
-            search_sims=50,
+            np.random.default_rng(2), tmp_path, n_sims=50, search_sims=50
         )
 
     rows = out["icc"]["0.0"]["rows"]
@@ -866,7 +862,7 @@ def test_study_design_effect_ignores_checkpoint_without_replicates(
 
 def test_dropping_invalid_items_keeps_each_survivor_in_its_own_harmonic() -> None:
     """Alignment reports original harmonic positions, not retained-item offsets."""
-    n = paired_analysis.N_HARMONICS
+    n = N_HARMONICS
     seeds = (0, 1, 2)
     # Each seed loses a different harmonic, so retained offsets diverge from positions.
     invalid = {0: 0, 1: n // 2, 2: n - 1}

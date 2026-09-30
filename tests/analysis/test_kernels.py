@@ -3,7 +3,6 @@
 from itertools import product
 
 import numpy as np
-import pytest
 from scipy.stats import binomtest, chi2
 from statsmodels.stats.contingency_tables import StratifiedTable
 
@@ -30,7 +29,7 @@ def test_cmh_stat_matches_statsmodels() -> None:
         succ_b = rng.binomial(n, rng.uniform(0.2, 0.9), size=k)
         tables = np.array([[succ_a, n - succ_a], [succ_b, n - succ_b]])
         reference = StratifiedTable(tables).test_null_odds(correction=True).statistic
-        ours = paired_analysis.cmh_stat(succ_a, succ_b, n)
+        ours = power_analysis.cmh_stat(succ_a, succ_b, n)
         assert np.allclose(ours, reference, atol=1e-9), (ours, reference)
 
 
@@ -82,8 +81,16 @@ def test_gcmh_stat_is_calibrated_under_the_null() -> None:
     assert 0.03 <= rejected.mean() <= 0.07, rejected.mean()
 
 
-@pytest.mark.parametrize(("b", "c"), ((0, 0), (3, 3), (0, 5), (2, 9), (7, 1)))
-def test_mcnemar_exact_p_matches_binomtest(b: int, c: int) -> None:
-    """Exact McNemar equals the two-sided binomial test; no discordant pairs give 1.0."""
-    expected = 1.0 if b + c == 0 else binomtest(b, b + c, 0.5).pvalue
-    assert np.isclose(paired_analysis.mcnemar_exact_p(b, c), expected, atol=1e-12)
+def test_mcnemar_exact_p_matches_binomtest() -> None:
+    """Batched exact McNemar equals scipy's two-sided binomial test; no discordant pairs give 1.0."""
+    rng = np.random.default_rng(3)
+    b = np.append(rng.integers(0, 40, 300), [0, 4, 0])
+    c = np.append(rng.integers(0, 40, 300), [0, 4, 5])
+    expected = [
+        1.0 if n == 0 else binomtest(int(x), int(n), 0.5).pvalue
+        for x, n in zip(b, b + c)
+    ]
+    np.testing.assert_allclose(
+        power_analysis.mcnemar_exact_p(b, c), expected, atol=1e-12
+    )
+    assert power_analysis.mcnemar_exact_p(0, 0) == 1.0

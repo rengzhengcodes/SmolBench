@@ -1,10 +1,11 @@
 """Monte Carlo study of test and correction choices for the induction study.
 
-`study_design_effect` compares the observed design effect with simulated `icc` clustering;
-they differ because `icc` is latent share and `design_effect` an observed variance ratio.
+PART 2 prints the study's measured design effect (`study_design_effect`) beside each
+simulated `icc` block's; they differ in kind because `icc` is a latent share and
+`design_effect` an observed variance ratio.
 
 Rejection boundary: a p-value rejects when ``p <= alpha`` (the statsmodels convention
-`paired_analysis.holm` and `significance_report.hochberg` follow). Tests decided on a
+`paired_analysis.holm` and `paired_analysis.hochberg` follow). Tests decided on a
 chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
 """
 
@@ -18,6 +19,7 @@ import tempfile
 import time
 from itertools import combinations, product
 from pathlib import Path
+from typing import Optional
 
 # Anchor paths to this file so sibling imports do not depend on invocation.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -26,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import paired_analysis
 import power_analysis
-from _power_common import ALPHA, SEED, apply_corrections
+from _power_common import ALPHA, POWER_TARGETS, SEED, apply_corrections
 from power_analysis import (
     ALPHA_OMNIBUS,
     ALPHA_PRIMARY,
@@ -63,9 +65,10 @@ ICC_GRID = (0.0, 0.2, 0.4)
 
 #: Replace each ladder's pairwise contrasts with one trend test.
 N_REDUCED = N_LADDERS + N_PRIMARY - N_LADDER_CONTRASTS
-#: Anchor checkpoints to the study results tree.
+#: Checkpoint file name; main() places it under the study results tree.
 OUT_NAME = "multiplicity_sim_results.json"
-OUT_PATH = RESULTS_DIR / OUT_NAME
+#: PART 1 sizes the same gap at the corrected and the naive alpha.
+_MDD_ALPHAS = (("bonf", ALPHA_PRIMARY), ("naive", ALPHA))
 
 
 def dump(out: dict, path: Path, tag: str) -> None:
@@ -95,12 +98,10 @@ def dump(out: dict, path: Path, tag: str) -> None:
     print(f"[checkpoint written after {tag}]", flush=True)
 
 
-def trend_stat(
-    succ: np.ndarray,
-    n: int,
-    scores: tuple[float, ...] = tuple(float(i) for i in range(1, N_RUNGS + 1)),
-) -> np.ndarray:
+def trend_stat(succ: np.ndarray, n: int) -> np.ndarray:
     """Compute the 1-df CMH linear trend across the three rungs.
+
+    Rung scores are 1..N_RUNGS.
 
     Parameters
     ----------
@@ -108,17 +109,14 @@ def trend_stat(
         Success counts with trailing rung and harmonic axes.
     n : int
         Trials per cell.
-    scores : tuple[float, ...]
-        Ordered rung scores.
 
     Returns
     -------
     np.ndarray
         Statistic per simulation; zero where variance is zero.
     """
-    x = np.asarray(scores)
-    n_rungs = succ.shape[-2]
-    total_n = float(n_rungs * n)
+    x = np.arange(1.0, N_RUNGS + 1)  # equally spaced rung scores 1..N_RUNGS
+    total_n = float(N_RUNGS * n)
     m = succ.sum(axis=-2)  # (..., K) successes
     t = (succ * x[:, None]).sum(axis=(-2, -1))  # observed
     sum_nx = n * x.sum()
@@ -186,7 +184,7 @@ def paired_marks(
 
 
 def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -> dict:
-    """Find minimum detectable differences at each ceiling.
+    """Find minimum detectable differences at each ceiling at ``POWER_TARGETS[0]`` power.
 
     Parameters
     ----------
@@ -212,22 +210,17 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
             sa = rng.binomial(N_REPLICATES, p_a, (n_sims, N_HARMONICS))
             sb = rng.binomial(N_REPLICATES, p_b, (n_sims, N_HARMONICS))
             st = cmh_stat(sa, sb, N_REPLICATES)
-            for a_lab, a in (("bonf", ALPHA_PRIMARY), ("naive", ALPHA)):
+            for a_lab, a in _MDD_ALPHAS:
                 if a_lab not in found:
                     pw = (st > chi2.isf(a, df=1)).mean()
-                    if pw >= 0.80:
+                    if pw >= POWER_TARGETS[0]:
                         found[a_lab] = (round(d, 4), float(pw))
             d += step
-        mdd_bonf, pow_bonf = found.get("bonf", (None, None))
-        mdd_naive, pow_naive = found.get("naive", (None, None))
-        row = {
-            "p_a": p_a,
-            "mdd_bonf": mdd_bonf,
-            "pow_bonf": pow_bonf,
-            "mdd_naive": mdd_naive,
-            "pow_naive": pow_naive,
-            "ratio": mdd_bonf / mdd_naive if mdd_bonf and mdd_naive else None,
-        }
+        row = {"p_a": p_a}
+        for a_lab, _ in _MDD_ALPHAS:
+            row[f"mdd_{a_lab}"], row[f"pow_{a_lab}"] = found.get(a_lab, (None, None))
+        mdd_bonf, mdd_naive = row["mdd_bonf"], row["mdd_naive"]
+        row["ratio"] = mdd_bonf / mdd_naive if mdd_bonf and mdd_naive else None
         rows.append(row)
         print(
             f"  p_A={p_a:.2f}  MDD(alpha={ALPHA_PRIMARY:.2e})={row['mdd_bonf']}  "
@@ -283,7 +276,9 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
             w1, w2 = np.sqrt(icc), np.sqrt(1.0 - icc)
             ma = (w1 * u_a + w2 * ea) < thr
             mb = (w1 * u_b + w2 * eb) < thr
-            if len(phis) < 3:  # empirical binary within-replicate corr
+            # Three chunks suffice for the empirical binary within-replicate
+            # correlation; later chunks feed only the rejection counts.
+            if len(phis) < 3:
                 x = ma.astype(np.float64)
                 mu = x.mean()
                 cx = x - mu
@@ -416,7 +411,7 @@ def _paired_powers(
     rng: np.random.Generator,
     stats: bool = True,
     icc: float = 0.0,
-) -> tuple[float, float, float | None, float | None]:
+) -> tuple[float, float, Optional[float], Optional[float]]:
     """Compute unpaired and paired power on identical simulated marks.
 
     Item-level McNemar assumes independent marks, so it is anticonservative
@@ -451,14 +446,14 @@ def _paired_powers(
     powers = float(unp), float((pv <= ALPHA_PRIMARY).mean())
     if not stats:
         # ``None`` distinguishes unmeasured diagnostics from zero.
-        return powers[0], powers[1], None, None
+        return *powers, None, None
     xa, xb = ma.astype(np.float64), mb.astype(np.float64)
     va, vb = xa.mean() * (1 - xa.mean()), xb.mean() * (1 - xb.mean())
     phi = ((xa * xb).mean() - xa.mean() * xb.mean()) / np.sqrt(max(va * vb, 1e-12))
     return *powers, float(phi), float((ma == mb).mean())
 
 
-def study_design_effect(results_dir: Path) -> float | None:
+def study_design_effect(results_dir: Path) -> Optional[float]:
     """Read the study's measured design effect.
 
     Return ``None`` when no study replicate lane exists (a checkpoint JSON alone
@@ -471,7 +466,7 @@ def study_design_effect(results_dir: Path) -> float | None:
 
     Returns
     -------
-    float | None
+    Optional[float]
         Median measurable design effect, or no measurable contrast.
     """
     store = LocalResultsStore(results_dir)
@@ -495,14 +490,16 @@ def part2(
     results_dir: Path,
     n_sims: int = 20000,
     search_sims: int = 8000,
+    null_sims: int = 60000,
 ) -> dict:
     """Measure pairing gains over unpaired testing.
 
     McNemar is anticonservative at ``icc > 0``, biasing ``eq_R`` upward;
     compare each simulated design effect with the study estimate.
     Search only for power gaps above `EQ_R_TOL` (Monte-Carlo error).
-    Unpaired power within `EQ_R_TOL` counts as matching; smaller initial
-    gaps and first-rung matches are unsearched at `N_REPLICATES`.
+    Unpaired power within `EQ_R_TOL` counts as matching; an initial gap within
+    `EQ_R_TOL` is reported unsearched at `N_REPLICATES`, and ``eq_searched`` is
+    also False when the search matches at the first rung.
 
     Parameters
     ----------
@@ -510,8 +507,8 @@ def part2(
         Random-number generator for simulated marks.
     results_dir : Path
         Study replicate tree for the measured design effect.
-    n_sims, search_sims : int, optional
-        Main power and per-rung equivalent-R search simulation counts.
+    n_sims, search_sims, null_sims : int, optional
+        Main power, per-rung equivalent-R search, and null-calibration simulation counts.
 
     Returns
     -------
@@ -535,7 +532,6 @@ def part2(
         f"and reported unsearched at R={N_REPLICATES}",
         flush=True,
     )
-    grid_r = list(EQ_R_GRID)
     icc_blocks = {}
     for icc in ICC_GRID:
         print(f"\n--- PART 2 table, icc={icc} ---", flush=True)
@@ -549,20 +545,20 @@ def part2(
                 p_a, delta, rho, N_REPLICATES, n_sims, rng, icc=icc
             )
             # Smallest R where the unpaired test matches paired power at study depth.
-            searched = pair > unp + EQ_R_TOL
-            eq_r = None
+            within_tol = pair <= unp + EQ_R_TOL
+            eq_r = N_REPLICATES if within_tol else None
+            searched = not within_tol
             if searched:
-                for rr in grid_r:
+                for rr in EQ_R_GRID:
                     # stats=False: only unpaired power is read here.
                     u2 = _paired_powers(
                         p_a, delta, rho, rr, search_sims, rng, stats=False, icc=icc
                     )[0]
                     if u2 >= pair - EQ_R_TOL:
                         eq_r = rr
+                        # eq_searched records whether eq_R moved beyond study depth.
                         searched = rr != N_REPLICATES
                         break
-            else:
-                eq_r = N_REPLICATES
             rows.append(
                 {
                     "p_a": p_a,
@@ -579,7 +575,7 @@ def part2(
                     "icc": icc,
                 }
             )
-            suffix = "" if searched else f" (gap <= {EQ_R_TOL}, unsearched)"
+            suffix = f" (gap <= {EQ_R_TOL}, unsearched)" if within_tol else ""
             print(
                 f"  icc={icc} p_A={p_a} d={delta} rho={rho}: "
                 f"phi_bin={phi:.3f} agree={agree:.3f} "
@@ -589,8 +585,10 @@ def part2(
             )
         nulls = {}
         for rho in (0.0, 0.5, 0.9):
+            # 60000 draws give ~14 expected null rejections at ALPHA_PRIMARY,
+            # enough to resolve the McNemar inflation.
             u, p = _paired_powers(
-                0.90, 0.0, rho, N_REPLICATES, 60000, rng, stats=False, icc=icc
+                0.90, 0.0, rho, N_REPLICATES, null_sims, rng, stats=False, icc=icc
             )[:2]
             nulls[rho] = {"unpaired_t1": u, "mcnemar_t1": p}
             print(
@@ -636,7 +634,7 @@ def part2(
     return {
         "n_sims": n_sims,
         "alpha": ALPHA_PRIMARY,
-        "grid_r": grid_r,
+        "grid_r": list(EQ_R_GRID),
         "icc": icc_blocks,
     }
 
@@ -666,9 +664,9 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     print("\n=== PART 4: correction cost ===", flush=True)
     # Family 0 is a ceiling ladder at every info; ladders (1, info 1) and (2, info 1)
     # plant mid-range effects; every other contrast is null.
-    rates = np.zeros((N_FAMILIES, N_RUNGS, N_INFOS))
-    for f, rate in enumerate([0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62]):
-        rates[f] = rate
+    rates = np.empty((N_FAMILIES, N_RUNGS, N_INFOS))
+    # Broadcasting raises if the family count ever disagrees with these rates.
+    rates[:] = np.array([0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62])[:, None, None]
     rates[0] = np.array([0.99, 0.96, 0.925])[:, None]
     rates[1, :, 1] = [0.97, 0.91, 0.83]
     rates[2, :, 1] = [0.95, 0.86, 0.74]
@@ -784,7 +782,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     }
 
 
-def main(results_dir: Path = RESULTS_DIR, out_path: Path | None = None) -> None:
+def main(results_dir: Path = RESULTS_DIR, out_path: Optional[Path] = None) -> None:
     """Run and checkpoint all simulation parts.
 
     Part-number seeds keep reordering from changing draws.
@@ -793,7 +791,7 @@ def main(results_dir: Path = RESULTS_DIR, out_path: Path | None = None) -> None:
     ----------
     results_dir : Path
         Study replicate tree and default checkpoint directory.
-    out_path : Path | None
+    out_path : Optional[Path]
         Explicit checkpoint path, or the results-directory default.
     """
     out_path = results_dir / OUT_NAME if out_path is None else out_path

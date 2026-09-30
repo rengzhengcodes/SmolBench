@@ -1,14 +1,16 @@
 """Run the induction reports in one process, optionally ending with multiplicity_sim.
 
 One process so the scripts share one results directory. The costly, result-free
-simulation runs only behind ``--with-sim``. CHAIN order is fixed: each later script
-import-time-checks invariants against the earlier ones.
+simulation runs only behind ``--with-sim``. CHAIN order is the import order: each
+later script imports the earlier ones, and ``power_analysis`` checks the design
+invariants when it is imported.
 """
 
 import argparse
 import importlib
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,22 +39,17 @@ def _banner(name: str) -> None:
 
 
 def main(
-    argv: list[str] | None = None,
+    argv: Optional[list[str]] = None,
     results_dir: Path = power_analysis.RESULTS_DIR,
-) -> int:
+) -> None:
     """Run analysis scripts in dependency order.
 
     Parameters
     ----------
-    argv : list[str] | None, optional
+    argv : Optional[list[str]], optional
         Command-line arguments to parse.
     results_dir : Path
         Results tree handed to every script.
-
-    Returns
-    -------
-    int
-        Always 0 after all analysis scripts complete successfully.
     """
     parser = argparse.ArgumentParser(
         prog="run_all.py",
@@ -77,8 +74,7 @@ def main(
         multiplicity_sim = importlib.import_module("multiplicity_sim")
         _banner(multiplicity_sim.__name__)
         multiplicity_sim.main(results_dir=results_dir)
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
