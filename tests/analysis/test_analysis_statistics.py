@@ -148,13 +148,7 @@ def test_mcnemar_is_defined_once() -> None:
 
 
 def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A same-family checkpoint swap keeps every count but must still fail.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        Swaps one checkpoint in the roster tables.
-    """
+    """A same-family checkpoint swap keeps every count but must still fail."""
     power_analysis.check_design_invariants()
     old, new = power_analysis.MODELS[0], "qwen35_9b"
     monkeypatch.setattr(
@@ -178,13 +172,7 @@ def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) 
 def test_design_invariants_pin_roster_keys_not_only_tags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A checkpoint swap that keeps the old tag must still fail on the key.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        Swaps one roster key while keeping its tag.
-    """
+    """A checkpoint swap that keeps the old tag must still fail on the key."""
     keys = list(power_analysis.ROSTER_KEYS)
     keys[0] = "qwen3.5-9b"
     monkeypatch.setattr(power_analysis, "ROSTER_KEYS", tuple(keys))
@@ -291,8 +279,6 @@ def test_the_census_consumes_the_loader_rather_than_re_reading_the_tree(
     ----------
     small_tree : tuple[Path, tuple[str, str]]
         Tree root and cell with the unparsable filename.
-    monkeypatch : pytest.MonkeyPatch
-        Patches the loader with a read recorder.
     """
     root, _cell = small_tree
     reads = []
@@ -322,8 +308,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     ----------
     small_tree : tuple[Path, tuple[str, str]]
         Tree root and cell with the unparsable filename.
-    monkeypatch : pytest.MonkeyPatch
-        Patches the sign-flip kernel with a call counter.
     """
     root, _cell = small_tree
     calls = []
@@ -354,8 +338,6 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     ----------
     tmp_path : Path
         Temporary results directory.
-    monkeypatch : pytest.MonkeyPatch
-        Replaces every simulation part with a stub.
     """
     for i in range(1, 6):
         monkeypatch.setattr(
@@ -394,8 +376,6 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
     ----------
     tmp_path : Path
         Temporary checkpoint directory.
-    monkeypatch : pytest.MonkeyPatch
-        Makes ``json.dump`` fail before writing.
     """
     target = tmp_path / multiplicity_sim.OUT_NAME
     multiplicity_sim.dump({"first": 1}, target, "first")
@@ -525,13 +505,7 @@ def test_sizing_scan_uses_common_random_numbers() -> None:
 def test_sizing_crossing_is_sustained_not_first_hit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A noisy first crossing is rejected when later power dips below target.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        Replaces the CMH kernel with the noisy curve.
-    """
+    """A noisy first crossing is rejected when later power dips below target."""
 
     def fake_cmh_stat(_succ_a: np.ndarray, _succ_b: np.ndarray, n: int) -> np.ndarray:
         """Inject a known power dip so the sizing scan must reject it.
@@ -569,13 +543,7 @@ def test_sizing_crossing_is_sustained_not_first_hit(
 def test_equivalence_crossing_is_sustained_not_first_hit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Equivalence sizing rejects a noisy first crossing.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        Replaces the equivalence power curve with the noisy curve.
-    """
+    """Equivalence sizing rejects a noisy first crossing."""
     curve = {n: _noisy_curve(n) for n in range(1, power_analysis.MAX_REPLICATES + 1)}
     rates = np.full(N_HARMONICS, 0.5)
     monkeypatch.setattr(
@@ -629,13 +597,7 @@ def test_recommended_replicates_carries_censored_contrasts() -> None:
 def test_primary_contrasts_table_reports_the_family_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`r_star` covers powerable contrasts; censored ones prevent `family_r`.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        Replaces the sizing scan with censored rows.
-    """
+    """`r_star` covers powerable contrasts; censored ones prevent `family_r`."""
 
     def fake_results(
         contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]],
@@ -837,8 +799,6 @@ def test_part2_searches_eq_r_from_the_first_matching_rung(
     ----------
     match_rung : int
         First matching equivalent-R grid index.
-    monkeypatch : pytest.MonkeyPatch
-        Replaces the paired-power simulation and design-effect lookup.
     """
 
     def fake_powers(
