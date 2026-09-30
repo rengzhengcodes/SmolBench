@@ -52,16 +52,18 @@ _SKEW_SPLIT = 10
 
 
 def _skew_census(
-    per_seed: Mapping[tuple[str, str], dict[int, tuple[int, int]]],
+    per_seed: Mapping[tuple[str, str], Mapping[int, int]],
 ) -> Callable[[dict], dict]:
-    """Wrap the census so `per_seed` ``{cell: {seed: (non_compliant, total)}}`` overwrite it and the cell rate is recomputed."""
+    """Wrap the census so `per_seed` ``{cell: {seed: non_compliant}}`` (of `N_HARMONICS` marks) overwrite it and the cell rate is recomputed."""
     real = significance_report.compliance_census
 
     def skewed(marks: object) -> dict:
         census = real(marks)
         for key, replacements in per_seed.items():
             cell = census[key]
-            cell["per_seed"].update(replacements)
+            cell["per_seed"].update(
+                {seed: (nc, N_HARMONICS) for seed, nc in replacements.items()}
+            )
             nc = sum(n for n, _t in cell["per_seed"].values())
             cell["rate"] = nc / sum(t for _n, t in cell["per_seed"].values())
         return census
@@ -281,7 +283,9 @@ def test_no_data_gate_renders_ungated(no_data_gate_tree: Path) -> None:
 def test_permutation_p_is_deterministic_and_bounded() -> None:
     """Same tensor and seed give the same p; the plus-one keeps it in (0, 1]."""
     rng = np.random.default_rng(0)
-    tensor = (rng.random((8, 3, N_HARMONICS * len(INFOS))) < 0.9).astype(np.int64)
+    tensor = (
+        rng.random((8, power_analysis.N_RUNGS, N_HARMONICS * len(INFOS))) < 0.9
+    ).astype(np.int64)
     stat = float(power_analysis.gcmh_stat(tensor.sum(axis=0)[None], 8)[0])
     p1, p2 = (
         significance_report.permutation_omnibus_p(
@@ -301,9 +305,13 @@ def test_gate_requires_both_p_values(tmp_path: Path) -> None:
     assert gate["n_seeds"] == 2
     # The asymptotic p alone would gate; only the within-seed permutation blocks it.
     assert gate["p"] <= power_analysis.ALPHA_OMNIBUS
-    # N_RUNGS! rung labellings per seed: the exact permutation floor, not the +1 floor.
-    assert (
-        gate["p_perm"] >= 1 / math.factorial(power_analysis.N_RUNGS) ** gate["n_seeds"]
+    # (N_RUNGS!)**n_seeds per-seed labellings, but gcmh_stat is invariant under a joint
+    # relabelling, so N_RUNGS! of them tie the observed statistic: the exact p-value is
+    # at least 1 / N_RUNGS!**(n_seeds - 1) (exactly that on this tree), far above the
+    # +1 floor; the slack is three Monte-Carlo standard errors over N_GATE_PERMS draws.
+    floor = 1 / math.factorial(power_analysis.N_RUNGS) ** (gate["n_seeds"] - 1)
+    assert gate["p_perm"] >= floor - 3 * math.sqrt(
+        floor * (1 - floor) / significance_report.N_GATE_PERMS
     )
     assert gate["p_perm"] > power_analysis.ALPHA_OMNIBUS
     assert gate["p_gate"] == max(gate["p"], gate["p_perm"])
@@ -456,17 +464,15 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
 @pytest.fixture
 def padding_control_report(
     padding_control_tree: Path, monkeypatch: pytest.MonkeyPatch
-) -> Callable[[tuple[int, int]], Rendered]:
-    """Render `padding_control_tree` with the noise arm's per-seed census set to ``(non_compliant, total)`` and the intens arm compliant."""
+) -> Callable[[int], Rendered]:
+    """Render `padding_control_tree` with `noise_nc` of every noise-arm seed's marks non-compliant and the intens arm compliant."""
 
-    def render(noise_counts: tuple[int, int]) -> Rendered:
+    def render(noise_nc: int) -> Rendered:
         skewed = _skew_census(
             {
-                (LANE_MODEL, "intens"): dict.fromkeys(
-                    range(DEEP_DEPTH), (0, N_HARMONICS)
-                ),
+                (LANE_MODEL, "intens"): dict.fromkeys(range(DEEP_DEPTH), 0),
                 (LANE_MODEL, "noise_intens"): dict.fromkeys(
-                    range(DEEP_DEPTH), noise_counts
+                    range(DEEP_DEPTH), noise_nc
                 ),
             },
         )
@@ -478,10 +484,10 @@ def padding_control_report(
 
 
 def test_partial_pad_crossing_is_not_called_near_total(
-    padding_control_report: Callable[[tuple[int, int]], Rendered],
+    padding_control_report: Callable[[int], Rendered],
 ) -> None:
     """A partial compliance collapse is reported as a caveat, not control causation."""
-    out, computed = padding_control_report((4, N_HARMONICS))
+    out, computed = padding_control_report(4)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     assert computed.fails_partial
     assert not computed.fails_total
@@ -492,10 +498,10 @@ def test_partial_pad_crossing_is_not_called_near_total(
 
 
 def test_total_pad_crossing_keeps_near_total_exoneration(
-    padding_control_report: Callable[[tuple[int, int]], Rendered],
+    padding_control_report: Callable[[int], Rendered],
 ) -> None:
     """A total compliance collapse retains the padding exoneration."""
-    out, computed = padding_control_report((N_HARMONICS, N_HARMONICS))
+    out, computed = padding_control_report(N_HARMONICS)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     assert computed.fails_total
     assert "near-total non-compliance" in controls
@@ -515,7 +521,7 @@ def test_reversed_controls_are_not_counted_as_passing(reversed_tree: Path) -> No
         f"{len(computed.passing)} significant with the informative arm AHEAD"
         in controls
     )
-    assert f"{len(computed.reversed_)} significant" in controls
+    assert f"{len(computed.reversed_)} significant\nbut REVERSED" in controls
     assert f"{len(computed.fails)} not rejected" in controls
     n_controls = len(computed.passing) + len(computed.reversed_) + len(computed.fails)
     assert f"{n_controls} arm-vs-floor positive controls" in controls
@@ -573,22 +579,17 @@ def test_partial_replicate_is_rejected(shallow_tree: Path, tmp_path: Path) -> No
 # The PADDING EFFECT table subtracts both arms' rates over their common seeds only.
 
 
-def _padding_table(out: str) -> dict[str, str]:
-    """Parse the rendered report's PADDING EFFECT table into ``{lane: row text}``."""
-    block = out.split("PADDING EFFECT", 1)[1].split("=> The pad", 1)[0]
-    return {
-        parts[0]: line
-        for line in block.splitlines()
-        if len(parts := line.split()) >= 4 and parts[1].endswith("%")
-    }
-
-
 def test_padding_table_subtracts_over_the_common_seeds_only(
     collapse_tree: Path,
 ) -> None:
     """The delta is a within-lane difference, so both rates must be computed over the same seeds."""
     out, computed = rendered(collapse_tree)
-    rows = _padding_table(out)
+    table = out.split("PADDING EFFECT", 1)[1].split("=> The pad", 1)[0]
+    rows = {
+        parts[0]: line
+        for line in table.splitlines()
+        if len(parts := line.split()) >= 4 and parts[1].endswith("%")
+    }
     assert SKEW_MODEL in rows, rows
     row = rows[SKEW_MODEL]
     assert "COLLAPSE" in row and "not padding-specific" not in row, row
@@ -630,20 +631,6 @@ def test_padding_table_counts_come_from_the_rows_it_actually_built(
     )
 
 
-def test_padding_intro_numerator_comes_from_the_common_seed_table(
-    collapse_tree: Path,
-) -> None:
-    """`In X of Y lanes` counts table rows whose common-seed noise rate crosses the criterion."""
-    out, computed = rendered(collapse_tree)
-    n_over = sum(
-        row["rate_n"] >= significance_report.COLLAPSE_THRESHOLD
-        for row in computed.pad_rows
-    )
-    assert (
-        f"In {n_over} of {len(computed.pad_rows)} lanes with both arms measured" in out
-    )
-
-
 def test_all_cells_noise_count_uses_whole_cell_rates(
     shared_seed_noise_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -653,12 +640,8 @@ def test_all_cells_noise_count_uses_whole_cell_rates(
         "compliance_census",
         _skew_census(
             {
-                (SKEW_MODEL, "intens"): dict.fromkeys(
-                    range(_SKEW_SPLIT), (0, N_HARMONICS)
-                ),
-                (SKEW_MODEL, "noise_intens"): dict.fromkeys(
-                    range(3), (N_HARMONICS, N_HARMONICS)
-                ),
+                (SKEW_MODEL, "intens"): dict.fromkeys(range(_SKEW_SPLIT), 0),
+                (SKEW_MODEL, "noise_intens"): dict.fromkeys(range(3), N_HARMONICS),
             },
         ),
     )
@@ -680,14 +663,6 @@ def test_all_cells_noise_count_uses_whole_cell_rates(
     assert f"In 1 of {len(computed.pad_rows)} lanes with both arms measured" in out
 
 
-def test_non_noise_arms_line_is_conditional_on_a_non_noise_cell_over_the_criterion(
-    clean_tree: Path, collapse_tree: Path
-) -> None:
-    """`non-noise arms appear here` prints only when a non-noise cell is at or over the criterion."""
-    assert "non-noise arms appear here" not in rendered(clean_tree)[0]
-    assert "non-noise arms appear here" in rendered(collapse_tree)[0]
-
-
 def test_zero_vs_zero_controls_report_the_measured_count_only(
     collapse_tree: Path, shallow_tree: Path
 ) -> None:
@@ -697,7 +672,7 @@ def test_zero_vs_zero_controls_report_the_measured_count_only(
         assert computed.zero_vs_zero
         n_sig = sum(computed.hp[i] for i in computed.zero_vs_zero)
         assert f"{len(computed.zero_vs_zero)} zero-vs-zero ladder contrasts" in out
-        assert f"{n_sig} significant" in out
+        assert f"another's): {n_sig} significant." in out
 
 
 # Each narrative conclusion is gated by its own computed count.
@@ -707,13 +682,10 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     shallow_tree: Path, collapse_tree: Path
 ) -> None:
     """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
-    # With no ladder loss the family-scaling sentence must not print (it is the n_lad > 0 line).
     one_sided = "bites the family-scaling story, not the info-arm story"
 
     # Floor-bound: Holm rejects nothing, so no story claim is earned.
-    shallow = rendered(shallow_tree)[0]
-    assert one_sided not in shallow
-    assert "bites the family-scaling story" not in shallow
+    assert "bites the family-scaling story" not in rendered(shallow_tree)[0]
 
     # Not floor-bound: the claim must track the count printed beside it.
     collapse, computed = rendered(collapse_tree)
@@ -737,21 +709,24 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     )
 
 
-def test_the_two_mechanism_claim_is_conditional_on_a_flagged_finding(
-    shallow_tree: Path, clean_tree: Path, collapse_tree: Path
+@pytest.mark.parametrize(
+    "claim",
+    (
+        # A non-noise cell at or over the criterion.
+        "non-noise arms appear here",
+        # A significant finding that touches a collapse: neither count may be zero.
+        "TWO-MECHANISM",
+        # At least one lane crossed the criterion because of the pad.
+        "is not inert",
+    ),
+)
+def test_collapse_claims_print_only_on_the_tree_that_earns_them(
+    claim: str, shallow_tree: Path, clean_tree: Path, collapse_tree: Path
 ) -> None:
-    """`TWO-MECHANISM` needs a significant finding that actually touches a collapse; zero findings or zero collapses must not earn it."""
-    assert "TWO-MECHANISM" not in rendered(shallow_tree)[0]
-    assert "TWO-MECHANISM" not in rendered(clean_tree)[0]
-    assert "TWO-MECHANISM" in rendered(collapse_tree)[0]
-
-
-def test_the_not_inert_result_needs_a_pad_crossing_lane(
-    clean_tree: Path, collapse_tree: Path
-) -> None:
-    """`is not inert` is a result only when at least one lane crossed the criterion because of the pad."""
-    assert "is not inert" not in rendered(clean_tree)[0]
-    assert "is not inert" in rendered(collapse_tree)[0]
+    """Each collapse claim prints on the collapse tree and on neither the floor-bound nor the all-tied tree."""
+    assert claim not in rendered(shallow_tree)[0]
+    assert claim not in rendered(clean_tree)[0]
+    assert claim in rendered(collapse_tree)[0]
 
 
 def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
@@ -763,7 +738,7 @@ def test_two_mechanism_needs_a_pad_crossing_extens_vs_noise_finding(
     assert n_flag > 0
     assert f"[COLLAPSE] {n_flag} of {len(computed.findings)} findings touch" in out
     assert "TWO-MECHANISM" not in out
-    assert "no evidence for a second" in out
+    assert "None is an extens-vs-noise finding" in out
 
 
 def test_the_ceiling_claim_is_conditional_and_counts_its_discordances(
@@ -859,9 +834,7 @@ def test_exact_ties_are_labelled_tied_not_extens_higher(collapse_tree: Path) -> 
     out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     tied_rows = [ln for ln in out.splitlines() if TIED_MODEL in ln]
     assert tied_rows, out[:2000]
-    for line in tied_rows:
-        assert "extens HIGHER" not in line, line
-        assert "noise HIGHER" not in line, line
+    assert not any("HIGHER" in ln for ln in tied_rows), tied_rows
     assert any("tied" in ln.lower() for ln in tied_rows), tied_rows
     # The bucket counter must agree with the RAW DIRECTION block's tally.
     raw = out.split("RAW DIRECTION", 1)[1]
@@ -908,7 +881,7 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
     skewed = _skew_census(
         {
             (SKEW_MODEL, "extens"): dict.fromkeys(
-                range(_SKEW_SPLIT, DEEP_DEPTH), (N_HARMONICS, N_HARMONICS)
+                range(_SKEW_SPLIT, DEEP_DEPTH), N_HARMONICS
             )
         },
     )
@@ -930,33 +903,20 @@ def test_collapse_tags_use_the_compared_seeds(
     collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Collapse tags use only seeds shared by the compared contrast arms."""
-    skewed = _skew_census(
-        {
-            (SKEW_MODEL, "noise_intens"): {
-                **dict.fromkeys(range(_SKEW_SPLIT), (0, N_HARMONICS)),
-                **dict.fromkeys(
-                    range(_SKEW_SPLIT, DEEP_DEPTH),
-                    (N_HARMONICS, N_HARMONICS),
-                ),
-            }
-        },
-    )
-    monkeypatch.setattr(significance_report, "compliance_census", skewed)
-    out = run_captured(lambda: significance_report.main(collapse_tree))
     label = f"[{SKEW_MODEL}] noise_intens vs zero"
-    lines = [line for line in out.splitlines() if label in line]
-    assert lines, out[:3000]
-    assert all("[COLLAPSE:" not in line for line in lines), lines
-
-    crossing = _skew_census(
-        {
-            (SKEW_MODEL, "noise_intens"): dict.fromkeys(
-                range(_SKEW_SPLIT), (N_HARMONICS, N_HARMONICS)
-            )
-        },
-    )
-    monkeypatch.setattr(significance_report, "compliance_census", crossing)
-    out = run_captured(lambda: significance_report.main(collapse_tree))
-    lines = [line for line in out.splitlines() if label in line]
-    assert lines, out[:3000]
-    assert any("[COLLAPSE:" in line for line in lines), lines
+    compared, uncompared = range(_SKEW_SPLIT), range(_SKEW_SPLIT, DEEP_DEPTH)
+    for noise_census, tagged in (
+        # Fully non-compliant only outside the compared seeds: no tag.
+        (
+            {**dict.fromkeys(compared, 0), **dict.fromkeys(uncompared, N_HARMONICS)},
+            False,
+        ),
+        # Fully non-compliant on the compared seeds: tagged.
+        (dict.fromkeys(compared, N_HARMONICS), True),
+    ):
+        skewed = _skew_census({(SKEW_MODEL, "noise_intens"): noise_census})
+        monkeypatch.setattr(significance_report, "compliance_census", skewed)
+        out = run_captured(lambda: significance_report.main(collapse_tree))
+        lines = [line for line in out.splitlines() if label in line]
+        assert lines, out[:3000]
+        assert any("[COLLAPSE:" in line for line in lines) is tagged, lines

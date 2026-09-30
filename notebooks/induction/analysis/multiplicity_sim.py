@@ -5,17 +5,18 @@ simulated `icc` block's; they differ in kind because `icc` is a latent share and
 `design_effect` an observed variance ratio.
 
 Rejection boundary: a p-value rejects when ``p <= alpha``
-(`_power_common.apply_corrections`, which the `paired_analysis` wrappers call and
-which ``test_apply_corrections_matches_statsmodels`` pins to statsmodels' inclusive
-boundary). Tests decided on a chi-square statistic use ``stat > crit``, equivalent
-for a continuous statistic.
+(`_power_common.apply_corrections`, which `paired_analysis.rejections` calls;
+``test_apply_corrections_share_one_inclusive_boundary`` pins the boundary and
+``test_apply_corrections_matches_statsmodels`` the row-wise agreement). Tests
+decided on a chi-square statistic use ``stat > crit``, equivalent for a
+continuous statistic.
 """
-
-from __future__ import annotations
 
 import functools
 import json
+import os
 import sys
+import tempfile
 import time
 from itertools import combinations, product
 from pathlib import Path
@@ -87,13 +88,17 @@ def dump(out: dict, path: Path, tag: str) -> None:
         Checkpoint label written to the log.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    # A per-call temp name: two runs sharing a results directory must not
+    # write through, replace or unlink each other's pending checkpoint.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=path.parent
+    )
     try:
-        with tmp.open("w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(out, fh, indent=2, default=float)
-        tmp.replace(path)
+        os.replace(tmp_name, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        Path(tmp_name).unlink(missing_ok=True)
     print(f"[checkpoint written after {tag}]", flush=True)
 
 
@@ -221,7 +226,7 @@ def part1(rng: np.random.Generator, n_sims: int = 20000, step: float = 0.0025) -
     for p_a in (0.99, 0.97, 0.95, 0.90, 0.70, 0.50):
         found = {}
         d = step
-        while d <= min(p_a, 0.60) + 1e-9 and len(found) < 2:
+        while d <= min(p_a, 0.60) + 1e-9 and len(found) < len(_MDD_ALPHAS):
             p_b = max(0.0, p_a - d)
             sa = rng.binomial(N_REPLICATES, p_a, (n_sims, N_HARMONICS))
             sb = rng.binomial(N_REPLICATES, p_b, (n_sims, N_HARMONICS))
@@ -270,6 +275,9 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     crit05 = chi2.isf(ALPHA, df=1)
     critb = chi2.isf(ALPHA_PRIMARY, df=1)
     rows = []
+    # ICC_GRID plus 0.1: the CMH Type-I inflation is already ~1.3x at icc=0.1
+    # (measured), so PART 3 resolves its onset; PART 2 keeps the coarser grid
+    # because each of its icc blocks runs the eq_R search.
     for p, icc, variant in product(
         (0.90, 0.70), (0.0, 0.1, 0.2, 0.4), ("independent", "shared")
     ):
@@ -501,8 +509,9 @@ def part2(
     Search only for power gaps above `EQ_R_TOL` (Monte-Carlo error).
     Unpaired power within `EQ_R_TOL` counts as matching; an initial gap within
     `EQ_R_TOL` is reported unsearched at `N_REPLICATES`. ``eq_r_advanced`` says
-    whether ``eq_R`` moved beyond study depth, so it is also False when the
-    search matches at its first rung.
+    whether a matching depth beyond study depth was found, so it is False when
+    the gap is within tolerance, when the first rung matches, and when no grid
+    depth matches (``eq_R`` is then ``None``).
 
     Parameters
     ----------
@@ -550,8 +559,7 @@ def part2(
             # Smallest R where the unpaired test matches paired power at study depth.
             within_tol = pair <= unp + EQ_R_TOL
             eq_r = N_REPLICATES if within_tol else None
-            advanced = not within_tol
-            if advanced:
+            if not within_tol:
                 for rr in EQ_R_GRID:
                     # stats=False: only unpaired power is read here.
                     u2 = _paired_powers(
@@ -559,9 +567,6 @@ def part2(
                     )[0]
                     if u2 >= pair - EQ_R_TOL:
                         eq_r = rr
-                        # The flag records whether eq_R moved beyond study depth,
-                        # not whether the search ran.
-                        advanced = rr != N_REPLICATES
                         break
             rows.append(
                 {
@@ -571,7 +576,9 @@ def part2(
                     "power_unpaired": unp,
                     "power_paired": pair,
                     "eq_R": eq_r,
-                    "eq_r_advanced": advanced,
+                    # Whether a matching depth beyond study depth was found, not
+                    # whether the search ran.
+                    "eq_r_advanced": eq_r is not None and eq_r != N_REPLICATES,
                     "cap": EQ_R_GRID[-1],
                     "phi_binary": phi,
                     "agreement": agree,
@@ -780,7 +787,7 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     }
 
 
-def main(results_dir: Path = RESULTS_DIR, out_path: Optional[Path] = None) -> None:
+def main(results_dir: Path = RESULTS_DIR) -> None:
     """Run and checkpoint all simulation parts.
 
     Part-number seeds keep reordering from changing draws.
@@ -788,11 +795,8 @@ def main(results_dir: Path = RESULTS_DIR, out_path: Optional[Path] = None) -> No
     Parameters
     ----------
     results_dir : Path
-        Study replicate tree and default checkpoint directory.
-    out_path : Optional[Path]
-        Explicit checkpoint path, or the results-directory default.
+        Study replicate tree; the checkpoint lands beside it as OUT_NAME.
     """
-    out_path = results_dir / OUT_NAME if out_path is None else out_path
     t0 = time.time()
     out: dict[str, dict] = {}
     parts = (
@@ -804,7 +808,7 @@ def main(results_dir: Path = RESULTS_DIR, out_path: Optional[Path] = None) -> No
     )
     for i, part in enumerate(parts, 1):
         out[f"part{i}"] = part(np.random.default_rng(SEED + i))
-        dump(out, out_path, f"part{i}")
+        dump(out, results_dir / OUT_NAME, f"part{i}")
     print(f"\nTOTAL {time.time() - t0:.1f}s", flush=True)
 
 

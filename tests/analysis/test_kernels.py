@@ -38,19 +38,8 @@ def test_cmh_stat_matches_statsmodels() -> None:
         assert np.allclose(ours, reference, atol=1e-9), (ours, reference)
 
 
-def landis_gcmh(counts: np.ndarray) -> float:
-    """Landis general-association GCMH for one ``(I, J, K)`` table.
-
-    Parameters
-    ----------
-    counts : np.ndarray
-        Counts indexed ``(row, column, stratum)``.
-
-    Returns
-    -------
-    float
-        Generalized CMH statistic with ``(I - 1)(J - 1)`` degrees of freedom.
-    """
+def _landis_gcmh(counts: np.ndarray) -> float:
+    """Landis general-association GCMH, ``(I - 1)(J - 1)`` df, for one table of counts indexed ``(row, column, stratum)``."""
     n_i, n_j, _ = counts.shape
     t_vec = np.zeros((n_i - 1) * (n_j - 1))
     cov = np.zeros((t_vec.size, t_vec.size))
@@ -70,10 +59,11 @@ def test_gcmh_stat_matches_landis_form() -> None:
     rng = np.random.default_rng(303)
     for _ in range(10):
         n, k = int(rng.integers(5, 40)), int(rng.integers(2, 20))
-        succ = rng.binomial(n, rng.uniform(0.2, 0.9, size=(1, 3, 1)), size=(1, 3, k))
+        shape = (1, power_analysis.N_RUNGS, 1)
+        succ = rng.binomial(n, rng.uniform(0.2, 0.9, size=shape), size=shape[:2] + (k,))
         counts = np.stack([succ[0], n - succ[0]], axis=1)
         ours = power_analysis.gcmh_stat(succ, n)[0]
-        assert np.isclose(ours, landis_gcmh(counts), atol=1e-8), (ours, counts)
+        assert np.isclose(ours, _landis_gcmh(counts), atol=1e-8), (ours, counts)
 
 
 def test_gcmh_stat_is_calibrated_under_the_null() -> None:
@@ -81,7 +71,7 @@ def test_gcmh_stat_is_calibrated_under_the_null() -> None:
     rng = np.random.default_rng(404)
     n_seeds, k, n_sims = 30, 18, 2000
     rates = rng.uniform(0.3, 0.9, size=(1, 1, k))
-    succ = rng.binomial(n_seeds, rates, size=(n_sims, 3, k))
+    succ = rng.binomial(n_seeds, rates, size=(n_sims, power_analysis.N_RUNGS, k))
     rejected = power_analysis.gcmh_stat(succ, n_seeds) > chi2.isf(
         power_analysis.ALPHA, df=power_analysis.N_RUNGS - 1
     )

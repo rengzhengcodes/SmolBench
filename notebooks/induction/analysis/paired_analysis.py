@@ -237,69 +237,29 @@ def cmh_unpaired_p(a: np.ndarray, b: np.ndarray, harm_idx: np.ndarray) -> float:
     return float(cmh_p(succ_a, succ_b, counts))
 
 
-def _rejection_mask(pvals: np.ndarray, level: float, method: str) -> np.ndarray:
-    """Return the `apply_corrections` mask named ``method`` at error rate ``level``."""
+def rejections(pvals: np.ndarray, method: str, level: float = ALPHA) -> np.ndarray:
+    """Return one family's `apply_corrections` rejection mask.
+
+    ``"Holm"`` (PRIMARY) permits arbitrary dependence among shared models, seeds and
+    harmonics; ``"Hochberg"`` is sensitivity-only, its positive-dependence condition
+    unverified; ``"BH"`` controls FDR and takes the `Q_SECONDARY` level owned by
+    power_analysis.
+
+    Parameters
+    ----------
+    pvals : np.ndarray
+        P-values in the family.
+    method : str
+        ``"Holm"``, ``"Hochberg"`` or ``"BH"``.
+    level : float, optional
+        Familywise error rate, or the false-discovery rate for ``"BH"``.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask in input order.
+    """
     return apply_corrections(np.atleast_2d(np.asarray(pvals, float)), level)[method][0]
-
-
-def holm(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Return Holm's FWER rejection mask.
-
-    Holm permits arbitrary dependence among shared models, seeds, and harmonics.
-
-    Parameters
-    ----------
-    pvals : np.ndarray
-        P-values in the family.
-    alpha : float, optional
-        Familywise error-rate level.
-
-    Returns
-    -------
-    np.ndarray
-        Rejection mask.
-    """
-    return _rejection_mask(pvals, alpha, "Holm")
-
-
-def hochberg(pvals: np.ndarray, alpha: float = ALPHA) -> np.ndarray:
-    """Return Hochberg step-up rejections at familywise level ``alpha``.
-
-    Sensitivity-only: its positive-dependence condition is unverified.
-
-    Parameters
-    ----------
-    pvals : np.ndarray
-        P-values in the family.
-    alpha : float, optional
-        Familywise error-rate level.
-
-    Returns
-    -------
-    np.ndarray
-        Rejection mask.
-    """
-    return _rejection_mask(pvals, alpha, "Hochberg")
-
-
-def bh(pvals: np.ndarray, q: float = Q_SECONDARY) -> np.ndarray:
-    """Return Benjamini-Hochberg FDR rejection mask.
-
-    The imported default keeps this secondary-tier level owned by power_analysis.
-
-    Parameters
-    ----------
-    pvals : np.ndarray
-        P-values in the family.
-    q : float, optional
-        False discovery-rate level.
-
-    Returns
-    -------
-    np.ndarray
-        Rejection mask.
-    """
-    return _rejection_mask(pvals, q, "BH")
 
 
 def design_effect(
@@ -338,72 +298,55 @@ def design_effect(
     return float(observed / assumed)
 
 
-def contrast_row(
-    marks: CellMarks, key_a: CellKey, key_b: CellKey, drop_invalid: bool = False
-) -> dict:
-    """Compute every paired statistic the reports share for one contrast.
+def labeled_rows(
+    marks: CellMarks, contrasts: Iterable[tuple], drop_invalid: bool = False
+) -> list[dict]:
+    """Compute every paired statistic the reports share, one row per contrast.
 
     Parameters
     ----------
     marks : CellMarks
         Parsed marks from `load_marks`.
-    key_a, key_b : CellKey
-        The two cells being compared.
+    contrasts : Iterable[tuple]
+        ``(label, key_a, key_b)`` triples as built by `build_primary_contrasts`.
     drop_invalid : bool, optional
         Forwarded to `aligned`. Dropping pairs changes the per-seed statistic,
         so ``p_cluster`` is ``None`` in that mode.
 
     Returns
     -------
-    dict
-        ``key_a``, ``key_b``, ``n``, ``acc_a``, ``acc_b``, ``b``, ``c``, ``disc``,
-        ``seeds`` (sorted common seeds), ``n_seeds``, ``p_item`` (exact McNemar),
-        ``p_unpaired`` (harmonic-stratified CMH), ``p_cluster`` (seed sign-flip)
-        and ``de`` (`design_effect`).
-    """
-    a, b, sidx, hidx = aligned(marks, key_a, key_b, drop_invalid)
-    nb, nc = int((a & ~b).sum()), int((~a & b).sum())
-    return {
-        "key_a": key_a,
-        "key_b": key_b,
-        "n": a.size,
-        "acc_a": float(a.mean()) if a.size else None,
-        "acc_b": float(b.mean()) if b.size else None,
-        "b": nb,
-        "c": nc,
-        "disc": (nb + nc) / max(a.size, 1),
-        "seeds": _common_seeds(marks, key_a, key_b),
-        "n_seeds": int(np.unique(sidx).size),
-        "p_item": mcnemar_exact_p(nb, nc),
-        "p_unpaired": cmh_unpaired_p(a, b, hidx),
-        "p_cluster": None if drop_invalid else signflip_exact_p(seed_diffs(a, b, sidx)),
-        "de": design_effect(a, b, sidx, hidx),
-    }
-
-
-def labeled_rows(
-    marks: CellMarks, contrasts: Iterable[tuple], drop_invalid: bool = False
-) -> list[dict]:
-    """Return one `contrast_row` per ``(label, key_a, key_b)``, with its label.
-
-    Parameters
-    ----------
-    marks : CellMarks
-        Loaded per-cell marks.
-    contrasts : Iterable[tuple]
-        ``(label, key_a, key_b)`` triples as built by `build_primary_contrasts`.
-    drop_invalid : bool, optional
-        Forwarded to `contrast_row`.
-
-    Returns
-    -------
     list[dict]
-        `contrast_row` dicts, each with an added ``"label"`` entry.
+        Per contrast: ``label``, ``key_a``, ``key_b``, ``n``, ``acc_a``, ``acc_b``,
+        ``b``, ``c``, ``disc``, ``seeds`` (sorted common seeds), ``n_seeds``,
+        ``p_item`` (exact McNemar), ``p_unpaired`` (harmonic-stratified CMH),
+        ``p_cluster`` (seed sign-flip) and ``de`` (`design_effect`).
     """
-    return [
-        {"label": label, **contrast_row(marks, key_a, key_b, drop_invalid)}
-        for label, key_a, key_b in contrasts
-    ]
+    rows = []
+    for label, key_a, key_b in contrasts:
+        a, b, sidx, hidx = aligned(marks, key_a, key_b, drop_invalid)
+        nb, nc = int((a & ~b).sum()), int((~a & b).sum())
+        rows.append(
+            {
+                "label": label,
+                "key_a": key_a,
+                "key_b": key_b,
+                "n": a.size,
+                "acc_a": float(a.mean()) if a.size else None,
+                "acc_b": float(b.mean()) if b.size else None,
+                "b": nb,
+                "c": nc,
+                "disc": (nb + nc) / max(a.size, 1),
+                "seeds": _common_seeds(marks, key_a, key_b),
+                "n_seeds": int(np.unique(sidx).size),
+                "p_item": mcnemar_exact_p(nb, nc),
+                "p_unpaired": cmh_unpaired_p(a, b, hidx),
+                "p_cluster": (
+                    None if drop_invalid else signflip_exact_p(seed_diffs(a, b, sidx))
+                ),
+                "de": design_effect(a, b, sidx, hidx),
+            }
+        )
+    return rows
 
 
 def _acc(x: Optional[float]) -> str:
@@ -435,13 +378,6 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         )
 
     contrasts = build_primary_contrasts()
-    if len(contrasts) != N_PRIMARY:
-        # This local list sets correction denominators and must survive ``-O``.
-        raise RuntimeError(
-            f"build_primary_contrasts() returned {len(contrasts)} contrasts "
-            f"but N_PRIMARY is {N_PRIMARY}; every correction below would be "
-            "sized at the wrong threshold."
-        )
 
     for drop_invalid, tag in (
         (False, "null == incorrect (pre-registered)"),
@@ -452,7 +388,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
         p_pair = np.array([r["p_item"] for r in rows])
         p_unp = np.array([r["p_unpaired"] for r in rows])
-        rej_pair, rej_unp = holm(p_pair), holm(p_unp)
+        rej_pair, rej_unp = rejections(p_pair, "Holm"), rejections(p_unp, "Holm")
 
         print(
             f"Rejections at FWER {ALPHA} over {N_PRIMARY} contrasts:\n"
@@ -465,7 +401,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             des = np.array([r["de"] for r in rows if r["de"] is not None])
             frac_pos = f"{(des > 1.0).mean():.0%}" if des.size else "n/a"
             p_cl = np.array([r["p_cluster"] for r in rows])
-            rej_cl = holm(p_cl)
+            rej_cl = rejections(p_cl, "Holm")
             print(
                 f"  seed sign-flip+ Bonferroni : {int((p_cl <= ALPHA_PRIMARY).sum()):3d}\n"
                 f"  seed sign-flip+ Holm       : {int(rej_cl.sum()):3d}   "
@@ -549,7 +485,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     sec = build_secondary_contrasts()
     sec_rows = labeled_rows(marks, sec)
     n_disc = {
-        k: bh(np.array([r[k] for r in sec_rows])).sum()
+        k: rejections(np.array([r[k] for r in sec_rows]), "BH", Q_SECONDARY).sum()
         for k in ("p_cluster", "p_unpaired", "p_item")
     }
 

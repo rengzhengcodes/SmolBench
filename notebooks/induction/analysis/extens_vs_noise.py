@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from paired_analysis import hochberg, holm, labeled_rows, load_marks
+from paired_analysis import labeled_rows, load_marks, rejections
 from power_analysis import (
     ALPHA,
     MODELS,
@@ -100,38 +100,6 @@ def direction(acc_e: float, acc_n: float) -> Direction:
     return Direction.TIED
 
 
-def noncompliance_rate(
-    census: dict[tuple[str, str], dict],
-    key: tuple[str, str],
-    seeds: list[int],
-) -> float:
-    """Return one arm's non-compliance rate over the compared seeds.
-
-    Parameters
-    ----------
-    census : dict[tuple[str, str], dict]
-        `compliance_census` output.
-    key : tuple[str, str]
-        ``(model, info)`` cell of the arm.
-    seeds : list[int]
-        Seeds both arms of the contrast cover.
-
-    Returns
-    -------
-    float
-        Pooled non-compliance rate over `seeds`.
-
-    Raises
-    ------
-    RuntimeError
-        If the arm has no marks on `seeds`.
-    """
-    rate = common_seed_rate(census[key], seeds)
-    if rate is None:
-        raise RuntimeError(f"no compared-seed marks for {key}")
-    return rate
-
-
 def _star(ok: bool) -> str:
     """Render a fixed-width ``yes`` / ``.`` rejection cell."""
     return " yes " if ok else "  .  "
@@ -152,8 +120,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     # Keep the full family: the displayed subset is selected after measurement.
     full = labeled_rows(marks, build_primary_contrasts())
-    holm_full = holm(np.array([r["p_cluster"] for r in full]), ALPHA)
-    holm_full_item = holm(np.array([r["p_item"] for r in full]), ALPHA)
+    holm_full = rejections(np.array([r["p_cluster"] for r in full]), "Holm", ALPHA)
+    holm_full_item = rejections(np.array([r["p_item"] for r in full]), "Holm", ALPHA)
     full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
 
     # One lane per model: its family contrast row (``a`` = extens, ``b`` = noise)
@@ -163,7 +131,9 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         ka, kb = (model, "extens"), (model, "noise_intens")
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
-        nc_e, nc_n = (noncompliance_rate(census, k, fr["seeds"]) for k in (ka, kb))
+        nc_e, nc_n = (common_seed_rate(census[k], fr["seeds"]) for k in (ka, kb))
+        if nc_e is None or nc_n is None:
+            raise RuntimeError(f"no compared-seed marks for {ka} / {kb}")
         rows.append(
             {
                 **fr,
@@ -178,8 +148,16 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         )
 
     p_sub = np.array([r["p_cluster"] for r in rows])
-    h_sub, hb_sub = holm(p_sub, ALPHA), hochberg(p_sub, ALPHA)
     p_sub_item = np.array([r["p_item"] for r in rows])
+    h_sub, hb_sub, h_sub_item, hb_sub_item = (
+        rejections(p, method, ALPHA)
+        for p, method in (
+            (p_sub, "Holm"),
+            (p_sub, "Hochberg"),
+            (p_sub_item, "Holm"),
+            (p_sub_item, "Hochberg"),
+        )
+    )
 
     n_models = len(MODELS)
     n_seed_min = min(r["n_seeds"] for r in rows)
@@ -229,8 +207,8 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
         f"Hoch{n_models} {int(hb_sub.sum())} of {n_models}\n"
         f"  the same family under the DESCRIPTIVE item-level p: H{N_PRIMARY} "
         f"{sum(r['holm_full_item'] for r in rows)}, H{n_models} "
-        f"{int(holm(p_sub_item, ALPHA).sum())}, Hoch{n_models} "
-        f"{int(hochberg(p_sub_item, ALPHA).sum())} -- the clustering\n  "
+        f"{int(h_sub_item.sum())}, Hoch{n_models} "
+        f"{int(hb_sub_item.sum())} -- the clustering\n  "
         f"correction changes "
         f"{sum(1 for r in rows if r['holm_full'] != r['holm_full_item'])} of "
         f"these {n_models} primary decisions.\n"

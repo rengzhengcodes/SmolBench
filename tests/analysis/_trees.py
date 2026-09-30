@@ -25,13 +25,13 @@ ANALYSIS_DIR = NOTEBOOKS / "induction" / "analysis"
 sys.path[:0] = [str(NOTEBOOKS), str(ANALYSIS_DIR)]
 
 # pylint: disable=wrong-import-order,unused-import  # sys.path scripts read as third party; re-exported to the tests
-import _power_common  # noqa: E402
-import extens_vs_noise  # noqa: E402
-import multiplicity_sim  # noqa: E402
-import paired_analysis  # noqa: E402
-import power_analysis  # noqa: E402
-import run_all  # noqa: E402
-import significance_report  # noqa: E402
+import _power_common
+import extens_vs_noise
+import multiplicity_sim
+import paired_analysis
+import power_analysis
+import run_all
+import significance_report
 
 # pylint: enable=wrong-import-order,unused-import
 
@@ -42,7 +42,7 @@ DEEP_DEPTH = 16
 
 N_HARMONICS = power_analysis.N_HARMONICS
 N_PRIMARY = power_analysis.N_PRIMARY
-N_REPLICATES = multiplicity_sim.N_REPLICATES
+N_REPLICATES = power_analysis.N_REPLICATES
 MODELS = power_analysis.MODELS
 FAMILIES = power_analysis.FAMILIES
 INFOS = power_analysis.INFOS

@@ -71,25 +71,7 @@ EXPLORATORY_NOTE = (
 def _gate_row(
     n_seeds: int, stat: Optional[float], p: Optional[float], p_perm: Optional[float]
 ) -> dict:
-    """Build one `omnibus_gates` entry.
-
-    Parameters
-    ----------
-    n_seeds : int
-        Common seeds the family's rungs share.
-    stat : Optional[float]
-        Generalized CMH statistic, or None without data.
-    p : Optional[float]
-        Asymptotic chi-square p-value, or None without data.
-    p_perm : Optional[float]
-        Within-seed permutation p-value, or None without data.
-
-    Returns
-    -------
-    dict
-        ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate = max(p, p_perm)`` and
-        ``reject`` at `ALPHA_OMNIBUS`.
-    """
+    """Build one `omnibus_gates` entry; ``p_gate = max(p, p_perm)`` (None without data) and ``reject`` is ``p_gate <= ALPHA_OMNIBUS``."""
     p_gate = None if p is None or p_perm is None else max(p, p_perm)
     return {
         "n_seeds": n_seeds,
@@ -334,17 +316,7 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
 
 
 def _print_signed(rows: list, sign: str, key: str) -> None:
-    """Print one correction-cost block.
-
-    Parameters
-    ----------
-    rows : list
-        Contrast rows to print.
-    sign : str
-        Marker prefixed to every line.
-    key : str
-        Row field the block is sorted on.
-    """
+    """Print one correction-cost block: `rows` sorted on field `key`, each line prefixed with `sign`."""
     for r in sorted(rows, key=lambda r: r[key]):
         print(
             f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
@@ -353,15 +325,7 @@ def _print_signed(rows: list, sign: str, key: str) -> None:
 
 
 def _step_boundary(rows: list, n_rej: int) -> None:
-    """Print Holm ranks around its stopping boundary.
-
-    Parameters
-    ----------
-    rows : list
-        Contrast rows.
-    n_rej : int
-        Holm rejection count.
-    """
+    """Print the Holm ranks two either side of the stopping boundary `n_rej`, each with its own step threshold."""
     m = len(rows)
     ranked = sorted(rows, key=lambda r: r["p_cluster"])
     print("\nHolm step-down at the boundary (rank / p / own threshold):")
@@ -856,7 +820,6 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
         )
         row.update(
             rate_a=rate_a,
-            rate_b=rate_b,
             kind=classify(key_a, key_b),
             kind_is_ladder=is_ladder,
             family=family,

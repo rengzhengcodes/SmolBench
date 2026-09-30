@@ -37,9 +37,7 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
         monkeypatch.setattr(
             module,
             "main",
-            lambda *a, name=module.__name__, **k: calls.append(
-                (name, (a + tuple(k.values()))[0])
-            ),
+            lambda results_dir, name=module.__name__: calls.append((name, results_dir)),
         )
     return calls
 

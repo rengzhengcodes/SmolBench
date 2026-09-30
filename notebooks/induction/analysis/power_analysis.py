@@ -21,6 +21,7 @@ signal, not a confirmed effect.
 import functools
 import math
 import sys
+import warnings
 from itertools import combinations
 from pathlib import Path
 from typing import Optional
@@ -32,6 +33,7 @@ import numpy as np
 import statsmodels.api as sm
 from _power_common import ALPHA, POWER_TARGETS, SEED, results_dir
 from scipy.stats import binom, chi2, fisher_exact, norm
+from statsmodels.tools.sm_exceptions import PerfectSeparationWarning
 
 from smolbench.evals.results_store import LocalResultsStore, ReplicateAddress
 from smolbench.evals.study_config import families, roster_keys, tag_for
@@ -52,7 +54,9 @@ RESULTS_DIR = results_dir("induction")
 # configures logging, loads keys.env and builds the env-configured EXPERIMENT at
 # module scope, so the analysis restates the three values. A BASE_SEED or
 # N_HARMONICS drift surfaces in load_outcomes (missing pilot replicate, wrong mark
-# count); N_REPLICATES is only quoted in the recommendation text.
+# count); an N_REPLICATES drift surfaces in paired_analysis.load_marks (a seed past
+# the expected range exits) or its depth WARNING, and multiplicity_sim simulates
+# every part at this depth.
 BASE_SEED = 0
 N_REPLICATES = 30
 # Replicates are the sampling unit; more harmonics would change the task.
@@ -592,10 +596,14 @@ def omnibus_interaction_power(rates: CellVectors, n_reps: int) -> float:
     for _ in range(N_SIMS_OMNIBUS_DIAGNOSTIC):
         succ = rng.binomial(n_reps, cell_rates)
         endog = np.column_stack([succ, n_reps - succ])
-        llf_null, llf_full = (
-            sm.GLM(endog, x, family=sm.families.Binomial()).fit().llf
-            for x in (x_null, x_full)
-        )
+        # A fully separated draw only warns (once per IRLS step, hundreds per
+        # sim) and still fits with a finite llf; nothing here raises.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PerfectSeparationWarning)
+            llf_null, llf_full = (
+                sm.GLM(endog, x, family=sm.families.Binomial()).fit().llf
+                for x in (x_null, x_full)
+            )
         if 2 * (llf_full - llf_null) > crit:
             rejections += 1
     return rejections / N_SIMS_OMNIBUS_DIAGNOSTIC
@@ -647,24 +655,7 @@ _SizingResult = tuple[str, tuple[str, str], tuple[str, str], _Needed, _Needed]
 def _compute_sizing_results(
     contrasts: list[_Contrast], rates: CellVectors, pooled: CellVectors, alpha: float
 ) -> list[_SizingResult]:
-    """Size every contrast under shrunk and pooled assumptions.
-
-    Parameters
-    ----------
-    contrasts : list[_Contrast]
-        Contrasts to size, in output order.
-    rates : CellVectors
-        Shrunk-rate assumption for the headline sizing results.
-    pooled : CellVectors
-        Condition-mean-only sensitivity assumption.
-    alpha : float
-        Per-test threshold for both sizing runs.
-
-    Returns
-    -------
-    list[_SizingResult]
-        One `_SizingResult` per contrast, input order.
-    """
+    """Size every contrast under the shrunk `rates` and the `pooled` rates at `alpha`, in input order."""
     return [
         (
             name,
@@ -945,10 +936,10 @@ def render_recommended_replicates(primary: dict) -> None:
     )
 
 
-def equivalence_checks(
-    primary_results: list[_SizingResult], rates: CellVectors, r_star: int
-) -> dict:
-    """Compute Fisher and TOST checks at recommended R.
+def render_equivalence_checks(
+    primary_results: list[_SizingResult], rates: CellVectors, label_w: int, r_star: int
+) -> None:
+    """Print the Fisher cross-check at `r_star`, then TOST sizing for the near-tie PRIMARY contrasts.
 
     Parameters
     ----------
@@ -956,61 +947,28 @@ def equivalence_checks(
         PRIMARY sizing results in input order.
     rates : CellVectors
         Shrunk rates keyed by model and information type.
+    label_w : int
+        Contrast label column width.
     r_star : int
         Replicate count for the Fisher cross-check.
-
-    Returns
-    -------
-    dict
-        Fisher p-values and TOST results for each eligible primary contrast.
     """
-    fisher = [
-        (
-            name,
-            fisher_check(
+    print(
+        f"Cross-check at R={r_star} (pooled two-sided Fisher exact, PRIMARY "
+        f"alpha={ALPHA_PRIMARY:.6f}):"
+    )
+    for name, key_a, key_b, needed, _pooled in primary_results:
+        if needed[POWER_TARGETS[0]] is not None:
+            p_fisher = fisher_check(
                 rates[key_a], rates[key_b], r_star, np.random.default_rng(SEED)
-            ),
-        )
-        for name, key_a, key_b, needed, _pooled in primary_results
-        if needed[POWER_TARGETS[0]] is not None
-    ]
+            )
+            print(f"  {name:{label_w}s} fisher power = {p_fisher:.3f}")
 
     near_ties = [
         (name, key_a, key_b)
         for name, key_a, key_b, needed, _pooled in primary_results
         if needed[POWER_TARGETS[0]] is None or needed[POWER_TARGETS[0]] > NEAR_TIE_R
     ]
-    # Correct the planned equivalence family; None when it is empty.
-    alpha_eq = ALPHA / len(near_ties) if near_ties else None
-    table = [
-        (
-            name,
-            [
-                equivalence_replicates(
-                    rates[key_a],
-                    rates[key_b],
-                    delta,
-                    np.random.default_rng(SEED),
-                    alpha=alpha_eq,
-                )
-                for delta in EQUIVALENCE_DELTAS
-            ],
-        )
-        for name, key_a, key_b in near_ties
-    ]
-    return {"fisher": fisher, "alpha_eq": alpha_eq, "table": table}
-
-
-def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
-    """Print the Fisher cross-check and TOST sections `equivalence_checks` returns."""
-    print(
-        f"Cross-check at R={r_star} (pooled two-sided Fisher exact, PRIMARY "
-        f"alpha={ALPHA_PRIMARY:.6f}):"
-    )
-    for name, p_fisher in data["fisher"]:
-        print(f"  {name:{label_w}s} fisher power = {p_fisher:.3f}")
-
-    n_ties = len(data["table"])
+    n_ties = len(near_ties)
     print()
     if not n_ties:
         print(
@@ -1020,17 +978,29 @@ def render_equivalence_checks(data: dict, label_w: int, r_star: int) -> None:
             "sizing."
         )
         return
+    # Correct the planned equivalence family.
+    alpha_eq = ALPHA / n_ties
     eq_header = f"{'contrast':{label_w}s} " + " ".join(
         f"{f'R(d={d:.2f})':>10s}" for d in EQUIVALENCE_DELTAS
     )
     print(
         "Equivalence (TOST) sizing for near-tie PRIMARY contrasts, "
         f"assuming a true tie at the contrasts' mean rate (alpha="
-        f"{ALPHA}/{n_ties} = {data['alpha_eq']:.4f} per one-sided test, "
+        f"{ALPHA}/{n_ties} = {alpha_eq:.4f} per one-sided test, "
         f"Bonferroni over the {n_ties}-test family; "
         f"{POWER_TARGETS[0]:.0%} power):\n{eq_header}\n{'-' * len(eq_header)}"
     )
-    for name, cells in data["table"]:
+    for name, key_a, key_b in near_ties:
+        cells = [
+            equivalence_replicates(
+                rates[key_a],
+                rates[key_b],
+                delta,
+                np.random.default_rng(SEED),
+                alpha=alpha_eq,
+            )
+            for delta in EQUIVALENCE_DELTAS
+        ]
         print(f"{name:{label_w}s} " + " ".join(f"{_fmt_r(c):>10s}" for c in cells))
 
 
@@ -1063,8 +1033,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     render_secondary_contrasts_table(rates, pooled, outcomes)
     render_recommended_replicates(primary)
 
-    equivalence = equivalence_checks(primary["results"], rates, r_star)
-    render_equivalence_checks(equivalence, primary["label_w"], r_star)
+    render_equivalence_checks(primary["results"], rates, primary["label_w"], r_star)
     render_interaction_diagnostic(rates, r_star)
 
 

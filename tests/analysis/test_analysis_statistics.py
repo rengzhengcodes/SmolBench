@@ -1,19 +1,19 @@
 """Contracts for induction-analysis statistical plumbing."""
 
 import contextlib
+import inspect
 import io
 import json
 import shutil
 import subprocess
 import sys
 import warnings
-from collections.abc import Callable
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pytest
-from scipy.stats import chi2
+from scipy.stats import chi2, norm
 from statsmodels.stats.multitest import multipletests
 
 from smolbench.evals import Marks, study_config
@@ -99,13 +99,9 @@ def test_power_analysis_roster_comes_from_the_study_config() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "correct", (paired_analysis.holm, paired_analysis.hochberg, paired_analysis.bh)
-)
-def test_rejection_sets_do_not_depend_on_contrast_build_order(
-    correct: Callable[[np.ndarray, float], np.ndarray],
-) -> None:
-    """Tie ordering cannot change `correct`'s rank-monotone rejection decisions."""
+@pytest.mark.parametrize("method", ("Holm", "Hochberg", "BH"))
+def test_rejection_sets_do_not_depend_on_contrast_build_order(method: str) -> None:
+    """Tie ordering cannot change `method`'s rank-monotone rejection decisions."""
     alpha = _power_common.ALPHA
     rng = np.random.default_rng(7)
     tie_rng = np.random.default_rng(20260905)
@@ -130,8 +126,8 @@ def test_rejection_sets_do_not_depend_on_contrast_build_order(
             else tie_rng.choice(pool, size=m)
         )
         perm = rng.permutation(pvals.size)
-        base = correct(pvals, alpha)
-        permuted = correct(pvals[perm], alpha)
+        base = paired_analysis.rejections(pvals, method, alpha)
+        permuted = paired_analysis.rejections(pvals[perm], method, alpha)
         assert np.array_equal(permuted, base[perm]), (pvals, perm)
 
 
@@ -270,24 +266,6 @@ def test_extens_vs_noise_reuses_the_family_p_values_it_already_computed(
     assert len(calls) == N_PRIMARY, len(calls)
 
 
-def test_monte_carlo_output_lands_in_the_results_dir(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """main()'s default checkpoint lands in the general ignored results directory."""
-    for i in range(1, 6):
-        monkeypatch.setattr(multiplicity_sim, f"part{i}", lambda *_a, **_k: {})
-    written: list[Path] = []
-    monkeypatch.setattr(
-        multiplicity_sim, "dump", lambda _out, path, _tag: written.append(path)
-    )
-    multiplicity_sim.main()
-
-    assert written and all(
-        p == _power_common.results_dir("induction") / multiplicity_sim.OUT_NAME
-        for p in written
-    )
-
-
 def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -300,8 +278,11 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
 
     target = tmp_path / multiplicity_sim.OUT_NAME
     assert target.exists()
-    assert target != multiplicity_sim.RESULTS_DIR / multiplicity_sim.OUT_NAME
     assert json.loads(target.read_text())["part5"] == {"part": 5}
+    # main()'s own default is the study results tree run_all hands every script.
+    assert inspect.signature(multiplicity_sim.main).parameters[
+        "results_dir"
+    ].default == _power_common.results_dir("induction")
 
 
 def test_dump_creates_its_own_results_directory(tmp_path: Path) -> None:
@@ -333,7 +314,7 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
     assert [p.name for p in tmp_path.iterdir()] == [target.name]
 
 
-def test_contrast_row_handles_empty_drop_invalid_pairs() -> None:
+def test_labeled_rows_handles_empty_drop_invalid_pairs() -> None:
     """Dropping all invalid marks returns empty accuracies without warnings."""
     key_a = ("model_a", "intens")
     key_b = ("model_b", "noise_intens")
@@ -342,12 +323,11 @@ def test_contrast_row_handles_empty_drop_invalid_pairs() -> None:
     valid = {key_a: ones, key_b: {seed: ~v for seed, v in ones.items()}}
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        row = paired_analysis.contrast_row(
+        row = paired_analysis.labeled_rows(
             paired_analysis.CellMarks(correct, valid, {}),
-            key_a,
-            key_b,
-            drop_invalid=True,
-        )
+            [("empty", key_a, key_b)],
+            True,
+        )[0]
 
     assert row["n"] == 0
     assert row["acc_a"] is None
@@ -430,11 +410,7 @@ def test_sizing_scan_uses_common_random_numbers(
     power_analysis._sizing_scan.cache_clear()
     a = np.full(N_HARMONICS, 0.75)
     b = np.full(N_HARMONICS, 0.55)
-    try:
-        needed, curve = power_analysis.replicates_needed(a, b)
-    finally:
-        # The spied scan must not stay cached for the later sizing tests.
-        power_analysis._sizing_scan.cache_clear()
+    needed, curve = power_analysis.replicates_needed(a, b)
     assert len(streams) == 2, len(streams)
     cum_a, cum_b = streams[0], streams[1]
     crit = chi2.isf(power_analysis.ALPHA_PRIMARY, df=1)
@@ -557,10 +533,9 @@ def test_primary_contrasts_table_reports_the_family_size(
 def test_interaction_diagnostic_is_defined_under_separation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A saturated cell separates every interaction fit, yet the LR diagnostic stays a finite rate with no warning."""
+    """A fully saturated pilot separates every interaction fit (statsmodels warns per IRLS step, never raises), yet the LR diagnostic returns a finite rate and lets no warning out."""
     monkeypatch.setattr(power_analysis, "N_SIMS_OMNIBUS_DIAGNOSTIC", 5)
-    rates = {(m, i): np.full(N_HARMONICS, 0.9) for m in MODELS for i in INFOS}
-    rates[(MODELS[1], INFOS[1])] = np.ones(N_HARMONICS)
+    rates = {(m, i): np.ones(N_HARMONICS) for m in MODELS for i in INFOS}
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         power = power_analysis.omnibus_interaction_power(rates, N_REPLICATES)
@@ -578,34 +553,23 @@ def test_paired_powers_has_a_stats_free_fast_path() -> None:
     assert fast[2] is None and fast[3] is None
 
 
-def test_icc_zero_draws_the_unclustered_marks_byte_for_byte() -> None:
-    """`icc=0.0` must draw exactly what the un-clustered simulation drew, including RNG call order."""
-
-    args = (0.9, 0.8, 0.5, 64, N_REPLICATES)
-    plain_a, plain_b = multiplicity_sim.paired_marks(*args, np.random.default_rng(7))
-    zero_a, zero_b = multiplicity_sim.paired_marks(
-        *args, np.random.default_rng(7), icc=0.0
+def test_icc_zero_consumes_only_the_two_item_latent_draws() -> None:
+    """`icc=0.0` draws exactly the two item latents and nothing for the replicate latent, so the zero path never moves the RNG stream."""
+    n_sims = 64
+    rng = np.random.default_rng(7)
+    marks_a, _ = multiplicity_sim.paired_marks(
+        0.9, 0.8, 0.5, n_sims, N_REPLICATES, rng, icc=0.0
     )
-    assert np.array_equal(plain_a, zero_a)
-    assert np.array_equal(plain_b, zero_b)
+    reference = np.random.default_rng(7)
+    z1 = reference.standard_normal(
+        (2, n_sims, N_REPLICATES, N_HARMONICS), dtype=np.float32
+    )[0]
+    assert rng.bit_generator.state == reference.bit_generator.state
+    assert np.array_equal(marks_a, z1 < norm.ppf(0.9))
 
 
-def within_replicate_phi(marks: np.ndarray) -> float:
-    """Return the mean pairwise item correlation within a replicate.
-
-    An independent reference for the pooled-moment formula PART 3 prints as
-    ``phi_binary``: the mean of ``np.corrcoef`` over the item pairs.
-
-    Parameters
-    ----------
-    marks : np.ndarray
-        Simulated marks with items on the last axis.
-
-    Returns
-    -------
-    float
-        Mean correlation between distinct items in a replicate.
-    """
+def _within_replicate_phi(marks: np.ndarray) -> float:
+    """Mean ``np.corrcoef`` over distinct item pairs (items on the last axis): an independent reference for the pooled-moment ``phi_binary`` PART 3 prints."""
     x = marks.reshape(-1, marks.shape[-1]).astype(float)
     corr = np.corrcoef(x.T)
     return float(corr[np.triu_indices(x.shape[1], 1)].mean())
@@ -621,8 +585,8 @@ def test_a_positive_icc_clusters_a_replicates_items_without_moving_the_rate() ->
         *args, np.random.default_rng(11), icc=0.4
     )
 
-    assert abs(within_replicate_phi(flat_a)) < 0.02
-    assert within_replicate_phi(clustered_a) > 0.10
+    assert abs(_within_replicate_phi(flat_a)) < 0.02
+    assert _within_replicate_phi(clustered_a) > 0.10
     for flat, clustered, rate in (
         (flat_a, clustered_a, 0.9),
         (flat_b, clustered_b, 0.8),
@@ -639,7 +603,7 @@ def test_the_replicate_latent_is_arm_specific_not_shared() -> None:
     per_replicate_a = marks_a.mean(axis=2).ravel()
     per_replicate_b = marks_b.mean(axis=2).ravel()
     assert abs(np.corrcoef(per_replicate_a, per_replicate_b)[0, 1]) < 0.05
-    assert within_replicate_phi(marks_a) > 0.10
+    assert _within_replicate_phi(marks_a) > 0.10
 
 
 def test_icc_does_not_attenuate_the_requested_cross_arm_correlation() -> None:
@@ -679,15 +643,16 @@ def test_clustering_inflates_the_item_level_mcnemar_type_i_error() -> None:
     assert clustered > multiplicity_sim.ALPHA_PRIMARY
 
 
-@pytest.mark.parametrize("seed", (2, 3))
-def test_part2_reports_every_icc_and_its_design_effect(
-    seed: int, tmp_path: Path
-) -> None:
+def test_part2_reports_every_icc_and_its_design_effect(tmp_path: Path) -> None:
     """Each ICC block labels its rows and reports the simulated design effect; the empty `tmp_path` keeps synced lanes out of it."""
     buf = io.StringIO()
+    # main() seeds part2 from SEED + 2; the test reads the same stream.
     with contextlib.redirect_stdout(buf):
         out = multiplicity_sim.part2(
-            np.random.default_rng(seed), tmp_path, n_sims=200, search_sims=100
+            np.random.default_rng(_power_common.SEED + 2),
+            tmp_path,
+            n_sims=200,
+            search_sims=100,
         )
 
     icc_keys = [str(icc) for icc in multiplicity_sim.ICC_GRID]

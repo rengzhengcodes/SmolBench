@@ -1,9 +1,9 @@
 """Run the induction reports in one process, optionally ending with multiplicity_sim.
 
 One process so the scripts share one results directory. The costly, result-free
-simulation runs only behind ``--with-sim``. CHAIN order is the import order: each
-later script imports the earlier ones, and ``power_analysis`` checks the design
-invariants when it is imported.
+simulation runs only behind ``--with-sim``. CHAIN order is the dependency order:
+each later script imports the earlier ones, and ``power_analysis`` checks the
+design invariants when it is first imported.
 """
 
 import argparse
@@ -14,13 +14,10 @@ from typing import Optional
 # Add sibling scripts when imported outside ``__main__``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# isort: off
-import power_analysis
-import paired_analysis
-import significance_report
 import extens_vs_noise
-
-# isort: on
+import paired_analysis
+import power_analysis
+import significance_report
 
 #: Report scripts in dependency order; each exposes ``main(results_dir)``.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
