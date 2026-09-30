@@ -281,6 +281,9 @@ def part3(rng: np.random.Generator, n_sims: int = 200000, chunk: int = 20000) ->
     for p, icc, variant in product(
         (0.90, 0.70), (0.0, 0.1, 0.2, 0.4), ("independent", "shared")
     ):
+        # p=0.70 re-runs only the independent variant: a shared latent cancels
+        # in the paired CMH statistic, which the p=0.90 rows show at every icc;
+        # the independent-latent inflation is what grows as p leaves the ceiling.
         if p == 0.70 and variant == "shared":
             continue
         thr = norm.ppf(p)
@@ -551,6 +554,9 @@ def part2(
         for p_a, delta, rho in product(
             (0.95, 0.70), (0.05, 0.10), (0.0, 0.3, 0.5, 0.7, 0.9)
         ):
+            # p_A=0.70 checks that the ceiling-rate pairing gain persists off
+            # the ceiling; two mid rhos suffice, and each extra row costs an
+            # eq_R search per icc block.
             if p_a == 0.70 and rho not in (0.5, 0.7):
                 continue
             unp, pair, phi, agree = _paired_powers(
@@ -795,7 +801,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     Parameters
     ----------
     results_dir : Path
-        Study replicate tree; the checkpoint lands beside it as OUT_NAME.
+        Study replicate tree; the checkpoint is written inside it as ``OUT_NAME``.
     """
     t0 = time.time()
     out: dict[str, dict] = {}

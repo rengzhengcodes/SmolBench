@@ -100,15 +100,6 @@ def test_gate_note_handles_no_data_and_numeric_gates() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("rate_i", "rate_n", "expected"),
-    ((0.30, 0.60, False), (0.10, 0.25, True), (0.10, 0.20, False)),
-)
-def test_pad_crossing(rate_i: float, rate_n: float, expected: bool) -> None:
-    """Only a threshold crossing is attributed to padding."""
-    assert significance_report.pad_crossing(rate_i, rate_n) is expected
-
-
 def test_classify_rejects_a_zero_first_pair() -> None:
     """A zero arm in `key_a` would invert the arm-vs-floor reading; refuse it."""
     with pytest.raises(RuntimeError, match="zero arm must be key_b"):
@@ -225,8 +216,7 @@ def test_missing_family_cell_yields_no_data_gate(
     gates = significance_report.omnibus_gates(marks)
     assert gates[_STEEP_FAMILY] == significance_report.GATE_NO_DATA
 
-    # load_marks cannot produce a missing cell, so render is checked against a patched
-    # gate on a flat tree, whose families add no findings that would format the missing p.
+    # load_marks cannot produce a missing cell, so the gate is patched; any session tree serves.
     real = significance_report.omnibus_gates
 
     def fake(marks: object) -> dict:
@@ -374,9 +364,7 @@ caveat_tree = tree_fixture(
 )
 padding_control_tree = tree_fixture(
     "padding_control_tree",
-    profile_for(
-        {(LANE_MODEL, info): _LOW for info in ("intens", "noise_intens", "zero")}
-    ),
+    profile_for(),
     "Build a copied noise control whose compliance can be skewed independently.",
     copies={
         (LANE_MODEL, info): (LANE_MODEL, "zero") for info in ("intens", "noise_intens")
@@ -609,14 +597,33 @@ def test_padding_table_reports_the_seed_count_it_used(collapse_tree: Path) -> No
     assert n_common[COLLAPSE_MODEL] == DEEP_DEPTH
 
 
+def test_padding_verdict_names_the_arm_that_crossed(
+    collapse_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """COLLAPSE needs a clean intens arm and a noise arm at or above the criterion; a lane already collapsed unpadded is not padding-specific."""
+    verdicts = {r["model"]: r["verdict"] for r in rendered(collapse_tree)[1].pad_rows}
+    assert verdicts[COLLAPSE_MODEL] == "COLLAPSE"
+    # LANE_MODEL has no override on this tree: both arms are compliant, so the pad crossed nothing.
+    assert verdicts[LANE_MODEL] == "contract holds"
+    # Both arms fully non-compliant: the lane collapsed, but not because of the pad.
+    skewed = _skew_census(
+        {
+            (LANE_MODEL, info): dict.fromkeys(range(DEEP_DEPTH), N_HARMONICS)
+            for info in ("intens", "noise_intens")
+        }
+    )
+    monkeypatch.setattr(significance_report, "compliance_census", skewed)
+    computed = significance_report.compute(collapse_tree)
+    verdict = next(r["verdict"] for r in computed.pad_rows if r["model"] == LANE_MODEL)
+    assert verdict == "collapsed, but not padding-specific"
+    assert LANE_MODEL not in computed.pad_lanes
+
+
 def test_padding_table_counts_come_from_the_rows_it_actually_built(
     collapse_tree: Path,
 ) -> None:
     """Every count in the section comes from the table's own row count, not a hard-coded lane total."""
     computed = rendered(collapse_tree)[1]
-    assert len(computed.pad_lanes) == sum(
-        row["verdict"] == "COLLAPSE" for row in computed.pad_rows
-    )
     # load_marks refuses a lane with a missing arm, so pad_rows only differs from
     # len(MODELS) on a hand-shortened Report.
     short = replace(computed, pad_rows=computed.pad_rows[1:])
@@ -681,7 +688,7 @@ def test_zero_vs_zero_controls_report_the_measured_count_only(
 def test_the_ladder_claim_is_conditional_on_its_own_count(
     shallow_tree: Path, collapse_tree: Path
 ) -> None:
-    """The family-scaling claim needs `n_lad > 0`; with none, only the info-arm story may print."""
+    """The one-sided family-scaling claim needs `n_lad == len(lost)`; a mixed loss set names both stories and none prints only the info-arm story."""
     one_sided = "bites the family-scaling story, not the info-arm story"
 
     # Floor-bound: Holm rejects nothing, so no story claim is earned.
@@ -707,6 +714,17 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
         "1 of the 1 losses are LADDER contrasts -- the clustering correction\n"
         "   bites the family-scaling story, not the info-arm story." in out
     )
+    # One loss of each kind: neither one-sided story is earned.
+    mixed = replace(
+        computed,
+        lost=[
+            next(r for r in computed.rows if r["kind_is_ladder"]),
+            next(r for r in computed.rows if not r["kind_is_ladder"]),
+        ],
+    )
+    out = run_captured(lambda: significance_report.render(mixed))
+    assert "1 of the 2 losses are LADDER contrasts and 1 are INFO-ARM" in out
+    assert one_sided not in out
 
 
 @pytest.mark.parametrize(

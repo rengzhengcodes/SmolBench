@@ -1,9 +1,10 @@
 """Run the induction reports in one process, optionally ending with multiplicity_sim.
 
-One process so the scripts share one results directory. The costly, result-free
-simulation runs only behind ``--with-sim``. CHAIN order is the dependency order:
-each later script imports the earlier ones, and ``power_analysis`` checks the
-design invariants when it is first imported.
+One process so the scripts share one results directory. The costly simulation,
+which reads the tree only for PART 2's measured design effect and writes its
+checkpoint beside it, runs only behind ``--with-sim``. CHAIN order is the
+dependency order: each later script imports the earlier ones, and
+``power_analysis`` checks the design invariants when it is first imported.
 """
 
 import argparse

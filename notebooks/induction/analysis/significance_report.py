@@ -24,6 +24,7 @@ from paired_analysis import CellMarks, labeled_rows, load_marks
 from power_analysis import (
     ALPHA,
     ALPHA_OMNIBUS,
+    EQUIVALENCE_DELTAS,
     FAMILIES,
     INFOS,
     MODELS,
@@ -265,24 +266,6 @@ def collapse_note(key: tuple[str, str], rate: Optional[float], census: dict) -> 
     return f"{key[0]}/{key[1]} {rate:.1%} non-compliant{mode}"
 
 
-def pad_crossing(rate_i: float, rate_n: float) -> bool:
-    """Tell whether padding alone carries a lane over `COLLAPSE_THRESHOLD`.
-
-    Parameters
-    ----------
-    rate_i : float
-        Non-compliance rate of the unpadded (intens) arm.
-    rate_n : float
-        Non-compliance rate of the padded (noise) arm.
-
-    Returns
-    -------
-    bool
-        True when `rate_i` is below the threshold and `rate_n` at or above it.
-    """
-    return rate_i < COLLAPSE_THRESHOLD <= rate_n
-
-
 def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
     """Classify a contrast by its two ``(model, info)`` keys.
 
@@ -465,7 +448,8 @@ def render(report: Report) -> None:
     )
     _print_signed(lost, "-", "p_item")
     _print_signed(gained, "+", "p_cluster")
-    # Floor-bound losses carry no clustering information; n_lad==0 needs its own branch.
+    # Floor-bound losses carry no clustering information; the story claim must
+    # match which kinds of contrast were lost, so each split has its own branch.
     if lost and floor_bound:
         print(
             "   Both counts are artifacts of the resolution floor: Holm rejects nothing at\n"
@@ -473,11 +457,18 @@ def render(report: Report) -> None:
             "rejections and\n   the clustering correction is not what cost them -- see "
             "the INCOMPLETE SYNC\n   banner above."
         )
-    elif lost and n_lad:
+    elif lost and n_lad == len(lost):
         print(
             f"   {n_lad} of the {len(lost)} losses are LADDER contrasts -- the "
             "clustering correction\n   bites the family-scaling story, not "
             "the info-arm story."
+        )
+    elif lost and n_lad:
+        print(
+            f"   {n_lad} of the {len(lost)} losses are LADDER contrasts and "
+            f"{len(lost) - n_lad} are INFO-ARM\n   contrasts. The clustering "
+            "correction bites both the family-scaling story and the\n   "
+            "info-arm story."
         )
     elif lost:
         print(
@@ -767,7 +758,8 @@ def render(report: Report) -> None:
             f"  of which CEILING pairs (both arms >= {CEILING}): {len(ceiling)}. "
             f"{n_zero_disc} of them have ZERO discordant items:\n  exact ties "
             "in this sample, which more replicates could still break (see the "
-            f"+/-0.20\n  equivalence decision). The other {len(ceiling) - n_zero_disc} "
+            f"+/-{EQUIVALENCE_DELTAS[-1]:.2f}\n  equivalence decision). The other "
+            f"{len(ceiling) - n_zero_disc} "
             "have discordant items and are UNRESOLVED at\n  this depth, not ties."
         )
     else:
@@ -859,7 +851,9 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
             continue
         if rate_n < COLLAPSE_THRESHOLD:
             verdict = "contract holds"
-        elif pad_crossing(rate_i, rate_n):
+        # The pad alone carried the lane over: unpadded arm under the criterion,
+        # padded arm at or above it.
+        elif rate_i < COLLAPSE_THRESHOLD:
             verdict = "COLLAPSE"
         else:
             verdict = "collapsed, but not padding-specific"
@@ -874,7 +868,7 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
                 "verdict": verdict,
             }
         )
-    pad_lanes = {r["model"] for r in pad_rows if pad_crossing(r["rate_i"], r["rate_n"])}
+    pad_lanes = {r["model"] for r in pad_rows if r["verdict"] == "COLLAPSE"}
     findings = [r for r, rej in zip(rows, hp) if rej and r["kind"] == "finding"]
     floor = [(r, rej) for r, rej in zip(rows, hp) if r["kind"] == "arm-vs-floor"]
     passing = [r for r, rej in floor if rej and r["acc_a"] > r["acc_b"]]

@@ -56,7 +56,7 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 | `paired_analysis.py` | Paired re-analysis of the family-ladder induction study. |
 | `significance_report.py` | Holm and Hochberg significance report over the primary contrast family. |
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
-| `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `power_analysis`; reads no results tree. |
+| `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `power_analysis`; reads the tree only for PART 2's measured design effect and writes its checkpoint into it as `multiplicity_sim_results.json`. |
 | `run_all.py` | The one driver over the chain above: runs the four report scripts in process, in order, plus `multiplicity_sim.py` behind `--with-sim`. |
 
 ## audits/ and results/ -- archived

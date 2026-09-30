@@ -101,7 +101,6 @@ PREREGISTERED_ROSTER: tuple[tuple[str, str], ...] = (
     ("deepseek-v3.1", "ds_v31"),
     ("deepseek-v4-pro", "ds_pro"),
 )
-PREREGISTERED_KEYS = tuple(key for key, _tag in PREREGISTERED_ROSTER)
 PREREGISTERED_MODELS = tuple(tag for _key, tag in PREREGISTERED_ROSTER)
 
 N_RUNGS = 3
@@ -706,16 +705,11 @@ def check_design_invariants() -> None:
     Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
     ``python -O`` removes assertions.
     """
-    if ROSTER_KEYS != PREREGISTERED_KEYS:
+    roster = tuple(zip(ROSTER_KEYS, MODELS, strict=True))
+    if roster != PREREGISTERED_ROSTER:
         raise RuntimeError(
-            f"study_config roster keys {ROSTER_KEYS!r} disagree with the "
-            f"pre-registered roster {PREREGISTERED_KEYS!r}; re-pin "
-            "PREREGISTERED_KEYS deliberately if the study changed"
-        )
-    if MODELS != PREREGISTERED_MODELS:
-        raise RuntimeError(
-            f"study_config roster tags {MODELS!r} disagree with the pre-registered "
-            f"tags {PREREGISTERED_MODELS!r}; re-pin PREREGISTERED_MODELS "
+            f"study_config roster {roster!r} disagrees with the pre-registered "
+            f"roster {PREREGISTERED_ROSTER!r}; re-pin PREREGISTERED_ROSTER "
             "deliberately if the study changed"
         )
 

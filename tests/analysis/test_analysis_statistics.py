@@ -38,8 +38,8 @@ from tests.analysis._trees import (
     significance_report,
 )
 
-#: Cell that also holds the unparsable rep_bogus.yaml.
-_BOGUS_CELL = (MODELS[0], "intens")
+#: First roster cell: the copy source of the all-identical tree, and the cell small_tree's rep_bogus.yaml sits in.
+_FIRST_CELL = (MODELS[0], "intens")
 
 
 def _noisy_curve(n: int) -> float:
@@ -155,7 +155,7 @@ def test_design_invariants_pin_roster_identity(monkeypatch: pytest.MonkeyPatch) 
         tuple(new if t == old else t for t in power_analysis.MODELS),
     )
     assert len(power_analysis.build_primary_contrasts()) == power_analysis.N_PRIMARY
-    with pytest.raises(RuntimeError, match="pre-registered tags"):
+    with pytest.raises(RuntimeError, match="pre-registered roster"):
         power_analysis.check_design_invariants()
 
 
@@ -195,10 +195,10 @@ def test_design_invariants_survive_python_dash_o() -> None:
 
 @pytest.fixture(scope="module")
 def small_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build a 6-seed tree with one unparsable replicate filename in `_BOGUS_CELL`."""
+    """Build a 6-seed tree with one unparsable replicate filename in `_FIRST_CELL`."""
     tmp_path = tmp_path_factory.mktemp("small-tree")
     build_tree(tmp_path, profile_for(depth=SHALLOW_DEPTH))
-    cell_dir = tmp_path / f"{_BOGUS_CELL[0]}_{_BOGUS_CELL[1]}"
+    cell_dir = tmp_path / f"{_FIRST_CELL[0]}_{_FIRST_CELL[1]}"
     shutil.copyfile(cell_dir / "rep_0.yaml", cell_dir / "rep_bogus.yaml")
     return tmp_path
 
@@ -206,19 +206,19 @@ def small_tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_walkers_skip_an_unparsable_replicate_filename(small_tree: Path) -> None:
     """The loader skips a non-replicate filename and the census inherits its seed set."""
     loaded = paired_analysis.load_marks(small_tree)
-    assert sorted(loaded.correct[_BOGUS_CELL]) == list(range(SHALLOW_DEPTH))
+    assert sorted(loaded.correct[_FIRST_CELL]) == list(range(SHALLOW_DEPTH))
 
     census = significance_report.compliance_census(loaded)
-    assert census[_BOGUS_CELL]["n"] == SHALLOW_DEPTH * N_HARMONICS
+    assert census[_FIRST_CELL]["n"] == SHALLOW_DEPTH * N_HARMONICS
 
 
 def test_paired_report_handles_no_measurable_design_effects(tmp_path: Path) -> None:
     """Identical cells produce no measurable design effects but report cleanly."""
     copies = {
-        (model, info): _BOGUS_CELL
+        (model, info): _FIRST_CELL
         for model in MODELS
         for info in INFOS
-        if (model, info) != _BOGUS_CELL
+        if (model, info) != _FIRST_CELL
     }
     build_tree(tmp_path, lambda _m, _i: (0.90, 0.0, range(SHALLOW_DEPTH)), copies)
     assert (
@@ -554,7 +554,7 @@ def test_paired_powers_has_a_stats_free_fast_path() -> None:
 
 
 def test_icc_zero_consumes_only_the_two_item_latent_draws() -> None:
-    """`icc=0.0` draws exactly the two item latents and nothing for the replicate latent, so the zero path never moves the RNG stream."""
+    """`icc=0.0` draws exactly the two item latents and nothing for the replicate latent, leaving the stream where the un-clustered draw leaves it."""
     n_sims = 64
     rng = np.random.default_rng(7)
     marks_a, _ = multiplicity_sim.paired_marks(
