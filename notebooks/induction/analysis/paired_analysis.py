@@ -146,7 +146,8 @@ def aligned(
     keep = np.ones_like(a, dtype=bool)
     if drop_invalid:
         keep = np.array([marks.valid[key_a][s] & marks.valid[key_b][s] for s in seeds])
-    # Carry the harmonic through the mask: a survivor's position is unrecoverable from the retained count.
+    # Carry the harmonic through the mask: a survivor's position is unrecoverable
+    # from the retained count.
     seed_idx, harm_idx = np.indices(a.shape)
     return a[keep], b[keep], seed_idx[keep], harm_idx[keep]
 

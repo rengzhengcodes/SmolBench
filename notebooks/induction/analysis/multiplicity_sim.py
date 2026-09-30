@@ -664,7 +664,8 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
         If contrast counts disagree with the study correction denominators.
     """
     print("\n=== PART 4: correction cost ===", flush=True)
-    # Selected effects span ceiling and mid-range rates; the other contrasts are nulls.
+    # Family 0 is a ceiling ladder at every info; ladders (1, info 1) and (2, info 1)
+    # plant mid-range effects; every other contrast is null.
     rates = np.zeros((N_FAMILIES, N_RUNGS, N_INFOS))
     for f, rate in enumerate([0.99, 0.97, 0.95, 0.92, 0.85, 0.75, 0.62]):
         rates[f] = rate
@@ -749,6 +750,8 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
             v = (rej & nullmask).sum(axis=1)
             s = (rej & ~nullmask).sum(axis=1)
             tot = rej.sum(axis=1)
+            # `contrasts` is ladder-major: the leading columns are contiguous blocks of
+            # `tests_per_ladder` rung pairs, one block per ladder.
             ladders = (
                 rej[:, : N_LADDERS * tests_per_ladder]
                 .reshape(n_sims, N_LADDERS, tests_per_ladder)

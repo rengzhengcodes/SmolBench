@@ -111,7 +111,8 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 # Degrees of freedom of the model-by-info interaction diagnostic.
 DF_INTERACTION = (len(MODELS) - 1) * (len(INFOS) - 1)
 
-#: One length-`N_HARMONICS` vector per ``(model tag, info)`` cell: pilot marks or per-harmonic rates.
+#: One length-`N_HARMONICS` vector per ``(model tag, info)`` cell: pilot marks or
+#: per-harmonic rates.
 CellVectors = dict[tuple[str, str], np.ndarray]
 #: ``(label, cell_a, cell_b)``: the two cells a pairwise contrast compares.
 _Contrast = tuple[str, tuple[str, str], tuple[str, str]]
@@ -258,6 +259,8 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     shape = np.full((df, df), -p * p)
     np.fill_diagonal(shape, p * (1.0 - p))
     sigma = common.sum(axis=1)[:, None, None] * shape[None, :, :]
+    # pinv: a stratum with every rung at ceiling makes sigma singular; the
+    # generalized inverse keeps the Wald form defined there.
     return np.einsum("sd,sde,se->s", t_vec, np.linalg.pinv(sigma), t_vec)
 
 
@@ -270,7 +273,10 @@ _SizingScan = tuple[_Needed, dict[int, float]]
 def _cumulative_successes(
     rng: np.random.Generator, rates: np.ndarray, n_sims: int
 ) -> np.ndarray:
-    """Cumulative successes of one `MAX_REPLICATES`-long Bernoulli stream per harmonic, ``(n_sims, R, K)``."""
+    """Cumulative successes of one `MAX_REPLICATES`-long Bernoulli stream per harmonic.
+
+    Shape ``(n_sims, MAX_REPLICATES, rates.size)``.
+    """
     trials = rng.random((n_sims, MAX_REPLICATES, rates.size), dtype=np.float32) < rates
     return np.cumsum(trials, axis=1, dtype=np.int16)
 
@@ -708,9 +714,6 @@ def check_design_invariants() -> None:
 
     Wrong counts invalidate correction thresholds. Raises ``RuntimeError`` because
     ``python -O`` removes assertions.
-
-    Reads the module globals on each call so a patched constant re-checks; that
-    is how a test demonstrates the gate fires.
     """
     if ROSTER_KEYS != PREREGISTERED_KEYS:
         raise RuntimeError(
