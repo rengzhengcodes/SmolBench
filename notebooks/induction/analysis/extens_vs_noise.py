@@ -112,8 +112,19 @@ def _star(ok: bool) -> str:
 def _lane_rows(marks: CellMarks, census: dict) -> list[dict]:
     """One PRIMARY-family row per model, ``(model, extens)`` vs ``(model, noise_intens)``.
 
-    Each row adds ``model``, ``dir``, ``holm_full``, ``holm_full_item``, ``nc_e``,
-    ``nc_n`` and ``mech``.
+    Parameters
+    ----------
+    marks : CellMarks
+        Parsed marks from `load_marks`.
+    census : dict
+        `compliance_census` of the same marks, keyed by ``(model, info)`` cell.
+
+    Returns
+    -------
+    list[dict]
+        One `labeled_rows` row per model in `MODELS` order, with ``model``,
+        ``dir``, ``holm_full``, ``holm_full_item``, ``nc_e``, ``nc_n`` and
+        ``mech`` added.
     """
     # Keep the full family: the displayed subset is selected after measurement.
     full = labeled_rows(marks, build_primary_contrasts())

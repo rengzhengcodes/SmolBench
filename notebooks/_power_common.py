@@ -18,12 +18,36 @@ EQUIVALENCE_DELTAS = ANALYSIS.equivalence_deltas
 
 
 def _stepup(ok: np.ndarray) -> np.ndarray:
-    """Reject every sorted position at or below the last threshold-satisfying one."""
+    """Reject every sorted position at or below the last threshold-satisfying one.
+
+    Parameters
+    ----------
+    ok : np.ndarray
+        Threshold-satisfied mask in sorted-p order, one family per row.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask in sorted-p order.
+    """
     return np.logical_or.accumulate(ok[:, ::-1], axis=1)[:, ::-1]
 
 
 def _unsort(rejected: np.ndarray, order: np.ndarray) -> np.ndarray:
-    """Scatter a sorted-position mask back to the input column order."""
+    """Scatter a sorted-position mask back to the input column order.
+
+    Parameters
+    ----------
+    rejected : np.ndarray
+        Rejection mask in sorted-p order.
+    order : np.ndarray
+        The ``np.argsort(pv, axis=1)`` that produced that order.
+
+    Returns
+    -------
+    np.ndarray
+        Rejection mask in input column order.
+    """
     out = np.zeros_like(rejected)
     np.put_along_axis(out, order, rejected, axis=1)
     return out

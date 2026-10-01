@@ -100,7 +100,7 @@ def load_outcomes(results_dir: Path = RESULTS_DIR) -> CellVectors:
         for info in INFOS:
             addr = ReplicateAddress(tag=model, info=info, seed=BASE_SEED)
             path = store.path(addr)
-            if not store.exists(addr):
+            if not path.exists():
                 # sync_down() pulls S3 results into the rep_{seed}.yaml layout this script reads.
                 raise SystemExit(
                     f"No pilot replicate for ({model}, {info}) at {path}\n"
@@ -133,7 +133,19 @@ def _cumulative_successes(
 ) -> np.ndarray:
     """Cumulative successes of one `MAX_REPLICATES`-long Bernoulli stream per harmonic.
 
-    Shape ``(n_sims, MAX_REPLICATES, rates.size)``.
+    Parameters
+    ----------
+    rng : np.random.Generator
+        Random-number generator the trials are drawn from.
+    rates : np.ndarray
+        Per-harmonic success rates.
+    n_sims : int
+        Number of simulated streams.
+
+    Returns
+    -------
+    np.ndarray
+        Cumulative successes shaped ``(n_sims, MAX_REPLICATES, rates.size)``.
     """
     trials = rng.random((n_sims, MAX_REPLICATES, rates.size), dtype=np.float32) < rates
     return np.cumsum(trials, axis=1, dtype=np.int16)
@@ -201,6 +213,18 @@ def _sustained_crossing(curve: dict[int, float], target: float) -> Optional[int]
 
     A first noisy crossing could dip back below the target at a larger R set by
     another contrast; the sustained crossing cannot.
+
+    Parameters
+    ----------
+    curve : dict[int, float]
+        Power at each R in ``1..MAX_REPLICATES``.
+    target : float
+        Power level to sustain.
+
+    Returns
+    -------
+    Optional[int]
+        Smallest sustaining R, or ``None`` when `curve` ends below `target`.
     """
     needed = None
     for n_reps in range(MAX_REPLICATES, 0, -1):
@@ -259,7 +283,26 @@ def _equivalence_power_curve(
     alpha: float,
     n_sims: int,
 ) -> dict[int, float]:
-    """Estimate nested Agresti–Caffo equivalence power at every replicate count."""
+    """Estimate nested Agresti–Caffo equivalence power at every replicate count.
+
+    Parameters
+    ----------
+    common : np.ndarray
+        Per-harmonic rates both arms are simulated at.
+    delta : float
+        Equivalence margin.
+    rng : np.random.Generator
+        Random-number generator for simulations.
+    alpha : float
+        One-sided test significance threshold.
+    n_sims : int
+        Number of simulated experiments.
+
+    Returns
+    -------
+    dict[int, float]
+        Power at each R in ``1..MAX_REPLICATES``.
+    """
     z = norm.isf(alpha)
     cum_a = _cumulative_successes(rng, common, n_sims)
     cum_b = _cumulative_successes(rng, common, n_sims)
@@ -383,6 +426,11 @@ def omnibus_interaction_power(rates: CellVectors, n_reps: int) -> float:
     cells = [(m, i, k) for m in MODELS for i in INFOS for k in range(N_HARMONICS)]
 
     def design(interaction: bool) -> np.ndarray:
+        """Dummy-coded design over `cells`.
+
+        Intercept, model, info and harmonic main effects, plus model x info
+        when `interaction`.
+        """
         cols = [np.ones(len(cells))]
         cols += [np.array([c[0] == m for c in cells], float) for m in MODELS[1:]]
         cols += [np.array([c[1] == i for c in cells], float) for i in INFOS[1:]]
@@ -431,7 +479,24 @@ _SizingResult = tuple[str, tuple[str, str], tuple[str, str], _Needed, _Needed]
 def _compute_sizing_results(
     contrasts: list[Contrast], rates: CellVectors, pooled: CellVectors, alpha: float
 ) -> list[_SizingResult]:
-    """Size every contrast under the shrunk `rates` and the `pooled` rates at `alpha`, in input order."""
+    """Size every contrast under the shrunk and the pooled rates, in input order.
+
+    Parameters
+    ----------
+    contrasts : list[Contrast]
+        Contrasts to size.
+    rates : CellVectors
+        Shrunk-toward-mean rates keyed by ``(model, info)`` cell.
+    pooled : CellVectors
+        Condition-mean-only rates keyed the same way.
+    alpha : float
+        Per-test significance threshold.
+
+    Returns
+    -------
+    list[_SizingResult]
+        One `_SizingResult` per contrast.
+    """
     return [
         (
             name,
@@ -454,7 +519,17 @@ def _print_sizing_table(
     outcomes: CellVectors,
     label_w: int,
 ) -> None:
-    """Print the sizing column header, then each ``(caption, rows)`` section, at label width `label_w`."""
+    """Print the sizing column header, then each ``(caption, rows)`` section.
+
+    Parameters
+    ----------
+    sections : list[tuple[Optional[str], list[_SizingResult]]]
+        Captioned row groups; ``None`` prints the rows without a caption.
+    outcomes : CellVectors
+        Pilot 0/1 marks keyed by ``(model, info)`` cell, for the rates column.
+    label_w : int
+        Contrast label column width.
+    """
     header = (
         f"{'contrast':{label_w}s} {'rates':13s} "
         f"{f'R({POWER_TARGETS[0]:.0%})':>7s} {f'R({POWER_TARGETS[1]:.0%})':>7s} "
@@ -743,7 +818,13 @@ def render_interaction_diagnostic(rates: CellVectors, r_star: int) -> None:
 
 
 def main(results_dir: Path = RESULTS_DIR) -> None:
-    """Run and print the family-ladder power analysis."""
+    """Run and print the family-ladder power analysis.
+
+    Parameters
+    ----------
+    results_dir : Path, optional
+        Local results tree in the ``rep_<seed>.yaml`` layout.
+    """
     outcomes = load_outcomes(results_dir)
     rates = {key: shrunk_rates(y) for key, y in outcomes.items()}
     pooled = {key: np.full(N_HARMONICS, y.mean()) for key, y in outcomes.items()}

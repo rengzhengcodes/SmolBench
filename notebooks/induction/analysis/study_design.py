@@ -1,9 +1,14 @@
-"""Pre-registered induction design: roster, contrast tiers, correction thresholds, and the test statistics the tiers are evaluated with."""
+"""Pre-registered induction design.
+
+Roster, contrast tiers, correction thresholds, and the CMH/McNemar/GCMH kernels
+the tiers are evaluated with.
+"""
 
 import math
 import sys
 from itertools import combinations
 from pathlib import Path
+from typing import Union
 
 # Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -45,10 +50,10 @@ N_INFO_CONTRASTS = len(MODELS) * math.comb(N_INFOS, 2)
 N_PRIMARY = N_LADDER_CONTRASTS + N_INFO_CONTRASTS
 ALPHA_PRIMARY = ALPHA / N_PRIMARY
 
-# Size BH contrasts at the conservative rank-1 threshold.
 #: BH's FDR level is the familywise level; a separate knob would need its own derivation.
 Q_SECONDARY = ALPHA
 N_SECONDARY = N_RUNGS * math.comb(N_FAMILIES, 2)
+# Size BH contrasts at the conservative rank-1 threshold.
 ALPHA_SECONDARY = Q_SECONDARY / N_SECONDARY
 
 ALPHA_OMNIBUS = ALPHA / N_FAMILIES
@@ -57,21 +62,23 @@ ALPHA_OMNIBUS = ALPHA / N_FAMILIES
 Contrast = tuple[str, tuple[str, str], tuple[str, str]]
 
 
-def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndarray:
+def mcnemar_exact_p(
+    b: Union[int, np.ndarray], c: Union[int, np.ndarray]
+) -> Union[float, np.ndarray]:
     """Compute two-sided exact McNemar p-values.
 
     No discordant pairs return 1.0.
 
     Parameters
     ----------
-    b : int | np.ndarray
+    b : int or np.ndarray
         First discordant count.
-    c : int | np.ndarray
+    c : int or np.ndarray
         Second discordant count.
 
     Returns
     -------
-    float | np.ndarray
+    float or np.ndarray
         Exact two-sided conditional p-values.
     """
     nd = b + c
@@ -83,7 +90,9 @@ def mcnemar_exact_p(b: int | np.ndarray, c: int | np.ndarray) -> float | np.ndar
     return p[()] if p.ndim == 0 else p
 
 
-def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.ndarray:
+def cmh_stat(
+    succ_a: np.ndarray, succ_b: np.ndarray, n: Union[int, np.ndarray]
+) -> np.ndarray:
     """Compute the continuity-corrected 2 x 2 x K CMH statistic.
 
     Stratifies by harmonic; generalized CMH is distinct. Conditions require equal
@@ -115,8 +124,25 @@ def cmh_stat(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.
         return np.where(denom > 0, num / denom, 0.0)
 
 
-def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.ndarray:
-    """Two-sided chi2 (df=1) p-value for `cmh_stat`."""
+def cmh_p(
+    succ_a: np.ndarray, succ_b: np.ndarray, n: Union[int, np.ndarray]
+) -> np.ndarray:
+    """Compute the two-sided chi-square (df=1) p-value of `cmh_stat`.
+
+    Parameters
+    ----------
+    succ_a : np.ndarray
+        Success counts for the first condition, shaped ``(..., K)``.
+    succ_b : np.ndarray
+        Success counts for the second condition, shaped ``(..., K)``.
+    n : int or np.ndarray
+        Trial count per condition and stratum.
+
+    Returns
+    -------
+    np.ndarray
+        Two-sided chi-square (df=1) p-value per leading batch index.
+    """
     return chi2.sf(cmh_stat(succ_a, succ_b, n), df=1)
 
 

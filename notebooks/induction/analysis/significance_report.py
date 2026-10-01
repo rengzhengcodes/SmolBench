@@ -62,7 +62,9 @@ N_GATE_PERMS = 4000
 if 1 / (N_GATE_PERMS + 1) >= ALPHA_OMNIBUS:
     raise RuntimeError("N_GATE_PERMS too small to resolve ALPHA_OMNIBUS")
 
-#: Rendered twice: under the method note and again under the Tier-1 gate table.
+#: Printed under the method note and again under the Tier-1 gate table, so a
+#: reader who jumps straight to the gated ladder findings still sees the
+#: exploratory frame.
 EXPLORATORY_NOTE = (
     "This study is exploratory end to end (pilot-sized, sizing rests on an\n"
     "  independent-harmonic approximation, no confirmatory claims). The Tier-1 "
@@ -75,7 +77,25 @@ EXPLORATORY_NOTE = (
 def _gate_row(
     n_seeds: int, stat: Optional[float], p: Optional[float], p_perm: Optional[float]
 ) -> dict:
-    """Build one `omnibus_gates` entry; ``p_gate = max(p, p_perm)`` (None without data) and ``reject`` is ``p_gate <= ALPHA_OMNIBUS``."""
+    """Build one `omnibus_gates` entry.
+
+    Parameters
+    ----------
+    n_seeds : int
+        Seeds every cell of the family shares; 0 without data.
+    stat : Optional[float]
+        Observed GCMH statistic, None when the family has no common-seed data.
+    p : Optional[float]
+        Asymptotic chi2 p-value, None when the family has no common-seed data.
+    p_perm : Optional[float]
+        Permutation p-value, None when the family has no common-seed data.
+
+    Returns
+    -------
+    dict
+        ``n_seeds``, ``stat``, ``p``, ``p_perm``, ``p_gate = max(p, p_perm)``
+        (None without data) and ``reject = p_gate <= ALPHA_OMNIBUS``.
+    """
     p_gate = None if p is None or p_perm is None else max(p, p_perm)
     return {
         "n_seeds": n_seeds,
@@ -238,7 +258,17 @@ def classify(key_a: tuple[str, str], key_b: tuple[str, str]) -> str:
 
 
 def _print_signed(rows: list, sign: str, key: str) -> None:
-    """Print one correction-cost block: `rows` sorted on field `key`, each line prefixed with `sign`."""
+    """Print one correction-cost block, one contrast per line.
+
+    Parameters
+    ----------
+    rows : list
+        Contrast rows Holm lost or gained against the item-level p.
+    sign : str
+        Prefix of every line, ``-`` for lost and ``+`` for gained.
+    key : str
+        Row field the block is sorted on.
+    """
     for r in sorted(rows, key=lambda r: r[key]):
         print(
             f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
@@ -745,7 +775,20 @@ def render(report: Report) -> None:
 
 
 def _annotate_rows(rows: list[dict], census: dict, gates: dict[str, dict]) -> None:
-    """Add `rate_a`, `kind`, `kind_is_ladder`, `family`, `gated` and `collapse_tag` to every contrast row in place."""
+    """Annotate every contrast row in place for rendering.
+
+    Each row gains ``rate_a``, ``kind``, ``kind_is_ladder``, ``family``,
+    ``gated`` and ``collapse_tag``.
+
+    Parameters
+    ----------
+    rows : list[dict]
+        `labeled_rows` output for the PRIMARY family.
+    census : dict
+        `compliance_census` of the same marks, keyed by ``(model, info)`` cell.
+    gates : dict[str, dict]
+        `omnibus_gates` output; a ladder row is gated when its family rejects.
+    """
     family_of = {rung: family for family, rungs in FAMILIES.items() for rung in rungs}
     for row in rows:
         key_a, key_b = row["key_a"], row["key_b"]
@@ -771,7 +814,19 @@ def _annotate_rows(rows: list[dict], census: dict, gates: dict[str, dict]) -> No
 
 
 def _padding_rows(census: dict) -> tuple[list[dict], set[str]]:
-    """Build the PADDING EFFECT rows over each lane's common seeds, and the lanes the pad alone pushed over the criterion."""
+    """Build the PADDING EFFECT rows over each lane's common seeds.
+
+    Parameters
+    ----------
+    census : dict
+        `compliance_census` output, keyed by ``(model, info)`` cell.
+
+    Returns
+    -------
+    tuple[list[dict], set[str]]
+        One row per model with both arms measurable, and the models whose
+        pad alone carried the lane over the collapse criterion.
+    """
     pad_rows = []
     for model in MODELS:
         ci, cn = census.get((model, "intens")), census.get((model, "noise_intens"))

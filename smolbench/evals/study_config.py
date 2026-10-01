@@ -40,8 +40,11 @@ class RosterConfig:
 
     families: "Mapping[str, tuple[str, ...]]"
     tags: "Mapping[str, str]"
-    #: Rungs per family; every family lists this many, so it is one number.
-    n_rungs: int
+
+    @property
+    def n_rungs(self) -> int:
+        """Rungs per family; every family lists this many, so it is one number."""
+        return len(next(iter(self.families.values())))
 
 
 @dataclass(frozen=True)
@@ -189,9 +192,7 @@ def _parse_study_config(data: dict) -> StudyConfig:
             "a ladder needs at least two rungs"
         )
     roster = RosterConfig(
-        families=MappingProxyType(families),
-        tags=MappingProxyType(tags),
-        n_rungs=n_rungs,
+        families=MappingProxyType(families), tags=MappingProxyType(tags)
     )
 
     study_raw = _require(data, "[study]")
@@ -216,7 +217,8 @@ def _parse_study_config(data: dict) -> StudyConfig:
         raise ValueError(
             f"study_config.toml [analysis] alpha must be in (0, 1), got {analysis.alpha}"
         )
-    # The sizing tables print exactly two power columns.
+    # power_analysis._print_sizing_table hard-codes two R columns
+    # (POWER_TARGETS[0], POWER_TARGETS[1]).
     if len(analysis.power_targets) != 2:
         raise ValueError(
             "study_config.toml [analysis] power_targets must list exactly two levels, "
@@ -229,7 +231,29 @@ def _parse_study_config(data: dict) -> StudyConfig:
 
 
 def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
-    """Return `mapping[name]` after checking it is an integer of at least `floor`."""
+    """Return `mapping[name]` after checking it is an integer of at least `floor`.
+
+    Parameters
+    ----------
+    mapping : dict
+        Parsed TOML table containing the key.
+    name : str
+        Key to retrieve.
+    within : str
+        TOML section suffix included in the error message.
+    floor : int
+        Smallest accepted value.
+
+    Returns
+    -------
+    int
+        The validated value.
+
+    Raises
+    ------
+    ValueError
+        If the key is missing, not an int, or below `floor`.
+    """
     value = _require(mapping, name, within)
     # bool is an int subclass, and ``seed = true`` is a typo, not a seed.
     if not isinstance(value, int) or isinstance(value, bool) or value < floor:
@@ -243,7 +267,27 @@ def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
 def _ascending_unit_floats(
     mapping: dict, name: str, within: str
 ) -> "tuple[float, ...]":
-    """Return `mapping[name]` as a non-empty, strictly ascending tuple of values in (0, 1)."""
+    """Return `mapping[name]` as a strictly ascending tuple of values in (0, 1).
+
+    Parameters
+    ----------
+    mapping : dict
+        Parsed TOML table containing the key.
+    name : str
+        Key to retrieve.
+    within : str
+        TOML section suffix included in the error message.
+
+    Returns
+    -------
+    tuple[float, ...]
+        The validated, non-empty values.
+
+    Raises
+    ------
+    ValueError
+        If the key is missing, empty, not in (0, 1), or not strictly ascending.
+    """
     values = tuple(float(v) for v in _require(mapping, name, within))
     if (
         not values

@@ -51,8 +51,10 @@ from study_design import (
 from smolbench.evals.results_store import LocalResultsStore
 
 #: Depths the eq_R search may advance to; the last is its ceiling.
-_EQ_R_DEPTHS = (35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250)
-_EQ_R_DEPTHS += (300, 360, 430, 520, 620, 750, 900)
+_EQ_R_DEPTHS = (
+    35, 40, 45, 50, 60, 70, 85, 100, 120, 145, 175, 210, 250,
+    300, 360, 430, 520, 620, 750, 900,
+)  # fmt: skip
 #: Start at study depth so "pairing bought nothing" stays reachable, then
 #: ascend through the depths beyond it (none when the study is at the ceiling).
 EQ_R_GRID = (N_REPLICATES, *(depth for depth in _EQ_R_DEPTHS if depth > N_REPLICATES))
@@ -110,7 +112,22 @@ def dump(out: dict, path: Path, tag: str) -> None:
 
 
 def _reject_rate(stat: np.ndarray, alpha: float, df: int) -> float:
-    """Fraction of simulations whose chi-square statistic exceeds the `alpha` critical value."""
+    """Fraction of simulations rejecting at `alpha` on a chi-square statistic.
+
+    Parameters
+    ----------
+    stat : np.ndarray
+        One chi-square statistic per simulation.
+    alpha : float
+        Nominal level of the test.
+    df : int
+        Degrees of freedom of the reference chi-square.
+
+    Returns
+    -------
+    float
+        Share of `stat` above the upper-`alpha` critical value.
+    """
     return float((stat > chi2.isf(alpha, df)).mean())
 
 
@@ -503,7 +520,27 @@ def study_design_effect(results_dir: Path) -> Optional[float]:
 def _pairing_gain_rows(
     rng: np.random.Generator, icc: float, n_sims: int, search_sims: int
 ) -> list[dict]:
-    """Power rows for one `icc`, each with its eq_R grid search, printed as computed."""
+    """Power rows for one `icc`, each with its eq_R grid search, printed as computed.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        Random-number generator for simulated marks.
+    icc : float
+        Within-replicate latent correlation of the simulated marks.
+    n_sims : int
+        Simulations per row for the study-depth paired and unpaired powers.
+    search_sims : int
+        Simulations per `EQ_R_GRID` depth in the eq_R search.
+
+    Returns
+    -------
+    list[dict]
+        One row per ``(p_a, delta, rho)`` scenario with ``p_a``, ``delta``,
+        ``rho``, ``power_unpaired``, ``power_paired``, ``eq_R``,
+        ``eq_r_advanced``, ``cap``, ``phi_binary``, ``agreement``,
+        ``eq_ratio`` and ``icc``.
+    """
     rows = []
     for p_a, delta, rho in product(
         (0.95, 0.70), (0.05, 0.10), (0.0, 0.3, 0.5, 0.7, 0.9)
@@ -560,7 +597,22 @@ def _pairing_gain_rows(
 def _null_calibration(
     rng: np.random.Generator, icc: float, null_sims: int
 ) -> dict[float, dict[str, float]]:
-    """Unpaired and item-McNemar Type-I rates at p_a = p_b = 0.90 for rho in (0.0, 0.5, 0.9), printed as computed."""
+    """Unpaired and item-McNemar Type-I rates under the null, printed as computed.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        Random-number generator for simulated marks.
+    icc : float
+        Within-replicate latent correlation of the simulated marks.
+    null_sims : int
+        Simulations per rho.
+
+    Returns
+    -------
+    dict[float, dict[str, float]]
+        rho -> ``unpaired_t1`` and ``mcnemar_t1`` at ``p_a = p_b = 0.90``.
+    """
     nulls = {}
     for rho in (0.0, 0.5, 0.9):
         # 60000 draws give ~14 expected null rejections at ALPHA_PRIMARY,
@@ -579,7 +631,22 @@ def _null_calibration(
 def _simulated_design_effect(
     rng: np.random.Generator, icc: float, n_sims: int
 ) -> Optional[float]:
-    """Median measurable design effect of null marks at rho=0.5, printed; ``None`` when none is measurable."""
+    """Median measurable design effect of null marks at rho=0.5, printed.
+
+    Parameters
+    ----------
+    rng : np.random.Generator
+        Random-number generator for simulated marks.
+    icc : float
+        Within-replicate latent correlation of the simulated marks.
+    n_sims : int
+        Simulated datasets the median is taken over.
+
+    Returns
+    -------
+    Optional[float]
+        Median of the measurable ratios, or ``None`` when none is measurable.
+    """
     # Match the null calibration at p_a=p_b=0.90, rho=0.5.
     ma, mb = paired_marks(0.90, 0.90, 0.5, n_sims, N_REPLICATES, rng, icc=icc)
     seed_idx = np.repeat(np.arange(N_REPLICATES), N_HARMONICS)
@@ -672,7 +739,23 @@ def part2(
 def _correction_summary(
     rej: np.ndarray, nullmask: np.ndarray, ladder_nonflat: np.ndarray
 ) -> dict[str, float]:
-    """True/false rejections, FWER, FDR, flagged ladders and per-true power of one rejection mask."""
+    """Summarise one correction procedure's rejection mask against the truth.
+
+    Parameters
+    ----------
+    rej : np.ndarray
+        Boolean ``(n_sims, n_contrasts)`` rejection mask, ladder-major.
+    nullmask : np.ndarray
+        Boolean ``(n_contrasts,)`` mask of the truly null contrasts.
+    ladder_nonflat : np.ndarray
+        Index of the ladders with a planted effect.
+
+    Returns
+    -------
+    dict[str, float]
+        ``true_rej``, ``false_rej``, ``fwer``, ``fdr``, ``ladders_flagged``
+        and ``power_per_true``, each averaged over simulations.
+    """
     v = (rej & nullmask).sum(axis=1)
     s = (rej & ~nullmask).sum(axis=1)
     tot = rej.sum(axis=1)

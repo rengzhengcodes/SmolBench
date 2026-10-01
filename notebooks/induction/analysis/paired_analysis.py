@@ -454,10 +454,15 @@ def _print_depth(marks: CellMarks) -> None:
         )
 
 
-def _print_standing_question(rows: list[dict], rej_cl: np.ndarray) -> None:
+def _print_standing_question(rows: list[dict], holm_primary: np.ndarray) -> None:
     """Print the intens-vs-noise_intens row per model.
 
-    Each row is flagged by the Holm (PRIMARY) decision in `rej_cl`.
+    Parameters
+    ----------
+    rows : list[dict]
+        `labeled_rows` output for the PRIMARY family.
+    holm_primary : np.ndarray
+        Holm rejection mask over `rows` on ``p_cluster`` (the PRIMARY decision).
     """
     hdr = (
         f"  {'model':14s} {'intens':>7s} {'noise':>7s} {'disc':>7s} "
@@ -471,7 +476,7 @@ def _print_standing_question(rows: list[dict], rej_cl: np.ndarray) -> None:
     # The flag follows the PRIMARY procedure printed above (Holm), not
     # Bonferroni: Holm's step thresholds exceed ALPHA_PRIMARY, so a
     # Holm-rejected row must not print as merely uncorrected.
-    for r, rej in zip(rows, rej_cl):
+    for r, rej in zip(rows, holm_primary):
         if {r["key_a"][1], r["key_b"][1]} != {"intens", "noise_intens"}:
             continue
         model = r["key_a"][0]
