@@ -41,13 +41,11 @@ to the store, so a script's depth affects only where it reads from.
 
 Each chained script inserts a `__file__`-anchored directory on `sys.path` --
 its own, or `notebooks/` for the ones importing `_power_common` -- and imports
-its siblings by bare name. `study_design.py` roots that chain: it reads the
-roster and the `[study]` parameters from `study_config.toml`, derives the
-contrast tiers and correction thresholds, and owns the test kernels and
-`RESULTS_DIR`. All read marks through `Marks.load`, never scraped; a lane with
-no replicates (or, for `power_analysis.py`, no pilot replicate) exits with a
-`sync_down()` hint, and an incomplete lane is compared on its common seeds
-under a depth warning.
+its siblings by bare name; `study_design.py` roots that chain (table below).
+All read marks through `Marks.load`, never scraped; a lane with no replicates
+(or, for `power_analysis.py`, no pilot replicate) exits with a `sync_down()`
+hint, and an incomplete lane is compared on its common seeds under a depth
+warning.
 
 `run_all.py` prints a banner before each script so a long combined log says
 whose numbers are whose, and keeps `multiplicity_sim` behind `--with-sim`

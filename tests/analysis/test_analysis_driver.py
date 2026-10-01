@@ -23,15 +23,10 @@ driver_tree = tree_fixture(
 )
 
 
-@pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
-    """Replace every script's ``main`` with a call recorder.
-
-    Returns
-    -------
-    list[tuple[str, Path]]
-        ``(module name, results_dir)`` in the order each ``main`` was called.
-    """
+def test_the_simulation_runs_only_behind_its_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The chain runs in order on the given tree; the simulation only when ``--with-sim`` is passed."""
     calls: list[tuple[str, Path]] = []
     for module in run_all.CHAIN + (multiplicity_sim,):
         monkeypatch.setattr(
@@ -39,19 +34,12 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
             "main",
             lambda results_dir, name=module.__name__: calls.append((name, results_dir)),
         )
-    return calls
-
-
-def test_the_simulation_runs_only_behind_its_flag(
-    recorded: list[tuple[str, Path]], tmp_path: Path
-) -> None:
-    """The chain runs in order on the given tree; the simulation only when ``--with-sim`` is passed."""
     chain = [(m.__name__, tmp_path) for m in run_all.CHAIN]
     assert run_all.main([], results_dir=tmp_path) == 0
-    assert recorded == chain
-    recorded.clear()
+    assert calls == chain
+    calls.clear()
     run_all.main(["--with-sim"], results_dir=tmp_path)
-    assert recorded == chain + [("multiplicity_sim", tmp_path)]
+    assert calls == chain + [("multiplicity_sim", tmp_path)]
 
 
 def test_the_driver_really_runs_the_chain_in_one_process(
