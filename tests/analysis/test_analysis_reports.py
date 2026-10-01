@@ -697,9 +697,8 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     assert "info-arm story" in collapse
     # No fixture loses a ladder contrast to the clustering correction, so the
     # n_lad > 0 branch is rendered from a Report with one forced ladder loss.
-    forced = replace(
-        computed, lost=[next(r for r in computed.rows if r["kind_is_ladder"])]
-    )
+    ladder = next(r for r in computed.rows if r["kind_is_ladder"])
+    forced = replace(computed, lost=[ladder])
     out = run_captured(lambda: significance_report.render(forced))
     assert (
         "1 of the 1 losses are LADDER contrasts -- the clustering correction\n"
@@ -708,10 +707,7 @@ def test_the_ladder_claim_is_conditional_on_its_own_count(
     # One loss of each kind: neither one-sided story is earned.
     mixed = replace(
         computed,
-        lost=[
-            next(r for r in computed.rows if r["kind_is_ladder"]),
-            next(r for r in computed.rows if not r["kind_is_ladder"]),
-        ],
+        lost=[ladder, next(r for r in computed.rows if not r["kind_is_ladder"])],
     )
     out = run_captured(lambda: significance_report.render(mixed))
     assert "1 of the 2 losses are LADDER contrasts and 1 are INFO-ARM" in out
@@ -882,14 +878,12 @@ def test_extens_vs_noise_rates_use_the_aligned_seed_population(
 ) -> None:
     """Non-compliance outside the seeds the noise arm covers must not colour the contrast."""
     # Whole-cell view: every seed the noise arm lacks is fully non-compliant.
-    skewed = _skew_census(
-        {
-            (SKEW_MODEL, "extens"): dict.fromkeys(
-                range(_SKEW_SPLIT, DEEP_DEPTH), N_HARMONICS
-            )
-        },
+    uncompared = range(_SKEW_SPLIT, DEEP_DEPTH)
+    monkeypatch.setattr(
+        extens_vs_noise,
+        "compliance_census",
+        _skew_census({(SKEW_MODEL, "extens"): dict.fromkeys(uncompared, N_HARMONICS)}),
     )
-    monkeypatch.setattr(extens_vs_noise, "compliance_census", skewed)
     out = run_captured(lambda: extens_vs_noise.main(collapse_tree))
     skew_lines = [ln for ln in out.splitlines() if SKEW_MODEL in ln]
     assert skew_lines, out[:2000]

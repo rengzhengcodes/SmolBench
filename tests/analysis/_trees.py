@@ -201,11 +201,8 @@ def build_tree(
                     f"{model}/{info}/{seed}".encode(), digest_size=4
                 ).digest()
                 rng = np.random.default_rng(int.from_bytes(digest, "big"))
-                seed_nc = (
-                    cell.noncompliance(seed)
-                    if callable(cell.noncompliance)
-                    else cell.noncompliance
-                )
+                nc = cell.noncompliance
+                seed_nc = nc(seed) if callable(nc) else nc
                 _marks_for(cell.rate, seed_nc, rng, cell.invalid).dump(
                     cdir / f"rep_{seed}.yaml"
                 )
