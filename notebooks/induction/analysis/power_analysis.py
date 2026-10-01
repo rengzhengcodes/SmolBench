@@ -16,7 +16,8 @@ import functools
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
+from types import MappingProxyType
+from typing import Mapping, Optional
 
 # Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -123,8 +124,8 @@ def shrunk_rates(y: np.ndarray) -> np.ndarray:
 
 #: Power target -> smallest R from which power stays at or above it; ``None`` when
 #: the target is not sustained within `MAX_REPLICATES`.
-_Needed = dict[float, Optional[int]]
-_SizingScan = tuple[_Needed, dict[int, float]]
+_Needed = Mapping[float, Optional[int]]
+_SizingScan = tuple[_Needed, Mapping[int, float]]
 
 
 def _cumulative_successes(
@@ -147,7 +148,8 @@ def replicates_needed(
     """Find the smallest replicate count for each power target.
 
     Memoized on the rate tuples (hence tuples, not arrays) and seeded per scan,
-    so cache hits and recomputations agree. Common random numbers: the
+    so cache hits and recomputations agree; the mappings are read-only because
+    the cache hands every caller the same objects. Common random numbers: the
     R-replicate design is the first R trials of one `MAX_REPLICATES`-long
     Bernoulli stream per harmonic and arm, so successive R share their noise and
     sampling error cannot reorder neighbouring R. Each target's R is the
@@ -191,7 +193,8 @@ def replicates_needed(
             n_reps,
         )
         curve[n_reps] = float((stat > crit).mean())
-    return {t: _sustained_crossing(curve, t) for t in POWER_TARGETS}, curve
+    needed = {t: _sustained_crossing(curve, t) for t in POWER_TARGETS}
+    return MappingProxyType(needed), MappingProxyType(curve)
 
 
 def _sustained_crossing(curve: dict[int, float], target: float) -> Optional[int]:
