@@ -245,8 +245,7 @@ INFO_TYPES: tuple[str, ...] = tuple(CONDITIONS)
 #: Covers special tokens and cross-seed prompt variation missed by probes.
 TEMPLATE_RESERVE: int = 8_000
 
-#: Endpoints plus four interior seeds: this many tokenizer passes instead of
-#: N_REPLICATES. Must be >= 2.
+#: Endpoints plus four interior seeds: 6 tokenizer passes instead of N_REPLICATES. Must be >= 2.
 PROBE_SEEDS: int = 6
 
 #: Avoids CoT truncation that yields unscorable responses; periodic_moe's
