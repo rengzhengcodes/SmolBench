@@ -500,9 +500,7 @@ def _fmt_r(r: Optional[int]) -> str:
 
 
 def _print_sizing_table(
-    sections: list[tuple[Optional[str], list[_SizingResult]]],
-    outcomes: CellVectors,
-    label_w: int,
+    sections: list[tuple[Optional[str], list[_SizingResult]]], outcomes: CellVectors
 ) -> None:
     """Print the sizing column header, then each ``(caption, rows)`` section.
 
@@ -512,9 +510,8 @@ def _print_sizing_table(
         Captioned row groups; ``None`` prints the rows without a caption.
     outcomes : CellVectors
         Pilot 0/1 marks keyed by ``(model, info)`` cell, for the rates column.
-    label_w : int
-        Contrast label column width.
     """
+    label_w = max(len(name) for _, rows in sections for name, *_ in rows)
     header = (
         f"{'contrast':{label_w}s} {'rates':13s} "
         f"{f'R({POWER_TARGETS[0]:.0%})':>7s} {f'R({POWER_TARGETS[1]:.0%})':>7s} "
@@ -640,7 +637,6 @@ def render_primary_contrasts_table(data: dict, outcomes: CellVectors) -> None:
             ),
         ],
         outcomes,
-        data["label_w"],
     )
 
 
@@ -676,9 +672,7 @@ def render_secondary_contrasts_table(
         f"Tier 3 -- SECONDARY pairwise contrasts ({N_SECONDARY} tests, "
         f"cross-family, size-matched, intens only):"
     )
-    _print_sizing_table(
-        [(None, results)], outcomes, max(len(name) for name, *_ in results)
-    )
+    _print_sizing_table([(None, results)], outcomes)
 
 
 def render_recommended_replicates(primary: dict) -> None:
