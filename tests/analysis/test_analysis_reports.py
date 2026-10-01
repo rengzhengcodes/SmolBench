@@ -418,9 +418,6 @@ def skewed_report(monkeypatch: pytest.MonkeyPatch) -> SkewedReport:
     return report
 
 
-# The shallow fixture pins the incomplete-sync guard and control messaging.
-
-
 def test_shallow_sync_prints_an_incomplete_banner_and_no_exoneration(
     shallow_tree: Path,
 ) -> None:
@@ -466,28 +463,24 @@ def test_failing_controls_are_exonerated_only_where_the_pad_explains_them(
     assert any(WEAK_MODEL in row["label"] for row in computed.fails_unexplained)
 
 
-@pytest.fixture
-def padding_control_report(
-    padding_control_tree: Path, skewed_report: SkewedReport
-) -> Callable[[int], Rendered]:
-    """Render `padding_control_tree` with `noise_nc` of every noise-arm seed's marks non-compliant and the intens arm compliant."""
-    return lambda noise_nc: skewed_report(
+@pytest.mark.parametrize(
+    "noise_nc, near_total", [(4, False), (N_HARMONICS, True)], ids=["partial", "total"]
+)
+def test_pad_crossing_is_called_near_total_only_at_total_collapse(
+    padding_control_tree: Path,
+    skewed_report: SkewedReport,
+    noise_nc: int,
+    near_total: bool,
+) -> None:
+    """A partial compliance collapse is reported as a caveat, not control causation; only a total one keeps the near-total exoneration."""
+    # `noise_nc` of every noise-arm seed's marks non-compliant, the intens arm compliant.
+    out, computed = skewed_report(
         padding_control_tree,
         {
             (LANE_MODEL, "intens"): dict.fromkeys(range(DEEP_DEPTH), 0),
             (LANE_MODEL, "noise_intens"): dict.fromkeys(range(DEEP_DEPTH), noise_nc),
         },
     )
-
-
-@pytest.mark.parametrize(
-    "noise_nc, near_total", [(4, False), (N_HARMONICS, True)], ids=["partial", "total"]
-)
-def test_pad_crossing_is_called_near_total_only_at_total_collapse(
-    padding_control_report: Callable[[int], Rendered], noise_nc: int, near_total: bool
-) -> None:
-    """A partial compliance collapse is reported as a caveat, not control causation; only a total one keeps the near-total exoneration."""
-    out, computed = padding_control_report(noise_nc)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
     assert bool(computed.fails_total) is near_total
     assert bool(computed.fails_partial) is not near_total
@@ -544,9 +537,6 @@ def test_reports_handle_invalid_marks(tmp_path: Path) -> None:
         r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, True)
     ) < sum(r["n"] for r in paired_analysis.labeled_rows(marks, contrasts, False))
     assert "DROP-INVALID pairs" in out
-
-
-# The PADDING EFFECT table subtracts both arms' rates over their common seeds only.
 
 
 def test_padding_table_subtracts_over_the_common_seeds_only(
@@ -815,9 +805,6 @@ def test_standing_question_flag_follows_holm_not_bonferroni(
     assert f"{p_between:.2e}" in line, line
     assert "SEPARATES (Holm, PRIMARY)" in line, line
     assert "uncorrected" not in line, line
-
-
-# Exact ties retain a distinct direction label.
 
 
 def test_exact_ties_are_labelled_tied_not_extens_higher(collapse_tree: Path) -> None:
