@@ -728,22 +728,21 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     rates[1, :, 1] = [0.97, 0.91, 0.83]
     rates[2, :, 1] = [0.95, 0.86, 0.74]
     contrasts = [
-        (f, a, i, f, b, i)
+        ((f, a, i), (f, b, i))
         for f, i in np.ndindex(N_FAMILIES, N_INFOS)
         for a, b in combinations(range(N_RUNGS), 2)
     ] + [
-        (f, r, a, f, r, b)
+        ((f, r, a), (f, r, b))
         for f, r in np.ndindex(N_FAMILIES, N_RUNGS)
         for a, b in combinations(range(N_INFOS), 2)
     ]
-    m_full = len(contrasts)
     # Raise survives ``-O``; this family sets every correction denominator.
-    if m_full != N_PRIMARY:
+    if len(contrasts) != N_PRIMARY:
         raise RuntimeError(
-            f"PART 4 built {m_full} contrasts but N_PRIMARY = {N_PRIMARY}; "
+            f"PART 4 built {len(contrasts)} contrasts but N_PRIMARY = {N_PRIMARY}; "
             "the simulated Bonferroni alpha would be wrong."
         )
-    true_diff = np.array([abs(rates[c[:3]] - rates[c[3:]]) for c in contrasts])
+    true_diff = np.array([abs(rates[a] - rates[b]) for a, b in contrasts])
     is_null = true_diff == 0.0
     n_true = int((~is_null).sum())
     n_true_ladder = int((~is_null[:N_LADDER_CONTRASTS]).sum())
@@ -762,11 +761,9 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
         succ[:, f, r, i, :] = rng.binomial(
             N_REPLICATES, rates[f, r, i], (n_sims, N_HARMONICS)
         )
-    pv = np.empty((n_sims, m_full))
-    for t, c in enumerate(contrasts):
-        pv[:, t] = cmh_p(
-            succ[:, c[0], c[1], c[2], :], succ[:, c[3], c[4], c[5], :], N_REPLICATES
-        )
+    pv = np.column_stack(
+        [cmh_p(succ[:, *a, :], succ[:, *b, :], N_REPLICATES) for a, b in contrasts]
+    )
     trend_p = np.column_stack(
         [
             chi2.sf(trend_stat(succ[:, f, :, i, :], N_REPLICATES), df=1)
@@ -775,11 +772,10 @@ def part4(rng: np.random.Generator, n_sims: int = 4000) -> dict:
     )
     pv_red = np.concatenate([trend_p, pv[:, N_LADDER_CONTRASTS:]], axis=1)
     null_red = np.concatenate([~ladder_nonflat, is_null[N_LADDER_CONTRASTS:]])
-    m_red = pv_red.shape[1]
     # PART 5 uses this reduced-family correction denominator.
-    if m_red != N_REDUCED:
+    if pv_red.shape[1] != N_REDUCED:
         raise RuntimeError(
-            f"PART 4 built {m_red} reduced tests but N_REDUCED = {N_REDUCED}; "
+            f"PART 4 built {pv_red.shape[1]} reduced tests but N_REDUCED = {N_REDUCED}; "
             "PART 5's study-wide alpha would be wrong."
         )
 
