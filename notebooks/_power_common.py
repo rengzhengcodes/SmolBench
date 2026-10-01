@@ -1,7 +1,7 @@
 """Shared analysis constants and the batched multiplicity corrections.
 
 Kept dependency-light (numpy plus smolbench) so any study's analysis scripts can
-import it (the deduction leg lands in slice 3).
+import it.
 """
 
 import numpy as np

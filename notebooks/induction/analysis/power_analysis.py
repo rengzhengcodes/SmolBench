@@ -180,11 +180,10 @@ def replicates_needed(
             f"rates_a and rates_b must have the same length, got "
             f"{len(rates_a)} and {len(rates_b)}"
         )
-    a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
     crit = chi2.isf(alpha, df=1)
-    cum_a = _cumulative_successes(rng, a, N_SIMS)
-    cum_b = _cumulative_successes(rng, b, N_SIMS)
+    cum_a = _cumulative_successes(rng, np.asarray(rates_a), N_SIMS)
+    cum_b = _cumulative_successes(rng, np.asarray(rates_b), N_SIMS)
     curve: dict[int, float] = {}
     for n_reps in range(1, MAX_REPLICATES + 1):
         stat = cmh_stat(
@@ -220,7 +219,7 @@ def fisher_check(
 ) -> float:
     """Cross-check power with pooled two-sided Fisher tests.
 
-    Cache discrete counts to limit SciPy calls.
+    Each distinct count pair is tested once to limit SciPy calls.
 
     Parameters
     ----------
@@ -243,15 +242,14 @@ def fisher_check(
     total = n_reps * N_HARMONICS
     succ_a = rng.binomial(n_reps, rates_a, size=(N_SIMS, rates_a.size)).sum(axis=1)
     succ_b = rng.binomial(n_reps, rates_b, size=(N_SIMS, rates_b.size)).sum(axis=1)
-    cache: dict[tuple[int, int], bool] = {}
-    rejections = 0
-    for ka, kb in zip(succ_a, succ_b):
-        key = (int(ka), int(kb))
-        if key not in cache:
-            _, p = fisher_exact([[ka, total - ka], [kb, total - kb]])
-            cache[key] = p <= alpha
-        rejections += cache[key]
-    return rejections / N_SIMS
+    pairs, counts = np.unique(
+        np.column_stack([succ_a, succ_b]), axis=0, return_counts=True
+    )
+    rejected = [
+        fisher_exact([[ka, total - ka], [kb, total - kb]])[1] <= alpha
+        for ka, kb in pairs
+    ]
+    return float(counts[rejected].sum() / N_SIMS)
 
 
 def _equivalence_power_curve(
@@ -265,20 +263,14 @@ def _equivalence_power_curve(
     z = norm.isf(alpha)
     cum_a = _cumulative_successes(rng, common, n_sims)
     cum_b = _cumulative_successes(rng, common, n_sims)
-    curve: dict[int, float] = {}
-    for n_reps in range(1, MAX_REPLICATES + 1):
-        total = n_reps * N_HARMONICS
-        succ_a = cum_a[:, n_reps - 1].sum(axis=1, dtype=np.int64)
-        succ_b = cum_b[:, n_reps - 1].sum(axis=1, dtype=np.int64)
-        adj_a, adj_b = (succ_a + 1) / (total + 2), (succ_b + 1) / (total + 2)
-        diff = adj_a - adj_b
-        se = np.sqrt(
-            adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2)
-        )
-        curve[n_reps] = float(
-            ((diff + z * se < delta) & (diff - z * se > -delta)).mean()
-        )
-    return curve
+    # Successes pooled over harmonics at every R: shape ``(n_sims, MAX_REPLICATES)``.
+    total = np.arange(1, MAX_REPLICATES + 1) * N_HARMONICS
+    adj_a = (cum_a.sum(axis=2, dtype=np.int64) + 1) / (total + 2)
+    adj_b = (cum_b.sum(axis=2, dtype=np.int64) + 1) / (total + 2)
+    diff = adj_a - adj_b
+    se = np.sqrt(adj_a * (1 - adj_a) / (total + 2) + adj_b * (1 - adj_b) / (total + 2))
+    power = ((diff + z * se < delta) & (diff - z * se > -delta)).mean(axis=0)
+    return dict(zip(range(1, MAX_REPLICATES + 1), power.tolist()))
 
 
 def equivalence_replicates(
@@ -356,13 +348,11 @@ def omnibus_power(
         Estimated omnibus-gate rejection fraction.
     """
     rungs = FAMILIES[family]
-    strata = [(k, info) for info in INFOS for k in range(N_HARMONICS)]
+    # (N_RUNGS, K) with the K strata ordered info-major, harmonic-minor.
     cell_rates = np.array(
-        [[rates[(rung, info)][k] for k, info in strata] for rung in rungs]
-    )  # (N_RUNGS, K)
-    succ = rng.binomial(
-        n_reps, cell_rates[None, :, :], size=(n_sims, len(rungs), len(strata))
+        [np.concatenate([rates[(rung, info)] for info in INFOS]) for rung in rungs]
     )
+    succ = rng.binomial(n_reps, cell_rates, size=(n_sims, *cell_rates.shape))
     return (gcmh_stat(succ, n_reps) > chi2.isf(alpha, df=N_RUNGS - 1)).mean()
 
 
