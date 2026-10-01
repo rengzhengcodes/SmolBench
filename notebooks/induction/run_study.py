@@ -231,9 +231,8 @@ CONTEXT_LIMIT: int = find_shared_context_limit(
     {key: ec2.get_model_context_length(key) for key in MODELS}
 )
 
-#: The ``[study]`` section of study_config.toml: one declaration shared with the
-#: analysis chain (``study_design.py``), so the driver and the reports cannot
-#: restate it differently.
+#: The ``[study]`` section of study_config.toml, shared with the analysis chain
+#: (``study_design.py``) so the driver and the reports cannot restate it differently.
 STUDY = load_study_config().study
 BASE_SEED: int = STUDY.base_seed
 N_REPLICATES: int = STUDY.n_replicates
