@@ -99,7 +99,6 @@ def load_marks(results_dir: Path = RESULTS_DIR) -> CellMarks:
             cell = (model, info)
             views.correct[cell], views.valid[cell], views.compliance[cell] = {}, {}, {}
             for seed in seeds:
-                # Reuse one load for every view.
                 addr = ReplicateAddress(tag=model, info=info, seed=seed)
                 marks = store.load_marks(addr).marks
                 scores = [m.score for m in marks]

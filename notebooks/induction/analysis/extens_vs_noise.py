@@ -12,12 +12,10 @@ from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 
-# Bare-name imports: sibling scripts from this directory, ``_power_common`` from ``notebooks/``.
+# Bare-name imports: sibling scripts from this directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import ALPHA
 from paired_analysis import (
     COLLAPSE_CRITERION,
     COLLAPSE_THRESHOLD,
@@ -119,12 +117,10 @@ def _lane_rows(marks: CellMarks, census: dict) -> list[dict]:
     """
     # Keep the full family: the displayed subset is selected after measurement.
     full = labeled_rows(marks, build_primary_contrasts())
-    holm_full = rejections(np.array([r["p_cluster"] for r in full]), "Holm", ALPHA)
-    holm_full_item = rejections(np.array([r["p_item"] for r in full]), "Holm", ALPHA)
+    holm_full = rejections(np.array([r["p_cluster"] for r in full]), "Holm")
+    holm_full_item = rejections(np.array([r["p_item"] for r in full]), "Holm")
     full_idx = {(r["key_a"], r["key_b"]): i for i, r in enumerate(full)}
 
-    # One lane per model: its family contrast row (``a`` = extens, ``b`` = noise)
-    # plus the family-level Holm decisions and the compliance annotation.
     rows = []
     for model in MODELS:
         ka, kb = (model, "extens"), (model, "noise_intens")
@@ -261,10 +257,10 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
 
     p_sub = np.array([r["p_cluster"] for r in rows])
     p_sub_item = np.array([r["p_item"] for r in rows])
-    h_sub = rejections(p_sub, "Holm", ALPHA)
-    hb_sub = rejections(p_sub, "Hochberg", ALPHA)
-    h_sub_item = rejections(p_sub_item, "Holm", ALPHA)
-    hb_sub_item = rejections(p_sub_item, "Hochberg", ALPHA)
+    h_sub = rejections(p_sub, "Holm")
+    hb_sub = rejections(p_sub, "Hochberg")
+    h_sub_item = rejections(p_sub_item, "Holm")
+    hb_sub_item = rejections(p_sub_item, "Hochberg")
 
     n_models = len(MODELS)
     n_seed_min = min(r["n_seeds"] for r in rows)
