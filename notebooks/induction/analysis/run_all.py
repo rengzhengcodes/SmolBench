@@ -16,7 +16,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import extens_vs_noise
-import multiplicity_sim
 import paired_analysis
 import power_analysis
 import significance_report
@@ -68,6 +67,10 @@ def main(
         _banner(module.__name__)
         module.main(results_dir)
     if args.with_sim:
+        # Imported on request: its import-time SCENARIO_RUNGS check and cost
+        # belong to the simulation, not to the reports.
+        import multiplicity_sim
+
         _banner(multiplicity_sim.__name__)
         multiplicity_sim.main(results_dir=results_dir)
     return 0
