@@ -132,7 +132,7 @@ def compliance_census(marks: CellMarks) -> dict:
     dict
         Cell key -> ``rate`` (pooled non-compliance), ``n`` (marks), ``modes``
         (`Counter` of non-compliant labels) and ``per_seed``
-        (seed -> ``(non_compliant, total)``).
+        (seed -> ``(non_compliant, total)``), skipping cells without marks.
     """
     out = {}
     for key, by_seed in marks.compliance.items():
@@ -141,6 +141,8 @@ def compliance_census(marks: CellMarks) -> dict:
             for seed, vals in by_seed.items()
         }
         n = sum(t for _nc, t in per_seed.values())
+        if not n:
+            continue
         out[key] = {
             "rate": sum(nc for nc, _t in per_seed.values()) / n,
             "n": n,
