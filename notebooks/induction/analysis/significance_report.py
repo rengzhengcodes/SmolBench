@@ -663,7 +663,6 @@ def _render_zero_arm_controls(report: Report) -> None:
             f"   p={r['p_cluster']:.2e}{r['collapse_tag']}"
         )
     if fails and report.floor_bound:
-        # Floor-bound failures are arithmetically forced and carry no information about padding.
         print(
             f"\n  All {len(fails)} failures are forced by the resolution floor "
             f"(see INCOMPLETE SYNC above):\n  at {depth_max} seeds no positive "
