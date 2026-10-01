@@ -57,7 +57,22 @@ _SKEW_SPLIT = 10
 def _skew_census(
     per_seed: Mapping[tuple[str, str], Mapping[int, int]],
 ) -> Callable[[dict], dict]:
-    """Wrap the census so `per_seed` ``{cell: {seed: non_compliant}}`` (of `N_HARMONICS` marks) overwrite it and the cell rate is recomputed."""
+    """Wrap the census so a test can skew compliance on a cached session tree.
+
+    Patching the census avoids building a new tree for every compliance pattern.
+
+    Parameters
+    ----------
+    per_seed : Mapping[tuple[str, str], Mapping[int, int]]
+        Per cell, the seeds whose non-compliant count (out of `N_HARMONICS`)
+        replaces the measured one.
+
+    Returns
+    -------
+    Callable[[dict], dict]
+        Drop-in for `significance_report.compliance_census` whose per-cell
+        ``rate`` is recomputed from the patched seeds.
+    """
     real = significance_report.compliance_census
 
     def skewed(marks: object) -> dict:
@@ -114,7 +129,18 @@ _STEEP_FAMILY, _STEEP_RUNGS = next(iter(FAMILIES.items()))
 
 
 def _steep_profile(depth: int) -> Callable[[str, str], Cell]:
-    """First family's rungs rise 0.2/0.5/0.9 over `depth` seeds; all else default."""
+    """Profile whose first family rises steeply while every other cell stays default.
+
+    Parameters
+    ----------
+    depth : int
+        Number of seeds in every cell, steep rungs included.
+
+    Returns
+    -------
+    Callable[[str, str], Cell]
+        `profile_for` profile with `_STEEP_RUNGS` at 0.2/0.5/0.9 on each non-zero arm.
+    """
     return profile_for(
         {
             (rung, info): (rate, 0.0, range(depth))

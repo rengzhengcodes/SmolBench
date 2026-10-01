@@ -44,7 +44,21 @@ def test_cmh_stat_matches_statsmodels() -> None:
 
 
 def _landis_gcmh(counts: np.ndarray) -> float:
-    """Landis general-association GCMH, ``(I - 1)(J - 1)`` df, for one table of counts indexed ``(row, column, stratum)``."""
+    """Landis general-association GCMH statistic for one stratified table.
+
+    Parameters
+    ----------
+    counts : np.ndarray
+        ``(row, column, stratum)`` table of counts.
+
+    Returns
+    -------
+    float
+        Landis general-association statistic on ``(I - 1)(J - 1)`` df.
+    """
+    # Landis, Heyman & Koch (1978): T sums observed-minus-expected over the leading
+    # (I-1)(J-1) cells; Cov is their hypergeometric covariance given the stratum
+    # margins, N**2/(N-1) * kron(V_rows, V_cols), summed over strata.
     n_i, n_j, _ = counts.shape
     t_vec = np.zeros((n_i - 1) * (n_j - 1))
     cov = np.zeros((t_vec.size, t_vec.size))

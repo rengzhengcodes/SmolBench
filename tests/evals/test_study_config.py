@@ -30,7 +30,7 @@ def _no_ambient_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_results_section_names_the_provisioned_bucket() -> None:
-    """Pin the configured results location."""
+    """The results section names the provisioned bucket, region and prefix."""
     results = sc.load_study_config().results
     assert (results.bucket, results.region) == (BUCKET, "us-west-2")
     # Keys begin with the experiment at the bucket root.
@@ -38,7 +38,7 @@ def test_results_section_names_the_provisioned_bucket() -> None:
 
 
 def test_fleet_section_carries_the_regions_and_the_tag_vocabulary() -> None:
-    """Pin fleet regions and tag forms."""
+    """The fleet section carries the three regions and both tag forms."""
     fleet = sc.load_study_config().fleet
     assert fleet.regions == ("us-east-1", "us-east-2", "us-west-2")
     assert fleet.tag_prefix == "scaling-"
@@ -46,13 +46,13 @@ def test_fleet_section_carries_the_regions_and_the_tag_vocabulary() -> None:
 
 
 def test_the_roster_is_exactly_the_non_smoke_deploy_specs() -> None:
-    """Pin roster checkpoints to non-smoke deploy specs."""
+    """The roster is exactly `EC2_DEPLOY_SPECS` minus the smoke entry: 21 keys."""
     assert sorted(sc.roster_keys()) == sorted(set(EC2_DEPLOY_SPECS) - {SMOKE_KEY})
     assert len(sc.roster_keys()) == 21
 
 
 def test_families_partition_the_roster_in_ladder_order() -> None:
-    """Pin three-rung families in roster order."""
+    """Seven three-rung families flatten to the roster, in roster order."""
     families = sc.load_study_config().roster.families
     assert len(families) == 7
     assert all(len(rungs) == 3 for rungs in families.values())
@@ -61,7 +61,7 @@ def test_families_partition_the_roster_in_ladder_order() -> None:
 
 
 def test_tag_for_is_total_over_the_roster_and_injective() -> None:
-    """Require unique roster tags and reject unknown keys."""
+    """Roster tags are unique and an unknown key raises `KeyError`."""
     tags = [sc.tag_for(key) for key in sc.roster_keys()]
     assert len(set(tags)) == len(tags)
     with pytest.raises(KeyError):
@@ -69,12 +69,15 @@ def test_tag_for_is_total_over_the_roster_and_injective() -> None:
 
 
 def test_load_study_config_is_cached() -> None:
-    """Cache the parsed configuration."""
+    """Repeated loads return the same parsed object."""
     assert sc.load_study_config() is sc.load_study_config()
 
 
 def test_the_config_reads_no_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep environment precedence in consumers, not cached config."""
+    """The config is identical with and without the S3 and fleet variables set.
+
+    Environment precedence belongs to consumers, not to the cached config.
+    """
     before = sc.load_study_config()
     monkeypatch.setenv("EC2_REGIONS", "eu-west-1")
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3", "s3://somebody-elses-bucket")
@@ -84,7 +87,7 @@ def test_the_config_reads_no_environment(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_ec2_default_regions_are_built_from_the_config() -> None:
-    """Build default EC2 regions from config with ``AWS_REGION`` first."""
+    """EC2's default regions are ``AWS_REGION`` then the configured fleet."""
     regions = sc.load_study_config().fleet.regions
     assert ec2._DEFAULT_REGIONS == ",".join(dict.fromkeys((ec2.AWS_REGION, *regions)))
     for region in regions:
@@ -92,7 +95,7 @@ def test_ec2_default_regions_are_built_from_the_config() -> None:
 
 
 def test_the_toml_is_declared_as_package_data() -> None:
-    """Ship the TOML in non-editable installs."""
+    """The TOML is package data, so non-editable installs ship it."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     package_data = pyproject["tool"]["setuptools"]["package-data"]
     assert "*.toml" in package_data["smolbench.evals"]
@@ -132,14 +135,27 @@ equivalence_deltas = [0.10, 0.15, 0.20]
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
-    """Write a TOML config fixture."""
+    """Write a study-config TOML for `load_study_config` to read.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Per-test directory the file is written into.
+    text : str
+        TOML document to write, usually a mutation of `GOOD_TOML`.
+
+    Returns
+    -------
+    Path
+        The written ``study_config.toml``.
+    """
     path = tmp_path / "study_config.toml"
     path.write_text(text)
     return path
 
 
 def test_a_well_formed_file_loads(tmp_path: Path) -> None:
-    """Load the unmodified fixture."""
+    """`GOOD_TOML` parses and every section round-trips to its dataclass."""
     cfg = sc.load_study_config(write_config(tmp_path, GOOD_TOML))
     assert cfg.results.bucket == "b"
     assert cfg.roster.families["fam"] == ("a", "b")
@@ -220,7 +236,7 @@ def test_a_malformed_config_raises_naming_the_defect(
     mutation: Callable[[str], str],
     expected: str,
 ) -> None:
-    """Name malformed configuration entries."""
+    """Each malformed entry raises `ValueError` naming the offending key."""
     with pytest.raises(ValueError) as exc:
         sc.load_study_config(write_config(tmp_path, mutation(GOOD_TOML)))
     assert expected in str(exc.value)
@@ -230,7 +246,7 @@ def test_a_malformed_config_raises_naming_the_defect(
 
 
 def test_the_default_results_uri_is_rendered_from_the_config() -> None:
-    """Render the configured canonical URI."""
+    """The default results URI is ``s3://`` plus the configured bucket."""
     from smolbench.evals.results_store import default_results_uri
 
     assert default_results_uri() == f"s3://{BUCKET}"
@@ -240,7 +256,7 @@ def test_sync_down_names_the_default_uri_when_the_env_is_unset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Name the required URI when sync is unconfigured."""
+    """An unconfigured sync fails naming the default URI it needed."""
     from smolbench.evals.results_store import default_results_uri, sync_down
 
     monkeypatch.delenv("SMOLBENCH_RESULTS_S3", raising=False)

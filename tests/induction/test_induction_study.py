@@ -164,6 +164,7 @@ class CountingTokenizer(StubTokenizer):
     """Stub tokenizer that records count calls."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
     def count(self, text: str) -> int:

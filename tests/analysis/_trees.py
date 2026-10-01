@@ -11,7 +11,7 @@ import shutil
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional, Union
 
 import numpy as np
 import pytest
@@ -74,11 +74,13 @@ def copies_from(
     return {(m, i): source for m in MODELS for i in infos if (m, i) != source}
 
 
-#: ``(rate, noncompliance, seeds[, invalid])``; `noncompliance` may be a per-seed function.
-Cell = (
-    tuple[float, float | Callable[[int], float], Sequence[int]]
-    | tuple[float, float | Callable[[int], float], Sequence[int], float]
-)
+class Cell(NamedTuple):
+    """One cell's generating parameters; `noncompliance` may be a per-seed function."""
+
+    rate: float
+    noncompliance: Union[float, Callable[[int], float]]
+    seeds: Sequence[int]
+    invalid: float = 0.0
 
 
 def run_captured(fn: Callable[[], object]) -> str:
@@ -111,7 +113,8 @@ def profile_for(
     Parameters
     ----------
     overrides : Optional[Mapping[tuple[str, str], Cell]]
-        Explicit cells keyed by ``(model, info)``; all others use the default.
+        Explicit cells keyed by ``(model, info)``, as `Cell` or positional tuple;
+        all others use the default.
     rate : float
         Accuracy of the default non-zero cells.
     depth : int
@@ -126,8 +129,8 @@ def profile_for(
     """
 
     def profile(model: str, info: str) -> Cell:
-        base: Cell = ((0.10 if info == "zero" else rate), 0.0, range(depth), invalid)
-        return (overrides or {}).get((model, info), base)
+        base = ((0.10 if info == "zero" else rate), 0.0, range(depth), invalid)
+        return Cell(*(overrides or {}).get((model, info), base))
 
     return profile
 
@@ -135,7 +138,24 @@ def profile_for(
 def _marks_for(
     rate: float, noncompliance: float, rng: np.random.Generator, invalid: float = 0.0
 ) -> Marks:
-    """Draw one `N_HARMONICS`-mark replicate; `rate`, `noncompliance` and `invalid` are independent per-mark probabilities."""
+    """Draw one `N_HARMONICS`-mark replicate from independent per-mark probabilities.
+
+    Parameters
+    ----------
+    rate : float
+        P(score = 1) for each mark.
+    noncompliance : float
+        P(compliance = EMPTY) for each mark.
+    rng : np.random.Generator
+        Source of the draws, in the order scores, then non-compliance, then invalid.
+    invalid : float
+        P(score = None) for each mark.
+
+    Returns
+    -------
+    Marks
+        One `N_HARMONICS`-mark replicate for ``stub-model``.
+    """
     scores = rng.random(N_HARMONICS) < rate
     bad = rng.random(N_HARMONICS) < noncompliance
     null = rng.random(N_HARMONICS) < invalid
@@ -172,20 +192,23 @@ def build_tree(
     """
     for model in MODELS:
         for info in INFOS:
-            rate, noncompliance, seeds, *rest = profile(model, info)
-            invalid = rest[0] if rest else 0.0
+            cell = profile(model, info)
             cdir = root / f"{model}_{info}"
             cdir.mkdir(parents=True, exist_ok=True)
-            for seed in seeds:
+            for seed in cell.seeds:
                 # Avoid randomized hash() so report assertions are reproducible.
                 digest = hashlib.blake2b(
                     f"{model}/{info}/{seed}".encode(), digest_size=4
                 ).digest()
                 rng = np.random.default_rng(int.from_bytes(digest, "big"))
                 seed_nc = (
-                    noncompliance(seed) if callable(noncompliance) else noncompliance
+                    cell.noncompliance(seed)
+                    if callable(cell.noncompliance)
+                    else cell.noncompliance
                 )
-                _marks_for(rate, seed_nc, rng, invalid).dump(cdir / f"rep_{seed}.yaml")
+                _marks_for(cell.rate, seed_nc, rng, cell.invalid).dump(
+                    cdir / f"rep_{seed}.yaml"
+                )
     for dst, src in (copies or {}).items():
         dst_dir = root / f"{dst[0]}_{dst[1]}"
         shutil.rmtree(dst_dir, ignore_errors=True)

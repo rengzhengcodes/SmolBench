@@ -37,7 +37,18 @@ from tests.analysis._trees import (
 
 
 def _noisy_curve(n: int) -> float:
-    """Simulated power at `n` replicates whose first crossing is not sustained: it dips at seven."""
+    """Simulated power curve whose first crossing is not sustained.
+
+    Parameters
+    ----------
+    n : int
+        Replicate count being sized.
+
+    Returns
+    -------
+    float
+        0.85 from five replicates on, except a dip to 0.79 at seven.
+    """
     return 0.79 if n == 7 else 0.85 if n >= 5 else 0.1
 
 
@@ -93,7 +104,20 @@ def test_walkers_skip_an_unparsable_replicate_filename(small_tree: Path) -> None
 
 
 def _copied_replicate(small_tree: Path, tmp_path: Path) -> Path:
-    """Copy `small_tree` into `tmp_path` (so corruption never leaks) and return `FIRST_CELL`'s ``rep_0.yaml``."""
+    """Copy `small_tree` into `tmp_path` so a test can corrupt it without leaking.
+
+    Parameters
+    ----------
+    small_tree : Path
+        Module-scoped tree shared by the loader tests.
+    tmp_path : Path
+        Per-test directory that receives the copy.
+
+    Returns
+    -------
+    Path
+        `FIRST_CELL`'s ``rep_0.yaml`` inside the copy.
+    """
     shutil.copytree(small_tree, tmp_path, dirs_exist_ok=True)
     return tmp_path / f"{FIRST_CELL[0]}_{FIRST_CELL[1]}" / "rep_0.yaml"
 
@@ -456,7 +480,18 @@ def test_icc_zero_consumes_only_the_two_item_latent_draws() -> None:
 
 
 def _within_replicate_phi(marks: np.ndarray) -> float:
-    """Mean ``np.corrcoef`` over distinct item pairs (items on the last axis): an independent reference for the pooled-moment ``phi_binary`` PART 3 prints."""
+    """Independent reference for the pooled-moment ``phi_binary`` PART 3 prints.
+
+    Parameters
+    ----------
+    marks : np.ndarray
+        Binary marks with items on the last axis.
+
+    Returns
+    -------
+    float
+        Mean ``np.corrcoef`` over distinct item pairs.
+    """
     x = marks.reshape(-1, marks.shape[-1]).astype(float)
     corr = np.corrcoef(x.T)
     return float(corr[np.triu_indices(x.shape[1], 1)].mean())
