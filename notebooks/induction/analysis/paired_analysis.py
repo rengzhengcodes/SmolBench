@@ -132,7 +132,7 @@ def compliance_census(marks: CellMarks) -> dict:
     dict
         Cell key -> ``rate`` (pooled non-compliance), ``n`` (marks), ``modes``
         (`Counter` of non-compliant labels) and ``per_seed``
-        (seed -> ``(non_compliant, total)``), skipping cells without marks.
+        (seed -> ``(non_compliant, total)``).
     """
     out = {}
     for key, by_seed in marks.compliance.items():
@@ -141,8 +141,6 @@ def compliance_census(marks: CellMarks) -> dict:
             for seed, vals in by_seed.items()
         }
         n = sum(t for _nc, t in per_seed.values())
-        if not n:
-            continue
         out[key] = {
             "rate": sum(nc for nc, _t in per_seed.values()) / n,
             "n": n,
@@ -581,7 +579,6 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
             _print_standing_question(rows, rej_cl)
             _print_design_effects(des)
 
-    # --- Tier 3 (SECONDARY) gets the same treatment, for completeness --------
     sec = build_secondary_contrasts()
     sec_rows = labeled_rows(marks, sec)
     n_disc = {
