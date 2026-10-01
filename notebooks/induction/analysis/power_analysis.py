@@ -353,12 +353,7 @@ def equivalence_replicates(
 
 
 def omnibus_power(
-    rates: CellVectors,
-    family: str,
-    n_reps: int,
-    rng: np.random.Generator,
-    alpha: float = ALPHA_OMNIBUS,
-    n_sims: int = N_SIMS,
+    rates: CellVectors, family: str, n_reps: int, rng: np.random.Generator
 ) -> float:
     """Estimate a family's Tier-1 omnibus-gate power.
 
@@ -374,23 +369,19 @@ def omnibus_power(
         Replicates per rung and stratum.
     rng : np.random.Generator
         Random-number generator for simulations.
-    alpha : float, optional
-        Test significance threshold.
-    n_sims : int, optional
-        Number of simulated experiments.
 
     Returns
     -------
     float
-        Estimated omnibus-gate rejection fraction.
+        Estimated omnibus-gate rejection fraction over `N_SIMS` simulations.
     """
     rungs = FAMILIES[family]
     # (N_RUNGS, K) with the K strata ordered info-major, harmonic-minor.
     cell_rates = np.array(
         [np.concatenate([rates[(rung, info)] for info in INFOS]) for rung in rungs]
     )
-    succ = rng.binomial(n_reps, cell_rates, size=(n_sims, *cell_rates.shape))
-    return (gcmh_stat(succ, n_reps) > chi2.isf(alpha, df=N_RUNGS - 1)).mean()
+    succ = rng.binomial(n_reps, cell_rates, size=(N_SIMS, *cell_rates.shape))
+    return (gcmh_stat(succ, n_reps) > chi2.isf(ALPHA_OMNIBUS, df=N_RUNGS - 1)).mean()
 
 
 def omnibus_interaction_power(rates: CellVectors, n_reps: int) -> float:
