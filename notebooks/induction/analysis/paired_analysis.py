@@ -321,8 +321,8 @@ def rejections(pvals: np.ndarray, method: str, level: float = ALPHA) -> np.ndarr
 
     ``"Holm"`` (PRIMARY) permits arbitrary dependence among shared models, seeds and
     harmonics; ``"Hochberg"`` is sensitivity-only, its positive-dependence condition
-    unverified; ``"BH"`` controls FDR and takes the `Q_SECONDARY` level owned by
-    power_analysis.
+    unverified; ``"BH"`` controls FDR and takes the `Q_SECONDARY` level from
+    `study_design`.
 
     Parameters
     ----------

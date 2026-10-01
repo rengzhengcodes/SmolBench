@@ -229,24 +229,7 @@ def _parse_study_config(data: dict) -> StudyConfig:
 
 
 def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
-    """Return `mapping[name]` after checking it is an integer of at least `floor`.
-
-    Parameters
-    ----------
-    mapping : dict
-        TOML section holding the key.
-    name : str
-        Key to read.
-    within : str
-        TOML section suffix for the error message.
-    floor : int
-        Smallest accepted value.
-
-    Returns
-    -------
-    int
-        The validated value.
-    """
+    """Return `mapping[name]` after checking it is an integer of at least `floor`."""
     value = _require(mapping, name, within)
     # bool is an int subclass, and ``seed = true`` is a typo, not a seed.
     if not isinstance(value, int) or isinstance(value, bool) or value < floor:
@@ -260,22 +243,7 @@ def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
 def _ascending_unit_floats(
     mapping: dict, name: str, within: str
 ) -> "tuple[float, ...]":
-    """Return `mapping[name]` as a non-empty, strictly ascending tuple of values in (0, 1).
-
-    Parameters
-    ----------
-    mapping : dict
-        TOML section holding the key.
-    name : str
-        Key to read.
-    within : str
-        TOML section suffix for the error message.
-
-    Returns
-    -------
-    tuple[float, ...]
-        The validated levels.
-    """
+    """Return `mapping[name]` as a non-empty, strictly ascending tuple of values in (0, 1)."""
     values = tuple(float(v) for v in _require(mapping, name, within))
     if (
         not values
@@ -334,26 +302,6 @@ def roster_keys() -> "tuple[str, ...]":
     return tuple(
         key for rungs in load_study_config().roster.families.values() for key in rungs
     )
-
-
-def families() -> "Mapping[str, tuple[str, ...]]":
-    """Return roster families in ladder order."""
-    return load_study_config().roster.families
-
-
-def n_rungs() -> int:
-    """Return the rung count every family shares."""
-    return load_study_config().roster.n_rungs
-
-
-def study_params() -> StudyParams:
-    """Return the ``[study]`` collection parameters."""
-    return load_study_config().study
-
-
-def analysis_params() -> AnalysisParams:
-    """Return the ``[analysis]`` statistical knobs."""
-    return load_study_config().analysis
 
 
 def tag_for(key: str) -> str:

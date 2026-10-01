@@ -34,8 +34,8 @@ exactly three components shaped `notebooks/<study>/results`; anything else
 takes the full-path fallback and a different prefix. Script depth is free:
 the write side takes `<study>` from the literal `notebook_dir="induction"`
 passed to `InductionExperiment`, never from a `__file__`, and readers anchor
-through `_power_common.results_dir(__file__, up=N)` (`up=1` under
-`analysis/`, pinned by `tests/tooling/test_analysis_stats.py`).
+through `study_design.RESULTS_DIR`, built from `repo_root()` and the literal
+study name.
 
 **Both `run_study.py` files are launched by literal path.**
 `scripts/fleet/run_fleet.py` builds each lane's argv from

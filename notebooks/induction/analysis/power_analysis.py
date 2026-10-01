@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 import statsmodels.api as sm
-from _power_common import ALPHA, POWER_TARGETS, SEED
+from _power_common import ALPHA, EQUIVALENCE_DELTAS, POWER_TARGETS, SEED
 from scipy.stats import chi2, fisher_exact, norm
 from statsmodels.tools.sm_exceptions import PerfectSeparationWarning
 from study_design import (
@@ -32,7 +32,6 @@ from study_design import (
     ALPHA_PRIMARY,
     ALPHA_SECONDARY,
     BASE_SEED,
-    EQUIVALENCE_DELTAS,
     FAMILIES,
     INFOS,
     MODELS,
@@ -140,15 +139,45 @@ def _cumulative_successes(
 
 
 @functools.lru_cache(maxsize=None)
-def _sizing_scan(rates_a: tuple, rates_b: tuple, alpha: float) -> _SizingScan:
-    """`replicates_needed`'s memoized core, keyed on hashable rate tuples.
+def replicates_needed(
+    rates_a: tuple[float, ...],
+    rates_b: tuple[float, ...],
+    alpha: float = ALPHA_PRIMARY,
+) -> _SizingScan:
+    """Find the smallest replicate count for each power target.
 
-    Common random numbers: the R-replicate design is the first R trials of one
-    `MAX_REPLICATES`-long Bernoulli stream per harmonic and arm, so successive R
-    share their noise and sampling error cannot reorder neighbouring R. Each
-    target's R is the `_sustained_crossing`, so the maximum over contrasts powers
-    every contrast at that R.
+    Memoized on the rate tuples (hence tuples, not arrays) and seeded per scan,
+    so cache hits and recomputations agree. Common random numbers: the
+    R-replicate design is the first R trials of one `MAX_REPLICATES`-long
+    Bernoulli stream per harmonic and arm, so successive R share their noise and
+    sampling error cannot reorder neighbouring R. Each target's R is the
+    `_sustained_crossing`, so the maximum over contrasts powers every contrast
+    at that R.
+
+    Parameters
+    ----------
+    rates_a : tuple[float, ...]
+        Per-harmonic rates for the first condition.
+    rates_b : tuple[float, ...]
+        Per-harmonic rates for the second condition.
+    alpha : float, optional
+        Per-test significance threshold.
+
+    Returns
+    -------
+    _SizingScan
+        ``(needed, curve)``: power target -> smallest R from which power stays at or above it, and power by R.
+
+    Raises
+    ------
+    ValueError
+        If `rates_a` and `rates_b` differ in length.
     """
+    if len(rates_a) != len(rates_b):
+        raise ValueError(
+            f"rates_a and rates_b must have the same length, got "
+            f"{len(rates_a)} and {len(rates_b)}"
+        )
     a, b = np.asarray(rates_a), np.asarray(rates_b)
     rng = np.random.default_rng(SEED)
     crit = chi2.isf(alpha, df=1)
@@ -177,43 +206,6 @@ def _sustained_crossing(curve: dict[int, float], target: float) -> Optional[int]
             break
         needed = n_reps
     return needed
-
-
-def replicates_needed(
-    rates_a: np.ndarray,
-    rates_b: np.ndarray,
-    alpha: float = ALPHA_PRIMARY,
-) -> _SizingScan:
-    """Find the smallest replicate count for each power target.
-
-    Cache rate values and seed each scan so hits and recomputations agree.
-
-    Parameters
-    ----------
-    rates_a : np.ndarray
-        Per-harmonic rates for the first condition.
-    rates_b : np.ndarray
-        Per-harmonic rates for the second condition.
-    alpha : float, optional
-        Per-test significance threshold.
-
-    Returns
-    -------
-    _SizingScan
-        ``(needed, curve)``: power target -> smallest R from which power stays at or above it, and power by R.
-
-    Raises
-    ------
-    ValueError
-        If `rates_a` and `rates_b` differ in shape.
-    """
-    if rates_a.shape != rates_b.shape:
-        raise ValueError(
-            f"rates_a and rates_b must have the same shape, got "
-            f"{rates_a.shape} and {rates_b.shape}"
-        )
-    needed, curve = _sizing_scan(tuple(rates_a), tuple(rates_b), float(alpha))
-    return dict(needed), dict(curve)
 
 
 def fisher_check(
@@ -452,8 +444,8 @@ def _compute_sizing_results(
             name,
             key_a,
             key_b,
-            replicates_needed(rates[key_a], rates[key_b], alpha=alpha)[0],
-            replicates_needed(pooled[key_a], pooled[key_b], alpha=alpha)[0],
+            replicates_needed(tuple(rates[key_a]), tuple(rates[key_b]), alpha)[0],
+            replicates_needed(tuple(pooled[key_a]), tuple(pooled[key_b]), alpha)[0],
         )
         for name, key_a, key_b in contrasts
     ]
@@ -537,8 +529,7 @@ def primary_contrasts_table(rates: CellVectors, pooled: CellVectors) -> dict:
     """Build PRIMARY sizing data and recommendation inputs.
 
     `r_star` is the smallest R that powers every contrast that is powerable
-    within `MAX_REPLICATES`; `n_censored` counts the contrasts it leaves unpowered, and
-    `family_r` is the whole-family R (``None`` when any contrast is censored).
+    within `MAX_REPLICATES`; `n_censored` counts the contrasts it leaves unpowered.
 
     Parameters
     ----------
@@ -550,7 +541,7 @@ def primary_contrasts_table(rates: CellVectors, pooled: CellVectors) -> dict:
     Returns
     -------
     dict
-        With keys `results`, `r_star`, `family_r`, `n_censored`, `label_w`.
+        With keys `results`, `r_star`, `n_censored`, `label_w`.
 
     Raises
     ------
@@ -575,7 +566,6 @@ def primary_contrasts_table(rates: CellVectors, pooled: CellVectors) -> dict:
     return {
         "results": results,
         "r_star": r_star,
-        "family_r": r_star if n_censored == 0 else None,
         "n_censored": n_censored,
         "label_w": max(len(name) for name, *_ in results),
     }
@@ -651,7 +641,7 @@ def render_recommended_replicates(primary: dict) -> None:
         f"({(r_star - 1) * N_HARMONICS} more questions) per condition beyond "
         f"the existing pilot run."
     )
-    if primary["family_r"] is None:
+    if n_censored:
         print(
             f"  Whole-family sizing is CENSORED: {n_censored} of "
             f"{n_primary} PRIMARY contrasts never reached "
@@ -664,7 +654,7 @@ def render_recommended_replicates(primary: dict) -> None:
         print(
             f"  All {n_primary} PRIMARY contrasts reach "
             f"{POWER_TARGETS[0]:.0%} by "
-            f"R={primary['family_r']}; the family is fully powered."
+            f"R={r_star}; the family is fully powered."
         )
     print(
         f"  The study itself collects R={N_REPLICATES} (user-locked in "

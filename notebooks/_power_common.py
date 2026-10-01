@@ -1,41 +1,20 @@
-"""Shared analysis constants and result-path helpers.
+"""Shared analysis constants and the batched multiplicity corrections.
 
 Kept dependency-light (numpy plus smolbench) so any study's analysis scripts can
 import it (the deduction leg lands in slice 3).
 """
 
-from pathlib import Path
-
 import numpy as np
 
-from smolbench.evals.results_store import repo_root
-from smolbench.evals.study_config import analysis_params
+from smolbench.evals.study_config import load_study_config
 
 #: The ``[analysis]`` section of study_config.toml, where each knob's rationale lives.
-ANALYSIS = analysis_params()
+ANALYSIS = load_study_config().analysis
 SEED = ANALYSIS.seed
 ALPHA = ANALYSIS.alpha
 POWER_TARGETS = ANALYSIS.power_targets
-
-
-def results_dir(study: str) -> Path:
-    """Return the study results directory.
-
-    Mirrors ``Experiment.results_dir``: ``notebooks/<study>/results`` is the path
-    ``experiment_name`` parses into the S3 experiment key, so it derives from the
-    study name rather than from the caller's file location.
-
-    Parameters
-    ----------
-    study : str
-        Study directory name under ``notebooks/``.
-
-    Returns
-    -------
-    Path
-        ``<repo>/notebooks/<study>/results``.
-    """
-    return repo_root() / "notebooks" / study / "results"
+#: TOST equivalence margins.
+EQUIVALENCE_DELTAS = ANALYSIS.equivalence_deltas
 
 
 def _stepup(ok: np.ndarray) -> np.ndarray:

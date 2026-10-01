@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import ALPHA, SEED
+from _power_common import ALPHA, EQUIVALENCE_DELTAS, SEED
 from paired_analysis import (
     COLLAPSE_CRITERION,
     COLLAPSE_THRESHOLD,
@@ -33,7 +33,6 @@ from paired_analysis import (
 from scipy.stats import chi2
 from study_design import (
     ALPHA_OMNIBUS,
-    EQUIVALENCE_DELTAS,
     FAMILIES,
     INFOS,
     MODELS,
@@ -108,7 +107,7 @@ def permutation_omnibus_p(
         Correct marks shaped ``(n_seeds, N_RUNGS, K)``, strata ordered
         ``(info, k) for info in INFOS for k in range(N_HARMONICS)``.
     stat_obs : float
-        Observed `power_analysis.gcmh_stat` value.
+        Observed `study_design.gcmh_stat` value.
     rng : np.random.Generator
         Random-number generator for the permutations.
 
@@ -135,11 +134,6 @@ def omnibus_gates(marks: CellMarks) -> dict[str, dict]:
     ``(info, harmonic)`` like `power_analysis.omnibus_power`. The marks are
     the observed ones, so strata hold only the seeds all of the family's cells
     share; an absent cell or empty intersection yields the no-data entry.
-
-    Under the gate's null the family's rungs are exchangeable within each
-    seed. The gate rejects only when BOTH the asymptotic chi2 p-value and the
-    within-seed permutation p-value (cluster-valid) clear `ALPHA_OMNIBUS` --
-    ``p_gate`` is the stricter of the two.
 
     Parameters
     ----------
@@ -249,19 +243,6 @@ def _print_signed(rows: list, sign: str, key: str) -> None:
         print(
             f"   {sign}{r['label']:52s} item {r['p_item']:.3e} -> "
             f"cluster {r['p_cluster']:.3e}"
-        )
-
-
-def _step_boundary(rows: list, n_rej: int) -> None:
-    """Print the Holm ranks two either side of the stopping boundary `n_rej`, each with its own step threshold."""
-    m = len(rows)
-    ranked = sorted(rows, key=lambda r: r["p_cluster"])
-    print("\nHolm step-down at the boundary (rank / p / own threshold):")
-    for i in range(max(n_rej - 2, 0), min(n_rej + 2, m)):
-        mark = "REJ " if i < n_rej else "stop"
-        print(
-            f"  {mark} rank {i + 1:3d}  p={ranked[i]['p_cluster']:.4e}  "
-            f"thr={ALPHA / (m - i):.4e}   {ranked[i]['label']}"
         )
 
 
@@ -428,12 +409,19 @@ def _render_correction_cost(report: Report) -> None:
     for r in extra:
         print(f"   +{r['label']:52s} p={r['p_cluster']:.3e}")
 
-    _step_boundary(rows, int(hp.sum()))
+    n_rej = int(hp.sum())
+    ranked = sorted(rows, key=lambda r: r["p_cluster"])
+    print("\nHolm step-down at the boundary (rank / p / own threshold):")
+    for i in range(max(n_rej - 2, 0), min(n_rej + 2, m)):
+        mark = "REJ " if i < n_rej else "stop"
+        print(
+            f"  {mark} rank {i + 1:3d}  p={ranked[i]['p_cluster']:.4e}  "
+            f"thr={ALPHA / (m - i):.4e}   {ranked[i]['label']}"
+        )
 
 
 def _render_collapse_census(report: Report) -> None:
     """Print the collapse census: the padding effect per lane, then every cell at or above the criterion."""
-    # COLLAPSE CENSUS: a result, not a data-quality footnote.
     # pad_rows supplies the intro's denominator; `len(MODELS)` would over-count unpaired lanes.
     census = report.census
     over, pad_rows, pad_lanes = report.over, report.pad_rows, report.pad_lanes
@@ -620,7 +608,6 @@ def _render_gates_and_findings(report: Report) -> None:
 
 def _render_zero_arm_controls(report: Report) -> None:
     """Print the arm-vs-floor positive controls, the partition of their failures and the zero-vs-zero contrasts."""
-    # zero-arm controls
     rows, hp = report.rows, report.hp
     depth_max = max(r["n_seeds"] for r in rows)
     zz, passing, reversed_ = report.zero_vs_zero, report.passing, report.reversed_
@@ -706,7 +693,6 @@ def _render_zero_arm_controls(report: Report) -> None:
 
 def _render_not_significant(report: Report) -> None:
     """Print the not-significant count, the ceiling pairs and the cluster test's resolution floor."""
-    # what is NOT significant, which is half the story
     rows = report.rows
     sel, tot = report.findings, sum(r["kind"] == "finding" for r in rows)
     depth_min = min(r["n_seeds"] for r in rows)

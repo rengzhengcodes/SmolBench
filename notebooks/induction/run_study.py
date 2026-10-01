@@ -125,7 +125,6 @@ from smolbench.evals.providers import ec2
 from smolbench.evals.study_config import (
     load_study_config,
     roster_keys,
-    study_params,
     tag_for,
 )
 from smolbench.evals.tokenization import for_model
@@ -235,7 +234,7 @@ CONTEXT_LIMIT: int = find_shared_context_limit(
 #: The ``[study]`` section of study_config.toml: one declaration shared with the
 #: analysis chain (``study_design.py``), so the driver and the reports cannot
 #: restate it differently.
-STUDY = study_params()
+STUDY = load_study_config().study
 BASE_SEED: int = STUDY.base_seed
 N_REPLICATES: int = STUDY.n_replicates
 N_HARMONICS: int = STUDY.n_harmonics

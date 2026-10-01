@@ -1,11 +1,4 @@
-"""Pre-registered induction design: roster, contrast tiers, correction thresholds, and the test statistics the tiers are evaluated with.
-
-This study is exploratory end to end: it is pilot-sized, its sizing rests on an
-independent-harmonic approximation, and it makes no confirmatory claims.
-The Tier-1 omnibus gate and the Holm/BH corrections order the evidence within
-that exploratory frame; a gated ladder finding is a stronger exploratory
-signal, not a confirmed effect.
-"""
+"""Pre-registered induction design: roster, contrast tiers, correction thresholds, and the test statistics the tiers are evaluated with."""
 
 import math
 import sys
@@ -16,40 +9,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
-from _power_common import ALPHA, results_dir
+from _power_common import ALPHA
 from scipy.stats import binom, chi2
 
-from smolbench.evals.study_config import (
-    analysis_params,
-    families,
-    n_rungs,
-    roster_keys,
-    study_params,
-    tag_for,
-)
+from smolbench.evals.results_store import repo_root
+from smolbench.evals.study_config import load_study_config
 from smolbench.induction.periodic import CONDITIONS
 
-# Derive tags from the committed configuration.
-ROSTER_KEYS = tuple(roster_keys())
-MODELS = tuple(tag_for(key) for key in ROSTER_KEYS)
+# The committed study_config.toml, the same declaration run_study.py collects
+# with; each value's rationale is written beside it there.
+_CONFIG = load_study_config()
 
+# Analysis tags in ladder order, which is the roster's declaration order.
 FAMILIES: dict[str, tuple[str, ...]] = {
-    family: tuple(tag_for(key) for key in rungs) for family, rungs in families().items()
+    family: tuple(_CONFIG.roster.tags[key] for key in rungs)
+    for family, rungs in _CONFIG.roster.families.items()
 }
+MODELS = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
 
 # Arm names in the order run_study collects them.
 INFOS = tuple(CONDITIONS)
-RESULTS_DIR = results_dir("induction")
-# The ``[study]`` section of study_config.toml, the same declaration run_study.py
-# collects with; each value's rationale is written beside it there.
-_STUDY = study_params()
-BASE_SEED = _STUDY.base_seed
-N_REPLICATES = _STUDY.n_replicates
-N_HARMONICS = _STUDY.n_harmonics
-#: TOST equivalence margins from the ``[analysis]`` section.
-EQUIVALENCE_DELTAS = analysis_params().equivalence_deltas
+# Mirrors ``Experiment.results_dir``: notebooks/<study>/results is the path
+# ``experiment_name`` parses into the S3 key, so it derives from the study name.
+RESULTS_DIR = repo_root() / "notebooks" / "induction" / "results"
+BASE_SEED = _CONFIG.study.base_seed
+N_REPLICATES = _CONFIG.study.n_replicates
+N_HARMONICS = _CONFIG.study.n_harmonics
 
-N_RUNGS = n_rungs()
+N_RUNGS = _CONFIG.roster.n_rungs
 N_INFOS = len(INFOS)
 N_FAMILIES = len(FAMILIES)
 N_LADDERS = N_FAMILIES * N_INFOS
@@ -134,7 +121,7 @@ def cmh_p(succ_a: np.ndarray, succ_b: np.ndarray, n: int | np.ndarray) -> np.nda
 
 
 def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
-    """Compute generalized-CMH statistics for three-rung families.
+    """Compute generalized-CMH statistics for `N_RUNGS`-rung families.
 
     Uniform rung and stratum trials permit the fixed covariance shortcut.
     Singular batches return zero because their residual is zero.
@@ -142,7 +129,7 @@ def gcmh_stat(succ: np.ndarray, n_per_stratum: int) -> np.ndarray:
     Parameters
     ----------
     succ : np.ndarray
-        Success counts with shape ``(n_sims, 3, K)``.
+        Success counts with shape ``(n_sims, N_RUNGS, K)``.
     n_per_stratum : int
         Trials per rung and stratum.
 
@@ -220,39 +207,3 @@ def build_secondary_contrasts() -> list[Contrast]:
         for r in range(N_RUNGS)
         for fam_a, fam_b in combinations(FAMILIES, 2)
     ]
-
-
-def check_design_invariants() -> None:
-    """Check protocol denominators and contrast builders agree.
-
-    The roster itself is not re-pinned here: study_config.toml is its single
-    declaration and git history is the record of every change to it. Wrong
-    counts invalidate correction thresholds. Raises ``RuntimeError`` because
-    ``python -O`` removes assertions.
-    """
-    # A MODELS/FAMILIES disagreement silently changes which contrasts exist.
-    expected_models = tuple(rung for rungs in FAMILIES.values() for rung in rungs)
-    if MODELS != expected_models:
-        raise RuntimeError(
-            f"MODELS {MODELS!r} disagrees with FAMILIES' rungs {expected_models!r}"
-        )
-
-    n_primary = len(build_primary_contrasts())
-    if n_primary != N_PRIMARY:
-        raise RuntimeError(
-            f"build_primary_contrasts() returns {n_primary}, expected "
-            f"N_PRIMARY={N_PRIMARY}; ALPHA_PRIMARY={ALPHA_PRIMARY:.6g} was "
-            "frozen at import"
-        )
-
-    n_secondary = len(build_secondary_contrasts())
-    if n_secondary != N_SECONDARY:
-        raise RuntimeError(
-            f"build_secondary_contrasts() returns {n_secondary}, expected "
-            f"N_SECONDARY={N_SECONDARY}; ALPHA_SECONDARY={ALPHA_SECONDARY:.6g} "
-            "was frozen at import"
-        )
-
-
-# Run after contrast builders and before pilot data access.
-check_design_invariants()

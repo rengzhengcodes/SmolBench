@@ -14,11 +14,10 @@
 #   - notebooks/induction/analysis/study_design.py
 #                                             ([roster] -> MODELS, FAMILIES,
 #                                              rendered into analysis tags;
-#                                              [study] and [analysis] -> the
-#                                              design constants every report
-#                                              imports)
+#                                              [study] -> the collection
+#                                              constants every report imports)
 #   - notebooks/_power_common.py             ([analysis] -> SEED, ALPHA,
-#                                              POWER_TARGETS)
+#                                              POWER_TARGETS, EQUIVALENCE_DELTAS)
 #
 # This file is the audit surface for the above: written to be read by a
 # human, hence the comments below. study_config.py reads NOTHING from the
@@ -115,8 +114,7 @@ base_seed = 0
 # Replicates are the sampling unit; more harmonics would change the task.
 n_harmonics = 9
 
-# Analysis-wide statistical knobs, read once by notebooks/_power_common.py and
-# study_design.py.
+# Analysis-wide statistical knobs, read once by notebooks/_power_common.py.
 [analysis]
 # Fixed so every simulation and permutation stream is reproducible.
 seed = 0

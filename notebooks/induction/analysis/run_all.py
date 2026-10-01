@@ -3,8 +3,8 @@
 One process so the scripts share one results directory. The costly simulation,
 which reads the tree only for PART 2's measured design effect and writes its
 checkpoint beside it, runs only behind ``--with-sim``. CHAIN order is report
-order: every report imports ``study_design`` (which checks the design invariants
-when it is first imported) and the later ones import ``paired_analysis``.
+order: every report imports ``study_design`` and the later ones import
+``paired_analysis``.
 """
 
 import argparse
@@ -21,7 +21,7 @@ import power_analysis
 import significance_report
 import study_design
 
-#: Report scripts in dependency order; each exposes ``main(results_dir)``.
+#: Report scripts in report order; each exposes ``main(results_dir)``.
 CHAIN = (power_analysis, paired_analysis, significance_report, extens_vs_noise)
 
 
@@ -34,7 +34,7 @@ def main(
     argv: Optional[list[str]] = None,
     results_dir: Path = study_design.RESULTS_DIR,
 ) -> int:
-    """Run analysis scripts in dependency order.
+    """Run analysis scripts in report order.
 
     Parameters
     ----------

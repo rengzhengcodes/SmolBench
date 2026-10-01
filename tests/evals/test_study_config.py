@@ -53,7 +53,7 @@ def test_the_roster_is_exactly_the_non_smoke_deploy_specs() -> None:
 
 def test_families_partition_the_roster_in_ladder_order() -> None:
     """Pin three-rung families in roster order."""
-    families = sc.families()
+    families = sc.load_study_config().roster.families
     assert len(families) == 7
     assert all(len(rungs) == 3 for rungs in families.values())
     flat = tuple(key for rungs in families.values() for key in rungs)
@@ -154,15 +154,6 @@ def test_a_well_formed_file_loads(tmp_path: Path) -> None:
     )
 
 
-def test_the_study_and_analysis_sections_are_the_shared_declarations() -> None:
-    """The committed toml carries the study parameters and the analysis knobs the scripts read."""
-    study, analysis = sc.study_params(), sc.analysis_params()
-    assert study.n_replicates >= 1 and study.n_harmonics >= 1 and study.base_seed >= 0
-    assert 0 < analysis.alpha < 1
-    assert analysis.power_targets == tuple(sorted(analysis.power_targets))
-    assert sc.n_rungs() == len(next(iter(sc.families().values())))
-
-
 def test_a_checkpoint_cannot_appear_in_two_families(tmp_path: Path) -> None:
     """Reject family overlap even when every checkpoint has a unique tag."""
     duplicate_families = GOOD_TOML.replace(
@@ -217,6 +208,9 @@ def test_a_checkpoint_cannot_appear_in_two_families(tmp_path: Path) -> None:
         (lambda t: t.replace("alpha = 0.05", "alpha = 1.5"), "alpha"),
         # Power levels ascend.
         (lambda t: t.replace("[0.80, 0.90]", "[0.90, 0.80]"), "power_targets"),
+        # Levels are probabilities and the list is non-empty.
+        (lambda t: t.replace("[0.10, 0.15, 0.20]", "[0.10, 1.5]"), "in (0, 1)"),
+        (lambda t: t.replace("[0.10, 0.15, 0.20]", "[]"), "equivalence_deltas"),
         # The sizing tables print exactly two power columns.
         (lambda t: t.replace("[0.80, 0.90]", "[0.80]"), "exactly two"),
     ],

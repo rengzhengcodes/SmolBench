@@ -111,27 +111,11 @@ def _star(ok: bool) -> str:
     return " yes " if ok else "  .  "
 
 
-def lane_rows(marks: CellMarks, census: dict) -> list[dict]:
-    """Build one extens-vs-noise row per model from the full PRIMARY family.
+def _lane_rows(marks: CellMarks, census: dict) -> list[dict]:
+    """One PRIMARY-family row per model, ``(model, extens)`` vs ``(model, noise_intens)``.
 
-    Parameters
-    ----------
-    marks : CellMarks
-        Parsed marks from `paired_analysis.load_marks`.
-    census : dict
-        Compliance census from `compliance_census`.
-
-    Returns
-    -------
-    list[dict]
-        Each family row for ``(model, extens)`` vs ``(model, noise_intens)`` plus
-        ``model``, ``dir``, ``holm_full``, ``holm_full_item``, ``nc_e``, ``nc_n``
-        and ``mech``.
-
-    Raises
-    ------
-    RuntimeError
-        If a lane has no compared-seed marks on either arm.
+    Each row adds ``model``, ``dir``, ``holm_full``, ``holm_full_item``, ``nc_e``,
+    ``nc_n`` and ``mech``.
     """
     # Keep the full family: the displayed subset is selected after measurement.
     full = labeled_rows(marks, build_primary_contrasts())
@@ -147,8 +131,6 @@ def lane_rows(marks: CellMarks, census: dict) -> list[dict]:
         i_full = full_idx[(ka, kb)]
         fr = full[i_full]
         nc_e, nc_n = (common_seed_rate(census[k], fr["seeds"]) for k in (ka, kb))
-        if nc_e is None or nc_n is None:
-            raise RuntimeError(f"no compared-seed marks for {ka} / {kb}")
         rows.append(
             {
                 **fr,
@@ -275,19 +257,14 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     marks = load_marks(results_dir)
     census = compliance_census(marks)
 
-    rows = lane_rows(marks, census)
+    rows = _lane_rows(marks, census)
 
     p_sub = np.array([r["p_cluster"] for r in rows])
     p_sub_item = np.array([r["p_item"] for r in rows])
-    h_sub, hb_sub, h_sub_item, hb_sub_item = (
-        rejections(p, method, ALPHA)
-        for p, method in (
-            (p_sub, "Holm"),
-            (p_sub, "Hochberg"),
-            (p_sub_item, "Holm"),
-            (p_sub_item, "Hochberg"),
-        )
-    )
+    h_sub = rejections(p_sub, "Holm", ALPHA)
+    hb_sub = rejections(p_sub, "Hochberg", ALPHA)
+    h_sub_item = rejections(p_sub_item, "Holm", ALPHA)
+    hb_sub_item = rejections(p_sub_item, "Hochberg", ALPHA)
 
     n_models = len(MODELS)
     n_seed_min = min(r["n_seeds"] for r in rows)

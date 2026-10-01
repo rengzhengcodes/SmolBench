@@ -5,8 +5,6 @@ import inspect
 import io
 import json
 import shutil
-import subprocess
-import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -17,9 +15,7 @@ import pytest
 from scipy.stats import chi2, norm
 
 from smolbench.evals import Marks, study_config
-from tests._paths import NOTEBOOKS, REPO_ROOT
 from tests.analysis._trees import (
-    ANALYSIS_DIR,
     FIRST_CELL,
     INFOS,
     MODELS,
@@ -50,47 +46,31 @@ def test_design_comes_from_the_study_config() -> None:
     assert study_design.MODELS == tuple(
         study_config.tag_for(key) for key in study_config.roster_keys()
     )
+    config = study_config.load_study_config()
     assert study_design.FAMILIES == {
         family: tuple(study_config.tag_for(key) for key in rungs)
-        for family, rungs in study_config.families().items()
+        for family, rungs in config.roster.families.items()
     }
-    study = study_config.study_params()
+    study, analysis = config.study, config.analysis
     assert (study_design.N_REPLICATES, study_design.BASE_SEED) == (
         study.n_replicates,
         study.base_seed,
     )
     assert study_design.N_HARMONICS == study.n_harmonics
-    assert study_design.N_RUNGS == study_config.n_rungs()
-    analysis = study_config.analysis_params()
+    assert study_design.N_RUNGS == config.roster.n_rungs
     assert (_power_common.SEED, _power_common.ALPHA) == (analysis.seed, analysis.alpha)
     assert _power_common.POWER_TARGETS == analysis.power_targets
-    assert study_design.EQUIVALENCE_DELTAS == analysis.equivalence_deltas
+    assert _power_common.EQUIVALENCE_DELTAS == analysis.equivalence_deltas
     # The eq_R search starts at study depth and only ever advances beyond it.
     grid = multiplicity_sim.EQ_R_GRID
     assert grid[0] == study.n_replicates
     assert list(grid) == sorted(set(grid))
 
 
-def test_design_invariants_survive_python_dash_o() -> None:
-    """Design gates survive ``python -O``."""
-    code = (
-        "import sys;"
-        f"sys.path.insert(0, {str(ANALYSIS_DIR)!r});"
-        f"sys.path.insert(0, {str(NOTEBOOKS)!r});"
-        "import study_design as sd;"
-        "assert False, 'asserts are live -- this subprocess is not under -O';"
-        "sd.N_PRIMARY = sd.N_PRIMARY - 1;"
-        "sd.check_design_invariants()"
-    )
-    result = subprocess.run(
-        [sys.executable, "-O", "-c", code],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-        check=False,
-    )
-    assert result.returncode != 0, result.stdout
-    assert "RuntimeError" in result.stderr, result.stderr
+def test_contrast_builders_match_the_family_sizes_the_alphas_are_priced_at() -> None:
+    """The builders return exactly `N_PRIMARY` and `N_SECONDARY` contrasts, the denominators of the correction thresholds."""
+    assert len(study_design.build_primary_contrasts()) == N_PRIMARY
+    assert len(study_design.build_secondary_contrasts()) == study_design.N_SECONDARY
 
 
 @pytest.fixture(scope="module")
@@ -197,26 +177,18 @@ def test_monte_carlo_main_routes_default_output_to_explicit_results_dir(
     assert target.exists()
     assert json.loads(target.read_text())["part5"] == {"part": 5}
     # main()'s own default is the study results tree run_all hands every script.
-    assert inspect.signature(multiplicity_sim.main).parameters[
-        "results_dir"
-    ].default == _power_common.results_dir("induction")
+    assert (
+        inspect.signature(multiplicity_sim.main).parameters["results_dir"].default
+        is study_design.RESULTS_DIR
+    )
 
 
-def test_dump_creates_its_own_results_directory(tmp_path: Path) -> None:
-    """Dump creates the ignored results directory on fresh checkouts."""
-    target = tmp_path / "results" / multiplicity_sim.OUT_NAME
-    assert not target.parent.exists()
-    multiplicity_sim.dump({"probe": 1}, target, "probe")
-
-    assert target.exists()
-    assert json.loads(target.read_text()) == {"probe": 1}
-
-
-def test_dump_keeps_previous_checkpoint_when_write_fails(
+def test_dump_creates_the_results_directory_and_keeps_the_checkpoint_when_a_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failed checkpoint write does not replace the previous JSON."""
-    target = tmp_path / multiplicity_sim.OUT_NAME
+    """A first dump creates the ignored results directory; a failed later write leaves its JSON untouched and no temp file behind."""
+    target = tmp_path / "results" / multiplicity_sim.OUT_NAME
+    assert not target.parent.exists()
     multiplicity_sim.dump({"first": 1}, target, "first")
 
     def failing_dump(*_args: object, **_kwargs: object) -> None:
@@ -228,7 +200,7 @@ def test_dump_keeps_previous_checkpoint_when_write_fails(
         multiplicity_sim.dump({"second": 2}, target, "second")
 
     assert json.loads(target.read_text()) == {"first": 1}
-    assert [p.name for p in tmp_path.iterdir()] == [target.name]
+    assert [p.name for p in target.parent.iterdir()] == [target.name]
 
 
 def test_labeled_rows_handles_empty_drop_invalid_pairs() -> None:
@@ -271,14 +243,14 @@ def test_part5_prices_the_trend_test_in_the_same_family_as_part4() -> None:
 
 def test_replicates_needed_is_memoized_on_its_rate_vectors() -> None:
     """Sizing scans cache repeated rate vectors."""
-    power_analysis._sizing_scan.cache_clear()
+    power_analysis.replicates_needed.cache_clear()
     a = np.full(N_HARMONICS, 0.9)
     b = np.full(N_HARMONICS, 0.5)
-    first = power_analysis.replicates_needed(a, b)
-    second = power_analysis.replicates_needed(a.copy(), b.copy())
+    first = power_analysis.replicates_needed(tuple(a), tuple(b))
+    second = power_analysis.replicates_needed(tuple(a.copy()), tuple(b.copy()))
     assert first == second
     # pylint: disable-next=no-value-for-parameter  # lru_cache brain mistypes cache_info
-    info = power_analysis._sizing_scan.cache_info()
+    info = power_analysis.replicates_needed.cache_info()
     assert info.hits == 1 and info.misses == 1, info
 
 
@@ -311,7 +283,7 @@ def test_equivalence_power_pools_successes_across_harmonics() -> None:
     assert curve[10] == 1.0
 
 
-def test_sizing_scan_uses_common_random_numbers(
+def test_replicates_needed_uses_common_random_numbers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The curve is read off two nested Bernoulli streams, one per arm, not fresh draws per R."""
@@ -322,10 +294,10 @@ def test_sizing_scan_uses_common_random_numbers(
         "_cumulative_successes",
         lambda rng, rates, n: streams.append(real(rng, rates, n)) or streams[-1],
     )
-    power_analysis._sizing_scan.cache_clear()
+    power_analysis.replicates_needed.cache_clear()
     a = np.full(N_HARMONICS, 0.75)
     b = np.full(N_HARMONICS, 0.55)
-    needed, curve = power_analysis.replicates_needed(a, b)
+    needed, curve = power_analysis.replicates_needed(tuple(a), tuple(b))
     assert len(streams) == 2, len(streams)
     cum_a, cum_b = streams[0], streams[1]
     crit = chi2.isf(study_design.ALPHA_PRIMARY, df=1)
@@ -360,18 +332,18 @@ def test_sizing_crossing_is_sustained_not_first_hit(
             (np.full(n_reject, 1e6), np.zeros(power_analysis.N_SIMS - n_reject))
         )
 
-    power_analysis._sizing_scan.cache_clear()
+    power_analysis.replicates_needed.cache_clear()
     try:
         monkeypatch.setattr(power_analysis, "cmh_stat", fake_cmh_stat)
         rates = np.full(N_HARMONICS, 0.5)
-        needed, curve = power_analysis.replicates_needed(rates, rates)
+        needed, curve = power_analysis.replicates_needed(tuple(rates), tuple(rates))
         assert needed[power_analysis.POWER_TARGETS[0]] == 8
         assert needed[power_analysis.POWER_TARGETS[1]] is None
         assert curve[5] == pytest.approx(0.85)
         assert curve[7] == pytest.approx(0.79)
     finally:
         # The fake's curve would otherwise stay cached for the later sizing tests.
-        power_analysis._sizing_scan.cache_clear()
+        power_analysis.replicates_needed.cache_clear()
 
 
 def test_equivalence_crossing_is_sustained_not_first_hit(
@@ -396,7 +368,7 @@ def test_render_recommended_replicates_carries_censored_contrasts() -> None:
     results = [()] * N_PRIMARY
     out = run_captured(
         lambda: power_analysis.render_recommended_replicates(
-            {"results": results, "r_star": 40, "family_r": None, "n_censored": 3}
+            {"results": results, "r_star": 40, "n_censored": 3}
         )
     )
     assert (
@@ -407,7 +379,7 @@ def test_render_recommended_replicates_carries_censored_contrasts() -> None:
 
     assert "fully powered" in run_captured(
         lambda: power_analysis.render_recommended_replicates(
-            {"results": results, "r_star": 40, "family_r": 40, "n_censored": 0}
+            {"results": results, "r_star": 40, "n_censored": 0}
         )
     )
 
@@ -415,7 +387,7 @@ def test_render_recommended_replicates_carries_censored_contrasts() -> None:
 def test_primary_contrasts_table_reports_the_family_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`r_star` covers powerable contrasts; censored ones prevent `family_r`."""
+    """`r_star` covers powerable contrasts; censored ones are counted in `n_censored`."""
 
     def fake_results(
         contrasts: list[tuple[str, tuple[str, str], tuple[str, str]]],
@@ -441,7 +413,7 @@ def test_primary_contrasts_table_reports_the_family_size(
     monkeypatch.setattr(power_analysis, "_compute_sizing_results", fake_results)
     data = power_analysis.primary_contrasts_table({}, {})
     assert len(data["results"]) == N_PRIMARY
-    assert data["n_censored"] == 1 and data["family_r"] is None
+    assert data["n_censored"] == 1
     assert data["r_star"] == 14
 
 

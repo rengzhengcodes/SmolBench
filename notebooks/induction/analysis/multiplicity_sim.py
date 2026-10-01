@@ -4,15 +4,11 @@ PART 2 prints the study's measured design effect (`study_design_effect`) beside 
 simulated `icc` block's; they differ in kind because `icc` is a latent share and
 `design_effect` an observed variance ratio.
 
-Rejection boundary: a p-value rejects when ``p <= alpha``
-(`_power_common.apply_corrections`, which `paired_analysis.rejections` calls;
-``test_apply_corrections_share_one_inclusive_boundary`` pins the boundary and
-``test_apply_corrections_matches_statsmodels`` the row-wise agreement). Tests
-decided on a chi-square statistic use ``stat > crit``, equivalent for a
-continuous statistic.
+Rejection boundary: p-value tests reject at ``p <= alpha`` (`_power_common.apply_corrections`;
+``test_apply_corrections_share_one_inclusive_boundary`` pins it); tests decided on a
+chi-square statistic use ``stat > crit``, equivalent for a continuous statistic.
 """
 
-import functools
 import json
 import os
 import sys
@@ -28,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
 from _power_common import ALPHA, POWER_TARGETS, SEED, apply_corrections
-from paired_analysis import aligned, design_effect, load_marks
+from paired_analysis import design_effect, labeled_rows, load_marks
 from scipy.stats import chi2, norm
 from study_design import (
     ALPHA_OMNIBUS,
@@ -499,12 +495,8 @@ def study_design_effect(results_dir: Path) -> Optional[float]:
         store.list_seeds(None, model, info) for model in MODELS for info in INFOS
     ):
         return None
-    marks = load_marks(results_dir)
-    deffs = []
-    for _label, key_a, key_b in build_primary_contrasts():
-        d = design_effect(*aligned(marks, key_a, key_b, drop_invalid=False))
-        if d is not None:
-            deffs.append(d)
+    rows = labeled_rows(load_marks(results_dir), build_primary_contrasts())
+    deffs = [row["de"] for row in rows if row["de"] is not None]
     return float(np.median(deffs)) if deffs else None
 
 
@@ -621,13 +613,8 @@ def part2(
     """Measure pairing gains over unpaired testing.
 
     McNemar is anticonservative at ``icc > 0``, biasing ``eq_R`` upward;
-    compare each simulated design effect with the study estimate.
-    Search only for power gaps above `EQ_R_TOL` (Monte-Carlo error).
-    Unpaired power within `EQ_R_TOL` counts as matching; an initial gap within
-    `EQ_R_TOL` is reported unsearched at `N_REPLICATES`. ``eq_r_advanced`` says
-    whether a matching depth beyond study depth was found, so it is False when
-    the gap is within tolerance, when the first rung matches, and when no grid
-    depth matches (``eq_R`` is then ``None``).
+    compare each simulated design effect with the study estimate. Power gaps
+    within `EQ_R_TOL` (Monte-Carlo error) are reported unsearched at `N_REPLICATES`.
 
     Parameters
     ----------
@@ -842,13 +829,7 @@ def main(results_dir: Path = RESULTS_DIR) -> None:
     """
     t0 = time.time()
     out: dict[str, dict] = {}
-    parts = (
-        part1,
-        functools.partial(part2, results_dir=results_dir),
-        part3,
-        part4,
-        part5,
-    )
+    parts = (part1, lambda rng: part2(rng, results_dir), part3, part4, part5)
     for i, part in enumerate(parts, 1):
         out[f"part{i}"] = part(np.random.default_rng(SEED + i))
         dump(out, results_dir / OUT_NAME, f"part{i}")

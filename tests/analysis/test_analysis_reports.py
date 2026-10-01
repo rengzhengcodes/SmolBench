@@ -480,28 +480,24 @@ def padding_control_report(
     )
 
 
-def test_partial_pad_crossing_is_not_called_near_total(
-    padding_control_report: Callable[[int], Rendered],
+@pytest.mark.parametrize(
+    "noise_nc, near_total", [(4, False), (N_HARMONICS, True)], ids=["partial", "total"]
+)
+def test_pad_crossing_is_called_near_total_only_at_total_collapse(
+    padding_control_report: Callable[[int], Rendered], noise_nc: int, near_total: bool
 ) -> None:
-    """A partial compliance collapse is reported as a caveat, not control causation."""
-    out, computed = padding_control_report(4)
+    """A partial compliance collapse is reported as a caveat, not control causation; only a total one keeps the near-total exoneration."""
+    out, computed = padding_control_report(noise_nc)
     controls = out.split("ZERO-ARM CONTROLS", 1)[1]
-    assert computed.fails_partial
-    assert not computed.fails_total
-    assert f"{computed.partial_compliance} compliant on the compared seeds" in controls
-    assert "near-total non-compliance" not in controls
-    assert "55.6% compliant on the compared seeds" in controls
-    assert "caveat, not a demonstrated cause of the failed control" in controls
-
-
-def test_total_pad_crossing_keeps_near_total_exoneration(
-    padding_control_report: Callable[[int], Rendered],
-) -> None:
-    """A total compliance collapse retains the padding exoneration."""
-    out, computed = padding_control_report(N_HARMONICS)
-    controls = out.split("ZERO-ARM CONTROLS", 1)[1]
-    assert computed.fails_total
-    assert "near-total non-compliance" in controls
+    assert bool(computed.fails_total) is near_total
+    assert bool(computed.fails_partial) is not near_total
+    assert ("near-total non-compliance" in controls) is near_total
+    if not near_total:
+        assert (
+            f"{(N_HARMONICS - noise_nc) / N_HARMONICS:.1%} compliant on the compared seeds"
+            in controls
+        )
+        assert "caveat, not a demonstrated cause of the failed control" in controls
 
 
 def test_reversed_controls_are_not_counted_as_passing(reversed_tree: Path) -> None:
