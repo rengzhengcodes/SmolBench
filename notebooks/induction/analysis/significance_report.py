@@ -812,7 +812,7 @@ def _annotate_rows(rows: list[dict], census: dict, gates: dict[str, dict]) -> No
         )
 
 
-def _padding_rows(census: dict) -> tuple[list[dict], set[str]]:
+def _padding_rows(census: dict) -> list[dict]:
     """Build the PADDING EFFECT rows over each lane's common seeds.
 
     Parameters
@@ -822,9 +822,8 @@ def _padding_rows(census: dict) -> tuple[list[dict], set[str]]:
 
     Returns
     -------
-    tuple[list[dict], set[str]]
-        One row per model with both arms measurable, and the models whose
-        pad alone carried the lane over the collapse criterion.
+    list[dict]
+        One row per model with both arms measurable.
     """
     pad_rows = []
     for model in MODELS:
@@ -854,8 +853,7 @@ def _padding_rows(census: dict) -> tuple[list[dict], set[str]]:
                 "verdict": verdict,
             }
         )
-    pad_lanes = {r["model"] for r in pad_rows if r["verdict"] == "COLLAPSE"}
-    return pad_rows, pad_lanes
+    return pad_rows
 
 
 def compute(results_dir: Path = RESULTS_DIR) -> Report:
@@ -897,7 +895,8 @@ def compute(results_dir: Path = RESULTS_DIR) -> Report:
         (k for k, v in census.items() if v["rate"] >= COLLAPSE_THRESHOLD),
         key=lambda k: -census[k]["rate"],
     )
-    pad_rows, pad_lanes = _padding_rows(census)
+    pad_rows = _padding_rows(census)
+    pad_lanes = {r["model"] for r in pad_rows if r["verdict"] == "COLLAPSE"}
     findings = [r for r, rej in zip(rows, hp) if rej and r["kind"] == "finding"]
     floor = [(r, rej) for r, rej in zip(rows, hp) if r["kind"] == "arm-vs-floor"]
     passing = [r for r, rej in floor if rej and r["acc_a"] > r["acc_b"]]
