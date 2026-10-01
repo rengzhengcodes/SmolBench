@@ -725,8 +725,8 @@ def render_recommended_replicates(primary: dict) -> None:
             f"R={r_star}; the family is fully powered."
         )
     print(
-        f"  The study itself collects R={N_REPLICATES} (user-locked in "
-        "run_study.py, uniform across checkpoints); this prospective figure is "
+        f"  The study itself collects R={N_REPLICATES} (study_config.toml "
+        "[study].n_replicates, uniform across checkpoints); this prospective figure is "
         "the sizing check that decision was made against, not a superseding "
         "value.\n"
         "  This R powers the CMH sizing test, not the PRIMARY seed sign-flip; "
