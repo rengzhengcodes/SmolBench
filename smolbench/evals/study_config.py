@@ -185,15 +185,14 @@ def _parse_study_config(data: dict) -> StudyConfig:
             f"study_config.toml [roster.families] lists unequal rung counts "
             f"{rung_counts}; every family must have the same number of rungs"
         )
-    n_rungs = next(iter(rung_counts.values()))
-    if n_rungs < 2:
-        raise ValueError(
-            f"study_config.toml [roster.families] lists {n_rungs} rung per family; "
-            "a ladder needs at least two rungs"
-        )
     roster = RosterConfig(
         families=MappingProxyType(families), tags=MappingProxyType(tags)
     )
+    if roster.n_rungs < 2:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists {roster.n_rungs} rung per "
+            "family; a ladder needs at least two rungs"
+        )
 
     study_raw = _require(data, "[study]")
     study = StudyParams(
