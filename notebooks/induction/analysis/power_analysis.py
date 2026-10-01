@@ -235,11 +235,7 @@ def _sustained_crossing(curve: dict[int, float], target: float) -> Optional[int]
 
 
 def fisher_check(
-    rates_a: np.ndarray,
-    rates_b: np.ndarray,
-    n_reps: int,
-    rng: np.random.Generator,
-    alpha: float = ALPHA_PRIMARY,
+    rates_a: np.ndarray, rates_b: np.ndarray, n_reps: int, rng: np.random.Generator
 ) -> float:
     """Cross-check power with pooled two-sided Fisher tests.
 
@@ -255,13 +251,11 @@ def fisher_check(
         Replicates per harmonic.
     rng : np.random.Generator
         Random-number generator for simulations.
-    alpha : float, optional
-        Test significance threshold.
 
     Returns
     -------
     float
-        The fraction of `N_SIMS` simulations rejecting at `alpha`.
+        The fraction of `N_SIMS` simulations rejecting at `ALPHA_PRIMARY`.
     """
     total = n_reps * N_HARMONICS
     succ_a = rng.binomial(n_reps, rates_a, size=(N_SIMS, rates_a.size)).sum(axis=1)
@@ -270,7 +264,7 @@ def fisher_check(
         np.column_stack([succ_a, succ_b]), axis=0, return_counts=True
     )
     rejected = [
-        fisher_exact([[ka, total - ka], [kb, total - kb]])[1] <= alpha
+        fisher_exact([[ka, total - ka], [kb, total - kb]])[1] <= ALPHA_PRIMARY
         for ka, kb in pairs
     ]
     return float(counts[rejected].sum() / N_SIMS)
