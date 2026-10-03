@@ -565,10 +565,10 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     _spec["vllm_args"] = _args + DETERMINISM_ARGS
 
 #: ``num_attention_heads`` per family-ladder checkpoint, copied from each
-#: model's config.json (archived source scripts/arch/arch_configs_raw.json;
-#: test_deploy_specs drift-pins this map against the vendored config.json rows
-#: in tests/fixtures/roster_configs.json). Models absent here (the
-#: qwen2.5-1.5b canary) fall back to their spec's static ``tp`` in derive_tp.
+#: model's config.json (test_deploy_specs drift-pins this map against the
+#: vendored config.json rows in tests/fixtures/roster_configs.json). Models
+#: absent here (the qwen2.5-1.5b canary) fall back to their spec's static
+#: ``tp`` in derive_tp.
 MODEL_ATTENTION_HEADS = {
     "deepseek-v3.1": 128,
     "deepseek-v4-flash": 64,
