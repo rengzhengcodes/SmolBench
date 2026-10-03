@@ -73,11 +73,15 @@ def test_cot_args_table(run_study: ModuleType) -> None:
 
 
 def test_experiment_constants(run_study: ModuleType) -> None:
-    """Study constants remain locked."""
-    assert run_study.BASE_SEED == 0
-    assert run_study.EXPERIMENT.n_replicates == 30
-    assert run_study.EXPERIMENT.base_seed == 0
-    assert run_study.EXPERIMENT.seeds == tuple(range(30))
+    """The driver collects at the ``[study]`` parameters of study_config.toml."""
+    study = study_config.load_study_config().study
+    assert run_study.BASE_SEED == study.base_seed
+    assert run_study.N_HARMONICS == study.n_harmonics
+    assert run_study.EXPERIMENT.n_replicates == study.n_replicates
+    assert run_study.EXPERIMENT.base_seed == study.base_seed
+    assert run_study.EXPERIMENT.seeds == tuple(
+        range(study.base_seed, study.base_seed + study.n_replicates)
+    )
     assert run_study.INFO_TYPES == ("intens", "extens", "noise_intens", "zero")
     # Derive arms from the renderer's condition mapping.
     from smolbench.induction.periodic import CONDITIONS
@@ -160,6 +164,7 @@ class CountingTokenizer(StubTokenizer):
     """Stub tokenizer that records count calls."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
     def count(self, text: str) -> int:

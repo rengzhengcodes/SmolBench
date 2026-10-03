@@ -41,14 +41,40 @@ class RosterConfig:
     families: "Mapping[str, tuple[str, ...]]"
     tags: "Mapping[str, str]"
 
+    @property
+    def n_rungs(self) -> int:
+        """Rungs per family; every family lists this many, so it is one number."""
+        return len(next(iter(self.families.values())))
+
+
+@dataclass(frozen=True)
+class StudyParams:
+    """Collection parameters the driver and the analysis chain share."""
+
+    n_replicates: int
+    base_seed: int
+    n_harmonics: int
+
+
+@dataclass(frozen=True)
+class AnalysisParams:
+    """Analysis-wide statistical knobs."""
+
+    seed: int
+    alpha: float
+    power_targets: "tuple[float, ...]"
+    equivalence_deltas: "tuple[float, ...]"
+
 
 @dataclass(frozen=True)
 class StudyConfig:
-    """The whole committed study config: results bucket, fleet, roster."""
+    """The whole committed study config: results bucket, fleet, roster, study, analysis."""
 
     results: ResultsConfig
     fleet: FleetConfig
     roster: RosterConfig
+    study: StudyParams
+    analysis: AnalysisParams
 
 
 def _require(mapping: dict, name: str, within: str = "") -> Any:
@@ -149,12 +175,129 @@ def _parse_study_config(data: dict) -> StudyConfig:
             )
         seen_by_tag[tag] = key
 
+    # One rung count for the whole ladder: the contrast tiers assume it, and a
+    # ladder contrast needs two rungs to compare.
+    rung_counts = {name: len(rungs) for name, rungs in families.items()}
+    if not rung_counts:
+        raise ValueError("study_config.toml [roster.families] declares no family")
+    if len(set(rung_counts.values())) != 1:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists unequal rung counts "
+            f"{rung_counts}; every family must have the same number of rungs"
+        )
     roster = RosterConfig(
-        families=MappingProxyType(families),
-        tags=MappingProxyType(tags),
+        families=MappingProxyType(families), tags=MappingProxyType(tags)
+    )
+    if roster.n_rungs < 2:
+        raise ValueError(
+            f"study_config.toml [roster.families] lists {roster.n_rungs} rung per "
+            "family; a ladder needs at least two rungs"
+        )
+
+    study_raw = _require(data, "[study]")
+    study = StudyParams(
+        n_replicates=_int_at_least(study_raw, "n_replicates", " [study]", 1),
+        base_seed=_int_at_least(study_raw, "base_seed", " [study]", 0),
+        n_harmonics=_int_at_least(study_raw, "n_harmonics", " [study]", 1),
     )
 
-    return StudyConfig(results=results, fleet=fleet, roster=roster)
+    analysis_raw = _require(data, "[analysis]")
+    analysis = AnalysisParams(
+        seed=_int_at_least(analysis_raw, "seed", " [analysis]", 0),
+        alpha=_require(analysis_raw, "alpha", " [analysis]"),
+        power_targets=_ascending_unit_floats(
+            analysis_raw, "power_targets", " [analysis]"
+        ),
+        equivalence_deltas=_ascending_unit_floats(
+            analysis_raw, "equivalence_deltas", " [analysis]"
+        ),
+    )
+    if not 0 < analysis.alpha < 1:
+        raise ValueError(
+            f"study_config.toml [analysis] alpha must be in (0, 1), got {analysis.alpha}"
+        )
+    # power_analysis._print_sizing_table hard-codes two R columns
+    # (POWER_TARGETS[0], POWER_TARGETS[1]).
+    if len(analysis.power_targets) != 2:
+        raise ValueError(
+            "study_config.toml [analysis] power_targets must list exactly two levels, "
+            f"got {list(analysis.power_targets)}"
+        )
+
+    return StudyConfig(
+        results=results, fleet=fleet, roster=roster, study=study, analysis=analysis
+    )
+
+
+def _int_at_least(mapping: dict, name: str, within: str, floor: int) -> int:
+    """Return `mapping[name]` after checking it is an integer of at least `floor`.
+
+    Parameters
+    ----------
+    mapping : dict
+        Parsed TOML table containing the key.
+    name : str
+        Key to retrieve.
+    within : str
+        TOML section suffix included in the error message.
+    floor : int
+        Smallest accepted value.
+
+    Returns
+    -------
+    int
+        The validated value.
+
+    Raises
+    ------
+    ValueError
+        If the key is missing, not an int, or below `floor`.
+    """
+    value = _require(mapping, name, within)
+    # bool is an int subclass, and ``seed = true`` is a typo, not a seed.
+    if not isinstance(value, int) or isinstance(value, bool) or value < floor:
+        raise ValueError(
+            f"study_config.toml{within} {name} must be an integer >= {floor}, "
+            f"got {value!r}"
+        )
+    return value
+
+
+def _ascending_unit_floats(
+    mapping: dict, name: str, within: str
+) -> "tuple[float, ...]":
+    """Return `mapping[name]` as a strictly ascending tuple of values in (0, 1).
+
+    Parameters
+    ----------
+    mapping : dict
+        Parsed TOML table containing the key.
+    name : str
+        Key to retrieve.
+    within : str
+        TOML section suffix included in the error message.
+
+    Returns
+    -------
+    tuple[float, ...]
+        The validated, non-empty values.
+
+    Raises
+    ------
+    ValueError
+        If the key is missing, empty, not in (0, 1), or not strictly ascending.
+    """
+    values = tuple(float(v) for v in _require(mapping, name, within))
+    if (
+        not values
+        or any(not 0 < v < 1 for v in values)
+        or list(values) != sorted(set(values))
+    ):
+        raise ValueError(
+            f"study_config.toml{within} {name} must be a non-empty ascending list of "
+            f"values in (0, 1), got {list(values)}"
+        )
+    return values
 
 
 @functools.lru_cache(maxsize=None)
@@ -202,11 +345,6 @@ def roster_keys() -> "tuple[str, ...]":
     return tuple(
         key for rungs in load_study_config().roster.families.values() for key in rungs
     )
-
-
-def families() -> "Mapping[str, tuple[str, ...]]":
-    """Return roster families in ladder order."""
-    return load_study_config().roster.families
 
 
 def tag_for(key: str) -> str:

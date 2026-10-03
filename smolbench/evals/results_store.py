@@ -265,7 +265,19 @@ class LocalResultsStore(ResultsStore):
     def _dirname(self, tag: str, info: str) -> str:
         return f"{self.prefix}{tag}_{info}"
 
-    def _path(self, addr: ReplicateAddress) -> Path:
+    def path(self, addr: ReplicateAddress) -> Path:
+        """Return the replicate file for `addr`.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            Replicate to locate.
+
+        Returns
+        -------
+        Path
+            ``{root}/{prefix}{tag}_{info}/rep_{seed}.yaml``.
+        """
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
 
     def exists(self, addr: ReplicateAddress) -> bool:
@@ -281,7 +293,7 @@ class LocalResultsStore(ResultsStore):
         bool
             Whether the local result file exists.
         """
-        return self._path(addr).exists()
+        return self.path(addr).exists()
 
     def dump_marks(
         self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
@@ -297,7 +309,7 @@ class LocalResultsStore(ResultsStore):
         run_ts : datetime
             Collection timestamp ignored by the local store.
         """
-        path = self._path(addr)
+        path = self.path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
         marks.dump(path)
 
@@ -314,7 +326,7 @@ class LocalResultsStore(ResultsStore):
         Marks
             Deserialized local result.
         """
-        return Marks.load(self._path(addr))
+        return Marks.load(self.path(addr))
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
         """List seeds from local ``rep_*.yaml`` files.
@@ -363,7 +375,7 @@ class LocalResultsStore(ResultsStore):
         Optional[Path]
             Renamed file's new path.
         """
-        path = self._path(addr)
+        path = self.path(addr)
         if not path.exists():
             return None
         retired = path.with_name(
