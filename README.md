@@ -189,6 +189,3 @@ The tests run offline. They use stub model servers and need no credentials.
 | `notebooks/induction/` | The induction study driver |
 | `notebooks/deduction/analysis/` | Horn tables and figures |
 | `tests/` | The test suite |
-
-The Lean 4 deduction study, the cloud run tooling, and the Horn design notes are not on
-this branch. They are on the `extras` branch.
