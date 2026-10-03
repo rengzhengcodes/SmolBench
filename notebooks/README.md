@@ -15,6 +15,7 @@ notebooks/
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
+      run_all.py                  sequences power_analysis -> paired_analysis -> significance_report -> extens_vs_noise
   deduction/                   Horn-rule deduction benchmark
     analysis/                   tables and figures from the released results
                                 (make_figures.py; see smolbench/deduction/horn/README.md)
