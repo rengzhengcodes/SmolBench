@@ -63,3 +63,7 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
 | `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `study_design`; reads the tree only for PART 2's measured design effect and writes its checkpoint into it as `multiplicity_sim_results.json`. |
 | `run_all.py` | The one driver over the chain above: runs the four report scripts in process, in order, plus `multiplicity_sim.py` behind `--with-sim`. |
+
+`induction_results.py` stands outside the chain: it writes the paper's accuracy table
+from a results folder that `python -m smolbench.induction.repro fetch` downloads, not
+from `results/`. The root `README.md` explains how to run it.
