@@ -6,7 +6,7 @@
     python -m smolbench.induction.repro report <results folder>
 
 ``iclr.json`` (next to this file) records the protocol: the public bucket, seeds, arms,
-every model's pinned checkpoint, a SHA-256 digest of every published replicate, and the
+every model's pinned checkpoint, a SHA-256 digest of each seed's published runs, and the
 published accuracies. ``fetch`` copies an ``induction/`` results prefix (the public one,
 or the bucket a ``run_study.py`` run wrote to) into a local folder with the store's key
 layout, ``<folder>/induction/<model>/seed=<seed>/<arm>--<run stamp>.yaml``.
@@ -197,7 +197,9 @@ def load_cells(data: Path) -> Cells:
         ``(model, arm)`` -> ``{seed: accuracy}``.
     """
     cells: Cells = {}
-    for (model, seed, arm), path in sorted(select_runs(data, tuple(load_protocol()["arms"])).items()):
+    for (model, seed, arm), path in sorted(
+        select_runs(data, tuple(load_protocol()["arms"])).items()
+    ):
         cells.setdefault((model, arm), {})[seed] = replicate_accuracy(path)
     return cells
 
@@ -254,12 +256,22 @@ def report(data: Path) -> str:
     cells = load_cells(data)
     lines = []
     order = list(proto["models"])
-    for model in sorted({m for m, _ in cells}, key=lambda m: (order.index(m) if m in order else len(order), m)):
+    for model in sorted(
+        {m for m, _ in cells},
+        key=lambda m: (order.index(m) if m in order else len(order), m),
+    ):
         ref = proto["models"].get(model, {}).get("results", {})
-        stats = {arm: cell_stats(cells[model, arm]) for arm in proto["arms"] if (model, arm) in cells}
+        stats = {
+            arm: cell_stats(cells[model, arm])
+            for arm in proto["arms"]
+            if (model, arm) in cells
+        }
         seeds = sorted({s for (m, _), v in cells.items() if m == model for s in v})
         lines.append(f"== {model}: {len(seeds)} seeds")
-        lines.append(f"   {'':20s} {'mean':>6s} {'sd':>6s}" + (f" {'published':>16s}" if ref else ""))
+        lines.append(
+            f"   {'':20s} {'mean':>6s} {'sd':>6s}"
+            + (f" {'published':>16s}" if ref else "")
+        )
         for arm, (mean, sd) in stats.items():
             row = f"   {arm:20s} {mean:6.3f} {sd:6.3f}"
             if arm in ref:
@@ -269,7 +281,9 @@ def report(data: Path) -> str:
             if a in stats and b in stats:
                 name = f"{a}-{b}"
                 row = f"   {name:20s} {delta(stats[a][0], stats[b][0]):+6.1f}"
-                lines.append(row + (f" {'':6s} {ref[name]:+9.1f}" if name in ref else ""))
+                lines.append(
+                    row + (f" {'':6s} {ref[name]:+9.1f}" if name in ref else "")
+                )
     return "\n".join(lines)
 
 
@@ -293,7 +307,10 @@ def s3_client(bucket: str, region: Optional[str]) -> Any:
     from botocore.config import Config  # pylint: disable=import-outside-toplevel
 
     public = bucket == load_protocol()["bucket"]
-    config = Config(signature_version=UNSIGNED if public else None, max_pool_connections=FETCH_WORKERS)
+    config = Config(
+        signature_version=UNSIGNED if public else None,
+        max_pool_connections=FETCH_WORKERS,
+    )
     return boto3.client("s3", region_name=region, config=config)
 
 
@@ -324,7 +341,9 @@ def fetch(out: Path, bucket: str, prefix: str, client: Any) -> tuple[int, int]:
     root = "/".join(p for p in (prefix, study) if p) + "/"
     keep = len(root) - len(study) - 1
     todo, skipped = [], 0
-    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=root):
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=root
+    ):
         for obj in page.get("Contents", []):
             dest = out / obj["Key"][keep:]
             if dest.exists() and dest.stat().st_size == obj["Size"]:
@@ -382,8 +401,12 @@ def cmd_fetch(a: argparse.Namespace) -> int:
     proto = load_protocol()
     bucket = a.bucket or proto["bucket"]
     region = a.region or (proto["region"] if bucket == proto["bucket"] else None)
-    got, skipped = fetch(Path(a.out), bucket, a.prefix.strip("/"), s3_client(bucket, region))
-    print(f"fetched {got} files from s3://{bucket} to {a.out} ({skipped} already present)")
+    got, skipped = fetch(
+        Path(a.out), bucket, a.prefix.strip("/"), s3_client(bucket, region)
+    )
+    print(
+        f"fetched {got} files from s3://{bucket} to {a.out} ({skipped} already present)"
+    )
     return 0
 
 
@@ -403,7 +426,11 @@ def cmd_check_data(a: argparse.Namespace) -> int:
     problems = check_data(Path(a.data))
     for p in problems[:20]:
         print(f"  {p}")
-    print(f"FAIL: {len(problems)} problems" if problems else f"OK: {a.data} matches the published runs")
+    print(
+        f"FAIL: {len(problems)} problems"
+        if problems
+        else f"OK: {a.data} matches the published runs"
+    )
     return 1 if problems else 0
 
 
@@ -437,19 +464,31 @@ def main(argv: Optional[list[str]] = None) -> int:
     int
         Exit status.
     """
-    p = argparse.ArgumentParser(prog="induction-repro", description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
+    p = argparse.ArgumentParser(
+        prog="induction-repro", description=(__doc__ or "").split("\n\n", maxsplit=1)[0]
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("models", help="list the models of the ICLR run").set_defaults(func=cmd_models)
+    sub.add_parser("models", help="list the models of the ICLR run").set_defaults(
+        func=cmd_models
+    )
     pf = sub.add_parser("fetch", help="download a results prefix into a local folder")
     pf.add_argument("--out", required=True)
     pf.add_argument("--bucket", default=None, help="default: the public release bucket")
-    pf.add_argument("--prefix", default="", help="key root above induction/ (default: the bucket root)")
+    pf.add_argument(
+        "--prefix",
+        default="",
+        help="key root above induction/ (default: the bucket root)",
+    )
     pf.add_argument("--region", default=None)
     pf.set_defaults(func=cmd_fetch)
-    pd = sub.add_parser("check-data", help="check a results folder against the published runs")
+    pd = sub.add_parser(
+        "check-data", help="check a results folder against the published runs"
+    )
     pd.add_argument("data")
     pd.set_defaults(func=cmd_check_data)
-    prep = sub.add_parser("report", help="score a results folder next to the published values")
+    prep = sub.add_parser(
+        "report", help="score a results folder next to the published values"
+    )
     prep.add_argument("data")
     prep.set_defaults(func=cmd_report)
     a = p.parse_args(argv)

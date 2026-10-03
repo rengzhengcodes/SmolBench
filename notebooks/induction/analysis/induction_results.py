@@ -47,7 +47,10 @@ from smolbench.induction.repro import (  # noqa: E402
 #: Family -> models, small to large, in the paper's family order.
 FAMILIES = (
     ("Gemma 4", ("gemma-4-e2b", "gemma-4-12b", "gemma-4-31b")),
-    ("Nemotron 3", ("nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b")),
+    (
+        "Nemotron 3",
+        ("nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b"),
+    ),
     ("Qwen3.5", ("qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b")),
     ("DeepSeek", ("deepseek-v4-flash", "deepseek-v3.1")),
     ("GLM", ("glm-4.7-flash", "glm-4.7")),
@@ -58,9 +61,18 @@ ARMS = ("intens", "noise_intens", "extens")
 T_975 = {9: 2.262, 19: 2.093, 29: 2.045}
 #: ``--spread`` -> (what ± means in the caption, table label).
 SPREADS = {
-    "sd": (r"$\pm$ one sample standard deviation across seeds", "tab:induction-results"),
-    "2sd": (r"$\pm$ two sample standard deviations across seeds", "tab:induction-results-2sd"),
-    "ci": (r"$\pm$ the half-width of the $95\%$ $t$ confidence interval for the mean", "tab:induction-results-ci95"),
+    "sd": (
+        r"$\pm$ one sample standard deviation across seeds",
+        "tab:induction-results",
+    ),
+    "2sd": (
+        r"$\pm$ two sample standard deviations across seeds",
+        "tab:induction-results-2sd",
+    ),
+    "ci": (
+        r"$\pm$ the half-width of the $95\%$ $t$ confidence interval for the mean",
+        "tab:induction-results-ci95",
+    ),
 }
 HEADER = r"""\begin{table}[t]
     \centering
@@ -101,16 +113,24 @@ def summarise(cells: dict[tuple[str, str], dict[int, float]]) -> dict[str, dict]
     names = {key: e["name"] for key, e in load_protocol()["models"].items()}
     family = {m: f for f, ms in FAMILIES for m in ms}
     found = {m for m, _ in cells}
-    order = [m for _, ms in FAMILIES for m in ms if m in found] + sorted(found - set(family))
+    order = [m for _, ms in FAMILIES for m in ms if m in found] + sorted(
+        found - set(family)
+    )
     summary = {}
     for model in order:
-        stats = {arm: cell_stats(cells[model, arm]) for arm in ARMS if (model, arm) in cells}
+        stats = {
+            arm: cell_stats(cells[model, arm]) for arm in ARMS if (model, arm) in cells
+        }
         summary[model] = {
             "name": names.get(model, model),
             "family": family.get(model, "other"),
             "n": min(len(cells[model, arm]) for arm in stats),
             "arms": {arm: {"mean": m, "sd": sd} for arm, (m, sd) in stats.items()},
-            "deltas": {f"{a}-{b}": delta(stats[a][0], stats[b][0]) for a, b in DELTAS if a in stats and b in stats},
+            "deltas": {
+                f"{a}-{b}": delta(stats[a][0], stats[b][0])
+                for a, b in DELTAS
+                if a in stats and b in stats
+            },
         }
     return summary
 
@@ -142,7 +162,9 @@ def spread_of(sd: float, n: int, spread: str) -> float:
     if spread == "2sd":
         return 2 * sd
     if n - 1 not in T_975:
-        raise ValueError(f"no 95% t quantile recorded for {n} seeds; known: {sorted(d + 1 for d in T_975)}")
+        raise ValueError(
+            f"no 95% t quantile recorded for {n} seeds; known: {sorted(d + 1 for d in T_975)}"
+        )
     return T_975[n - 1] * sd / n**0.5
 
 
@@ -187,14 +209,18 @@ def latex_table(summary: dict[str, dict], spread: str = "sd") -> str:
             body = f"{a['mean']:.3f} \\pm {spread_of(a['sd'], s['n'], spread):.3f}"
             cells.append(f"$\\mathbf{{{body}}}$" if a["mean"] == best else f"${body}$")
         cells += [fmt_delta(s["deltas"][f"{a}-{b}"]) for a, b in DELTAS]
-        rows.append((r"\addlinespace" if previous not in (None, s["family"]) else None, cells))
+        rows.append(
+            (r"\addlinespace" if previous not in (None, s["family"]) else None, cells)
+        )
         previous = s["family"]
     widths = [max(len(cells[i]) for _, cells in rows) for i in range(6)]
     lines = [HEADER]
     for rule, cells in rows:
         if rule:
             lines.append(f"        {rule}")
-        padded = [cells[0].ljust(widths[0])] + [c.rjust(w) for c, w in zip(cells[1:], widths[1:])]
+        padded = [cells[0].ljust(widths[0])] + [
+            c.rjust(w) for c, w in zip(cells[1:], widths[1:])
+        ]
         lines.append("        " + " & ".join(padded) + r" \\")
     seeds = sorted({s["n"] for s in summary.values()})
     text, label = SPREADS[spread]
@@ -229,8 +255,15 @@ def markdown_table(summary: dict[str, dict], spread: str = "sd") -> str:
         cells = [s["name"], str(s["n"])]
         for arm in ARMS:
             a = s["arms"].get(arm)
-            cells.append(f"{a['mean']:.3f} ± {spread_of(a['sd'], s['n'], spread):.3f}" if a else "")
-        cells += [f"{s['deltas'][f'{a}-{b}']:+.1f}" if f"{a}-{b}" in s["deltas"] else "" for a, b in DELTAS]
+            cells.append(
+                f"{a['mean']:.3f} ± {spread_of(a['sd'], s['n'], spread):.3f}"
+                if a
+                else ""
+            )
+        cells += [
+            f"{s['deltas'][f'{a}-{b}']:+.1f}" if f"{a}-{b}" in s["deltas"] else ""
+            for a, b in DELTAS
+        ]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
@@ -266,7 +299,9 @@ def published_mismatches(summary: dict[str, dict]) -> tuple[int, list[str]]:
     return compared, diffs
 
 
-def write_outputs(summary: dict[str, dict], out: Path, spread: str = "sd") -> list[Path]:
+def write_outputs(
+    summary: dict[str, dict], out: Path, spread: str = "sd"
+) -> list[Path]:
     """Write the tables and the JSON summary under ``out``.
 
     Parameters
@@ -284,10 +319,17 @@ def write_outputs(summary: dict[str, dict], out: Path, spread: str = "sd") -> li
         The files written.
     """
     out.mkdir(parents=True, exist_ok=True)
-    written = [out / "induction_table.tex", out / "induction_table.md", out / "induction_summary.json"]
+    written = [
+        out / "induction_table.tex",
+        out / "induction_table.md",
+        out / "induction_summary.json",
+    ]
     written[0].write_text(latex_table(summary, spread), encoding="utf-8")
     written[1].write_text(markdown_table(summary, spread), encoding="utf-8")
-    written[2].write_text(json.dumps({"spread": spread, "models": summary}, indent=1) + "\n", encoding="utf-8")
+    written[2].write_text(
+        json.dumps({"spread": spread, "models": summary}, indent=1) + "\n",
+        encoding="utf-8",
+    )
     return written
 
 
@@ -304,11 +346,22 @@ def main(argv: list[str] | None = None) -> int:
     int
         Exit status: 1 when the data check fails.
     """
-    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
+    ap = argparse.ArgumentParser(
+        description=(__doc__ or "").split("\n\n", maxsplit=1)[0]
+    )
     ap.add_argument("--data", type=Path, required=True, help="the results folder")
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--spread", choices=list(SPREADS), default="sd", help="what ± means in the arm columns")
-    ap.add_argument("--skip-check", action="store_true", help="do not check the data against the published runs")
+    ap.add_argument(
+        "--spread",
+        choices=list(SPREADS),
+        default="sd",
+        help="what ± means in the arm columns",
+    )
+    ap.add_argument(
+        "--skip-check",
+        action="store_true",
+        help="do not check the data against the published runs",
+    )
     a = ap.parse_args(argv)
     if not a.skip_check:
         problems = check_data(a.data)

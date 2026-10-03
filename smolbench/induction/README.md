@@ -44,7 +44,7 @@ use billed EC2 instances.
 ## Reproducing the ICLR 2027 results
 
 `iclr.json` records the protocol of the submission's runs: the public bucket, seeds,
-arms, each model's pinned checkpoint, a SHA-256 digest of every published replicate, and
+arms, each model's pinned checkpoint, a SHA-256 digest of each seed's published runs, and
 the published accuracies. `repro.py` reads it:
 
 ```

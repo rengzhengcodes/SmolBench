@@ -212,7 +212,7 @@ interval for the mean. `induction_table.tex` matches the submitted table byte fo
 ## Run the induction study on a model
 
 `smolbench/induction/iclr.json` records the protocol of the submission's runs: the
-seeds, arms, each model's pinned checkpoint, a digest of every published replicate, and
+seeds, arms, each model's pinned checkpoint, a digest of each seed's published runs, and
 the published accuracies. The `repro` commands read it.
 
 The driver, `notebooks/induction/run_study.py`, runs only on EC2. It launches a GPU spot

@@ -62,4 +62,3 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 `induction_results.py` stands outside the chain: it writes the paper's accuracy table
 from a results folder that `python -m smolbench.induction.repro fetch` downloads, not
 from `results/`. The root `README.md` explains how to run it.
-
