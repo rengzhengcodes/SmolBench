@@ -9,6 +9,7 @@ across both studies.
 induction/
   run_study.py            the driver          <- launched by literal path
   induction_eval.ipynb    the exploration notebook
+  induction_results_table.ipynb  the paper's accuracy table, from the public bucket
   keys.env                the driver's own sibling (untracked)
   results/                S3-mirrored replicate YAMLs; archived out of the tree
   analysis/               the numbers that got published
@@ -36,6 +37,11 @@ to the store, so a script's depth affects only where it reads from.
 - `induction_eval.ipynb` -- the notebook for exploring and
   validating the study; framing cells document the as-served roster, config
   epochs, and the earliest-wins selection rule.
+- `induction_results_table.ipynb` -- rebuilds the paper's induction accuracy
+  table (`tab:induction-results`) from `s3://smolbench-public-release`
+  alone, with anonymous reads, and checks every cell against the published
+  values. It sits at the study root rather than under `analysis/` because it
+  reads neither `results/` nor the analysis chain.
 
 ## analysis/ -- the published numbers
 
