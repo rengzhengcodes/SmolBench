@@ -20,8 +20,8 @@ You need the following:
 
 - Linux with Python 3.12.
 - [uv](https://docs.astral.sh/uv/) to install the dependencies.
-- The released Horn results folder, `smolbench-horn-data-v1` (2.1 GB), to rebuild the
-  tables and figures without running any model.
+- The [AWS CLI](https://aws.amazon.com/cli/) to download the released Horn results
+  (2.1 GB). The download needs no AWS account.
 - To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
   self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
   models.
@@ -51,6 +51,14 @@ The results folder holds every prompt, model output, and verdict behind the pape
 table: 16 models, 4 arms, 100 theories, and 3 replicates, with full generations. It also
 holds the calibration runs that chose each model's chain length. The folder's
 `README.md` describes its layout and fields.
+
+1. Download the results folder:
+
+   ```
+   aws s3 sync --no-sign-request \
+       s3://smolbench-public-release/deduction/smolbench-horn-data-v1/ \
+       path/to/smolbench-horn-data-v1/
+   ```
 
 1. Check the folder against its manifest of checksums:
 
