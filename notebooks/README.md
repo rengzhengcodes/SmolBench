@@ -8,7 +8,8 @@ task design, run instructions and contracts.
 
 ```
 notebooks/
-  _power_common.py            scaffolding shared by both power analyses
+  _power_common.py            shared power-analysis scaffolding
+  notebook_stats.py           induction posterior-power and bootstrap estimators
   statistical_analyses.ipynb  the single notebook of this study's statistics
   induction/                  family-ladder induction study
     run_study.py                the driver           <- fleet launches this by path
@@ -16,12 +17,13 @@ notebooks/
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
-  deduction/                   family-ladder Lean 4 deduction study
-    run_study.py                the (generation-only) driver  <- ditto
-    lean_eval.ipynb             the exploration notebook
-    README.md                   ditto, plus the Lean data bootstrap
-    results/, data/             S3-mirrored; both archived out of the tree
-    analysis/                   the numbers that got published
+      run_all.py                  sequences power_analysis -> paired_analysis -> significance_report -> extens_vs_noise
+  deduction/                   Horn benchmark
+    horn_results.ipynb          the results notebook
+    HORN_BOTH_VS_PAD.md         benchmark findings
+    HORN_RELEVANCE_DESIGNS.md, HORN_ROSTER_PLAN.md
+    analysis/                   Horn result and route analyses
+      horn_reasoning_figure.py, horn_results.py, horn_routes.py
 ```
 
 ## What may not move
@@ -37,21 +39,31 @@ passed to `InductionExperiment`, never from a `__file__`, and readers anchor
 through `_power_common.results_dir(__file__, up=N)` (`up=1` under
 `analysis/`, pinned by `tests/tooling/test_analysis_stats.py`).
 
-**Both `run_study.py` files are launched by literal path.**
+**The induction `run_study.py` is launched by literal path.**
 `scripts/fleet/run_fleet.py` builds each lane's argv from
 `notebooks/<study>/run_study.py` (in `scripts/fleet/lane_env.py`),
-`scripts/fleet/run_shards.py` matches
-running shards with `pgrep -f notebooks/induction/run_study.py`, and
-`notebooks/deduction/run_study.py` loads the induction driver by file path
-for the shared roster. `notebooks/induction/keys.env` must stay the induction
-driver's own sibling (`load_dotenv(__file__.parent/"keys.env")`).
+and `scripts/fleet/run_shards.py` matches running shards with
+`pgrep -f notebooks/induction/run_study.py`. `notebooks/induction/keys.env`
+must stay the induction driver's own sibling
+(`load_dotenv(__file__.parent/"keys.env")`).
 
 ## Sibling imports inside a study
 
-Analysis scripts put `notebooks/` (for `_power_common`) and/or their own
-directory on `sys.path` and import siblings by bare module name. Both legs
-ship a `power_analysis.py`, so whichever imported first would own
-`sys.modules["power_analysis"]` for the rest of a session: anything loading
-both legs in one process (`tests/tooling/test_analysis_stats.py`,
-`statistical_analyses.ipynb`) loads each module under a unique name and binds
-the bare names only for the duration of each exec.
+Induction analysis scripts import siblings by bare name. Anything loading them
+alongside other modules (`tests/tooling/test_analysis_stats.py`,
+`statistical_analyses.ipynb`) loads each one under a unique name.
+
+**A re-run retires its predecessor rather than racing it.** The S3 key is an
+append-only log; a forced re-collection goes through
+`ResultsStore.regrade`/`supersede_all` (retire every surviving run
+at the address, then write the replacement, whose `regraded_from` names the run
+it replaced). `ARCHIVE.md` has the marker spellings.
+
+## statistical_analyses.ipynb
+
+The single notebook of this study's statistics. It imports the induction
+analysis modules plus `notebooks/notebook_stats.py`; cells that need the full
+results store are gated behind `RUN_HEAVY` and print a `skipped` line when it
+is off. It includes the posterior DECIDED/EQUIVALENT/UNDECIDED classifier.
+Outputs are committed cleared. Horn results are analysed in
+`notebooks/deduction/horn_results.ipynb`.
