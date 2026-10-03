@@ -1,5 +1,9 @@
 """Sibling test directories import root conftest by bare name; a second conftest here would shadow it."""
 
+# pylint: disable=import-error,unused-import,wrong-import-order,function-redefined,no-member
+# The analysis scripts are imported by bare name off a runtime sys.path insert,
+# and the session fixtures deliberately shadow those module names.
+
 import contextlib
 import hashlib
 import io
@@ -26,6 +30,18 @@ import paired_analysis  # noqa: E402
 import power_analysis  # noqa: E402
 import run_all  # noqa: E402
 import significance_report  # noqa: E402
+
+_ANALYSIS_MODULES = {
+    m.__name__: m
+    for m in (
+        extens_vs_noise,
+        multiplicity_sim,
+        paired_analysis,
+        power_analysis,
+        run_all,
+        significance_report,
+    )
+}
 
 #: Sign-flip floor 2/2**6 is above the primary correction threshold.
 SHALLOW_DEPTH = 6
@@ -187,37 +203,43 @@ def tree_fixture(
     return fixture
 
 
+def _analysis_module(name: str) -> ModuleType:
+    """Rebind the bare analysis names, which other test modules may unbind, and return `name`'s module."""
+    sys.modules.update(_ANALYSIS_MODULES)
+    return _ANALYSIS_MODULES[name]
+
+
 @pytest.fixture(scope="session")
 def power_analysis() -> ModuleType:
     """Return the power-analysis module."""
-    return sys.modules["power_analysis"]
+    return _analysis_module("power_analysis")
 
 
 @pytest.fixture(scope="session")
 def run_all() -> ModuleType:
     """Return the analysis driver module."""
-    return sys.modules["run_all"]
+    return _analysis_module("run_all")
 
 
 @pytest.fixture(scope="session")
 def multiplicity_sim() -> ModuleType:
     """Return the multiplicity-simulation module."""
-    return sys.modules["multiplicity_sim"]
+    return _analysis_module("multiplicity_sim")
 
 
 @pytest.fixture(scope="session")
 def paired_analysis() -> ModuleType:
     """Return the paired-analysis module."""
-    return sys.modules["paired_analysis"]
+    return _analysis_module("paired_analysis")
 
 
 @pytest.fixture(scope="session")
 def significance_report() -> ModuleType:
     """Return the significance-report module."""
-    return sys.modules["significance_report"]
+    return _analysis_module("significance_report")
 
 
 @pytest.fixture(scope="session")
 def extens_vs_noise() -> ModuleType:
     """Return the extens-versus-noise module."""
-    return sys.modules["extens_vs_noise"]
+    return _analysis_module("extens_vs_noise")
