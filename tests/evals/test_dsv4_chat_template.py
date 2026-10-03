@@ -27,9 +27,9 @@ def _load_vendored():
 
 ENC = _load_vendored()
 
-LEAN_SYSTEM = (
-    "You are an expert in the Lean 4 theorem prover and the Mathlib4 library.\n"
-    "Respond with only the Lean 4 tactic block."
+SYSTEM = (
+    "You are a careful logician.\n"
+    "Respond with only the proof, one step per line."
 )
 USER_PROMPT = (
     "You are a precise integer counter.\n\n"
@@ -55,7 +55,7 @@ def _render(messages, **kwargs):
     "messages",
     [
         [{"role": "user", "content": USER_PROMPT}],
-        [{"role": "system", "content": LEAN_SYSTEM}, {"role": "user", "content": USER_PROMPT}],
+        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": USER_PROMPT}],
     ],
     ids=["user-only", "system+user"],
 )

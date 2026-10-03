@@ -1,59 +1,194 @@
 # SmolBench
 
-A benchmark for smol manipulation of language: evaluating how representations of positive
-utility information in context can impact LLM performance.
+SmolBench measures how the way information is presented in a prompt affects a language
+model's reasoning. It holds two studies:
 
-This branch holds the code needed to reproduce the Horn-rule deduction results of the
-ICLR 2027 submission: generate the benchmark from seeds, run models on it, score the
-answers, and build the tables and figures. The rest of the project (the Lean 4 deduction
-study, cloud run tooling, pilot harnesses and design notes) is on the `extras` branch.
+- **Induction.** Models infer periodic patterns from either a compact rule or a list of
+  examples. See `smolbench/induction/README.md`.
+- **Horn-rule deduction.** Models prove a goal from a library of Horn rules. The library
+  is shown compactly (high density), with every lemma's full derivation tree (low
+  density), with length-matched irrelevant text, or with dead trees that can't be used.
+  This is the deduction benchmark of the ICLR 2027 submission. See
+  `smolbench/deduction/horn/README.md`.
+
+This page explains how to install the code, rebuild the Horn tables and figures from the
+released results, and run the benchmarks yourself.
+
+## Before you begin
+
+You need the following:
+
+- Linux with Python 3.12.
+- [uv](https://docs.astral.sh/uv/) to install the dependencies.
+- The released Horn results folder, `smolbench-horn-data-v1` (2.1 GB), to rebuild the
+  tables and figures without running any model.
+- To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
+  self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
+  models.
 
 ## Install
 
-```
-uv sync                   # Python 3.12; add --extra aws for AWS Bedrock runs, --extra dev for tests
-```
+1. Clone the repository and change into it.
+1. Install the dependencies:
 
-## Build the tables and figures from the released results
+   ```
+   uv sync
+   ```
 
-The released results folder holds every prompt, model output and verdict behind the
-paper's Horn table: 16 models x 4 arms x 100 theories x 3 replicates, with full
-generations, plus the calibration runs that chose each model's chain length.
+   To run Bedrock-hosted models, add the `aws` extra. To run the tests, add the `dev`
+   extra:
 
-```
-python notebooks/deduction/analysis/make_figures.py --data <results folder> --out results
-```
+   ```
+   uv sync --extra aws --extra dev
+   ```
 
-This checks the folder's checksums and writes every Horn table and figure to
-`results/iclr/` (scored as submitted) and `results/default/` (the default extractor;
-`smolbench/deduction/horn/README.md`, section 5, describes the two scoring modes).
+The commands on this page assume the virtual environment is active
+(`source .venv/bin/activate`), or that you prefix them with `uv run`.
+
+## Rebuild the Horn tables and figures
+
+The results folder holds every prompt, model output, and verdict behind the paper's Horn
+table: 16 models, 4 arms, 100 theories, and 3 replicates, with full generations. It also
+holds the calibration runs that chose each model's chain length. The folder's
+`README.md` describes its layout and fields.
+
+1. Check the folder against its manifest of checksums:
+
+   ```
+   python -m smolbench.deduction.horn.repro check-data path/to/smolbench-horn-data-v1
+   ```
+
+   The command prints `OK` when every file matches.
+
+1. Build the tables and figures:
+
+   ```
+   python notebooks/deduction/analysis/make_figures.py \
+       --data path/to/smolbench-horn-data-v1 --out results
+   ```
+
+   This takes about four minutes. It writes the outputs twice, once per scoring mode:
+
+   - `results/iclr/`: scored as in the submission.
+   - `results/default/`: scored with the default proof extractor, which also reads
+     proofs that have prose between their steps.
+
+The main outputs in each directory are:
+
+| File | Contents |
+|---|---|
+| `horn_table.tex` | The paper table: pass rates per arm and the deltas against low density |
+| `horn_table_full.tex`, `horn_table.md` | The full table, grouped by family, with every arm |
+| `horn_summary.json` | Every number in the tables |
+| `horn_ladder_arms.pdf`, `horn_ladder_deltas.pdf` | Pass rates and deltas per model family |
+| `horn_routes.pdf`, `horn_route_outcomes*.pdf` | How proofs used the derivation trees |
+| `reasoning_length_increase.pdf` | Output length relative to the high-density arm |
+
+The outputs match the submitted ones byte for byte, except for the creation date
+embedded in each PDF.
 
 ## Check the pipeline without a model
+
+The demo runs the whole Horn pipeline on your machine in a few seconds. It renders a
+small benchmark, answers every prompt with a correct proof from a local stub server, runs
+the sweep driver under both scoring modes, and prints the results:
 
 ```
 python scripts/deduction/horn/demo.py --out /tmp/horn_demo
 ```
 
-The demo renders a small benchmark, serves correct proofs from a local stub server, runs the
-sweep driver under both scoring modes, and prints the report.
-
-## Run the experiments again
+Every cell passes. To see how the two scoring modes differ, write a line of prose between
+proof steps:
 
 ```
-python -m smolbench.deduction.horn.repro models                                  # models and chain lengths
-python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48  # or use <results folder>/horn/prompts/m48
-python -m smolbench.deduction.horn.repro command --model glm-4.7 --rung rungs/m48 --out rows.jsonl
-python -m smolbench.deduction.horn.repro report rows.jsonl                       # compare with the published values
+python scripts/deduction/horn/demo.py --out /tmp/horn_demo --style interleaved
 ```
 
-Section 9 of `smolbench/deduction/horn/README.md` walks through each step.
+The answers then fail under `iclr` scoring and pass under `default` scoring.
 
-## Layout
+## Run the Horn benchmark on a model
 
-| path | contents |
+`smolbench/deduction/horn/iclr.json` records the protocol of the submission's runs: the
+seeds, replicates, sampling settings, each model's chain length and serving settings,
+and the published pass rates. The `repro` commands read it.
+
+1. List the models and their chain lengths:
+
+   ```
+   python -m smolbench.deduction.horn.repro models
+   ```
+
+1. Get the model's prompts. The results folder holds the served prompts in
+   `horn/prompts/m<m>/`, where `m` is the chain length. To regenerate them from their
+   seeds instead, render them; the command checks every file against the prompts the
+   model was served:
+
+   ```
+   python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
+   ```
+
+1. Print the commands that run the model with the submission's settings:
+
+   ```
+   python -m smolbench.deduction.horn.repro command \
+       --model qwen3.5-27b --rung rungs/m64 --out rows.jsonl
+   ```
+
+   For a self-hosted model, the output has two commands. The first serves the pinned
+   checkpoint with vLLM; the second runs the sweep against it. For a Bedrock model, the
+   output is one sweep command, which uses your AWS credentials.
+
+1. Run the printed commands. The sweep writes one JSONL row per cell. If it stops,
+   rerun the same command to resume.
+
+1. Compare your results with the published values:
+
+   ```
+   python -m smolbench.deduction.horn.repro report rows.jsonl
+   ```
+
+Sampling runs at temperature 0.7, so a rerun matches the published numbers up to
+sampling noise, not row for row.
+
+### Run a model outside the roster
+
+Render a rung at any chain length, then point the sweep driver at any
+OpenAI-compatible endpoint:
+
+```
+python -m smolbench.deduction.horn.cli render --seeds 100-199 --m 12 --out rungs/m12
+python scripts/deduction/horn/sweep.py --endpoint http://localhost:8000/v1 \
+    --model my-model --thinking on --rung-dir rungs/m12 --replicates 3 --out rows.jsonl
+```
+
+`scripts/deduction/horn/README.md` lists the sweep driver's options.
+
+## Run the induction study
+
+The induction driver is `notebooks/induction/run_study.py`. It provisions and serves
+models on EC2 and writes results to S3. `notebooks/induction/README.md` explains how to
+configure and run it.
+
+## Run the tests
+
+```
+uv sync --extra dev
+python -m pytest tests/
+```
+
+The tests run offline. They use stub model servers and need no credentials.
+
+## Repository layout
+
+| Path | Contents |
 |---|---|
-| `smolbench/deduction/horn/` | the benchmark: theory generator, the four arms, checker, scoring modes, statistics, reproduction CLI, `iclr.json` (the recorded protocol) |
-| `scripts/deduction/horn/` | sweep drivers for vLLM and AWS Bedrock, chain-length calibration, offline demo |
-| `notebooks/deduction/analysis/` | tables and figures from the released results |
-| `smolbench/evals/`, `smolbench/induction/` | shared model client and serving specs; the induction study |
-| `tests/` | `pytest tests/` |
+| `smolbench/evals/` | Shared model client, serving specs, results storage, and tokenizers |
+| `smolbench/induction/` | The induction task generator |
+| `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
+| `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
+| `notebooks/induction/` | The induction study driver |
+| `notebooks/deduction/analysis/` | Horn tables and figures |
+| `tests/` | The test suite |
+
+The Lean 4 deduction study, the cloud run tooling, and the Horn design notes are not on
+this branch. They are on the `extras` branch.

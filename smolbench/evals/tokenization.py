@@ -120,7 +120,7 @@ class TiktokenTokenizer:
         except ImportError as exc:  # pragma: no cover -- optional extra
             raise ImportError(
                 "TiktokenTokenizer needs `tiktoken` "
-                f"(pip install 'smolbench[lean]'): {exc}"
+                f"(pip install tiktoken): {exc}"
             ) from exc
         self.name = f"tiktoken:{encoding_name}"
         self._encoding = tiktoken.get_encoding(encoding_name)
