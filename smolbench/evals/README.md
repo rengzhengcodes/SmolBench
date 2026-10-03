@@ -61,4 +61,9 @@ python -m smolbench.evals.results_store notebooks/induction/results --tag gpt-os
 
 ## Provisioning the bucket
 
-`scripts/results/provision_results_bucket.py` idempotently provisions the configured bucket, public-access blocks, versioning, and `SmolbenchResultsBucketRW`. It requires admin credentials; day-to-day EC2 operator credentials cannot manage S3 or IAM.
+`scripts/results/provision_results_bucket.py` requires administrator-scoped credentials
+and the pre-existing `smolbench-ec2-operators` IAM group; it attaches
+`SmolbenchResultsBucketRW` to that group. EC2 model-cache and SageMaker endpoint setup may
+also create IAM roles, so grant the required IAM permissions or pre-create the roles
+named by `EC2_INSTANCE_ROLE_NAME` and `SAGEMAKER_EXEC_ROLE_NAME`. See the root
+[README's AWS setup](../../README.md#set-up-aws).

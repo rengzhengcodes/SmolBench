@@ -17,6 +17,8 @@ Tests are grouped by subsystem under test:
 
 - `analysis/` -- the induction analysis chain (report rendering, statistics,
   run_all driver) over synthetic result trees from `_trees.py`.
+- `tooling/` -- fleet and bucket provisioning, result audits and snapshots,
+  architecture tooling, and notebook/statistics integration.
 - `evals/` -- harness infrastructure and providers (EC2, AWS, OpenAI-compat,
   results store, marks I/O, tokenization/parsing).
 - `induction/` -- the induction benchmark (periodic quizzes,
@@ -37,4 +39,4 @@ Tests are grouped by subsystem under test:
 Test module basenames must stay globally unique across all subdirectories
 (pytest's rootdir-relative test IDs assume this when there's no package
 marker). Do not add `__init__.py` or `conftest.py` inside `analysis/`,
-`evals/`, `induction/` or `deduction/`.
+`tooling/`, `evals/`, `induction/` or `deduction/`.

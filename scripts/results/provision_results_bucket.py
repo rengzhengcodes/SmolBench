@@ -3,7 +3,7 @@
 Use the configured bucket, block public access, enable versioning, and attach
 the operator policy; every step is idempotent and nothing runs at import time.
 Versioning makes deletes recoverable; denied calls exit 1 because keys are EC2-only.
-The bucket is not seeded: historical imports must go through ``S3ResultsStore`` instead.
+The bucket starts empty; write to it through ``S3ResultsStore``.
     .venv/bin/python scripts/results/provision_results_bucket.py
 """
 

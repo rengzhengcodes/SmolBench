@@ -38,7 +38,7 @@ NON_LEMMA = {"long", "mixed"}
 ROUTES = (("short", "lemma only"), ("mixed", "mixed"), ("long", "tree only"))
 LENGTH_ARMS = (("lem", "high density (lem)"), ("both", "low density (both)"))
 N_BOOT = 5000
-#: Output cap of the roster runs (tokens), raised from the design's 32k on 2026-09-25.
+#: Output cap of the roster runs (tokens).
 OUTPUT_CAP = "131k"
 #: Failure kinds, in table order. ``no_route`` = an invalid or incomplete answer whose first
 #: step matched no rule, so the checker records no route.
@@ -279,7 +279,7 @@ def markdown(stats: dict[str, dict]) -> str:
         "### Per model\n\n" + outcomes5_models_markdown(stats) + "\n"
         "Figure `horn_route_outcomes5_models.png`. `mean` is the arithmetic mean of each segment over models.\n\n"
         "### Failure kinds, % of attempts, pooled over all cells\n\n" + decomposition_markdown(stats) + "\n"
-        f"The output cap is {OUTPUT_CAP} tokens (raised from the design's 32k on 2026-09-25; the largest prompts "
+        f"The output cap is {OUTPUT_CAP} tokens; the largest prompts "
         "leave about 101k-126k). A cap hit has no derive lines. 'invalid step after valid lemma steps' is a "
         "lemma-only route that broke: an invented rule or a lemma whose premise was not yet derived. 'after "
         "entering a tree' exists only in both (dead-tree detours in disc count here too). Pooled, not "

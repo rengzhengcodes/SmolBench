@@ -23,7 +23,7 @@ requires-python = ">=3.12,<3.13"
 # known to work here rather than the minimum ever supported.
 dependencies = [
     # 1.4 is the first release with Parallel(return_as="generator_unordered"),
-    # which smolbench.evals.openai_compat.evaluate streams results through.
+    # which smolbench.evals.openai_compat.ChatClient.evaluate streams results through.
     "joblib>=1.4",
     "numpy>=2.4.3",
     # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
@@ -87,7 +87,7 @@ notebook = [
     #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
     "PyYAML>=6.0.3",
     "python-dotenv>=1.0.1",
-    # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
+    # The notebooks provision AWS infrastructure (EC2 spot).
     "smolbench[aws]",
     # The analysis scripts under notebooks/induction/analysis/ import
     # scipy.stats for reference distributions; power_analysis.py also imports

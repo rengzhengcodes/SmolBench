@@ -7,7 +7,7 @@ High density is the baseline (0%). The x axis is the token ratio on a log scale,
 labelled in percent.
 
 Induction ratios come from the means of the induction reasoning-length table (thousands
-of tokens, Fisher, 2026-09-26). Deduction ratios come from the Horn stage-2 rows through
+of tokens). Deduction ratios come from the Horn stage-2 rows through
 ``horn_results.run_pipeline``. Rows pair by ``PAPER_NAME``; a model whose induction
 entry is ``None`` (no induction token means yet) is left out of the figure.
 No interval is drawn: the induction side has none.
@@ -42,7 +42,7 @@ INDUCTION = {
     "Deepseek V4-Flash": (0.84, 0.69, 5.05),
     "Deepseek V3.1": (0.49, 0.76, 2.04),
     "GLM-4.7-Flash": (2.17, 8.15, 35.66),
-    # Typed as "GLM-4.5-Air" in the induction table; Fisher confirmed (2026-09-26) it is GLM-4.7.
+    # The induction table labels this row GLM-4.5-Air; it is GLM-4.7.
     "GLM-4.7": (2.18, 2.25, 15.30),
     "Ministral3-2512 3B": (2.64, 2.81, 13.00),
     "Ministral3-2512 8B": (1.23, 4.33, 9.74),

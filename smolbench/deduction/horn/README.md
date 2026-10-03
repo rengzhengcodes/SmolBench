@@ -115,9 +115,8 @@ Before `verify`, `extract.extract_answer(content, scoring)` removes inline reaso
 takes the final block of step lines. There are two scoring modes:
 
 - `iclr`: the block is the last contiguous run of step lines, so a prose line between two
-  steps drops every step above it. This is the scoring rule used for the recorded ICLR
-  2027 protocol. Rows written before 2026-09-28 carry these verdicts and have no
-  `scoring` field.
+  steps drops every step above it. The ICLR 2027 submission's Horn table was scored this
+  way. Rows with no `scoring` field were scored this way.
 - `default`: prose lines between steps are skipped. A code fence, a reasoning close tag
   (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
   still ends the block, so a draft above it is not scored.

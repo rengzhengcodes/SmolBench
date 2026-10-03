@@ -1,7 +1,7 @@
 """Single source of truth for repo-relative path anchors used across the test suite.
 
-tests/ is grouped into subject subdirectories (analysis/, evals/, induction/,
-deduction/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
+tests/ is grouped into subject subdirectories (analysis/, tooling/, evals/,
+induction/, deduction/) while tests/conftest.py and tests/fixtures/ stay at the tests/ root
 (pytest resolves conftest.py by directory ancestry). Import
 these constants instead of hand-counting
 ``Path(__file__).resolve().parents[N]``, which silently breaks whenever a

@@ -39,11 +39,11 @@ You need the following:
    uv sync
    ```
 
-   To run Bedrock-hosted models, add the `aws` extra. To run the tests, add the `dev`
-   extra:
+   To run Bedrock-hosted models, add the `aws` extra. To run tests, install all extras;
+   the suite imports the notebook extra:
 
    ```
-   uv sync --extra aws --extra dev
+   uv sync --all-extras
    ```
 
 The commands on this page assume the virtual environment is active
@@ -95,17 +95,21 @@ What you set up yourself:
    vCPU quota of at least 192, or the On-Demand quota when `EC2_MARKET=on-demand`.
    The default regions come from `[fleet].regions` in
    `smolbench/evals/study_config.toml` with `AWS_REGION` prepended; override them with
-   `EC2_REGIONS`.
+   `EC2_REGIONS`. For SageMaker endpoints, request Service Quota for the selected
+   endpoint instance type (`ml.g5.2xlarge` or `ml.p5.48xlarge`) in the target region;
+   multi-GPU endpoint quotas default to zero.
 4. **Results bucket.** Create your own S3 bucket with Block Public Access enabled and
    versioning enabled, or run
    `.venv/bin/python scripts/results/provision_results_bucket.py`.
    The script takes no arguments, resolves the bucket from `SMOLBENCH_RESULTS_S3` or
    `[results].bucket`, creates it in `us-west-2` (tolerating an existing bucket), enables
-   all four public-access blocks and versioning, and creates or reuses the
-   `SmolbenchResultsBucketRW` policy
-   (`ListBucket`, `GetObject`, `PutObject`, and `DeleteObject`), and attaches it to the
-   existing `smolbench-ec2-operators` IAM group. It needs administrator-scoped
-   credentials; it does not create that group. To run the script, allow `s3:CreateBucket`,
+   all four public-access blocks and versioning. It creates or reuses the
+   `SmolbenchResultsBucketRW` policy (`ListBucket`, `GetObject`, `PutObject`, and
+   `DeleteObject`) and attaches it to the existing `smolbench-ec2-operators` IAM group.
+   Before running it, have an IAM administrator create that group and add your operator
+   IAM user; the script does not create the group and fails if it cannot attach the
+   policy. It needs administrator-scoped credentials. To run the script, allow
+   `s3:CreateBucket`,
    `s3:PutBucketPublicAccessBlock`, `s3:PutBucketVersioning`, `iam:CreatePolicy`,
    `iam:ListPolicies`, and `iam:AttachGroupPolicy`. Alternatively, provision the bucket
    yourself. Point the store at it with `SMOLBENCH_RESULTS_S3=s3://<your-bucket>` and
@@ -114,13 +118,15 @@ What you set up yourself:
 5. **Optional settings.** `EC2_KEY_NAME` names an existing key pair for SSH;
    `HF_TOKEN` is needed only for gated models; `EC2_S3_MODEL_CACHE` is an `s3://` URI
    for the model-weight cache.
-6. **Bedrock.** Enable access in the Bedrock console for the model IDs and regions
-   listed in `smolbench/deduction/horn/iclr.json`. `bedrock_sweep.py` loads
+6. **Bedrock.** The current roster uses `us-east-2` for Bedrock models
+   (`bedrock_region` in `smolbench/deduction/horn/iclr.json`). Enable access in the
+   Bedrock console for those model IDs in that region. `bedrock_sweep.py` loads
    `AWS_BEARER_TOKEN_BEDROCK` (a Bedrock API key) from the repository-root `.env`, or
    uses boto3's standard chain, which needs Bedrock `InvokeModelWithResponseStream`
    access for its `converse_stream` call. For the evals client, set
    `INFERENCE_PROVIDER=aws` and provide `AWS_BEARER_TOKEN_BEDROCK` or
-   `AWS_INFERENCE_API_KEY`.
+   `AWS_INFERENCE_API_KEY`; that client authenticates with a bearer key, not IAM
+   access keys.
 
 ## Rebuild the Horn tables and figures
 

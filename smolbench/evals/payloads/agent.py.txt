@@ -286,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         ] + vllm_args
         # Async (cold `docker run -d` blocks on the image pull; /status reports
         # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
-        # (else legacy whole-prefix sync); HF fills any gap.
+        # (else fallback whole-prefix sync); HF fills any gap.
         script = ""
         if S3_CACHE:
             sub = "models--" + hf_id.replace("/", "--")
@@ -314,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _sync_up(self, payload):
         """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
-        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
+        >1M files -> fallback whole-prefix sync; *.incomplete never travels)."""
         global SYNC_PROC
         if not S3_CACHE:
             self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})
