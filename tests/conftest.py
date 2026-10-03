@@ -1,11 +1,9 @@
 """Shared offline OpenAI-stub, tokenizer, and optional S3 fixtures."""
 
-import hashlib
 import importlib.util
 import json
 import math
 import os
-import posixpath
 import re
 import sys
 import threading
@@ -236,87 +234,3 @@ def stub_server() -> Iterator[StubServer]:
     yield server
     server.shutdown()
     thread.join(timeout=5)
-
-
-class S3Archive:
-    """Read-only S3 archive access.
-
-    Parameters
-    ----------
-    uri : str
-        ``s3://<bucket>/<prefix>`` of the archive root.
-    region : str or None
-        Region for the S3 client; ``None`` lets boto3 resolve one.
-    """
-
-    def __init__(self, uri: str, region: str | None) -> None:
-        """Initialize the archive client."""
-        from smolbench.evals import _aws
-        from smolbench.evals.results_store import parse_s3_uri
-
-        self.bucket, self.prefix = parse_s3_uri(uri)
-        self._client = _aws.fresh_client("s3", region)
-
-    def _key(self, rel: str) -> str:
-        """Return the archive key for a relative path."""
-        rel = posixpath.normpath(rel)
-        return f"{self.prefix}/{rel}" if self.prefix else rel
-
-    def keys(self, rel_prefix: str) -> list[str]:
-        """List paths below ``rel_prefix``."""
-        full = self._key(rel_prefix).rstrip("/") + "/"
-        out: list[str] = []
-        paginator = self._client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=self.bucket, Prefix=full):
-            for obj in page.get("Contents", []):
-                key = obj["Key"]
-                out.append(key[len(self.prefix) + 1 :] if self.prefix else key)
-        return out
-
-    def exists(self, rel: str) -> bool:
-        """Report whether an archive object exists."""
-        try:
-            self._client.head_object(Bucket=self.bucket, Key=self._key(rel))
-            return True
-        except self._client.exceptions.ClientError:
-            return False
-
-    def open(self, rel: str) -> Any:
-        """Return an object's streaming body."""
-        try:
-            return self._client.get_object(Bucket=self.bucket, Key=self._key(rel))[
-                "Body"
-            ]
-        except self._client.exceptions.NoSuchKey as exc:
-            raise FileNotFoundError(self._key(rel)) from exc
-
-    def read(self, rel: str) -> bytes:
-        """Read archive bytes for a relative path."""
-        return self.open(rel).read()
-
-    def text(self, rel: str) -> str:
-        """Read archive text for a relative path."""
-        return self.read(rel).decode("utf-8", errors="replace")
-
-    def sha256(self, rel: str) -> str:
-        """Return the archive object's SHA-256 digest."""
-        h = hashlib.sha256()
-        for chunk in self.open(rel).iter_chunks(1 << 20):
-            h.update(chunk)
-        return h.hexdigest()
-
-
-@pytest.fixture(scope="session")
-def s3_archive() -> "S3Archive":
-    """Return the opt-in S3 archive, or skip."""
-    uri = os.environ.get("SMOLBENCH_ARCHIVE_S3", "").strip()
-    if not uri:
-        pytest.skip("SMOLBENCH_ARCHIVE_S3 not set: archived evidence lives on S3 only")
-    pytest.importorskip("boto3")
-    region = os.environ.get("SMOLBENCH_RESULTS_S3_REGION") or None
-    archive = S3Archive(uri, region)
-    try:
-        archive.keys("notebooks/deduction/results")
-    except Exception as exc:  # noqa: BLE001 -- credentials/network, not a test defect
-        pytest.skip(f"S3 archive unreachable: {exc}")
-    return archive

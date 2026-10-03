@@ -96,9 +96,8 @@ ipython_config.py
 
 # UV
 #   uv.lock IS committed: the project resolves to a single Python 3.12
-#   .venv (pinned by .python-version, since lean-dojo pins
-#   Requires-Python <3.13) holding every extra, so the pins (lean-dojo,
-#   tiktoken, ray, ...) must be reproducible from a fresh clone.
+#   .venv (pinned by .python-version) holding every extra, so the pins
+#   must be reproducible from a fresh clone.
 #uv.lock
 
 # poetry
@@ -222,12 +221,6 @@ __marimo__/
 *.pem
 *.pem.pub
 .hf_token
-
-# LeanDojo Benchmark 4 -- a ~700MB external dataset (Zenodo download), not a
-# generated artifact. The replay_passing_*.jsonl sidecars derived from it are
-# not committed either (regenerate with `smolbench.deduction.lean.cli filter`,
-# or restore from the archive -- see notebooks/ARCHIVE.md).
-notebooks/deduction/data/leandojo_benchmark_4/
 
 # Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
 # dirs pruned after upload; never committed.

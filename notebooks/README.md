@@ -16,12 +16,9 @@ notebooks/
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
-  deduction/                   family-ladder Lean 4 deduction study
-    run_study.py                the (generation-only) driver  <- ditto
-    lean_eval.ipynb             the exploration notebook
-    README.md                   ditto, plus the Lean data bootstrap
-    results/, data/             S3-mirrored; both archived out of the tree
-    analysis/                   the numbers that got published
+  deduction/                   Horn-rule deduction benchmark
+    analysis/                   tables and figures from the released results
+                                (make_figures.py; see smolbench/deduction/horn/README.md)
 ```
 
 ## What may not move
@@ -37,14 +34,13 @@ passed to `InductionExperiment`, never from a `__file__`, and readers anchor
 through `_power_common.results_dir(__file__, up=N)` (`up=1` under
 `analysis/`, pinned by `tests/tooling/test_analysis_stats.py`).
 
-**Both `run_study.py` files are launched by literal path.**
+**`notebooks/induction/run_study.py` is launched by literal path.**
 `scripts/fleet/run_fleet.py` builds each lane's argv from
-`notebooks/<study>/run_study.py` (in `scripts/fleet/lane_env.py`),
-`scripts/fleet/run_shards.py` matches
-running shards with `pgrep -f notebooks/induction/run_study.py`, and
-`notebooks/deduction/run_study.py` loads the induction driver by file path
-for the shared roster. `notebooks/induction/keys.env` must stay the induction
-driver's own sibling (`load_dotenv(__file__.parent/"keys.env")`).
+`notebooks/<study>/run_study.py` (in `scripts/fleet/lane_env.py`), and
+`scripts/fleet/run_shards.py` matches running shards with
+`pgrep -f notebooks/induction/run_study.py`. `notebooks/induction/keys.env`
+must stay the induction driver's own sibling
+(`load_dotenv(__file__.parent/"keys.env")`).
 
 ## Sibling imports inside a study
 

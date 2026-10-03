@@ -1,5 +1,0 @@
-name = "leanmini"
-defaultTargets = ["Mini"]
-
-[[lean_lib]]
-name = "Mini"

@@ -1,0 +1,6 @@
+derive sedu(leb) from dudi(leb), pebad(leb)
+derive gidu(leb) from sedu(leb), gapor(leb)
+derive rarep(leb) from gidu(leb), desu(leb)
+derive minu(leb) from rarep(leb), ruma(leb)
+derive lige(leb) from minu(leb), buzef(leb)
+derive gari(leb) from lige(leb), pari(leb)

@@ -12,7 +12,7 @@ Dispatch happens at CALL time -- the env var is read and the module imported on
 each call -- so a notebook only needs its env configured before the first
 query/evaluate call, not before any import. To mix providers per model in one
 process (one env var cannot express that), resolve explicitly with
-provider_module("ec2"), as smolbench.deduction.lean does.
+provider_module("ec2").
 """
 
 import importlib

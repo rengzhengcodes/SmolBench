@@ -16,10 +16,7 @@ version = "0.1.0"
 description = "A benchmark for smol manipulation of language."
 readme = "README.md"
 
-# One venv (.venv) on Python 3.12 holds every extra, including the Lean
-# verification stack: lean-dojo (the `lean` extra) pins Requires-Python <3.13
-# upstream, so the project pins the same ceiling instead of splitting into a
-# second interpreter. `.python-version` selects 3.12 for `uv sync`.
+# Python 3.12, the interpreter the experiments ran on.
 requires-python = ">=3.12,<3.13"
 
 # Direct runtime dependencies, expressed as lower bounds at the versions
@@ -40,6 +37,11 @@ dependencies = [
     # that reads it, no modeling stack and no torch.
     "huggingface-hub>=0.30",
     "tokenizers>=0.20",
+    # smolbench.deduction.horn counts prompt tokens with cl100k (0.13 is the first
+    # release with cp312 wheels).
+    "tiktoken>=0.13",
+    # Horn tables and figures (notebooks/deduction/analysis/horn_*.py).
+    "matplotlib>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -69,28 +71,8 @@ aws = [
     "boto3>=1.43",
     # scripts/smoke/bedrock_smoke.py mints its Bedrock bearer token with this.
     "aws-bedrock-token-generator>=1.0",
-]
-
-# Lean theorem-proving eval (smolbench/deduction/lean/): corpus/context/prompt rendering
-# and the sweep runner need PyYAML (configs, results) and tiktoken (noise-rung
-# token matching, prompt-stats; also backs the optional
-# smolbench.evals.tokenization.TiktokenTokenizer, which the offline tests and
-# the module demos use in place of a downloaded model tokenizer);
-# verification additionally needs lean-dojo (the reason the project pins
-# python<3.13 above).
-lean = [
-    # The verifier's REPL backend: `lean-interact` wraps
-    # leanprover-community/repl (MIT) and tracks current Lean, including
-    # v4.33/v4.34, which is what `smolbench.deduction.lean.replbackend` drives.
-    "lean-interact>=0.11.5",
-    # `lean-dojo` stays ONLY because corpus tracing and premise slicing still
-    # use it (its v1 `Dojo` interaction layer is deprecated and cannot drive
-    # Lean >= v4.20, so it is no longer imported by the verifier). Drop it once
-    # the corpus package lands.
-    "lean-dojo>=2.0",
-    "PyYAML>=6.0.3",
-    # 0.13 is the first release shipping cp312 wheels.
-    "tiktoken>=0.13",
+    # scripts/deduction/horn/bedrock_sweep.py reads AWS settings from a .env file.
+    "python-dotenv>=1.0.1",
 ]
 
 # Jupyter kernel support for the checked-in notebooks under `notebooks/`,
@@ -149,6 +131,8 @@ include-package-data = false
 # without this entry a non-editable install would drop the .toml and every
 # importer of smolbench.evals.study_config would fail at import.
 "smolbench.evals" = ["*.toml"]
+# iclr.json: the recorded protocol of the ICLR runs, read by smolbench.deduction.horn.repro.
+"smolbench.deduction.horn" = ["*.json"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.
