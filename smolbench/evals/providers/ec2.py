@@ -558,9 +558,7 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     # Make the KV budget a function of the spec, not of free VRAM at
     # profiling time (which varies with whatever else the box was doing).
     # 0.92 equals vLLM's default AT THE PINNED BUILD
-    # (vllm/config/cache.py:69 at 8efa13b70), made explicit here. The hinge det
-    # arms also resolved to 0.92 (their cache_config_info records
-    # gpu_memory_utilization=0.92), so nothing the experiment certified changes.
+    # (vllm/config/cache.py:69 at 8efa13b70), made explicit here.
     # deepseek-v4-pro keeps 0.93 for its larger footprint.
     if "--gpu-memory-utilization" not in _args:
         _args += ["--gpu-memory-utilization", "0.92"]

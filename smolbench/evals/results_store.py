@@ -72,8 +72,10 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, base_prefix
 
 
-#: Read from the committed ``[results]`` section of ``study_config.toml``;
-#: tools import this name, and the TOML is the only place the value is written.
+#: The project's study bucket -- the fallback used only when
+#: ``SMOLBENCH_RESULTS_S3`` is unset (see `resolve_results_location`). Read
+#: from the committed ``[results]`` section of ``study_config.toml``; tools
+#: import this name, and the TOML is the only place the value is written.
 DEFAULT_RESULTS_BUCKET: str = load_study_config().results.bucket
 
 
