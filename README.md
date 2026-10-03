@@ -201,13 +201,16 @@ the dependencies with `uv sync --extra notebook` first.
 
 | File | Contents |
 |---|---|
-| `induction_table.tex` | The paper table: accuracy per arm and the deltas against low density |
-| `induction_table.md` | The same table in markdown, with the seeds per model |
+| `induction_table.tex` | The paper table (accuracy per arm and the deltas against low density) under each ± |
+| `induction_table.md` | The same tables in markdown, with the seeds per model |
 | `induction_summary.json` | Every number in the tables |
 
-The ± is one sample standard deviation across seeds, as published. Pass `--spread 2sd`
-for two standard deviations or `--spread ci` for the half-width of the 95% confidence
-interval for the mean. `induction_table.tex` matches the submitted table byte for byte.
+`induction_table.tex` and `induction_table.md` hold the table three times, with the ± as
+one sample standard deviation across seeds, two standard deviations, and the half-width
+of the 95% t confidence interval for the mean. The submission's table was improperly
+captioned: its ± is one sample standard deviation, as in the first table, and the
+outputs open with a note saying so. The three LaTeX tables match the ones the earlier
+table notebook printed, byte for byte.
 
 ## Run the induction study on a model
 

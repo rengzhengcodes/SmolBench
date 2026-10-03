@@ -202,10 +202,23 @@ def test_results_script_writes_the_tables(data, tmp_path, capsys):
     assert "pass --skip-check" in capsys.readouterr().out
     assert mod.main(["--data", str(data), "--out", str(out), "--skip-check"]) == 0
     tex = (out / "induction_table.tex").read_text(encoding="utf-8")
-    assert r"\label{tab:induction-results}" in tex and "over 3 seeds" in tex
-    assert tex.count(r"\addlinespace") == 1
+    assert tex.startswith(
+        "% The induction table in the ICLR 2027 submission was improperly captioned."
+    )
+    for label in (
+        "tab:induction-results}",
+        "tab:induction-results-2sd}",
+        "tab:induction-results-ci95}",
+    ):
+        assert tex.count(label) == 1
+    assert "over 3 seeds" in tex and tex.count(r"\addlinespace") == 3
     assert r"Gemma4 E2B-it & $\mathbf{0.889 \pm 0.111}$ &" in tex
     summary = json.loads((out / "induction_summary.json").read_text(encoding="utf-8"))
+    assert "improperly captioned" in summary["note"] and list(summary["spreads"]) == [
+        "sd",
+        "2sd",
+        "ci",
+    ]
     assert list(summary["models"]) == ["gemma-4-e2b", "glm-4.7"]
     assert summary["models"]["glm-4.7"]["deltas"]["intens-extens"] == pytest.approx(
         66.7
@@ -218,6 +231,5 @@ def test_results_script_formats_spreads_and_negative_deltas():
     mod = _load("induction_results")
     assert mod.spread_of(0.1, 30, "ci") == pytest.approx(2.045 * 0.1 / 30**0.5)
     assert mod.spread_of(0.1, 30, "2sd") == pytest.approx(0.2)
-    with pytest.raises(ValueError, match="no 95% t quantile"):
-        mod.spread_of(0.1, 4, "ci")
+    assert mod.spread_of(0.1, 4, "ci") == pytest.approx(3.182 * 0.1 / 2)
     assert mod.fmt_delta(-0.4) == "$-0.4$" and mod.fmt_delta(3.0) == "3.0"

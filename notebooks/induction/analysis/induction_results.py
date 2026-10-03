@@ -7,21 +7,23 @@ results, or a ``run_study.py`` run, as ``python -m smolbench.induction.repro fet
 downloads them. Checks the folder against the published runs (``--skip-check`` for your
 own run), then writes:
 
-* ``induction_table.tex``: the paper table (``tab:induction-results``). One row per model,
-  ladder order, the accuracy of the high-density (``intens``), high-density + irrelevant
-  (``noise_intens``) and low-density (``extens``) arms, and the two deltas against low
-  density.
-* ``induction_table.md``: the same table in markdown, with the number of seeds per model.
+* ``induction_table.tex``: the paper table (``tab:induction-results``) three times, with
+  the ``±`` as one sample standard deviation across seeds, two, and the half-width of the
+  95% t confidence interval for the mean (labels ``-2sd`` and ``-ci95``). One row per
+  model, ladder order, the accuracy of the high-density (``intens``), high-density +
+  irrelevant (``noise_intens``) and low-density (``extens``) arms, and the two deltas
+  against low density.
+* ``induction_table.md``: the same three tables in markdown, with the seeds per model.
 * ``induction_summary.json``: every number in the tables.
 
-Statistics (``smolbench.induction.repro``). A replicate's accuracy is the fraction of its 9
-marks scored correct; a ``null`` score is wrong. A cell is the mean over seeds; its ``±``
-is the sample standard deviation over seeds (``--spread sd``, as published), twice that
-(``2sd``), or the half-width of the 95% t confidence interval for the mean (``ci``). Bold
-marks the row's highest mean, ties included. A delta is ``100 x (a - b)`` in points from
-the means rounded to three decimals, as printed.
+Each output opens with ``CAPTION_NOTE``: the submission's table was improperly captioned.
 
-usage: induction_results.py --data DIR --out DIR [--spread sd|2sd|ci] [--skip-check]
+Statistics (``smolbench.induction.repro``). A replicate's accuracy is the fraction of its 9
+marks scored correct; a ``null`` score is wrong. A cell is the mean over seeds and the
+sample standard deviation over seeds. Bold marks the row's highest mean, ties included. A
+delta is ``100 x (a - b)`` in points from the means rounded to three decimals, as printed.
+
+usage: induction_results.py --data DIR --out DIR [--skip-check]
 """
 
 from __future__ import annotations
@@ -57,23 +59,30 @@ FAMILIES = (
     ("Ministral 3", ("ministral-3-3b", "ministral-3-8b", "ministral-3-14b")),
 )
 ARMS = ("intens", "noise_intens", "extens")
-#: Two-sided 95% t quantile with ``df`` degrees of freedom, to three decimals.
-T_975 = {9: 2.262, 19: 2.093, 29: 2.045}
-#: ``--spread`` -> (what ± means in the caption, table label).
+#: Spread key -> (heading, what ± means in the caption, table label), in output order.
 SPREADS = {
     "sd": (
+        "1 SD",
         r"$\pm$ one sample standard deviation across seeds",
         "tab:induction-results",
     ),
     "2sd": (
+        "2 SD",
         r"$\pm$ two sample standard deviations across seeds",
         "tab:induction-results-2sd",
     ),
     "ci": (
+        "95% CI",
         r"$\pm$ the half-width of the $95\%$ $t$ confidence interval for the mean",
         "tab:induction-results-ci95",
     ),
 }
+#: Opens every output: the published ± is the 1 SD table's, under a wrong caption.
+CAPTION_NOTE = (
+    "The induction table in the ICLR 2027 submission was improperly captioned. Its ± is "
+    "one sample standard deviation across seeds, as in the 1 SD table here; the captions "
+    "below state what each ± is."
+)
 HEADER = r"""\begin{table}[t]
     \centering
     \footnotesize
@@ -95,46 +104,6 @@ CAPTION = (
 )
 
 
-def summarise(cells: dict[tuple[str, str], dict[int, float]]) -> dict[str, dict]:
-    """Per-model cell statistics and deltas, in ladder order.
-
-    Models outside the roster follow the roster, in name order.
-
-    Parameters
-    ----------
-    cells : dict[tuple[str, str], dict[int, float]]
-        ``(model, arm)`` -> ``{seed: accuracy}``, from ``repro.load_cells``.
-
-    Returns
-    -------
-    dict[str, dict]
-        Model -> ``{"name", "family", "n", "arms": {arm: {"mean", "sd"}}, "deltas"}``.
-    """
-    names = {key: e["name"] for key, e in load_protocol()["models"].items()}
-    family = {m: f for f, ms in FAMILIES for m in ms}
-    found = {m for m, _ in cells}
-    order = [m for _, ms in FAMILIES for m in ms if m in found] + sorted(
-        found - set(family)
-    )
-    summary = {}
-    for model in order:
-        stats = {
-            arm: cell_stats(cells[model, arm]) for arm in ARMS if (model, arm) in cells
-        }
-        summary[model] = {
-            "name": names.get(model, model),
-            "family": family.get(model, "other"),
-            "n": min(len(cells[model, arm]) for arm in stats),
-            "arms": {arm: {"mean": m, "sd": sd} for arm, (m, sd) in stats.items()},
-            "deltas": {
-                f"{a}-{b}": delta(stats[a][0], stats[b][0])
-                for a, b in DELTAS
-                if a in stats and b in stats
-            },
-        }
-    return summary
-
-
 def spread_of(sd: float, n: int, spread: str) -> float:
     """The ``±`` of one cell.
 
@@ -150,22 +119,62 @@ def spread_of(sd: float, n: int, spread: str) -> float:
     Returns
     -------
     float
-        ``sd``, ``2 * sd`` or the 95% t half-width ``t * sd / sqrt(n)``.
-
-    Raises
-    ------
-    ValueError
-        For ``ci`` with a seed count ``T_975`` has no quantile for.
+        ``sd``, ``2 * sd`` or the 95% t half-width ``t * sd / sqrt(n)``, with the
+        two-sided t quantile for ``n - 1`` degrees of freedom rounded to three decimals
+        (2.045 for 30 seeds).
     """
     if spread == "sd":
         return sd
     if spread == "2sd":
         return 2 * sd
-    if n - 1 not in T_975:
-        raise ValueError(
-            f"no 95% t quantile recorded for {n} seeds; known: {sorted(d + 1 for d in T_975)}"
-        )
-    return T_975[n - 1] * sd / n**0.5
+    from scipy.stats import t  # pylint: disable=import-outside-toplevel
+
+    return round(float(t.ppf(0.975, n - 1)), 3) * sd / n**0.5
+
+
+def summarise(cells: dict[tuple[str, str], dict[int, float]]) -> dict[str, dict]:
+    """Per-model cell statistics and deltas, in ladder order.
+
+    Models outside the roster follow the roster, in name order.
+
+    Parameters
+    ----------
+    cells : dict[tuple[str, str], dict[int, float]]
+        ``(model, arm)`` -> ``{seed: accuracy}``, from ``repro.load_cells``.
+
+    Returns
+    -------
+    dict[str, dict]
+        Model -> ``{"name", "family", "n", "arms", "deltas"}``; ``arms[arm]`` holds the
+        ``mean``, the ``sd`` and the ``±`` under every other ``SPREADS`` key.
+    """
+    names = {key: e["name"] for key, e in load_protocol()["models"].items()}
+    family = {m: f for f, ms in FAMILIES for m in ms}
+    found = {m for m, _ in cells}
+    order = [m for _, ms in FAMILIES for m in ms if m in found] + sorted(
+        found - set(family)
+    )
+    summary = {}
+    for model in order:
+        stats = {
+            arm: cell_stats(cells[model, arm]) for arm in ARMS if (model, arm) in cells
+        }
+        n = min(len(cells[model, arm]) for arm in stats)
+        summary[model] = {
+            "name": names.get(model, model),
+            "family": family.get(model, "other"),
+            "n": n,
+            "arms": {
+                arm: {"mean": m, **{k: spread_of(sd, n, k) for k in SPREADS}}
+                for arm, (m, sd) in stats.items()
+            },
+            "deltas": {
+                f"{a}-{b}": delta(stats[a][0], stats[b][0])
+                for a, b in DELTAS
+                if a in stats and b in stats
+            },
+        }
+    return summary
 
 
 def fmt_delta(points: float) -> str:
@@ -185,7 +194,7 @@ def fmt_delta(points: float) -> str:
 
 
 def latex_table(summary: dict[str, dict], spread: str = "sd") -> str:
-    """LaTeX for the paper table.
+    """LaTeX for the paper table with one kind of ``±``.
 
     Parameters
     ----------
@@ -206,7 +215,7 @@ def latex_table(summary: dict[str, dict], spread: str = "sd") -> str:
         cells = [s["name"]]
         for arm in ARMS:
             a = s["arms"][arm]
-            body = f"{a['mean']:.3f} \\pm {spread_of(a['sd'], s['n'], spread):.3f}"
+            body = f"{a['mean']:.3f} \\pm {a[spread]:.3f}"
             cells.append(f"$\\mathbf{{{body}}}$" if a["mean"] == best else f"${body}$")
         cells += [fmt_delta(s["deltas"][f"{a}-{b}"]) for a, b in DELTAS]
         rows.append(
@@ -223,7 +232,7 @@ def latex_table(summary: dict[str, dict], spread: str = "sd") -> str:
         ]
         lines.append("        " + " & ".join(padded) + r" \\")
     seeds = sorted({s["n"] for s in summary.values()})
-    text, label = SPREADS[spread]
+    _, text, label = SPREADS[spread]
     lines += [
         r"        \bottomrule",
         r"    \end{tabular}",
@@ -232,6 +241,27 @@ def latex_table(summary: dict[str, dict], spread: str = "sd") -> str:
         r"\end{table}",
     ]
     return "\n".join(lines) + "\n"
+
+
+def latex_tables(summary: dict[str, dict]) -> str:
+    """``CAPTION_NOTE`` as a comment, then the paper table under every ``SPREADS`` key.
+
+    Parameters
+    ----------
+    summary : dict[str, dict]
+        Output of ``summarise``.
+
+    Returns
+    -------
+    str
+        The contents of ``induction_table.tex``.
+    """
+    parts = [f"% {CAPTION_NOTE}\n"]
+    parts += [
+        f"% ---- ± = {heading} ----\n" + latex_table(summary, k)
+        for k, (heading, _, _) in SPREADS.items()
+    ]
+    return "\n".join(parts)
 
 
 def markdown_table(summary: dict[str, dict], spread: str = "sd") -> str:
@@ -255,17 +285,34 @@ def markdown_table(summary: dict[str, dict], spread: str = "sd") -> str:
         cells = [s["name"], str(s["n"])]
         for arm in ARMS:
             a = s["arms"].get(arm)
-            cells.append(
-                f"{a['mean']:.3f} ± {spread_of(a['sd'], s['n'], spread):.3f}"
-                if a
-                else ""
-            )
+            cells.append(f"{a['mean']:.3f} ± {a[spread]:.3f}" if a else "")
         cells += [
             f"{s['deltas'][f'{a}-{b}']:+.1f}" if f"{a}-{b}" in s["deltas"] else ""
             for a, b in DELTAS
         ]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
+
+
+def markdown_tables(summary: dict[str, dict]) -> str:
+    """``CAPTION_NOTE``, then the markdown table under every ``SPREADS`` key.
+
+    Parameters
+    ----------
+    summary : dict[str, dict]
+        Output of ``summarise``.
+
+    Returns
+    -------
+    str
+        The contents of ``induction_table.md``.
+    """
+    parts = [f"> {CAPTION_NOTE}\n"]
+    parts += [
+        f"## ± = {heading}\n\n{text}\n\n" + markdown_table(summary, k)
+        for k, (heading, text, _) in SPREADS.items()
+    ]
+    return "\n".join(parts)
 
 
 def published_mismatches(summary: dict[str, dict]) -> tuple[int, list[str]]:
@@ -299,9 +346,7 @@ def published_mismatches(summary: dict[str, dict]) -> tuple[int, list[str]]:
     return compared, diffs
 
 
-def write_outputs(
-    summary: dict[str, dict], out: Path, spread: str = "sd"
-) -> list[Path]:
+def write_outputs(summary: dict[str, dict], out: Path) -> list[Path]:
     """Write the tables and the JSON summary under ``out``.
 
     Parameters
@@ -310,8 +355,6 @@ def write_outputs(
         Output of ``summarise``.
     out : Path
         Output directory, created if missing.
-    spread : str
-        A ``SPREADS`` key.
 
     Returns
     -------
@@ -324,11 +367,15 @@ def write_outputs(
         out / "induction_table.md",
         out / "induction_summary.json",
     ]
-    written[0].write_text(latex_table(summary, spread), encoding="utf-8")
-    written[1].write_text(markdown_table(summary, spread), encoding="utf-8")
+    written[0].write_text(latex_tables(summary), encoding="utf-8")
+    written[1].write_text(markdown_tables(summary), encoding="utf-8")
+    record = {
+        "note": CAPTION_NOTE,
+        "spreads": {k: v[0] for k, v in SPREADS.items()},
+        "models": summary,
+    }
     written[2].write_text(
-        json.dumps({"spread": spread, "models": summary}, indent=1) + "\n",
-        encoding="utf-8",
+        json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     return written
 
@@ -352,12 +399,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", type=Path, required=True, help="the results folder")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument(
-        "--spread",
-        choices=list(SPREADS),
-        default="sd",
-        help="what ± means in the arm columns",
-    )
-    ap.add_argument(
         "--skip-check",
         action="store_true",
         help="do not check the data against the published runs",
@@ -372,8 +413,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"data: {a.data} matches the published runs")
     summary = summarise(load_cells(a.data))
-    written = write_outputs(summary, a.out, a.spread)
-    print(markdown_table(summary, a.spread))
+    written = write_outputs(summary, a.out)
+    print(markdown_tables(summary))
     compared, diffs = published_mismatches(summary)
     for line in diffs:
         print(f"- {line}")
