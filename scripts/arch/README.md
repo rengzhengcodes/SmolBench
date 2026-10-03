@@ -46,5 +46,4 @@ One row per family.
 
 `--check` compares four shared fields with `tests/fixtures/roster_configs.json`,
 which `tests/evals/test_deploy_specs.py` also pins; a mismatch means an upstream
-checkpoint moved. There is no page builder because the page was a presentation
-artifact, not study tooling; built output lives only in release archives.
+checkpoint moved.

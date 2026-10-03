@@ -86,7 +86,7 @@ def test_render_user_data_fills_and_packs_deterministically():
     assert headroom > 0, f"compressed user-data over the 16 KB cap: {len(packed)} bytes"
     assert headroom > 6000, (
         f"compressed headroom {headroom} fell below the 6 KB floor -- "
-        "re-measure and update the doc/comment sites quoting the margin")
+        "re-measure the compressed headroom")
     print(f"user-data: raw={len(rendered.encode())} compressed={len(packed)}/16384 headroom={headroom}")
 
 

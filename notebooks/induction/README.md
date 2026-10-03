@@ -23,6 +23,9 @@ plus any `EC2_*` / `INDUCTION_*` overrides (catalogued in `run_study.py`'s
 module docstring); it is untracked with no committed example, because
 credential-shaped files never enter the tree.
 
+See the root [README's AWS setup](../../README.md#set-up-aws) for the credentials,
+network, quota and results-bucket setup.
+
 Everything else is free to be grouped, and is: nothing under `analysis/` writes
 to the store, so a script's depth affects only where it reads from.
 
@@ -30,9 +33,8 @@ to the store, so a script's depth affects only where it reads from.
 
 - `run_study.py` -- headless driver for the study; derives the roster
   (`MODELS`, `COT_ARGS`) from `smolbench/evals/study_config.toml` and owns
-  the sweep config. `notebooks/deduction/run_study.py`
-  loads it by file path for the shared roster; the analysis scripts do NOT --
-  they take their own `MODELS` from `analysis/study_design.py`.
+  the sweep config. The analysis scripts do NOT use `run_study.py` -- they
+  take their own `MODELS` from `analysis/study_design.py`.
 - `induction_eval.ipynb` -- the notebook for exploring and
   validating the study; framing cells document the as-served roster, config
   epochs, and the earliest-wins selection rule.

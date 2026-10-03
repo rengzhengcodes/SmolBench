@@ -50,7 +50,7 @@ def test_poll_until_success_and_failure_paths(monkeypatch):
 
 
 def _trust(service):
-    """Copied literally from aws.py/ec2.py pre-refactor; key order is part of the contract."""
+    """Pinned literal trust policy; key order is part of the contract."""
     return {"Version": "2012-10-17", "Statement": [
         {"Effect": "Allow", "Principal": {"Service": service}, "Action": "sts:AssumeRole"}]}
 

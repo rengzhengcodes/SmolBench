@@ -44,10 +44,10 @@ explicit user opt-in: they provision EC2 or invoke Bedrock and are billed.
 
 ### Live smoke runbook
 
-With fresh creds for profile `rengz`:
+With fresh creds for profile `<your-profile>`:
 
 ```bash
-export AWS_PROFILE=rengz AWS_REGION=us-east-1
+export AWS_PROFILE='<your-profile>' AWS_REGION=us-east-1
 export EC2_EXPERIMENT_TAG=smoke-test \
        EC2_STATE_FILE=/tmp/cleanup_smoke_state.json \
        EC2_INSTANCE_TYPES=g6.2xlarge,g5.2xlarge \

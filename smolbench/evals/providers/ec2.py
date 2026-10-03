@@ -306,14 +306,13 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
             "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
         ],
     },
-    # tp=4: gemma-4-12b is a TIER B lane (see run_fleet.TIER_MEMBERS), and
+    # tp=4: gemma-4-12b is a TIER B lane (see lane_env.TIER_MEMBERS), and
     # tier B's hunt list is ALL 4-GPU (g6e.12xlarge, g6e.24xlarge -- see
-    # run_fleet.TIER_INSTANCE_TYPES), which is what provides the 4x L40S box:
+    # lane_env.TIER_INSTANCE_TYPES), which is what provides the 4x L40S box:
     # a 12B model with ~95k-token thinking budgets on ONE L40S hit the read
     # timeout on long arms. 16 attention heads and 8 KV heads shard cleanly
     # across 4; tp=4 does require that 4-GPU box, which tier B's hunt list
-    # guarantees (tier A no longer hunts a 4-GPU box at all, see
-    # run_fleet.TIER_INSTANCE_TYPES).
+    # guarantees (tier A hunts no 4-GPU box, see lane_env.TIER_INSTANCE_TYPES).
     "gemma-4-12b": {
         "hf_model_id": "google/gemma-4-12B-it",
         "tp": 4,
@@ -559,10 +558,8 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     # Make the KV budget a function of the spec, not of free VRAM at
     # profiling time (which varies with whatever else the box was doing).
     # 0.92 equals vLLM's default AT THE PINNED BUILD
-    # (vllm/config/cache.py:69 at 8efa13b70), made explicit here, and is what
-    # the hinge det arms actually resolved to (their cache_config_info
-    # records gpu_memory_utilization=0.92), so nothing the experiment
-    # certified changes. deepseek-v4-pro keeps 0.93 for its larger footprint.
+    # (vllm/config/cache.py:69 at 8efa13b70), made explicit here.
+    # deepseek-v4-pro keeps 0.93 for its larger footprint.
     if "--gpu-memory-utilization" not in _args:
         _args += ["--gpu-memory-utilization", "0.92"]
     _spec["vllm_args"] = _args + DETERMINISM_ARGS
@@ -708,8 +705,8 @@ _INSTANCE_GPU_NAMES = {
 #: instance size keeps a same-GPU substitution legal and refuses a
 #: tp-changing one.
 #:
-#: Determinism scope: the pin is necessary but NOT sufficient. Measured
-#: (commit ac11f8c2): nemotron-3-nano-4b was 8/8 bitwise-identical at a
+#: Determinism scope: the pin is necessary but NOT sufficient. Measured:
+#: nemotron-3-nano-4b was 8/8 bitwise-identical at a
 #: fixed seed on one box, yet 0/8 across g6e.4xlarge vs g6e.2xlarge with
 #: the SAME 1x L40S and tp=1 -- host vCPU/RAM change batching and thus
 #: reduction order. The pin blocks silicon/tp swaps; it does not certify
@@ -1229,9 +1226,8 @@ _CLIENT = ChatClient(
 
 # The provider-facing API; see ChatClient.query/complete/evaluate. The
 # plain-text <think> splitting that Nemotron-3 and EXAONE need (this study
-# serves neither with a server-side reasoning parser; see the "Reasoning
-# wiring" note in EC2_DEPLOY_SPECS) lives in the shared client, so every
-# provider handles it identically.
+# serves neither with a server-side reasoning parser) lives in the shared
+# client, so every provider handles it identically.
 query = _CLIENT.query
 complete = _CLIENT.complete
 evaluate = _CLIENT.evaluate

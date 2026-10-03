@@ -18,7 +18,7 @@ def readme() -> str:
 
 
 def test_every_file_the_notebooks_readme_names_exists(readme: str) -> None:
-    """README paths resolve, as the counterpart to the root README map check."""
+    """README paths resolve."""
     named = sorted(
         set(re.findall(r"[\w./-]*[\w-]+\.(?:py|ipynb|md|yaml|toml)", readme))
     )

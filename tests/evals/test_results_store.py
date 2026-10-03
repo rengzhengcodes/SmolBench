@@ -213,10 +213,10 @@ def test_s3_log_is_append_only_and_earliest_wins(fake_s3: FakeS3Client) -> None:
     assert store.list_seeds("stub-model", "decode", "intens") == [1776, 1777]
     assert store.list_seeds("stub-model", "decode", "extens") == [1778]
     assert store.list_seeds("never-served", "decode", "intens") == []
-    based = S3ResultsStore(BUCKET, "archive/2026-08", "periodic_moe", "us-west-2")
+    based = S3ResultsStore(BUCKET, "team/base", "periodic_moe", "us-west-2")
     based.dump_marks(sample_marks(), addr(seed=1), TS1)
     assert (
-        "archive/2026-08/periodic_moe/stub-model/seed=1/intens--20260810T193000.000000Z.yaml"
+        "team/base/periodic_moe/stub-model/seed=1/intens--20260810T193000.000000Z.yaml"
         in fake_s3.objects
     )
     # ``--`` prevents sibling info-prefix matches.
@@ -254,10 +254,10 @@ def test_resolve_store(
         (URI, "notebooks/divisor/results", "one_hop_", "", "divisor/one_hop"),
         (URI, "notebooks/brand_new/results", "", "", "brand_new"),  # need not exist
         (
-            f"{URI}/archive/2026-08",
+            f"{URI}/team/base",
             "notebooks/periodic/results",
             "",
-            "archive/2026-08",
+            "team/base",
             "periodic",
         ),
     ]:
@@ -287,15 +287,15 @@ def test_resolve_store(
     monkeypatch.setenv("SMOLBENCH_RESULTS_S3_REGION", "us-west-2")
     assert resolve_store(results).region == "us-west-2"
     assert parse_s3_uri(f"s3://{BUCKET}/") == (BUCKET, "")
-    assert parse_s3_uri(f"s3://{BUCKET}/archive/2026-08/") == (
+    assert parse_s3_uri(f"s3://{BUCKET}/team/base/") == (
         BUCKET,
-        "archive/2026-08",
+        "team/base",
     )
     for bad in (
         "bucket",
         "https://bucket/x",
         "s3://",
-        "s3://buck//archive",
+        "s3://buck//base",
         "s3://bu ck",
     ):
         with pytest.raises(ValueError):

@@ -1,7 +1,8 @@
 # tests/fixtures/
 
-Shared fixtures for the offline suite. Everything in this tree is test
-input only: no experiment, notebook, or script reads from here.
+Shared fixtures for the offline suite. `roster_configs.json` is read by
+`scripts/arch/fetch_arch_facts.py --check` and is also referenced by the drift-pin
+comment in `smolbench/evals/providers/ec2.py`.
 
 `golden_quizzes.json` holds SHA-256 hashes of the induction generation
 pipeline's output at the studies' production configs;

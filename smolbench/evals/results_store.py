@@ -72,12 +72,10 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, base_prefix
 
 
-#: The project's study bucket -- the DOCUMENTED FALLBACK used only when
+#: The project's study bucket -- the fallback used only when
 #: ``SMOLBENCH_RESULTS_S3`` is unset (see `resolve_results_location`). Read
-#: from the committed ``[results]`` section of ``study_config.toml`` (issue
-# 46), never re-typed: it was previously a literal duplicated across ten
-#: files, so a redirected results store silently did not reach them. Tools
-#: import this name; the TOML is the one place the value is written down.
+#: from the committed ``[results]`` section of ``study_config.toml``; tools
+#: import this name, and the TOML is the only place the value is written.
 DEFAULT_RESULTS_BUCKET: str = load_study_config().results.bucket
 
 

@@ -95,7 +95,7 @@ def test_run_instances_kwargs_variants(monkeypatch, market, overrides, expected)
 
 
 def test_decode_user_data_round_trips():
-    """gzip decodes; pre-determinism plain text still decodes; garbage raises."""
+    """gzip decodes; uncompressed plain text also decodes; garbage raises."""
     rendered = "#!/bin/bash\necho hi\n"
     assert ec2._decode_user_data(pack_user_data(rendered)) == rendered
     assert ec2._decode_user_data(rendered.encode()) == rendered
