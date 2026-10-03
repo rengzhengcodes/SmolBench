@@ -231,7 +231,7 @@ def test_disc_trees_keep_roots_but_cannot_be_entered(tok):
 
 
 def test_arms_are_fixed():
-    """Only the five arms render; retired specs raise."""
+    """Only the five arms render; unknown specs raise."""
     th = generate(1)
     for bad in ("lem:1", "both:1", "pad:2", "ax", "unf:1", "bothm", "padm", "deep", "dpad", "junk", "nope"):
         with pytest.raises(ValueError):

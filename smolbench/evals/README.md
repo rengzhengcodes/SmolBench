@@ -56,7 +56,3 @@ python -m smolbench.evals.results_store notebooks/induction/results --tag gpt-os
 ```
 
 `--tag model=tag` is repeatable; `--prefix one_hop_` supplies a harness prefix. Run this before analysis: analysis scripts read local trees. Sync is one-way and overwrites matching local paths.
-
-## Provisioning the bucket
-
-`scripts/results/provision_results_bucket.py` idempotently provisions the configured bucket, public-access blocks, versioning, and `SmolbenchResultsBucketRW`. It requires admin credentials; day-to-day EC2 operator credentials cannot manage S3 or IAM.

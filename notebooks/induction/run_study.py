@@ -248,8 +248,8 @@ TEMPLATE_RESERVE: int = 8_000
 #: Endpoints plus four interior seeds: 6 tokenizer passes instead of N_REPLICATES. Must be >= 2.
 PROBE_SEEDS: int = 6
 
-#: Avoids CoT truncation that yields unscorable responses; periodic_moe's
-#: qwen3.5 needed a 65,536-token budget on a comparable listing, so under
+#: Avoids CoT truncation that yields unscorable responses; qwen3.5 needed a
+#: 65,536-token budget on a comparable listing, so under
 #: ~48k is deep truncation territory.
 MIN_VIABLE_BUDGET: int = 48_000
 

@@ -51,10 +51,7 @@ per lemma) and `m` scales the chain, the search space and the tokens together.
 ## 3. The four arms
 
 `render.render(theory, arm)` produces one prompt per arm. `ARMS = (lem, pad, disc, both)`.
-Only these four exist. A fifth arm, `junk` (rule-shaped lines over a vocabulary that
-appears nowhere else), was run on Haiku and on Ministral-3-14b and retired on
-2026-09-26: it sat level with lorem for Haiku and cost as much as `disc` for the
-non-thinking Ministral, so `disc` carries the rule-shaped control alone.
+Only these four exist.
 
 | arm | library section | what the extra lines are |
 |---|---|---|
@@ -112,7 +109,7 @@ derives the goal. `examples/` holds a small rendered theory in every arm.
   (infrastructure, not scored).
 - Route: `short` if only lemmas were applied, `long` if only tree rules, `mixed`
   otherwise, over the valid steps plus the failing step's rule. A `disc` rule counts as a
-  tree rule (an attempt to enter a tree); a `junk` rule counts as nothing.
+  tree rule (an attempt to enter a tree).
 
 Before `verify`, `extract.extract_answer(content, scoring)` removes inline reasoning and
 takes the final block of step lines. There are two scoring modes:

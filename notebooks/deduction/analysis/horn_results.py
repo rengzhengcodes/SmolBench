@@ -133,7 +133,7 @@ MIN_CHECK_CELLS = 300
 #: A point or delta with fewer seeds than this is left off the figures (still in the table).
 MIN_PLOT_SEEDS = 10
 
-# Categorical slots 1-4 of the validated default palette (dataviz skill).
+# Categorical slots 1-4 of the validated default palette.
 ARM_COLOR = {"lem": "#2a78d6", "pad": "#eb6834", "disc": "#1baf7a", "both": "#eda100"}
 ARM_MARKER = {"lem": "o", "pad": "s", "disc": "^", "both": "D"}
 DELTA_COLOR = ("#2a78d6", "#eb6834", "#1baf7a")
