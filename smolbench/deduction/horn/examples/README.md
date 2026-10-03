@@ -24,5 +24,6 @@ have no ids and any valid proof counts.
 
 Rules are listed in one shuffled order per theory; `pad` and `disc` keep every lemma
 at the position it has in `both`. Facts are listed first, then the library, then the goal.
-Rungs at other chain lengths are rendered with `python -m smolbench.deduction.horn.cli render`; the
-specification is `../README.md`.
+Rungs at other chain lengths can be rendered with
+`python -m smolbench.deduction.horn.cli render --m <m> --out <rung-dir>`; the specification
+is `../README.md`.

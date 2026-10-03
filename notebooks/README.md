@@ -13,9 +13,9 @@ notebooks/
     induction_eval.ipynb        the exploration notebook
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
-    analysis/                   the numbers that got published
+    analysis/                   induction analysis outputs
   deduction/                   Horn-rule deduction benchmark
-    analysis/                   tables and figures from the released results
+    analysis/                   Horn tables and figures
                                 (make_figures.py; see smolbench/deduction/horn/README.md)
 ```
 
@@ -33,7 +33,7 @@ through `study_design.RESULTS_DIR`, built from `repo_root()` and the literal
 study name.
 
 **`notebooks/induction/keys.env` stays the induction driver's own sibling**
-(`load_dotenv(__file__.parent/"keys.env")`).
+(`load_dotenv(Path(__file__).resolve().parent / "keys.env")`).
 
 ## Sibling imports inside a study
 

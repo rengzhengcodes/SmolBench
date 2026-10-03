@@ -11,8 +11,7 @@ model's reasoning. It holds two studies:
   This is the deduction benchmark of the ICLR 2027 submission. See
   `smolbench/deduction/horn/README.md`.
 
-This page explains how to install the code, rebuild the Horn tables and figures from the
-released results, and run the benchmarks yourself.
+This page explains how to install the code and run the benchmarks yourself.
 
 ## Before you begin
 
@@ -20,11 +19,9 @@ You need the following:
 
 - Linux with Python 3.12.
 - [uv](https://docs.astral.sh/uv/) to install the dependencies.
-- The released Horn results folder, `smolbench-horn-data-v1` (2.1 GB), to rebuild the
-  tables and figures without running any model.
 - To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
   self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
-  models.
+  models (see [Set up AWS](#set-up-aws)).
 
 ## Install
 
@@ -45,47 +42,67 @@ You need the following:
 The commands on this page assume the virtual environment is active
 (`source .venv/bin/activate`), or that you prefix them with `uv run`.
 
-## Rebuild the Horn tables and figures
+## Set up AWS
 
-The results folder holds every prompt, model output, and verdict behind the paper's Horn
-table: 16 models, 4 arms, 100 theories, and 3 replicates, with full generations. It also
-holds the calibration runs that chose each model's chain length. The folder's
-`README.md` describes its layout and fields.
+The code provisions these resources on first use when your credentials permit it:
 
-1. Check the folder against its manifest of checksums:
+- In a launch region, `smolbench-inference` (`EC2_SECURITY_GROUP_NAME`) gets TCP
+  ingress on ports 8000 and 9000 from the caller's current public IPv4 `/32`. Existing
+  rules on a pre-existing group are not removed.
+- Only when `EC2_S3_MODEL_CACHE` is set, the code creates the cache bucket if absent
+  and the `smolbench-ec2-role` role/profile (`EC2_INSTANCE_ROLE_NAME`). The role gets
+  list/read/write access to that cache bucket and `AmazonSSMManagedInstanceCore`.
+- On SageMaker endpoint provisioning, the code creates `smolbench-sm-exec-role`
+  (`SAGEMAKER_EXEC_ROLE_NAME`) and attaches `AmazonSageMakerFullAccess`.
+- The AMI is resolved from the public Deep Learning AMI SSM parameter configured by
+  `EC2_AMI_SSM_PARAM`.
 
-   ```
-   python -m smolbench.deduction.horn.repro check-data path/to/smolbench-horn-data-v1
-   ```
+What you set up yourself:
 
-   The command prints `OK` when every file matches.
-
-1. Build the tables and figures:
-
-   ```
-   python notebooks/deduction/analysis/make_figures.py \
-       --data path/to/smolbench-horn-data-v1 --out results
-   ```
-
-   This takes about four minutes. It writes the outputs twice, once per scoring mode:
-
-   - `results/iclr/`: scored as in the submission.
-   - `results/default/`: scored with the default proof extractor, which also reads
-     proofs that have prose between their steps.
-
-The main outputs in each directory are:
-
-| File | Contents |
-|---|---|
-| `horn_table.tex` | The paper table: pass rates per arm and the deltas against low density |
-| `horn_table_full.tex`, `horn_table.md` | The full table, grouped by family, with every arm |
-| `horn_summary.json` | Every number in the tables |
-| `horn_ladder_arms.pdf`, `horn_ladder_deltas.pdf` | Pass rates and deltas per model family |
-| `horn_routes.pdf`, `horn_route_outcomes*.pdf` | How proofs used the derivation trees |
-| `reasoning_length_increase.pdf` | Output length relative to the high-density arm |
-
-The outputs match the submitted ones byte for byte, except for the creation date
-embedded in each PDF.
+1. **Credentials and IAM.** For EC2 and the results store, boto3's standard credential
+   chain is used with fresh sessions/clients, so updated credentials files apply on the
+   next operation. First-time role creation needs `iam:CreateRole`,
+   `iam:AttachRolePolicy`, `iam:PutRolePolicy`, `iam:CreateInstanceProfile`, and
+   `iam:AddRoleToInstanceProfile`; the existing SageMaker-role path also calls
+   `iam:GetRole`. For the EC2 model-cache path, `AccessDenied` on `iam:CreateRole`
+   makes the code assume the role/profile already exist; that fallback does not apply
+   to SageMaker role creation. Allow these EC2 actions:
+   `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`,
+   `ec2:DescribeSubnets`, `ec2:DescribeSpotPriceHistory`,
+   `ec2:DescribeInstanceTypeOfferings`, `ec2:DescribeInstanceAttribute`,
+   `ec2:DescribeImages`, `ec2:DescribeCapacityReservations`, `ec2:RunInstances`,
+   `ec2:TerminateInstances`, `ec2:CreateSecurityGroup`,
+   `ec2:AuthorizeSecurityGroupIngress`, and `ec2:CreateTags` (`run_instances` uses
+   `TagSpecifications`). Also allow `ssm:GetParameter`, `sts:GetCallerIdentity`, and
+   `iam:PassRole` on `EC2_INSTANCE_ROLE_NAME` when the model cache is enabled. Results
+   storage needs `s3:ListBucket`, `s3:GetObject`, and `s3:PutObject` on your results
+   bucket (`ListBucket` on the bucket, `GetObject` and `PutObject` on its objects).
+   SageMaker endpoint creation also needs `iam:PassRole` on
+   `SAGEMAKER_EXEC_ROLE_NAME`. If the optional cache bucket must be created, the
+   caller also needs `s3:CreateBucket`; its `HeadBucket` check uses `s3:ListBucket`.
+2. **Networking.** Keep a default VPC with at least one subnet in every region you
+   hunt. The provisioner looks up only the default VPC and its subnets; a region without
+   either is skipped.
+3. **GPU quota.** The default `EC2_INSTANCE_TYPES` are `p5e.48xlarge` and
+   `p5.48xlarge`, each using 192 vCPUs. In each hunted region request a Spot P-instance
+   vCPU quota of at least 192, or the On-Demand quota when `EC2_MARKET=on-demand`.
+   The default regions come from `[fleet].regions` in
+   `smolbench/evals/study_config.toml` with `AWS_REGION` prepended; override them with
+   `EC2_REGIONS`.
+4. **Results bucket.** Create your own S3 bucket with Block Public Access enabled and
+   versioning enabled. Set `SMOLBENCH_RESULTS_S3=s3://<your-bucket>` and
+   `SMOLBENCH_RESULTS_S3_REGION`, or set `[results].bucket` and `[results].region` in
+   `smolbench/evals/study_config.toml`.
+5. **Optional settings.** `EC2_KEY_NAME` names an existing key pair for SSH;
+   `HF_TOKEN` is needed only for gated models; `EC2_S3_MODEL_CACHE` is an `s3://` URI
+   for the model-weight cache.
+6. **Bedrock.** Enable access in the Bedrock console for the model IDs and regions
+   listed in `smolbench/deduction/horn/iclr.json`. `bedrock_sweep.py` loads
+   `AWS_BEARER_TOKEN_BEDROCK` (a Bedrock API key) from the repository-root `.env`, or
+   uses boto3's standard chain, which needs Bedrock `InvokeModelWithResponseStream`
+   access for its `converse_stream` call. For the evals client, set
+   `INFERENCE_PROVIDER=aws` and provide `AWS_BEARER_TOKEN_BEDROCK` or
+   `AWS_INFERENCE_API_KEY`.
 
 ## Check the pipeline without a model
 
@@ -110,7 +127,7 @@ The answers then fail under `iclr` scoring and pass under `default` scoring.
 
 `smolbench/deduction/horn/iclr.json` records the protocol of the submission's runs: the
 seeds, replicates, sampling settings, each model's chain length and serving settings,
-and the published pass rates. The `repro` commands read it.
+and reference pass rates. The `repro` commands read it.
 
 1. List the models and their chain lengths:
 
@@ -118,10 +135,8 @@ and the published pass rates. The `repro` commands read it.
    python -m smolbench.deduction.horn.repro models
    ```
 
-1. Get the model's prompts. The results folder holds the served prompts in
-   `horn/prompts/m<m>/`, where `m` is the chain length. To regenerate them from their
-   seeds instead, render them; the command checks every file against the prompts the
-   model was served:
+1. Get the model's prompts by rendering them from their seeds. The command checks every
+   file against the prompts the model was served:
 
    ```
    python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
@@ -136,18 +151,18 @@ and the published pass rates. The `repro` commands read it.
 
    For a self-hosted model, the output has two commands. The first serves the pinned
    checkpoint with vLLM; the second runs the sweep against it. For a Bedrock model, the
-   output is one sweep command, which uses your AWS credentials.
+   output is one sweep command (see [Set up AWS](#set-up-aws)).
 
 1. Run the printed commands. The sweep writes one JSONL row per cell. If it stops,
    rerun the same command to resume.
 
-1. Compare your results with the published values:
+1. Compare your results with the protocol's recorded values:
 
    ```
    python -m smolbench.deduction.horn.repro report rows.jsonl
    ```
 
-Sampling runs at temperature 0.7, so a rerun matches the published numbers up to
+Sampling runs at temperature 0.7, so a rerun matches the protocol's recorded values up to
 sampling noise, not row for row.
 
 ### Run a model outside the roster
@@ -166,8 +181,8 @@ python scripts/deduction/horn/sweep.py --endpoint http://localhost:8000/v1 \
 ## Run the induction study
 
 The induction driver is `notebooks/induction/run_study.py`. It provisions and serves
-models on EC2 and writes results to S3. `notebooks/induction/README.md` explains how to
-configure and run it.
+models on EC2 and writes results to S3. See [Set up AWS](#set-up-aws), then
+`notebooks/induction/README.md` for how to configure and run it.
 
 ## Run the tests
 

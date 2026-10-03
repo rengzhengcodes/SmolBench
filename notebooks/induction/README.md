@@ -7,21 +7,25 @@ across both studies.
 
 ```
 induction/
-  run_study.py            the driver          <- launched by literal path
+  run_study.py            the driver
   induction_eval.ipynb    the exploration notebook
   keys.env                the driver's own sibling (untracked)
   results/                S3-mirrored replicate YAMLs; not in the tree
-  analysis/               the numbers that got published
+  analysis/               induction analysis outputs
 ```
 
 ## Layout
 
 `run_study.py`, `induction_eval.ipynb` and `keys.env` stay at this study root,
-and `results/` stays directly beneath it, for the two reasons
-`notebooks/README.md` gives. `keys.env` carries the driver's AWS credentials
-plus any `EC2_*` / `INDUCTION_*` overrides (catalogued in `run_study.py`'s
-module docstring); it is untracked with no committed example, because
-credential-shaped files never enter the tree.
+and `results/` stays directly beneath it: the results path is part of the S3
+key, and `keys.env` stays beside the driver, as `notebooks/README.md` explains.
+`keys.env` carries the driver's AWS credentials plus any `EC2_*` /
+`INDUCTION_*` overrides (catalogued in `run_study.py`'s module docstring); it
+is untracked with no committed example, because credential-shaped files never
+enter the tree.
+
+See the root [README's AWS setup](../../README.md#set-up-aws) for the credentials,
+network, quota and results-bucket setup.
 
 Everything else is free to be grouped, and is: nothing under `analysis/` writes
 to the store, so a script's depth affects only where it reads from.
@@ -36,7 +40,7 @@ to the store, so a script's depth affects only where it reads from.
   validating the study; framing cells document the as-served roster, config
   epochs, and the earliest-wins selection rule.
 
-## analysis/ -- the published numbers
+## analysis/ -- the analysis outputs
 
 Each chained script inserts a `__file__`-anchored directory on `sys.path` --
 its own, or `notebooks/` for the ones importing `_power_common` -- and imports

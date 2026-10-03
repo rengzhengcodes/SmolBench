@@ -115,17 +115,17 @@ Before `verify`, `extract.extract_answer(content, scoring)` removes inline reaso
 takes the final block of step lines. There are two scoring modes:
 
 - `iclr`: the block is the last contiguous run of step lines, so a prose line between two
-  steps drops every step above it. The ICLR 2027 submission's Horn table was scored this
-  way. Rows written before 2026-09-28 carry these verdicts and have no `scoring` field.
+  steps drops every step above it. This is the scoring rule used for the recorded ICLR
+  2027 protocol.
 - `default`: prose lines between steps are skipped. A code fence, a reasoning close tag
   (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
   still ends the block, so a draft above it is not scored.
 
 The drivers take `--scoring` (default `default`) and store it in each row.
-`notebooks/deduction/analysis/horn_results.py --scoring iclr|default` reports either mode
-from the same rows: `iclr` keeps the stored verdicts, and `default` rescores each finished
-row from its stored content against the served rungs (`--rungs`). On the 16-model roster,
-`default` changes gemma-4-e2b (both 45.7 to 62.3, disc 60.7 to 80.0) and Ministral-3B
+`notebooks/deduction/analysis/horn_results.py --data <data-dir> --scoring iclr|default`
+reports either mode from stored rows: `iclr` uses the stored verdicts, and `default` uses
+the `scoring_default` verdict saved with each row. On the 16-model roster, `default`
+changes gemma-4-e2b (both 45.7 to 62.3, disc 60.7 to 80.0) and Ministral-3B
 (lem 33.3 to 29.7), and every other model by 1.3 points or less.
 
 `checker.certify(theory, rendered)` runs on every arm before it is written. It checks
@@ -172,8 +172,7 @@ or at the ladder's end. The pick is the level nearest the target crossing of a l
 fit over the levels run (`calibration_pick.py`; `--target` is 0.75 in `calibrate_m.py`
 and 0.70 in `calibration_pick.py`). The first seven models were calibrated on the full
 ladder with 30 theories per level (seeds 200-229) before this rule was set; their picks
-stand. The picks are recorded in `iclr.json`, and the calibration rows are in the
-released results (`horn/calibration/`).
+stand. The picks are recorded in `iclr.json`.
 
 ## 8. Analysis
 
@@ -184,33 +183,16 @@ two-sided sign-flip permutation p-value (exact up to 16 seeds, else 20,000 Monte
 draws). The reported contrasts are relative to `both` (low density): `lem − both`,
 `pad − both` and `disc − both`. `python -m smolbench.deduction.horn.repro report
 <rows.jsonl>...` prints them for any rows files. The paper tables and figures come from
-`notebooks/deduction/analysis/make_figures.py` (section 9).
+`notebooks/deduction/analysis/make_figures.py`.
 
-## 9. Reproducing the ICLR 2027 results
-
-### From the released results (no model runs)
-
-The released results folder holds every prompt, model output and verdict behind the
-paper's Horn table, and the calibration runs (`README.md` in the folder describes the
-layout and fields). To regenerate the tables and
-figures:
-
-```
-python notebooks/deduction/analysis/make_figures.py --data <results folder> --out results
-```
-
-This checks the folder against its `MANIFEST.json`, then writes the paper table
-(`horn_table.tex`), the full table, the summary, the ladder figures, the proof-route
-figures and the reasoning-length figure to `results/iclr/` (scored as submitted) and
-`results/default/` (the default extractor). It takes about four minutes. The outputs match
-the submitted ones byte for byte (PDFs up to their embedded creation date).
+## 9. Reproducing the ICLR 2027 protocol
 
 ### Running the experiments again
 
 `iclr.json` records the protocol of the submission's runs: seeds, replicates, sampling,
 scoring, each model's chain length and serving settings (the pinned checkpoint revision
 of every self-hosted model, the Bedrock model id and request fields otherwise), a SHA-256
-digest of every served theory, and the published pass rates under both scoring modes.
+digest of every served theory, and the reference pass rates under both scoring modes.
 `repro.py` reads it.
 
 1. Check the pipeline offline, with no model (about ten seconds):
@@ -231,11 +213,9 @@ digest of every served theory, and the published pass rates under both scoring m
    python -m smolbench.deduction.horn.repro models
    ```
 
-3. Get a model's rung (seeds 100-199 at its `m`). The released results folder holds the
-   served prompts (`horn/prompts/m<m>/`, a rung directory the sweep runs directly). To
-   regenerate them instead, render from the seeds; the command checks the files against
-   the recorded digests, and `OK` means they are byte-identical to the prompts the model
-   was served:
+3. Get a model's rung (seeds 100-199 at its `m`) by rendering from the seeds. The command
+   checks the files against the recorded digests, and `OK` means they are byte-identical
+   to the prompts the model was served:
 
    ```
    python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
@@ -250,39 +230,16 @@ digest of every served theory, and the published pass rates under both scoring m
    python -m smolbench.deduction.horn.repro command --model qwen3.5-27b --rung rungs/m64 --out rows.jsonl
    ```
 
-5. Compare the rows with the published values:
+5. Compare the rows with the protocol's recorded values:
 
    ```
    python -m smolbench.deduction.horn.repro report rows.jsonl
    ```
 
-Sampling runs at temperature 0.7, so a rerun reproduces the numbers up to sampling noise
-(the published CIs give the scale), not row for row. Serving numerics also differ across
-GPU types and tensor-parallel layouts.
+Sampling runs at temperature 0.7, so a rerun reproduces the numbers up to sampling noise,
+not row for row. Serving numerics also differ across GPU types and tensor-parallel layouts.
 
-## 10. Reference result (Haiku, seeds 100-109 x 3)
-
-These rungs predate the ratio definition: their library was fitted to 5k tokens of
-lemmas (about 400 at every `m`, so 32 alternatives per chain lemma at m = 12 and 6.8 at
-m = 48) and their trees to 20k tokens (a depth-2 / depth-3 mix). The m = 48 rung is
-therefore close to the current definition; the m = 12 rung had a much larger library.
-
-| arm | m = 12 | m = 48 | m = 48 attempts using a tree rule |
-|---|---|---|---|
-| lem | 93.3% | 73.3% | 0/30 |
-| pad | 96.7% | 53.3% | 0/30 |
-| junk | 96.7% | 50.0% | 0/30 |
-| disc | 96.7% | 53.3% | 1/30 |
-| both | 86.7% | 3.3% | 11/30 |
-
-At `m = 48`: `both − pad` = −50 [−70, −30], p = 0.008; `both − junk` = −46.7, p = 0.016;
-`both − disc` = −50, p = 0.004; the controls sit within 4 points of each other. The
-mechanism: usable derivations are entered and committed to (a valid candidate passes the
-first lookup, so there is no signal to backtrack), while dead candidates are rejected
-after one lookup. Failures assert a derived chain head as a fact or invent a one-premise
-rule inside a tree.
-
-## 11. Files
+## 10. Files
 
 | file | role |
 |---|---|
@@ -298,9 +255,6 @@ rule inside a tree.
 | `../../../notebooks/deduction/analysis/` | `make_figures.py` and the table, route and reasoning-length scripts |
 | `../../../tests/deduction/test_horn_*.py` | generator, checker, certificate, drivers, scoring modes, reproduction |
 
-Compatibility. `Theory.from_json` loads theories written before the setup was fixed when
-they match it (one constant, no derivations below the facts); the retired partial-cut
-rules they carry are dropped. The theories behind the reference result were generated by
-an earlier generator with token-fitted budgets and carry two extra given facts (in the
-`m = 48` theories one of them is idle); the current generator takes no token budget, adds
-no extra facts, and its theories differ from the earlier ones for the same seed.
+`Theory.from_json` ignores legacy `facts_by_const`, accepts retired setup fields only at
+their current values and a single matching `constants` entry, and drops `sublemma`
+partial-cut rules.
