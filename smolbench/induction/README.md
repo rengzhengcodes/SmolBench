@@ -40,3 +40,21 @@ Each seed drives quiz and decoding randomness. Recreate prompts with
 
 `summarize()` reads stored marks. Provisioning, running, status, and teardown
 use billed EC2 instances.
+
+## Reproducing the ICLR 2027 results
+
+`iclr.json` records the protocol of the submission's runs: the public bucket, seeds,
+arms, each model's pinned checkpoint, a SHA-256 digest of every published replicate, and
+the published accuracies. `repro.py` reads it:
+
+```
+python -m smolbench.induction.repro models
+python -m smolbench.induction.repro fetch --out <results folder>
+python -m smolbench.induction.repro check-data <results folder>
+python -m smolbench.induction.repro report <results folder>
+```
+
+`fetch` copies an `induction/` prefix (the public one, or your own run's bucket) into a
+local folder with the store's key layout. `notebooks/induction/analysis/induction_results.py`
+writes the paper table from that folder. The root `README.md` walks through both paths:
+from the released results, and from a new run of `notebooks/induction/run_study.py`.

@@ -13,10 +13,10 @@ notebooks/
   induction/                  family-ladder induction study
     run_study.py                the driver           <- fleet launches this by path
     induction_eval.ipynb        the exploration notebook
-    induction_results_table.ipynb  the paper's accuracy table, rebuilt from the public bucket
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
+                                (induction_results.py: the accuracy table)
   deduction/                   Horn-rule deduction benchmark
     analysis/                   tables and figures from the released results
                                 (make_figures.py; see smolbench/deduction/horn/README.md)

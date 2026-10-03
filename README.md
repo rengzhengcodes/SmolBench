@@ -25,8 +25,10 @@ You need the following:
 - To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
   self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
   models.
+- The released induction results (1.1 GB), to rebuild the induction table. They are in
+  the public bucket `s3://smolbench-public-release`, which needs no AWS credentials.
 - To run the induction study: AWS credentials that can launch GPU spot instances on EC2
-  and write to an S3 bucket you own. Rebuilding the induction table needs no credentials.
+  and write to an S3 bucket you own.
 
 ## Install
 
@@ -165,87 +167,108 @@ python scripts/deduction/horn/sweep.py --endpoint http://localhost:8000/v1 \
 
 `scripts/deduction/horn/README.md` lists the sweep driver's options.
 
-## Rebuild the induction table without a model
+## Rebuild the induction table
 
-The paper's induction accuracy table (`tab:induction-results`) is computed from 1,440
-result files: 16 models, 3 conditions, and 30 seeds. They are in the public bucket
-`s3://smolbench-public-release`, which anyone can read without AWS credentials.
+The results folder holds every result file behind the paper's induction table: 16
+models, 3 arms, and 30 seeds, one YAML file of 9 graded answers per replicate. Install
+the dependencies with `uv sync --extra notebook` first.
 
-1. Install the notebook dependencies:
-
-   ```
-   uv sync --extra notebook
-   ```
-
-1. Run `notebooks/induction/induction_results_table.ipynb` with the `.venv` kernel, or
-   headless:
+1. Download the folder from the public bucket:
 
    ```
-   uv run --with nbconvert --with ipykernel jupyter nbconvert --to notebook --execute --inplace \
-       notebooks/induction/induction_results_table.ipynb
+   python -m smolbench.induction.repro fetch --out path/to/smolbench-induction-data
    ```
 
-   This downloads about 1.1 GB and takes about a minute.
+   This downloads 1,440 files (about 1.1 GB). If it stops, rerun the same command.
 
-The notebook prints the table in LaTeX three times, with the ± as one standard deviation
-across seeds (the published table), two standard deviations, and the 95% confidence
-interval for the mean. Its last cell checks every published value and prints
-`all 80 cells match the published table`.
+1. Check the folder against the published runs:
+
+   ```
+   python -m smolbench.induction.repro check-data path/to/smolbench-induction-data
+   ```
+
+   The command prints `OK` when every replicate matches.
+
+1. Build the table:
+
+   ```
+   python notebooks/induction/analysis/induction_results.py \
+       --data path/to/smolbench-induction-data --out results/induction
+   ```
+
+   This takes about ten seconds. It checks the folder again, writes the outputs, and
+   prints how many cells match the published table.
+
+| File | Contents |
+|---|---|
+| `induction_table.tex` | The paper table: accuracy per arm and the deltas against low density |
+| `induction_table.md` | The same table in markdown, with the seeds per model |
+| `induction_summary.json` | Every number in the tables |
+
+The ± is one sample standard deviation across seeds, as published. Pass `--spread 2sd`
+for two standard deviations or `--spread ci` for the half-width of the 95% confidence
+interval for the mean. `induction_table.tex` matches the submitted table byte for byte.
 
 ## Run the induction study on a model
 
+`smolbench/induction/iclr.json` records the protocol of the submission's runs: the
+seeds, arms, each model's pinned checkpoint, a digest of every published replicate, and
+the published accuracies. The `repro` commands read it.
+
 The driver, `notebooks/induction/run_study.py`, runs only on EC2. It launches a GPU spot
 instance (`p5e.48xlarge` or `p5.48xlarge` by default), serves each model on it with vLLM,
-and writes one result file per model, seed, and condition. It runs the `zero` condition
-too, which the table leaves out.
+and writes one result file per model, seed, and arm to S3. It runs the `zero` arm too,
+which the table leaves out.
 
-1. Install the dependencies:
+1. List the models and their checkpoints:
 
    ```
-   uv sync --extra notebook
+   python -m smolbench.induction.repro models
    ```
 
-1. Create an S3 bucket for the results.
-
-1. Write `notebooks/induction/keys.env`. Keep it out of git. To run the table's 16
-   models:
+1. Create an S3 bucket for the results, then write `notebooks/induction/keys.env`. Keep
+   it out of git. To run one model:
 
    ```
    AWS_ACCESS_KEY_ID=...
    AWS_SECRET_ACCESS_KEY=...
    AWS_REGION=us-west-2
    SMOLBENCH_RESULTS_S3=s3://<your-bucket>
-   INDUCTION_MODELS=gemma-4-e2b,gemma-4-12b,gemma-4-31b,nemotron-3-nano-4b,nemotron-3-nano-30b-a3b,nemotron-3-super-120b-a12b,qwen3.5-27b,qwen3.5-122b-a10b,qwen3.5-397b-a17b,deepseek-v4-flash,deepseek-v3.1,glm-4.7-flash,glm-4.7,ministral-3-3b,ministral-3-8b,ministral-3-14b
+   INDUCTION_MODELS=glm-4.7
    ```
 
-   Give `SMOLBENCH_RESULTS_S3` no path, so the result keys start with `induction/` as
-   the notebook expects. Without it, results are written under
-   `notebooks/induction/results/` instead, which the notebook does not read. Leave out
-   `INDUCTION_MODELS` to run the whole roster in `smolbench/evals/study_config.toml`.
+   `INDUCTION_MODELS` takes a comma-separated list. Leave it out to run the whole roster
+   in `smolbench/evals/study_config.toml`, which also holds models outside the table.
    The module docstring of `run_study.py` lists the other settings.
 
-1. Run the study:
+1. Run the study, then terminate the instance:
 
    ```
    python notebooks/induction/run_study.py
-   ```
-
-   If it stops, rerun the same command. It runs only the replicates that have no result
-   yet.
-
-1. Terminate the instance:
-
-   ```
    python notebooks/induction/run_study.py --teardown
    ```
 
-1. In the first code cell of `notebooks/induction/induction_results_table.ipynb`, set
-   `BUCKET` and `REGION` to your bucket, then run the notebook as above. Reads from your
-   bucket use your AWS credentials.
+   If the study stops, rerun the first command. It runs only the replicates that have no
+   result yet.
 
-Each request carries its replicate's seed, but vLLM does not guarantee identical outputs
-across runs, so your table can differ from the published one. The notebook's last cell
-then fails and lists the cells that differ.
+1. Download your results. If `SMOLBENCH_RESULTS_S3` has a path, pass it as `--prefix`:
+
+   ```
+   python -m smolbench.induction.repro fetch --bucket <your-bucket> --out myrun
+   ```
+
+   Reads from your bucket use your AWS credentials.
+
+1. Compare your results with the published values:
+
+   ```
+   python -m smolbench.induction.repro report myrun
+   ```
+
+   To build the table from them, run `induction_results.py --data myrun --skip-check`.
+
+vLLM does not guarantee identical outputs across runs, so a rerun matches the published
+numbers up to sampling noise, not replicate for replicate.
 
 ## Run the tests
 
@@ -261,10 +284,11 @@ The tests run offline. They use stub model servers and need no credentials.
 | Path | Contents |
 |---|---|
 | `smolbench/evals/` | Shared model client, serving specs, results storage, and tokenizers |
-| `smolbench/induction/` | The induction task generator |
+| `smolbench/induction/` | The induction task generator, reproduction CLI, and `iclr.json` |
 | `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
 | `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
-| `notebooks/induction/` | The induction study driver and the induction table notebook |
+| `notebooks/induction/` | The induction study driver |
+| `notebooks/induction/analysis/` | The induction table |
 | `notebooks/deduction/analysis/` | Horn tables and figures |
 | `tests/` | The test suite |
 
