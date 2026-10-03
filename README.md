@@ -11,7 +11,7 @@ model's reasoning. It holds two studies:
   This is the deduction benchmark of the ICLR 2027 submission. See
   `smolbench/deduction/horn/README.md`.
 
-This page explains how to install the code, rebuild the Horn tables and figures from the
+This page explains how to install the code, rebuild the Horn and induction tables from the
 released results, and run the benchmarks yourself.
 
 ## Before you begin
@@ -25,6 +25,10 @@ You need the following:
 - To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
   self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
   models.
+- The released induction results (1.1 GB), to rebuild the induction table. They are in
+  the public bucket `s3://smolbench-public-release`, which needs no AWS credentials.
+- To run the induction study: AWS credentials that can launch GPU spot instances on EC2
+  and write to an S3 bucket you own.
 
 ## Install
 
@@ -163,12 +167,112 @@ python scripts/deduction/horn/sweep.py --endpoint http://localhost:8000/v1 \
 
 `scripts/deduction/horn/README.md` lists the sweep driver's options.
 
-## Run the induction study
+## Rebuild the induction table
 
-The induction driver is `notebooks/induction/run_study.py`. It provisions and serves
-models on EC2 and writes results to S3. `notebooks/induction/README.md` explains how to
-configure and run it; `scripts/fleet/run_fleet.py` runs the full roster as a supervised
-fleet (see `scripts/README.md`).
+The results folder holds every result file behind the paper's induction table: 16
+models, 3 arms, and 30 seeds, one YAML file of 9 graded answers per replicate. Install
+the dependencies with `uv sync --extra notebook` first.
+
+1. Download the folder from the public bucket:
+
+   ```
+   python -m smolbench.induction.repro fetch --out path/to/smolbench-induction-data
+   ```
+
+   This downloads 1,440 files (about 1.1 GB). If it stops, rerun the same command.
+
+1. Check the folder against the published runs:
+
+   ```
+   python -m smolbench.induction.repro check-data path/to/smolbench-induction-data
+   ```
+
+   The command prints `OK` when every replicate matches.
+
+1. Build the table:
+
+   ```
+   python notebooks/induction/analysis/induction_results.py \
+       --data path/to/smolbench-induction-data --out results/induction
+   ```
+
+   This takes about ten seconds. It checks the folder again, writes the outputs, and
+   prints how many cells match the published table.
+
+| File | Contents |
+|---|---|
+| `induction_table.tex` | The paper table (accuracy per arm and the deltas against low density) under each ± |
+| `induction_table.md` | The same tables in markdown, with the seeds per model |
+| `induction_summary.json` | Every number in the tables |
+
+`induction_table.tex` and `induction_table.md` hold the table three times, with the ± as
+one sample standard deviation across seeds, two standard deviations, and the half-width
+of the 95% t confidence interval for the mean. The submission's table was improperly
+captioned: its ± is one sample standard deviation, as in the first table, and the
+outputs open with a note saying so. The three LaTeX tables match the ones the earlier
+table notebook printed, byte for byte.
+
+## Run the induction study on a model
+
+`smolbench/induction/iclr.json` records the protocol of the submission's runs: the
+seeds, arms, each model's pinned checkpoint, a digest of each seed's published runs, and
+the published accuracies. The `repro` commands read it.
+
+The driver, `notebooks/induction/run_study.py`, runs only on EC2. It launches a GPU spot
+instance (`p5e.48xlarge` or `p5.48xlarge` by default), serves each model on it with vLLM,
+and writes one result file per model, seed, and arm to S3. It runs the `zero` arm too,
+which the table leaves out.
+
+1. List the models and their checkpoints:
+
+   ```
+   python -m smolbench.induction.repro models
+   ```
+
+1. Create an S3 bucket for the results, then write `notebooks/induction/keys.env`. Keep
+   it out of git. To run one model:
+
+   ```
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   AWS_REGION=us-west-2
+   SMOLBENCH_RESULTS_S3=s3://<your-bucket>
+   INDUCTION_MODELS=glm-4.7
+   ```
+
+   `INDUCTION_MODELS` takes a comma-separated list. Leave it out to run the whole roster
+   in `smolbench/evals/study_config.toml`, which also holds models outside the table.
+   The module docstring of `run_study.py` lists the other settings.
+
+1. Run the study, then terminate the instance:
+
+   ```
+   python notebooks/induction/run_study.py
+   python notebooks/induction/run_study.py --teardown
+   ```
+
+   If the study stops, rerun the first command. It runs only the replicates that have no
+   result yet. `scripts/fleet/run_fleet.py` runs the full roster as a supervised fleet
+   instead (see `scripts/README.md`).
+
+1. Download your results. If `SMOLBENCH_RESULTS_S3` has a path, pass it as `--prefix`:
+
+   ```
+   python -m smolbench.induction.repro fetch --bucket <your-bucket> --out myrun
+   ```
+
+   Reads from your bucket use your AWS credentials.
+
+1. Compare your results with the published values:
+
+   ```
+   python -m smolbench.induction.repro report myrun
+   ```
+
+   To build the table from them, run `induction_results.py --data myrun --skip-check`.
+
+vLLM does not guarantee identical outputs across runs, so a rerun matches the published
+numbers up to sampling noise, not replicate for replicate.
 
 ## Run the tests
 
@@ -184,10 +288,10 @@ The tests run offline. They use stub model servers and need no credentials.
 | Path | Contents |
 |---|---|
 | `smolbench/evals/` | Shared model client, serving specs, results storage, and tokenizers |
-| `smolbench/induction/` | The induction task generator |
+| `smolbench/induction/` | The induction task generator, reproduction CLI, and `iclr.json` |
 | `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
 | `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
-| `notebooks/induction/` | The induction study driver and its analysis chain |
+| `notebooks/induction/` | The induction study driver, its analysis chain, and the induction table |
 | `notebooks/statistical_analyses.ipynb` | The induction study's cross-cutting statistics |
 | `scripts/fleet/` | Launch and supervise the induction study's EC2 fleet |
 | `scripts/results/` | Results-bucket provisioning, completeness audits, and analysis-data snapshots |

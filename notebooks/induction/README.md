@@ -9,7 +9,6 @@ across both studies.
 induction/
   run_study.py            the driver          <- launched by literal path
   induction_eval.ipynb    the exploration notebook
-  induction_results_table.ipynb  the paper's accuracy table, from the public bucket
   keys.env                the driver's own sibling (untracked)
   results/                S3-mirrored replicate YAMLs; not in the tree
   analysis/               the numbers that got published
@@ -37,11 +36,6 @@ to the store, so a script's depth affects only where it reads from.
 - `induction_eval.ipynb` -- the notebook for exploring and
   validating the study; framing cells document the as-served roster, config
   epochs, and the earliest-wins selection rule.
-- `induction_results_table.ipynb` -- rebuilds the paper's induction accuracy
-  table (`tab:induction-results`) from `s3://smolbench-public-release`
-  alone, with anonymous reads, and checks every cell against the published
-  values. It sits at the study root rather than under `analysis/` because it
-  reads neither `results/` nor the analysis chain.
 
 ## analysis/ -- the published numbers
 
@@ -66,3 +60,7 @@ because its Monte Carlo takes longer than the rest of the chain combined.
 | `extens_vs_noise.py` | Focused test: extensional vs noise-padded intensional, per model. |
 | `multiplicity_sim.py` | Monte Carlo study of TEST and CORRECTION choice for this study. Imports its design constants from `_power_common` and `study_design`; reads the tree only for PART 2's measured design effect and writes its checkpoint into it as `multiplicity_sim_results.json`. |
 | `run_all.py` | The one driver over the chain above: runs the four report scripts in process, in order, plus `multiplicity_sim.py` behind `--with-sim`. |
+
+`induction_results.py` stands outside the chain: it writes the paper's accuracy table
+from a results folder that `python -m smolbench.induction.repro fetch` downloads, not
+from `results/`. The root `README.md` explains how to run it.
