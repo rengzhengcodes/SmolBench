@@ -21,8 +21,12 @@ paper's Horn table: 16 models x 4 arms x 100 theories x 3 replicates, with full
 generations, plus the calibration runs that chose each model's chain length.
 
 ```
-python notebooks/deduction/analysis/make_figures.py --data <results folder> --out results
+aws s3 sync --no-sign-request \
+    s3://smolbench-public-release/deduction/smolbench-horn-data-v1/ smolbench-horn-data-v1/
+python notebooks/deduction/analysis/make_figures.py --data smolbench-horn-data-v1 --out results
 ```
+
+The download is 2.1 GB and needs no AWS account.
 
 This checks the folder's checksums and writes every Horn table and figure to
 `results/iclr/` (scored as submitted) and `results/default/` (the default extractor;
