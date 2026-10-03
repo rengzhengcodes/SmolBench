@@ -72,6 +72,61 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, base_prefix
 
 
+#: The project's study bucket -- the DOCUMENTED FALLBACK used only when
+#: ``SMOLBENCH_RESULTS_S3`` is unset (see `resolve_results_location`). Read
+#: from the committed ``[results]`` section of ``study_config.toml`` (issue
+# 46), never re-typed: it was previously a literal duplicated across ten
+#: files, so a redirected results store silently did not reach them. Tools
+#: import this name; the TOML is the one place the value is written down.
+DEFAULT_RESULTS_BUCKET: str = load_study_config().results.bucket
+
+
+def resolve_results_location() -> tuple[str, str]:
+    """Resolve the ``(bucket, base_prefix)`` a TOOL should target for S3 results.
+
+    Reads ``SMOLBENCH_RESULTS_S3`` at CALL time (never a module constant --
+    same rationale as :func:`resolve_store`: a notebook runs
+    ``load_dotenv(keys.env)`` AFTER ``import smolbench``), stripped exactly as
+    :func:`resolve_store` strips it.
+
+    Returns
+    -------
+    tuple[str, str]
+        ``(bucket, base_prefix)``. `base_prefix` is ``""`` for a bucket-only
+        URI (or when the env var is unset) and never carries a leading or
+        trailing ``"/"`` (see :func:`parse_s3_uri`). Unset, empty, or
+        whitespace-only ``SMOLBENCH_RESULTS_S3`` yields
+        the committed ``[results]`` ``(bucket, base_prefix)`` from
+        ``study_config.toml``, logged at INFO so the fallback is never silent.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`parse_s3_uri` when ``SMOLBENCH_RESULTS_S3`` is
+        set but malformed. NOT swallowed and NOT downgraded to the default:
+        mirroring `resolve_store`'s step-2 rationale, a typo'd URI must fail
+        loudly rather than silently provision or audit the WRONG bucket.
+
+    Notes
+    -----
+    For TOOLS that need the bucket/prefix pair directly -- a bucket
+    provisioner, a completeness auditor, a snapshot exporter -- none of which
+    hold or need a ``results_dir``. Code that needs a working
+    :class:`ResultsStore` must still go through :func:`resolve_store`, which
+    additionally handles the local-store and offline-test hermeticity cases
+    (neither of which applies to a tool addressing the bucket itself).
+    """
+    uri = os.environ.get("SMOLBENCH_RESULTS_S3", "").strip()
+    if not uri:
+        results = load_study_config().results
+        logging.info(
+            "resolve_results_location: SMOLBENCH_RESULTS_S3 is unset/empty; "
+            f"falling back to the committed study bucket ({results.bucket!r})."
+        )
+        return results.bucket, results.base_prefix
+    return parse_s3_uri(uri)
+
+
 def default_results_uri() -> str:
     """Return the committed project's canonical results URI."""
     results = load_study_config().results
@@ -265,7 +320,19 @@ class LocalResultsStore(ResultsStore):
     def _dirname(self, tag: str, info: str) -> str:
         return f"{self.prefix}{tag}_{info}"
 
-    def _path(self, addr: ReplicateAddress) -> Path:
+    def path(self, addr: ReplicateAddress) -> Path:
+        """Return the replicate file for `addr`.
+
+        Parameters
+        ----------
+        addr : ReplicateAddress
+            Replicate to locate.
+
+        Returns
+        -------
+        Path
+            ``{root}/{prefix}{tag}_{info}/rep_{seed}.yaml``.
+        """
         return self.root / self._dirname(addr.tag, addr.info) / f"rep_{addr.seed}.yaml"
 
     def exists(self, addr: ReplicateAddress) -> bool:
@@ -281,7 +348,7 @@ class LocalResultsStore(ResultsStore):
         bool
             Whether the local result file exists.
         """
-        return self._path(addr).exists()
+        return self.path(addr).exists()
 
     def dump_marks(
         self, marks: Marks, addr: ReplicateAddress, run_ts: datetime
@@ -297,7 +364,7 @@ class LocalResultsStore(ResultsStore):
         run_ts : datetime
             Collection timestamp ignored by the local store.
         """
-        path = self._path(addr)
+        path = self.path(addr)
         path.parent.mkdir(parents=True, exist_ok=True)
         marks.dump(path)
 
@@ -314,7 +381,7 @@ class LocalResultsStore(ResultsStore):
         Marks
             Deserialized local result.
         """
-        return Marks.load(self._path(addr))
+        return Marks.load(self.path(addr))
 
     def list_seeds(self, model: Optional[str], tag: str, info: str) -> list[int]:
         """List seeds from local ``rep_*.yaml`` files.
@@ -363,7 +430,7 @@ class LocalResultsStore(ResultsStore):
         Optional[Path]
             Renamed file's new path.
         """
-        path = self._path(addr)
+        path = self.path(addr)
         if not path.exists():
             return None
         retired = path.with_name(

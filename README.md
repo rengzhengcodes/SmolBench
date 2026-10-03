@@ -249,7 +249,8 @@ which the table leaves out.
    ```
 
    If the study stops, rerun the first command. It runs only the replicates that have no
-   result yet.
+   result yet. `scripts/fleet/run_fleet.py` runs the full roster as a supervised fleet
+   instead (see `scripts/README.md`).
 
 1. Download your results. If `SMOLBENCH_RESULTS_S3` has a path, pass it as `--prefix`:
 
@@ -287,10 +288,10 @@ The tests run offline. They use stub model servers and need no credentials.
 | `smolbench/induction/` | The induction task generator, reproduction CLI, and `iclr.json` |
 | `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
 | `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
-| `notebooks/induction/` | The induction study driver |
-| `notebooks/induction/analysis/` | The induction table |
+| `notebooks/induction/` | The induction study driver, its analysis chain, and the induction table |
+| `notebooks/statistical_analyses.ipynb` | The induction study's cross-cutting statistics |
+| `scripts/fleet/` | Launch and supervise the induction study's EC2 fleet |
+| `scripts/results/` | Results-bucket provisioning, completeness audits, and analysis-data snapshots |
+| `scripts/arch/` | The model-architecture facts pipeline |
 | `notebooks/deduction/analysis/` | Horn tables and figures |
 | `tests/` | The test suite |
-
-The Lean 4 deduction study, the cloud run tooling, and the Horn design notes are not on
-this branch. They are on the `extras` branch.

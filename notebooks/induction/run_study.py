@@ -123,6 +123,7 @@ from smolbench.evals import Numeric
 from smolbench.evals.experiment import validate_experiment_tag
 from smolbench.evals.providers import ec2
 from smolbench.evals.study_config import (
+    StudyParams,
     load_study_config,
     roster_keys,
     tag_for,
@@ -231,11 +232,12 @@ CONTEXT_LIMIT: int = find_shared_context_limit(
     {key: ec2.get_model_context_length(key) for key in MODELS}
 )
 
-#: Distinct from sibling-study seed ranges.
-BASE_SEED: int = 0
-
-#: Fixed shared replicate count prevents unequal comparisons.
-N_REPLICATES: int = 30
+#: The ``[study]`` section of study_config.toml, shared with the analysis chain
+#: (``study_design.py``) so the driver and the reports cannot restate it differently.
+STUDY: StudyParams = load_study_config().study
+BASE_SEED: int = STUDY.base_seed
+N_REPLICATES: int = STUDY.n_replicates
+N_HARMONICS: int = STUDY.n_harmonics
 
 #: Derived from the canonical condition mapping.
 INFO_TYPES: tuple[str, ...] = tuple(CONDITIONS)
@@ -243,7 +245,7 @@ INFO_TYPES: tuple[str, ...] = tuple(CONDITIONS)
 #: Covers special tokens and cross-seed prompt variation missed by probes.
 TEMPLATE_RESERVE: int = 8_000
 
-#: Endpoints plus four interior seeds: 6 tokenizer passes instead of 30. Must be >= 2.
+#: Endpoints plus four interior seeds: 6 tokenizer passes instead of N_REPLICATES. Must be >= 2.
 PROBE_SEEDS: int = 6
 
 #: Avoids CoT truncation that yields unscorable responses; periodic_moe's
@@ -342,7 +344,8 @@ def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
     list[RenderedQuery]
         Queries for all four ``CONDITIONS`` arms of the replicate.
     """
-    cfg = PeriodicConfig(n=9, labels=9, seed=seed)
+    # ``labels`` must equal ``n`` when given as a count (one label per harmonic).
+    cfg = PeriodicConfig(n=N_HARMONICS, labels=N_HARMONICS, seed=seed)
     prompter = Prompter(
         template, numeric_count_query_gen, range_free_template=_zero_template(template)
     )

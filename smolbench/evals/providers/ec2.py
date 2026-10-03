@@ -306,11 +306,14 @@ EC2_DEPLOY_SPECS: Dict[str, DeploySpec] = {
             "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
         ],
     },
-    # tp=4: tier A's g6e.12xlarge capacity fallback lands this lane on 4x
-    # L40S in practice, and a 12B model with ~95k-token thinking budgets on
-    # ONE L40S hit the 3600s read timeout on long arms. 16 attention heads
-    # and 8 KV heads shard cleanly across 4; tp=4 does require that 4-GPU
-    # box, which the fallback list provides.
+    # tp=4: gemma-4-12b is a TIER B lane (see run_fleet.TIER_MEMBERS), and
+    # tier B's hunt list is ALL 4-GPU (g6e.12xlarge, g6e.24xlarge -- see
+    # run_fleet.TIER_INSTANCE_TYPES), which is what provides the 4x L40S box:
+    # a 12B model with ~95k-token thinking budgets on ONE L40S hit the read
+    # timeout on long arms. 16 attention heads and 8 KV heads shard cleanly
+    # across 4; tp=4 does require that 4-GPU box, which tier B's hunt list
+    # guarantees (tier A no longer hunts a 4-GPU box at all, see
+    # run_fleet.TIER_INSTANCE_TYPES).
     "gemma-4-12b": {
         "hf_model_id": "google/gemma-4-12B-it",
         "tp": 4,
@@ -565,10 +568,10 @@ for _spec_key, _spec in EC2_DEPLOY_SPECS.items():
     _spec["vllm_args"] = _args + DETERMINISM_ARGS
 
 #: ``num_attention_heads`` per family-ladder checkpoint, copied from each
-#: model's config.json (archived source scripts/arch/arch_configs_raw.json;
-#: test_deploy_specs drift-pins this map against the vendored config.json rows
-#: in tests/fixtures/roster_configs.json). Models absent here (the
-#: qwen2.5-1.5b canary) fall back to their spec's static ``tp`` in derive_tp.
+#: model's config.json (test_deploy_specs drift-pins this map against the
+#: vendored config.json rows in tests/fixtures/roster_configs.json). Models
+#: absent here (the qwen2.5-1.5b canary) fall back to their spec's static
+#: ``tp`` in derive_tp.
 MODEL_ATTENTION_HEADS = {
     "deepseek-v3.1": 128,
     "deepseek-v4-flash": 64,

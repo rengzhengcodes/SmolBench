@@ -225,7 +225,3 @@ __marimo__/
 # Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
 # dirs pruned after upload; never committed.
 notebooks/*/results/
-
-# Claude Code local state; never committed.
-**/.claude/
-CLAUDE.md

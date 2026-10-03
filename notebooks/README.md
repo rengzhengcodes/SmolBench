@@ -15,7 +15,8 @@ notebooks/
     README.md                   task design, layout, the analysis chain
     results/                    S3-mirrored replicate YAMLs; not in the tree  <- S3 key anchor
     analysis/                   the numbers that got published
-                                (induction_results.py: the accuracy table)
+      run_all.py                  sequences power_analysis -> paired_analysis -> significance_report -> extens_vs_noise
+      induction_results.py        the paper's accuracy table, from a fetched results folder
   deduction/                   Horn-rule deduction benchmark
     analysis/                   tables and figures from the released results
                                 (make_figures.py; see smolbench/deduction/horn/README.md)
@@ -31,8 +32,8 @@ exactly three components shaped `notebooks/<study>/results`; anything else
 takes the full-path fallback and a different prefix. Script depth is free:
 the write side takes `<study>` from the literal `notebook_dir="induction"`
 passed to `InductionExperiment`, never from a `__file__`, and readers anchor
-through `_power_common.results_dir(__file__, up=N)` (`up=1` under
-`analysis/`, pinned by `tests/tooling/test_analysis_stats.py`).
+through `study_design.RESULTS_DIR`, built from `repo_root()` and the literal
+study name.
 
 **`notebooks/induction/run_study.py` is launched by literal path.**
 `scripts/fleet/run_fleet.py` builds each lane's argv from
