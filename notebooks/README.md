@@ -1,10 +1,9 @@
 # notebooks/
 
 One directory per study, each holding that study's driver, its exploration
-notebook, and its analysis code grouped by job. Result trees, evidence
-packages, data sidecars and writeups live on S3 and the release assets;
-[`ARCHIVE.md`](ARCHIVE.md) says where. Each study's own README covers its
-task design, run instructions and contracts.
+notebook, and its analysis code grouped by job. Result trees are S3-backed
+and not tracked here. Each study's own README covers its task design, run
+instructions and contracts.
 
 ```
 notebooks/
