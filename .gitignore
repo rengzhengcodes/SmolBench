@@ -226,16 +226,6 @@ __marimo__/
 # dirs pruned after upload; never committed.
 notebooks/*/results/
 
-# Claude files at ANY depth (a claude session run from a subdirectory
-# creates a nested .claude/ with local settings) -- except the repo-root
-# .claude/skills/, which holds committed agent tooling (run skills + their
-# drivers).
-**/.claude/*
-!.claude/skills/
+# Claude Code local state; never committed.
+**/.claude/
 CLAUDE.md
-
-# Local archives of retired result trees and experiment directories: kept on
-# disk, never committed (one exceeds GitHub's 100MB file limit; the other is
-# kept out by policy).
-/local_results_2026-08-10.zip
-/archive_2026-08-11.zip
