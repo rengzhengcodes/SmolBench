@@ -167,7 +167,8 @@ python scripts/deduction/horn/sweep.py --endpoint http://localhost:8000/v1 \
 
 The induction driver is `notebooks/induction/run_study.py`. It provisions and serves
 models on EC2 and writes results to S3. `notebooks/induction/README.md` explains how to
-configure and run it.
+configure and run it; `scripts/fleet/run_fleet.py` runs the full roster as a supervised
+fleet (see `scripts/README.md`).
 
 ## Run the tests
 
@@ -186,6 +187,10 @@ The tests run offline. They use stub model servers and need no credentials.
 | `smolbench/induction/` | The induction task generator |
 | `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
 | `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
-| `notebooks/induction/` | The induction study driver |
+| `notebooks/induction/` | The induction study driver and its analysis chain |
+| `notebooks/statistical_analyses.ipynb` | The induction study's cross-cutting statistics |
+| `scripts/fleet/` | Launch and supervise the induction study's EC2 fleet |
+| `scripts/results/` | Results-bucket provisioning, completeness audits, and analysis-data snapshots |
+| `scripts/arch/` | The model-architecture facts pipeline |
 | `notebooks/deduction/analysis/` | Horn tables and figures |
 | `tests/` | The test suite |
