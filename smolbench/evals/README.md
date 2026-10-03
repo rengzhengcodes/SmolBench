@@ -15,7 +15,7 @@ smolbench/evals/
   _aws.py           shared AWS primitives
   parsing.py  tokenization.py  replicates.py  results_store.py
   study_config.py   loads study_config.toml
-  study_config.toml results/fleet/roster/study/analysis config
+  study_config.toml committed results bucket/fleet/roster/study/analysis config
   payloads/         byte-exact EC2 assets
 ```
 
@@ -38,7 +38,7 @@ Create your own bucket; see the root [README's AWS setup](../../README.md#set-up
 
 - `SMOLBENCH_RESULTS_S3=s3://<bucket>[/<base-prefix>]` selects the S3 store.
 - `SMOLBENCH_RESULTS_S3_REGION` is the first-choice S3 client region.
-- `AWS_REGION` is the fallback, followed by the configured bucket's region and boto3's resolution chain.
+- `AWS_REGION` is the fallback, followed by the configured project-bucket region and boto3's resolution chain.
 
 Sync writes each selected S3 log entry to `{prefix}{tag}_{info}/rep_{seed}.yaml`.
 
@@ -58,3 +58,7 @@ python -m smolbench.evals.results_store notebooks/induction/results --tag gpt-os
 ```
 
 `--tag model=tag` is repeatable; `--prefix one_hop_` supplies a harness prefix. Run this before analysis: analysis scripts read local trees. Sync is one-way and overwrites matching local paths.
+
+## Provisioning the bucket
+
+`scripts/results/provision_results_bucket.py` idempotently provisions the configured bucket, public-access blocks, versioning, and `SmolbenchResultsBucketRW`. It requires admin credentials; day-to-day EC2 operator credentials cannot manage S3 or IAM.

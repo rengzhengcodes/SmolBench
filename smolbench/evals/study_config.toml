@@ -26,9 +26,9 @@
 # study_config.py's module docstring for why that is deliberate.
 
 [results]
-# `region` is the region THAT BUCKET lives in -- resolve_store falls back
-# to it only for URIs naming THIS bucket; others resolve through boto3's own
-# chain.
+# Provisioned once by scripts/results/provision_results_bucket.py. `region`
+# is the region THAT BUCKET lives in -- resolve_store falls back to it only
+# for URIs naming THIS bucket; others resolve through boto3's own chain.
 bucket = "smolbench-results-414266451290"
 region = "us-west-2"
 # The live log sits at the bucket root: every key starts with
@@ -36,16 +36,18 @@ region = "us-west-2"
 base_prefix = ""
 
 [fleet]
-# Spot-capacity hunt regions for providers/ec2.py's provisioning retries.
-# Overridable per-process via the EC2_REGIONS environment variable (ec2.py
-# applies that override itself; this list is only the DEFAULT).
+# Spot-capacity hunt regions for scripts/fleet/run_fleet.py and
+# providers/ec2.py's own provisioning retries. Overridable per-process via
+# the EC2_REGIONS environment variable (ec2.py applies that override itself;
+# this list is only the DEFAULT).
 regions = ["us-east-1", "us-east-2", "us-west-2"]
-# Prefix of each fleet lane's EC2_EXPERIMENT_TAG ("scaling-<spec-key>");
-# experiment.py rejects the bare prefix as a tag.
+# Prefix run_fleet.py gives each lane's EC2_EXPERIMENT_TAG ("scaling-<spec-key>"),
+# so fleet_status/fleet_teardown can recognize and enumerate fleet-owned boxes.
 tag_prefix = "scaling-"
-# Default EC2_EXPERIMENT_TAG for a standalone run of run_study.py,
-# deliberately outside "scaling-"; `run_study.py --teardown` owns it. An
-# exported EC2_EXPERIMENT_TAG wins.
+# Default EC2_EXPERIMENT_TAG for a STANDALONE (non-fleet) run of
+# run_study.py, deliberately outside "scaling-" so fleet_status/
+# fleet_teardown never touch a standalone box; `run_study.py --teardown`
+# owns it. A fleet-exported EC2_EXPERIMENT_TAG wins.
 standalone_tag = "induction-scaling"
 
 # The 21-checkpoint ladder: 7 families x 3 rungs -- every EC2_DEPLOY_SPECS

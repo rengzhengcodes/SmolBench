@@ -1,7 +1,7 @@
 # Horn bench scripts
 
-`smolbench/deduction/horn/README.md` specifies the experiment; its section 9 covers the
-ICLR 2027 run protocol.
+`smolbench/deduction/horn/README.md` specifies the experiment; its section 9 walks through
+reproducing the ICLR 2027 results.
 
 | script | what it does |
 |---|---|
