@@ -164,7 +164,7 @@ def test_main_provisions_bucket_policy_and_group_attachment(
 def test_main_provisions_the_bucket_smolbench_results_s3_names(
     fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The provisioner targets the configured store, not a stale literal."""
+    """The provisioner targets the bucket SMOLBENCH_RESULTS_S3 names."""
     monkeypatch.setenv(
         "SMOLBENCH_RESULTS_S3", "s3://redirected-bucket/analysis/2026-08-16"
     )

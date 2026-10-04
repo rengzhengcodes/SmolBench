@@ -40,10 +40,11 @@ One row per family.
 ## Checks
 
 ```bash
-.venv/bin/python scripts/arch/fetch_arch_facts.py --check   # configs vs the fleet's fixture
+.venv/bin/python scripts/arch/fetch_arch_facts.py --check   # configs vs the test fixture and pins
 .venv/bin/python -m pytest tests/tooling/test_kv_budget.py  # KV formulas vs the audit table
 ```
 
 `--check` compares four shared fields with `tests/fixtures/roster_configs.json`,
-which `tests/evals/test_deploy_specs.py` also pins; a mismatch means an upstream
-checkpoint moved.
+which `tests/evals/test_deploy_specs.py` also pins, and each pinned revision with
+the resolved SHA; a mismatch means an upstream checkpoint moved. It writes the
+audit files only when every check passes.

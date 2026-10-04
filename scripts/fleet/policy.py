@@ -53,7 +53,7 @@ def classify_exit(log_tail: str, instance_present: bool) -> str:
 
 MAX_CRASH_RELAUNCHES = 2
 # Bound reclaim retries: failed instance sweeps otherwise hide crashes; 12
-# relaunches span about 4.15h against 9--14h tier budgets.
+# relaunches span about 4.0h of backoff against 9--14h tier budgets.
 MAX_RECLAIM_RELAUNCHES = 12
 RECLAIM_BACKOFF_BASE_SECONDS = 60
 RECLAIM_BACKOFF_CAP_SECONDS = 1800
