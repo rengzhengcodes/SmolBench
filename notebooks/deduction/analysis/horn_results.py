@@ -465,12 +465,8 @@ def markdown_table(summary: dict[str, dict], spread: str) -> str:
         "over seeds. Bold = best arm, italic = worst arm in the row. Deltas in points, "
         "seed-paired, with 95% bootstrap CI; * p<0.05, ** p<0.01, *** p<0.001 (sign-flip), "
         "† survives Holm across models in that column. Flags: a = incomplete "
-        f"(n < {N_FULL} cells, still running), b = m set by hand, c = below floor (lem < 60% at m=1 on "
-        "calibration seeds), d = a few missing cells counted as failures. Dropped by decision and absent here: exaone-4.0-32b, exaone-4.5-33b, "
-        "k-exaone-236b-a23b, glm-4.5-air (stopped early), deepseek-v4-pro (not run).\n"
-        "Rows for a running box arrive in completion order, so a partial pass rate (flag a) is biased "
-        "toward short generations: quick failures for hard models, quick successes for easy ones. Do not "
-        f"read a flagged row until n is a good fraction of {N_FULL}.\n"
+        f"(n < {N_FULL} cells), b = m set by hand, c = below floor (lem < 60% at m=1 on "
+        "calibration seeds), d = a few missing cells counted as failures.\n"
     )
     return "\n".join(lines) + "\n" + note
 
