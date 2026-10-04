@@ -54,11 +54,6 @@ def seed_digest(seed_dir: Path, arms: tuple[str, ...] = ARMS) -> str:
     return h.hexdigest()
 
 
-def rung_digests(rung: Path, seeds: list[int]) -> dict[str, str]:
-    """``{seed: digest}`` for the given seeds of a rendered rung."""
-    return {str(s): seed_digest(rung / f"s{s:04d}") for s in seeds}
-
-
 def verify_rung(rung: Path, m: int, seeds: list[int] | None = None) -> list[str]:
     """Problems found when comparing ``rung`` with the recorded digests (empty: identical)."""
     recorded = load_protocol()["rung_digests"].get(str(m))
@@ -137,9 +132,9 @@ def serve_command(key: str) -> list[str]:
     """``vllm serve`` for a self-hosted model: the pinned checkpoint and the served context.
 
     The serving arguments come from the deployment spec
-    (``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``). The single-sequence settings there
-    (``--max-num-seqs 1``, ``--enforce-eager``) were dropped for the Horn runs, which
-    batched requests.
+    (``smolbench.evals.providers.ec2.EC2_DEPLOY_SPECS``). Its single-sequence settings
+    (``--max-num-seqs 1``, ``--enforce-eager``) are removed because the Horn runs
+    batch requests.
     """
     from smolbench.evals.providers.ec2 import (  # pylint: disable=import-outside-toplevel
         EC2_DEPLOY_SPECS,

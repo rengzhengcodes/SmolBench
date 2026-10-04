@@ -116,9 +116,9 @@ FIG_LABEL = {
     "qwen3.5-397b-a17b": "397B",
 }
 
-#: m was set by hand, not by the calibration rule.
+#: m set by hand, outside the calibration rule (flag b).
 FORCED = {"qwen3.5-397b-a17b"}
-#: lem below 60% at m = 1 on the calibration seeds; run at m = 1 for the record.
+#: lem below 60% at m = 1 on the calibration seeds, so run at m = 1 (flag c).
 BELOW_FLOOR = {"ministral-3-3b", "ministral-3-8b"}
 
 N_FULL = 1200
@@ -148,7 +148,7 @@ AXIS = "#c3c2b7"
 
 
 def rung_m(rung: str) -> int | None:
-    """``m48`` or ``stage2_m48`` -> 48."""
+    """``m48`` or ``calib_m48`` -> 48."""
     mt = re.search(r"m(\d+)$", str(rung))
     return int(mt.group(1)) if mt else None
 

@@ -1,15 +1,14 @@
 """Reasoning length relative to the high-density arm, induction and deduction averaged.
 
-One panel. Each row is a model; each point is the mean output tokens of an arm as a
-percent increase over the high-density arm of the same model, averaged over the two
-benchmarks on the log scale (geometric mean of the induction and deduction token ratios).
-High density is the baseline (0%). The x axis is the token ratio on a log scale,
-labelled in percent.
+One panel of grouped bars. Each group is a model, plus a ``geomean`` group; each bar is
+the ratio of an arm's mean output tokens to the high-density arm of the same model,
+averaged over the two benchmarks on the log scale (geometric mean of the induction and
+deduction token ratios). High density is the dotted line at 1.
 
 Induction ratios come from the means of the induction reasoning-length table (thousands
-of tokens). Deduction ratios come from the Horn stage-2 rows through
-``horn_results.run_pipeline``. Rows pair by ``PAPER_NAME``; a model whose induction
-entry is ``None`` (no induction token means yet) is left out of the figure.
+of tokens). Deduction ratios come from the released Horn rows through
+``horn_results.run_pipeline``. Rows pair by ``PAPER_NAME``; a model without deduction
+rows is left out.
 No interval is drawn: the induction side has none.
 
 usage: horn_reasoning_figure.py --data DIR [--scoring iclr|default] [--out DIR]
@@ -49,13 +48,9 @@ INDUCTION = {
     "Ministral3-2512 14B": (6.41, 8.00, 22.00),
 }
 
-N_BOOT = 5000
-
-
-def deduction_ratios(res: hr.Results) -> dict[str, dict[str, tuple[float, float, float]]]:
-    """Model -> arm -> (ratio, lo, hi) of mean output tokens against lem, bootstrapped over seeds."""
-    rng = np.random.default_rng(0)
-    out: dict[str, dict[str, tuple[float, float, float]]] = {}
+def deduction_ratios(res: hr.Results) -> dict[str, dict[str, float]]:
+    """Model -> arm -> ratio of mean output tokens against lem over shared seeds."""
+    out: dict[str, dict[str, float]] = {}
     for model in hr.MODELS:
         if model not in res.chosen:
             continue
@@ -71,26 +66,19 @@ def deduction_ratios(res: hr.Results) -> dict[str, dict[str, tuple[float, float,
                 continue
             base = np.array([np.mean(per_seed["lem"][s]) for s in seeds])
             other = np.array([np.mean(per_seed[arm][s]) for s in seeds])
-            ratio = other.mean() / base.mean()
-            idx = rng.integers(0, len(seeds), size=(N_BOOT, len(seeds)))
-            bs = other[idx].mean(axis=1) / base[idx].mean(axis=1)
-            out[model][arm] = (float(ratio), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5)))
+            out[model][arm] = float(other.mean() / base.mean())
     return out
 
 
-#: Induction row -> deduction model, where the induction name differs from ``PAPER_NAME``.
-PAIRING: dict[str, str] = {}
-
-
-def combined_ratios(res: hr.Results) -> tuple[list[str], dict[str, dict[str, tuple[float, float, float]]], dict]:
+def combined_ratios(res: hr.Results) -> tuple[list[str], dict[str, dict[str, float]], dict]:
     """Rows in induction order; per row the geometric mean of the two benchmarks' ratios.
     Also returns the per-benchmark ratios for the printed table."""
     ded = deduction_ratios(res)
     by_paper = {hr.PAPER_NAME[m]: m for m in hr.MODELS}
     names, points, detail = [], {}, {}
     for ind_name, vals in INDUCTION.items():
-        model = PAIRING.get(ind_name) or by_paper.get(ind_name)
-        if vals is None or model is None or model not in ded:
+        model = by_paper.get(ind_name)
+        if model is None or model not in ded:
             continue
         h, w, l = vals
         label = ind_name
@@ -101,9 +89,9 @@ def combined_ratios(res: hr.Results) -> tuple[list[str], dict[str, dict[str, tup
         for arm in ind_r:
             if arm not in ded[model]:
                 continue
-            d = ded[model][arm][0]
+            d = ded[model][arm]
             g = float(np.sqrt(ind_r[arm] * d))
-            points[label][arm] = (g, g, g)
+            points[label][arm] = g
             detail[label][arm] = (ind_r[arm], d, g)
     return names, points, detail
 
@@ -118,7 +106,7 @@ def figure(res: hr.Results, out: Path | None = None):
     width = 0.4
     fig, ax = plt.subplots(figsize=(12, 4))
     for k, (arm, label) in enumerate(arms):
-        ys = [points[n].get(arm, (np.nan,))[0] for n in names]
+        ys = [points[n].get(arm, np.nan) for n in names]
         ys.append(float(np.exp(np.nanmean(np.log(ys)))))
         ax.bar(xs + (k - 0.5) * width, ys, width=width, label=label)
     ax.axhline(1.0, linestyle=":", color="black", label="high density")

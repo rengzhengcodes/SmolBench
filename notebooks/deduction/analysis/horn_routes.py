@@ -1,6 +1,6 @@
 """Route choice and proof length per model and arm for the Horn bench.
 
-Reads the deduped stage-2 rows through ``horn_results.run_pipeline`` and writes
+Reads the deduped released rows through ``horn_results.run_pipeline`` and writes
 ``horn_routes.md``, ``horn_routes.tex``, ``horn_routes.json`` and
 ``horn_routes.{png,pdf}`` into ``notebooks/deduction/results/``.
 
