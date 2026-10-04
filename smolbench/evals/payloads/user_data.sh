@@ -12,9 +12,9 @@ mkdir -p /opt/smolbench /opt/hf-cache /var/run/smolbench /etc/smolbench
 # Model cache on instance-store NVMe (multi-GB/s; no instance store -> root
 # volume, so size EC2_ROOT_VOLUME_GB for the checkpoints then). The DL AMI
 # pre-assembles ALL NVMe into one LVM at /opt/dlami/nvme -- mkfs on a raw
-# device then fails "in use" (bit a live p5): bind-mount it instead. The
+# device then fails "in use": bind-mount it instead. The
 # raw-device path is for AMIs that leave devices alone; by-id detection
-# because lsblk MODEL renders underscores on some kernels (also bit a p5).
+# because lsblk MODEL renders underscores on some kernels.
 if mountpoint -q /opt/dlami/nvme; then
   mkdir -p /opt/dlami/nvme/smolbench-hf-cache
   mount --bind /opt/dlami/nvme/smolbench-hf-cache /opt/hf-cache

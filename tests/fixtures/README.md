@@ -1,8 +1,8 @@
 # tests/fixtures/
 
 Shared fixtures for the offline suite. `roster_configs.json` is read by
-`scripts/arch/fetch_arch_facts.py --check` and is also referenced by the drift-pin
-comment in `smolbench/evals/providers/ec2.py`.
+`tests/evals/test_deploy_specs.py`, which drift-pins `ec2.MODEL_ATTENTION_HEADS`
+against it, and by `scripts/arch/fetch_arch_facts.py --check`.
 
 `golden_quizzes.json` holds SHA-256 hashes of the induction generation
 pipeline's output at the studies' production configs;

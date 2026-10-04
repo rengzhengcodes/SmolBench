@@ -242,7 +242,8 @@ class Experiment:
         Raises
         ------
         KeyError
-            If ``model`` is not a key of ``archetype_tags``.
+            If ``model`` is not a key of ``archetype_tags`` or
+            ``EC2_DEPLOY_SPECS``.
         """
         ec2 = self._ec2()
         # Avoid a billed model load when resume has nothing outstanding.
