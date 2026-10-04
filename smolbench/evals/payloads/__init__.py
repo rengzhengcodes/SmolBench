@@ -42,7 +42,7 @@ AGENT_PY: str = _asset("agent.py.txt")
 # Idle watchdog: checks once a minute. A plain loop under Restart=always, NOT
 # the obvious OnUnitActiveSec=60 + Type=oneshot timer -- a oneshot unit never
 # enters the "active" state the timer measures from, so it fires exactly once.
-# Activity =
+# Activity is any of:
 #   (a) any authenticated control-agent request (the agent touches last_active),
 #   (b) movement in vLLM's request-token counters, or requests in flight
 #       (clients hit vLLM directly during evals, invisible to the agent), or

@@ -69,7 +69,7 @@ def test_theory_invariants(seed):
 
 
 def test_per_lemma_depths():
-    """Depth overrides change tree size per lemma and the max height."""
+    """Depth overrides change tree size per lemma."""
     th = generate(4, m=2, height=2, n_extra=3, depths={2: 4, 5: 3})
     assert [lm.height for lm in th.library][:5] == [2, 4, 2, 2, 3]
     assert len(th.tree(2)) == 15 and len(th.tree(1)) == 3
