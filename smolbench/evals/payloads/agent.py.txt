@@ -20,7 +20,7 @@ VLLM_API_KEY = os.environ["VLLM_API_KEY"]
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 VLLM_IMAGE = os.environ["VLLM_IMAGE"]
 # Optional S3 mirror of the HF hub cache (creds come from the instance
-# profile; empty = HF-only, the pre-S3 behavior).
+# profile; empty = HF-only).
 S3_CACHE = os.environ.get("S3_CACHE_URI", "").rstrip("/")
 CACHE_HUB = os.environ.get("SMOLBENCH_CACHE_HUB", "/opt/hf-cache/hub")
 SERVE_PROC = None  # the in-flight `docker run -d` launcher, if any
@@ -137,7 +137,7 @@ def fingerprint():
             pass
     # Hash of the safetensors index + per-file sizes for the LAST (sorted)
     # snapshot dir -- cheap fingerprint of the loaded weights, not a full read.
-    # NOTE: "last in sorted order" is the spec's literal rule (lexicographic
+    # NOTE: "last in sorted order" is the literal rule (lexicographic
     # on the snapshot dirname, which is normally an HF commit-sha hex string)
     # -- it is NOT guaranteed to be the pinned/--revision snapshot when the
     # cache holds more than one (e.g. a stale main pull alongside a pinned
@@ -286,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         ] + vllm_args
         # Async (cold `docker run -d` blocks on the image pull; /status reports
         # meanwhile). S3 mirror: blobs/ once + snapshots/refs via a tiny meta.tar
-        # (else legacy whole-prefix sync); HF fills any gap.
+        # (else fallback whole-prefix sync); HF fills any gap.
         script = ""
         if S3_CACHE:
             sub = "models--" + hf_id.replace("/", "--")
@@ -314,7 +314,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _sync_up(self, payload):
         """Upload hub cache to S3: blobs once + meta.tar (snapshots with real
-        >1M files -> legacy whole-prefix sync; *.incomplete never travels)."""
+        >1M files -> fallback whole-prefix sync; *.incomplete never travels)."""
         global SYNC_PROC
         if not S3_CACHE:
             self._reply(200, {"ok": True, "skipped": "S3_CACHE_URI not set"})

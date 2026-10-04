@@ -23,7 +23,7 @@ requires-python = ">=3.12,<3.13"
 # known to work here rather than the minimum ever supported.
 dependencies = [
     # 1.4 is the first release with Parallel(return_as="generator_unordered"),
-    # which smolbench.evals.openai_compat.evaluate streams results through.
+    # which smolbench.evals.openai_compat.ChatClient.evaluate streams results through.
     "joblib>=1.4",
     "numpy>=2.4.3",
     # smolbench.induction uses OrderedSet for deterministic, order-preserving sets.
@@ -87,18 +87,11 @@ notebook = [
     #   - python-dotenv (`import dotenv`) loads provider keys from keys.env.
     "PyYAML>=6.0.3",
     "python-dotenv>=1.0.1",
-    # The notebooks provision AWS infrastructure (EC2 spot / SageMaker).
+    # The notebooks provision AWS infrastructure (EC2 spot).
     "smolbench[aws]",
-    # The analysis scripts under notebooks/{induction,deduction}/analysis/
-    # import scipy.stats for their reference distributions (induction
-    # power_analysis.py: chi2/fisher_exact/norm; deduction error_bars.py: norm;
-    # deduction hint_vs_noise.py: binom), and statsmodels for their
-    # multiplicity corrections: induction paired_analysis.py and
-    # significance_report.py import statsmodels.stats.multitest.multipletests
-    # at module top for the Holm / Hochberg / Benjamini-Hochberg passes, which
-    # are on the main path of EVERY report run, and induction power_analysis.py
-    # additionally imports statsmodels.api for the omnibus interaction test (an
-    # optional diagnostic). Both
+    # The analysis scripts under notebooks/induction/analysis/ import
+    # scipy.stats for reference distributions; power_analysis.py also imports
+    # statsmodels for its optional omnibus interaction test. Both
     # must stay declared: `uv sync` strips anything undeclared, and those
     # scripts then fail on ModuleNotFoundError partway through a run.
     "scipy>=1.15",

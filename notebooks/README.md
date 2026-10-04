@@ -7,7 +7,7 @@ instructions and contracts.
 
 ```
 notebooks/
-  _power_common.py            scaffolding shared by both power analyses
+  _power_common.py            scaffolding shared by the induction analysis scripts
   statistical_analyses.ipynb  the single notebook of this study's statistics
   induction/                  family-ladder induction study
     run_study.py                the driver           <- fleet launches this by path
@@ -41,14 +41,11 @@ study name.
 `scripts/fleet/run_shards.py` matches running shards with
 `pgrep -f notebooks/induction/run_study.py`. `notebooks/induction/keys.env`
 must stay the induction driver's own sibling
-(`load_dotenv(__file__.parent/"keys.env")`).
+(`load_dotenv(Path(__file__).resolve().parent / "keys.env")`).
 
 ## Sibling imports inside a study
 
 Analysis scripts put `notebooks/` (for `_power_common`) and/or their own
-directory on `sys.path` and import siblings by bare module name. Both legs
-ship a `power_analysis.py`, so whichever imported first would own
-`sys.modules["power_analysis"]` for the rest of a session: anything loading
-both legs in one process (`tests/tooling/test_analysis_stats.py`,
-`statistical_analyses.ipynb`) loads each module under a unique name and binds
-the bare names only for the duration of each exec.
+directory on `sys.path` and import siblings by bare module name. The analysis
+statistics tests are in `tests/tooling/test_analysis_stats.py`; the study's
+statistical notebook is `statistical_analyses.ipynb`.

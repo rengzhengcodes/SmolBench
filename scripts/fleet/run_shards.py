@@ -3,8 +3,9 @@
 Adopt or relaunch shards with the shared policy; terminate clean-exit boxes
 because direct runs have no teardown and would idle about 30 minutes for the watchdog.
 Default tags stay outside fleet teardown's scope.
-Launch detached (``setsid nohup ... &``) after sourcing ``notebooks/induction/keys.env``
-and ``notebooks/ec2-operator.env`` because children inherit this environment and `shard_env` only layers onto it.
+Launch detached (``setsid nohup ... &``) after sourcing
+``notebooks/induction/keys.env`` because children inherit this environment and `shard_env`
+only layers onto it.
 """
 
 from __future__ import annotations
@@ -191,7 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force-rerun",
         default="",
-        help="INDUCTION_FORCE_RERUN value ('1' or 'a-b'; empty = off).",
+        help="INDUCTION_FORCE_RERUN value ('all' or 'a-b'; empty = off).",
     )
     parser.add_argument(
         "--types", required=True, help="EC2_INSTANCE_TYPES for every shard."

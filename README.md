@@ -24,11 +24,11 @@ You need the following:
   tables and figures without running any model.
 - To run models yourself: a GPU server with [vLLM](https://docs.vllm.ai/) for
   self-hosted models, or AWS credentials with Amazon Bedrock access for Bedrock-hosted
-  models.
+  models (see [Set up AWS](#set-up-aws)).
 - The released induction results (1.1 GB), to rebuild the induction table. They are in
   the public bucket `s3://smolbench-public-release`, which needs no AWS credentials.
 - To run the induction study: AWS credentials that can launch GPU spot instances on EC2
-  and write to an S3 bucket you own.
+  and write to an S3 bucket you own (see [Set up AWS](#set-up-aws)).
 
 ## Install
 
@@ -39,15 +39,94 @@ You need the following:
    uv sync
    ```
 
-   To run Bedrock-hosted models, add the `aws` extra. To run the tests, add the `dev`
-   extra:
+   To run Bedrock-hosted models, add the `aws` extra. To run tests, install all extras;
+   the suite imports the notebook extra:
 
    ```
-   uv sync --extra aws --extra dev
+   uv sync --all-extras
    ```
 
 The commands on this page assume the virtual environment is active
 (`source .venv/bin/activate`), or that you prefix them with `uv run`.
+
+## Set up AWS
+
+The code provisions these resources on first use when your credentials permit it:
+
+- In a launch region, `smolbench-inference` (`EC2_SECURITY_GROUP_NAME`) gets TCP
+  ingress on ports 8000 and 9000 from the caller's current public IPv4 `/32`. Existing
+  rules on a pre-existing group are not removed.
+- Only when `EC2_S3_MODEL_CACHE` is set, the code creates the cache bucket if absent
+  and the `smolbench-ec2-role` role/profile (`EC2_INSTANCE_ROLE_NAME`). The role gets
+  list/read/write access to that cache bucket and `AmazonSSMManagedInstanceCore`.
+- On SageMaker endpoint provisioning, the code creates `smolbench-sm-exec-role`
+  (`SAGEMAKER_EXEC_ROLE_NAME`) and attaches `AmazonSageMakerFullAccess`.
+- The AMI is resolved from the public Deep Learning AMI SSM parameter configured by
+  `EC2_AMI_SSM_PARAM`.
+
+What you set up yourself:
+
+1. **Credentials and IAM.** For EC2 and the results store, boto3's standard credential
+   chain is used with fresh sessions/clients, so updated credentials files apply on the
+   next operation. First-time role creation needs `iam:CreateRole`,
+   `iam:AttachRolePolicy`, `iam:PutRolePolicy`, `iam:CreateInstanceProfile`, and
+   `iam:AddRoleToInstanceProfile`; the existing SageMaker-role path also calls
+   `iam:GetRole`. For the EC2 model-cache path, `AccessDenied` on `iam:CreateRole`
+   makes the code assume the role/profile already exist; that fallback does not apply
+   to SageMaker role creation. Allow these EC2 actions:
+   `ec2:DescribeInstances`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`,
+   `ec2:DescribeSubnets`, `ec2:DescribeSpotPriceHistory`,
+   `ec2:DescribeInstanceTypeOfferings`, `ec2:DescribeInstanceAttribute`,
+   `ec2:DescribeImages`, `ec2:DescribeCapacityReservations`, `ec2:RunInstances`,
+   `ec2:TerminateInstances`, `ec2:CreateSecurityGroup`,
+   `ec2:AuthorizeSecurityGroupIngress`, and `ec2:CreateTags` (`run_instances` uses
+   `TagSpecifications`). Also allow `ssm:GetParameter`, `sts:GetCallerIdentity`, and
+   `iam:PassRole` on `EC2_INSTANCE_ROLE_NAME` when the model cache is enabled. Results
+   storage needs `s3:ListBucket`, `s3:GetObject`, and `s3:PutObject` on your results
+   bucket (`ListBucket` on the bucket, `GetObject` and `PutObject` on its objects).
+   SageMaker endpoint creation also needs `iam:PassRole` on
+   `SAGEMAKER_EXEC_ROLE_NAME`. If the optional cache bucket must be created, the
+   caller also needs `s3:CreateBucket`; its `HeadBucket` check uses `s3:ListBucket`.
+2. **Networking.** Keep a default VPC with at least one subnet in every region you
+   hunt. The provisioner looks up only the default VPC and its subnets; a region without
+   either is skipped.
+3. **GPU quota.** The default `EC2_INSTANCE_TYPES` are `p5e.48xlarge` and
+   `p5.48xlarge`, each using 192 vCPUs. In each hunted region request a Spot P-instance
+   vCPU quota of at least 192, or the On-Demand quota when `EC2_MARKET=on-demand`.
+   The default regions come from `[fleet].regions` in
+   `smolbench/evals/study_config.toml` with `AWS_REGION` prepended; override them with
+   `EC2_REGIONS`. For SageMaker endpoints, request Service Quota for the selected
+   endpoint instance type (`ml.g5.2xlarge` or `ml.p5.48xlarge`) in the target region;
+   multi-GPU endpoint quotas default to zero.
+4. **Results bucket.** Create your own S3 bucket with Block Public Access enabled and
+   versioning enabled, or run
+   `.venv/bin/python scripts/results/provision_results_bucket.py`.
+   The script takes no arguments, resolves the bucket from `SMOLBENCH_RESULTS_S3` or
+   `[results].bucket`, creates it in `us-west-2` (tolerating an existing bucket), enables
+   all four public-access blocks and versioning. It creates or reuses the
+   `SmolbenchResultsBucketRW` policy (`ListBucket`, `GetObject`, `PutObject`, and
+   `DeleteObject`) and attaches it to the existing `smolbench-ec2-operators` IAM group.
+   Before running it, have an IAM administrator create that group and add your operator
+   IAM user; the script does not create the group and fails if it cannot attach the
+   policy. It needs administrator-scoped credentials. To run the script, allow
+   `s3:CreateBucket`,
+   `s3:PutBucketPublicAccessBlock`, `s3:PutBucketVersioning`, `iam:CreatePolicy`,
+   `iam:ListPolicies`, and `iam:AttachGroupPolicy`. Alternatively, provision the bucket
+   yourself. Point the store at it with `SMOLBENCH_RESULTS_S3=s3://<your-bucket>` and
+   `SMOLBENCH_RESULTS_S3_REGION`, or set `[results].bucket` and `[results].region` in
+   `smolbench/evals/study_config.toml`.
+5. **Optional settings.** `EC2_KEY_NAME` names an existing key pair for SSH;
+   `HF_TOKEN` is needed only for gated models; `EC2_S3_MODEL_CACHE` is an `s3://` URI
+   for the model-weight cache.
+6. **Bedrock.** The current roster uses `us-east-2` for Bedrock models
+   (`bedrock_region` in `smolbench/deduction/horn/iclr.json`). Enable access in the
+   Bedrock console for those model IDs in that region. `bedrock_sweep.py` loads
+   `AWS_BEARER_TOKEN_BEDROCK` (a Bedrock API key) from the repository-root `.env`, or
+   uses boto3's standard chain, which needs Bedrock `InvokeModelWithResponseStream`
+   access for its `converse_stream` call. For the evals client, set
+   `INFERENCE_PROVIDER=aws` and provide `AWS_BEARER_TOKEN_BEDROCK` or
+   `AWS_INFERENCE_API_KEY`; that client authenticates with a bearer key, not IAM
+   access keys.
 
 ## Rebuild the Horn tables and figures
 
@@ -140,7 +219,7 @@ and the published pass rates. The `repro` commands read it.
 
    For a self-hosted model, the output has two commands. The first serves the pinned
    checkpoint with vLLM; the second runs the sweep against it. For a Bedrock model, the
-   output is one sweep command, which uses your AWS credentials.
+   output is one sweep command (see [Set up AWS](#set-up-aws)).
 
 1. Run the printed commands. The sweep writes one JSONL row per cell. If it stops,
    rerun the same command to resume.
@@ -229,8 +308,8 @@ which the table leaves out.
    python -m smolbench.induction.repro models
    ```
 
-1. Create an S3 bucket for the results, then write `notebooks/induction/keys.env`. Keep
-   it out of git. To run one model:
+1. Create an S3 bucket for the results (see [Set up AWS](#set-up-aws)), then write
+   `notebooks/induction/keys.env`. Keep it out of git. To run one model:
 
    ```
    AWS_ACCESS_KEY_ID=...

@@ -47,7 +47,7 @@ tag_prefix = "scaling-"
 # Default EC2_EXPERIMENT_TAG for a STANDALONE (non-fleet) run of
 # run_study.py, deliberately outside "scaling-" so fleet_status/
 # fleet_teardown never touch a standalone box; `run_study.py --teardown`
-# owns it. A fleet-exported EC2_EXPERIMENT_TAG wins via setdefault.
+# owns it. A fleet-exported EC2_EXPERIMENT_TAG wins.
 standalone_tag = "induction-scaling"
 
 # The 21-checkpoint ladder: 7 families x 3 rungs -- every EC2_DEPLOY_SPECS

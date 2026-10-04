@@ -1,5 +1,5 @@
 {
- "description": "Protocol of the Horn benchmark runs in the ICLR 2027 submission. Read by smolbench.deduction.horn.repro; built by scripts/deduction/horn/build_iclr_protocol.py (branch extras).",
+ "description": "Protocol of the Horn benchmark runs in the ICLR 2027 submission. Read by smolbench.deduction.horn.repro.",
  "seeds": "100-199",
  "replicates": 3,
  "arms": [
