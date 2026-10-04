@@ -8,8 +8,6 @@ build-backend = "setuptools.build_meta"
 # Keep the distribution name aligned with the import package directory.
 name = "smolbench"
 
-# No release process exists in the repository yet, so use a simple manual
-# version for now.
 version = "0.1.0"
 
 # Mirror the repository README at a high level.
@@ -124,8 +122,10 @@ include-package-data = false
 # without this entry a non-editable install would drop the .toml and every
 # importer of smolbench.evals.study_config would fail at import.
 "smolbench.evals" = ["*.toml"]
-# iclr.json: the recorded protocol of the ICLR runs, read by smolbench.deduction.horn.repro.
+# iclr.json: the recorded protocol of the ICLR runs, read by smolbench.deduction.horn.repro
+# and smolbench.induction.repro.
 "smolbench.deduction.horn" = ["*.json"]
+"smolbench.induction" = ["*.json"]
 
 [tool.setuptools.packages.find]
 # Pick up the top-level package and any subpackages below it.
