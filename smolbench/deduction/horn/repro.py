@@ -86,16 +86,12 @@ def report(paths: list[Path], rng_seed: int = 0) -> str:
     cells, dropped = load_rows(paths)
     models = load_protocol()["models"]
     rng = random.Random(rng_seed)
-    scorings = _scorings(paths)
     lines = []
     for (model, rung), arms in sorted(cells.items()):
-        published = models.get(model, {}).get("results", {})
-        ref = published.get(scorings[0]) if len(scorings) == 1 else None
+        ref = models.get(model, {}).get("results")
         seeds = sorted({s for arm in arms.values() for s in arm})
         n = sum(len(v) for arm in arms.values() for v in arm.values())
-        lines.append(
-            f"== {model} {rung}: {n} cells, {len(seeds)} seeds, scoring {'/'.join(scorings)}"
-        )
+        lines.append(f"== {model} {rung}: {n} cells, {len(seeds)} seeds")
         head = f"   {'':10s} {'pass %':>8s}"
         lines.append(head + (f" {'published':>10s}" if ref else ""))
         for arm in sorted(arms, key=arm_order):
@@ -119,19 +115,6 @@ def report(paths: list[Path], rng_seed: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _scorings(paths: list[Path]) -> list[str]:
-    """The scoring modes found in the rows (rows without the field were scored ``iclr``)."""
-    found: set[str] = set()
-    for path in paths:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    found.add(json.loads(line).get("scoring") or "iclr")
-                except json.JSONDecodeError:
-                    continue
-    return sorted(found) or ["iclr"]
-
-
 def cmd_models(_: argparse.Namespace) -> int:
     """List the models, their chain lengths and backends."""
     proto = load_protocol()
@@ -140,7 +123,7 @@ def cmd_models(_: argparse.Namespace) -> int:
         f"{'lem':>6s} {'pad':>6s} {'both':>6s}  notes"
     )
     for key, e in proto["models"].items():
-        r = e["results"]["iclr"]
+        r = e["results"]
         print(
             f"{key:28s} {e['m']:3d}  {e['backend']:8s} "
             f"{r['lem']:6.1f} {r['pad']:6.1f} {r['both']:6.1f}  {e.get('notes', '')}"

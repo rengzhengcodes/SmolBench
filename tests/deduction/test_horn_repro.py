@@ -15,14 +15,14 @@ def test_protocol_record_is_complete():
     """The protocol records all models, rungs, and published scores."""
     proto = repro.load_protocol()
     assert proto["seeds"] == "100-199" and proto["replicates"] == 3
-    assert proto["arms"] == list(ARMS) and proto["scoring"] == "iclr"
+    assert proto["arms"] == list(ARMS)
     assert proto["bucket"] == "smolbench-public-release"
     assert proto["region"] == "us-west-2"
     assert proto["prefix"] == "deduction/smolbench-horn-data-v1/"
     assert len(proto["models"]) == 16
     for key, e in proto["models"].items():
         assert str(e["m"]) in proto["rung_digests"], key
-        assert set(e["results"]) == {"iclr", "default"}
+        assert {"lem", "pad", "disc", "both"} <= set(e["results"])
     for digests in proto["rung_digests"].values():
         assert sorted(map(int, digests)) == list(range(100, 200))
 
@@ -103,7 +103,7 @@ def test_report_compares_with_the_published_values(tmp_path):
         + "\n"
     )
     text = repro.report([rows])
-    assert "== glm-4.7 m48: 16 cells, 4 seeds, scoring iclr" in text
+    assert "== glm-4.7 m48: 16 cells, 4 seeds" in text
     assert "published" in text and "74.0" in text  # the published lem rate
 
 

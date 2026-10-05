@@ -62,8 +62,7 @@ The commands below assume the virtual environment is active
        --data path/to/smolbench-horn-data-v1 --out results
    ```
 
-   This takes about four minutes and writes outputs for both scoring modes,
-   `results/iclr/` and `results/default/`.
+   This takes about four minutes. The main outputs in `results/` are:
 
 | File | Contents |
 |---|---|

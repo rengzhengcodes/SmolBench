@@ -108,15 +108,10 @@ derives the goal.
   otherwise, over the valid steps plus the failing step's rule. A `disc` rule counts as a
   tree rule (an attempt to enter a tree).
 
-Before `verify`, `extract.extract_answer(content, scoring)` removes inline reasoning and
-takes the final block of step lines. There are two scoring modes:
-
-- `iclr`: the block is the last contiguous run of step lines, so a prose line between two
-  steps drops every step above it. The ICLR 2027 submission's Horn table was scored this
-  way. Rows with no `scoring` field were scored this way.
-- `default`: prose lines between steps are skipped. A code fence, a reasoning close tag
-  (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
-  still ends the block, so a draft above it is not scored.
+Before `verify`, `extract.extract_answer(content)` removes inline reasoning blocks and
+takes the last contiguous run of step lines. A non-step line ends the run, so a draft
+written above the final proof is not scored. This is the rule the ICLR 2027 results were
+scored with.
 
 `checker.certify(theory, rendered)` checks that rule content is unique; the goal is
 derivable; every library lemma lies on a path to the goal and fires for `c`; every fact is
@@ -152,8 +147,8 @@ python notebooks/deduction/analysis/make_figures.py --data <results-folder> --ou
 ```
 
 The analysis writes the paper table, the full table, the summary, ladder figures,
-proof-route figures and the reasoning-length figure to `results/iclr/` (scored as
-submitted) and `results/default/` (the default extractor). It takes about four minutes.
+proof-route figures and the reasoning-length figure to `results/`. It takes about four
+minutes.
 The outputs match the submitted ones byte for byte, apart from embedded PDF creation
 dates.
 
@@ -164,7 +159,7 @@ dates.
 | `theory.py` | `Theory`, `Rule`, `Lemma`, `generate`; JSON round-trip |
 | `render.py` | `ARMS`, `render`, `Rendered`, `Tokenizer`; lorem and disc slot fillers |
 | `checker.py` | `verify`, `certify`, `designed_proof`, `closure`, `route_of` |
-| `extract.py` | Scoring modes: `final_proof_block`, `extract_answer`, `verdict_fields` |
+| `extract.py` | `final_proof_block`, `extract_answer`, `verdict_fields`: the answer extraction |
 | `stats.py` | `load_rows` (dedupe by cell), `pass_rate`, `contrast` |
 | `repro.py`, `iclr.json` | Protocol record; `fetch`, `check-data`, `models`, `report` |
 | `../../../notebooks/deduction/analysis/` | `make_figures.py` and the table, route and reasoning-length scripts |

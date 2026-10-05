@@ -30,7 +30,7 @@ def _load(name: str):
     return mod
 
 
-def _row(arm: str, seed: int, rep: int, ok: bool, ok_default: bool) -> dict:
+def _row(arm: str, seed: int, rep: int, ok: bool) -> dict:
     verdict = "success" if ok else "invalid_step"
     fields = {
         "answer": "",
@@ -40,12 +40,11 @@ def _row(arm: str, seed: int, rep: int, ok: bool, ok_default: bool) -> dict:
         "reason": "",
         "ignored_lines": 0,
     }
-    default = dict(fields, verdict="success" if ok_default else "invalid_step")
     return {
         "model": MODEL, "spec_key": MODEL, "rung": "m6", "arm": arm, "seed": seed, "rep": rep,
         "prompt_tokens": 900, "completion_tokens": 2000 + 100 * ARMS.index(arm),
         "finish_reason": "stop", "content": "derive a(c) from f(c)\n", "reasoning": "",
-        "scoring": "iclr", **fields, "scoring_default": default, "source": "spot",
+        **fields, "source": "spot",
     }  # fmt: skip
 
 
@@ -59,7 +58,7 @@ def data(tmp_path):
         for seed in SEEDS:
             for arm in ARMS:
                 ok = rng.random() < rate[arm]
-                rows.append(_row(arm, seed, rep, ok, ok or arm == "both"))
+                rows.append(_row(arm, seed, rep, ok))
     path = tmp_path / "data" / "horn" / "rows" / f"{MODEL}.jsonl"
     path.parent.mkdir(parents=True)
     body = "".join(json.dumps(r) + "\n" for r in rows).encode()
@@ -110,39 +109,27 @@ def test_check_data_catches_a_changed_file(data):
     assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: meta.json missing"]
 
 
-def test_make_figures_writes_both_scorings(data, tmp_path):
-    """The figure script writes summaries and tables for both scoring modes."""
+def test_make_figures_writes_the_tables_and_figures(data, tmp_path):
+    """The figure script writes the paper tables and figures."""
     pytest.importorskip("matplotlib")
     folder, rows = data
     out = tmp_path / "out"
     assert _load("make_figures").main(["--data", str(folder), "--out", str(out)]) == 0
-    for mode in ("iclr", "default"):
-        summary = json.loads((out / mode / "horn_summary.json").read_text())["models"][
-            MODEL
-        ]
-        for arm in ARMS:
-            key = "verdict" if mode == "iclr" else None
-            sel = [r for r in rows if r["arm"] == arm]
-            passed = [
-                (r[key] if key else r["scoring_default"]["verdict"]) == "success"
-                for r in sel
-            ]
-            per_seed = {}
-            for r, ok in zip(sel, passed):
-                per_seed.setdefault(r["seed"], []).append(ok)
-            expected = sum(sum(v) / len(v) for v in per_seed.values()) / len(per_seed)
-            assert summary["arms"][arm]["mean"] == pytest.approx(expected)
-        for name in (
-            "horn_table.tex",
-            "horn_table_full.tex",
-            "horn_ladder_arms.png",
-            "horn_routes.md",
-            "reasoning_length_increase.png",
-        ):
-            assert (out / mode / name).exists(), name
-    both_default = json.loads((out / "default" / "horn_summary.json").read_text())[
-        "models"
-    ][MODEL]["arms"]["both"]
-    assert (
-        both_default["mean"] == 1.0
-    )  # every both cell passes under default in this fixture
+    summary = json.loads((out / "horn_summary.json").read_text())["models"][MODEL]
+    for arm in ARMS:
+        selected = [row for row in rows if row["arm"] == arm]
+        per_seed = {}
+        for row in selected:
+            per_seed.setdefault(row["seed"], []).append(row["verdict"] == "success")
+        expected = sum(sum(values) / len(values) for values in per_seed.values()) / len(
+            per_seed
+        )
+        assert summary["arms"][arm]["mean"] == pytest.approx(expected)
+    for name in (
+        "horn_table.tex",
+        "horn_table_full.tex",
+        "horn_ladder_arms.png",
+        "horn_routes.md",
+        "reasoning_length_increase.png",
+    ):
+        assert (out / name).exists(), name

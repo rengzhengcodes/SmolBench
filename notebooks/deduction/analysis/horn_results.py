@@ -19,12 +19,10 @@ of a 95% percentile bootstrap CI over seeds (``--spread sd`` prints the sd over 
 instead). A delta is the mean seed-paired difference in points with a 95% bootstrap CI
 and a sign-flip permutation p-value (``smolbench.deduction.horn.stats.contrast``).
 
-Scoring. Each row holds its verdict under both scoring modes
-(``smolbench.deduction.horn.extract``): ``--scoring iclr`` uses the verdicts the ICLR 2027
-submission was scored with, ``--scoring default`` those of the default extractor.
-Outputs go to ``<out>/<scoring>/``.
+Each row's verdict is the one stored when the answer was scored
+(``smolbench.deduction.horn.extract``).
 
-usage: horn_results.py --data DIR [--scoring iclr|default] [--out DIR] [--spread ci|sd]
+usage: horn_results.py --data DIR [--out DIR] [--spread ci|sd]
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 
-from smolbench.deduction.horn.extract import DEFAULT_SCORING, SCORING_MODES  # noqa: E402
 from smolbench.deduction.horn.stats import contrast  # noqa: E402
 
 OUT = REPO / "notebooks" / "deduction" / "results"
@@ -154,12 +151,11 @@ def rung_m(rung: str) -> int | None:
 
 
 def load_data(
-    data: Path, anomalies: list[str], scoring: str = DEFAULT_SCORING, keep_text: bool = False
+    data: Path, anomalies: list[str], keep_text: bool = False
 ) -> tuple[dict[tuple, dict], dict[str, int], set[str]]:
     """Read ``<data>/horn/rows/<model>.jsonl`` for every model.
 
-    Returns ``(model, m, arm, seed, rep) -> row`` with the verdict fields of ``scoring``,
-    each model's chain length, and the models with ``missing`` cells (flag d). Rows keep
+    Returns ``(model, m, arm, seed, rep) -> row``, each model's chain length, and the models with ``missing`` cells (flag d). Rows keep
     the file's order, which fixes the bootstrap draws. ``keep_text`` keeps ``content``,
     ``reasoning`` and ``answer``.
     """
@@ -176,9 +172,7 @@ def load_data(
         n_missing = 0
         for line in path.read_text(encoding="utf-8").splitlines():
             r = json.loads(line)
-            if scoring == "default":
-                r = {**r, **r["scoring_default"]}
-            r.pop("scoring_default", None)
+            r.pop("scoring_default", None)  # released rows also carry a second, unused scoring
             if CORRUPT_TOKEN in (r.get("content") or ""):
                 corrupt[(model, r["arm"])] += 1
             if not keep_text:
@@ -194,7 +188,7 @@ def load_data(
         if n_missing:
             imputed.add(model)
             anomalies.append(f"{model}: {n_missing} missing cells counted as failures (flag d)")
-    anomalies.append(f"read {len(chosen)} models, {len(rows)} cells, scoring {scoring}")
+    anomalies.append(f"read {len(chosen)} models, {len(rows)} cells")
     for model in sorted({mdl for mdl, _ in corrupt}):
         per_arm = {arm: corrupt[(model, arm)] for arm in ARMS}
         anomalies.append(
@@ -621,10 +615,10 @@ class Results:
         self.anomalies = anomalies
 
 
-def run_pipeline(data: Path, scoring: str = DEFAULT_SCORING, keep_text: bool = False) -> Results:
+def run_pipeline(data: Path, keep_text: bool = False) -> Results:
     """Load, summarise, check and diagnose. No files are written."""
     anomalies: list[str] = []
-    rows, chosen, imputed = load_data(data, anomalies, scoring, keep_text)
+    rows, chosen, imputed = load_data(data, anomalies, keep_text)
     summary = summarise(rows, chosen, imputed)
     data_checks(summary, anomalies)
     diag = diagnostics(rows, chosen)
@@ -663,8 +657,7 @@ def write_outputs(res: Results, out: Path = OUT, spread: str = "ci", with_n: boo
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
     ap.add_argument("--data", type=Path, required=True, help="the released results folder")
-    ap.add_argument("--scoring", choices=list(SCORING_MODES), default=DEFAULT_SCORING)
-    ap.add_argument("--out", type=Path, default=OUT, help="outputs go to <out>/<scoring>/")
+    ap.add_argument("--out", type=Path, default=OUT)
     ap.add_argument("--spread", choices=("ci", "sd"), default="ci", help="what ± means in the arm columns")
     ap.add_argument("--no-n", action="store_true", help="drop the n column from the LaTeX table")
     ap.add_argument("--no-figures", action="store_true")
@@ -674,8 +667,8 @@ def main(argv: list[str] | None = None) -> int:
         import matplotlib
 
         matplotlib.use("Agg")
-    res = run_pipeline(a.data, a.scoring)
-    written = write_outputs(res, a.out / a.scoring, a.spread, not a.no_n, not a.no_figures)
+    res = run_pipeline(a.data)
+    written = write_outputs(res, a.out, a.spread, not a.no_n, not a.no_figures)
 
     print(markdown_table(res.summary, a.spread))
     print("## Diagnostics per arm\n")
