@@ -22,7 +22,15 @@ def test_protocol_record_is_complete():
     assert len(proto["models"]) == 16
     for key, e in proto["models"].items():
         assert str(e["m"]) in proto["rung_digests"], key
-        assert {"lem", "pad", "disc", "both"} <= set(e["results"])
+        assert {
+            "lem",
+            "pad",
+            "disc",
+            "both",
+            "lem-both",
+            "pad-both",
+            "disc-both",
+        } <= set(e["results"])
     for digests in proto["rung_digests"].values():
         assert sorted(map(int, digests)) == list(range(100, 200))
 

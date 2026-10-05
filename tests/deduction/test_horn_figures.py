@@ -30,7 +30,7 @@ def _load(name: str):
     return mod
 
 
-def _row(arm: str, seed: int, rep: int, ok: bool) -> dict:
+def _row(arm: str, seed: int, rep: int, ok: bool, ok_default: bool) -> dict:
     verdict = "success" if ok else "invalid_step"
     fields = {
         "answer": "",
@@ -40,11 +40,12 @@ def _row(arm: str, seed: int, rep: int, ok: bool) -> dict:
         "reason": "",
         "ignored_lines": 0,
     }
+    default = dict(fields, verdict="success" if ok_default else "invalid_step")
     return {
         "model": MODEL, "spec_key": MODEL, "rung": "m6", "arm": arm, "seed": seed, "rep": rep,
         "prompt_tokens": 900, "completion_tokens": 2000 + 100 * ARMS.index(arm),
         "finish_reason": "stop", "content": "derive a(c) from f(c)\n", "reasoning": "",
-        **fields, "source": "spot",
+        "scoring": "iclr", **fields, "scoring_default": default, "source": "spot",
     }  # fmt: skip
 
 
@@ -58,7 +59,7 @@ def data(tmp_path):
         for seed in SEEDS:
             for arm in ARMS:
                 ok = rng.random() < rate[arm]
-                rows.append(_row(arm, seed, rep, ok))
+                rows.append(_row(arm, seed, rep, ok, ok or arm == "both"))
     path = tmp_path / "data" / "horn" / "rows" / f"{MODEL}.jsonl"
     path.parent.mkdir(parents=True)
     body = "".join(json.dumps(r) + "\n" for r in rows).encode()
@@ -117,13 +118,12 @@ def test_make_figures_writes_the_tables_and_figures(data, tmp_path):
     assert _load("make_figures").main(["--data", str(folder), "--out", str(out)]) == 0
     summary = json.loads((out / "horn_summary.json").read_text())["models"][MODEL]
     for arm in ARMS:
-        selected = [row for row in rows if row["arm"] == arm]
         per_seed = {}
-        for row in selected:
-            per_seed.setdefault(row["seed"], []).append(row["verdict"] == "success")
-        expected = sum(sum(values) / len(values) for values in per_seed.values()) / len(
-            per_seed
-        )
+        for r in rows:
+            if r["arm"] == arm:
+                per_seed.setdefault(r["seed"], []).append(r["verdict"] == "success")
+        expected = sum(sum(v) / len(v) for v in per_seed.values()) / len(per_seed)
+        # the stored verdict counts; the released rows' extra scoring_default is ignored
         assert summary["arms"][arm]["mean"] == pytest.approx(expected)
     for name in (
         "horn_table.tex",
