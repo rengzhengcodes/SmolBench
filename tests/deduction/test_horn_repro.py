@@ -34,11 +34,11 @@ def test_parse_seeds_mixes_ranges_and_numbers():
 def test_protocol_record_is_complete():
     proto = repro.load_protocol()
     assert proto["seeds"] == "100-199" and proto["replicates"] == 3
-    assert proto["arms"] == list(ARMS) and proto["scoring"] == "iclr"
+    assert proto["arms"] == list(ARMS)
     assert len(proto["models"]) == 16
     for key, e in proto["models"].items():
         assert str(e["m"]) in proto["rung_digests"], key
-        assert set(e["results"]) == {"iclr", "default"}
+        assert {"lem", "pad", "disc", "both", "lem-both", "pad-both", "disc-both"} <= set(e["results"])
         if e["backend"] == "vllm":
             assert len(e["revision"]) == 40
         else:
@@ -63,7 +63,7 @@ def test_commands_carry_the_protocol_settings(tmp_path):
     assert cmd[cmd.index("--model") + 1] == "zai.glm-4.7"
     assert json.loads(cmd[cmd.index("--extra-fields") + 1]) == {"reasoning_effort": "high"}
     for flag, value in (("--seeds", "100-199"), ("--replicates", "3"), ("--max-tokens", "131072"),
-                        ("--temperature", "0.7"), ("--scoring", "iclr")):
+                        ("--temperature", "0.7")):
         assert cmd[cmd.index(flag) + 1] == value
     cmd = repro.sweep_command("qwen3.5-27b", tmp_path, tmp_path / "rows.jsonl", "http://h:1/v1", None)
     assert cmd[1].endswith("sweep.py") and cmd[cmd.index("--endpoint") + 1] == "http://h:1/v1"
@@ -111,7 +111,7 @@ def test_report_compares_with_the_published_values(tmp_path):
         for s in range(4) for arm in ARMS
     ) + "\n")
     text = repro.report([rows])
-    assert "== glm-4.7 m48: 16 cells, 4 seeds, scoring iclr" in text
+    assert "== glm-4.7 m48: 16 cells, 4 seeds" in text
     assert "published" in text and "74.0" in text  # the published lem rate
 
 
@@ -129,12 +129,8 @@ def test_lock_rows_refuses_a_second_writer_and_drops_a_torn_line(tmp_path):
 
 def test_demo_runs_end_to_end(tmp_path, capsys):
     demo = _load("demo")
-    assert demo.main(["--out", str(tmp_path), "--m", "2", "--seeds", "0-1", "--style", "interleaved"]) == 0
-    verdicts = {}
-    for mode in ("iclr", "default"):
-        rows = [json.loads(x) for x in (tmp_path / f"rows_interleaved_{mode}.jsonl").read_text().splitlines()]
-        assert len(rows) == 2 * len(ARMS)
-        verdicts[mode] = {r["verdict"] for r in rows}
-    assert verdicts["default"] == {"success"}
-    assert "success" not in verdicts["iclr"]
+    assert demo.main(["--out", str(tmp_path), "--m", "2", "--seeds", "0-1"]) == 0
+    rows = [json.loads(x) for x in (tmp_path / "rows.jsonl").read_text().splitlines()]
+    assert len(rows) == 2 * len(ARMS)
+    assert {r["verdict"] for r in rows} == {"success"}
     assert "== oracle m2" in capsys.readouterr().out

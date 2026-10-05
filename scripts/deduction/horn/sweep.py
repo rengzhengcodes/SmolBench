@@ -33,7 +33,6 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
@@ -46,8 +45,6 @@ if str(REPO_ROOT) not in sys.path:
 
 # pylint: disable=wrong-import-position
 from smolbench.deduction.horn.extract import (  # noqa: E402
-    DEFAULT_SCORING,
-    SCORING_MODES,
     final_proof_block,  # noqa: F401  re-exported for callers and tests
     strip_reasoning,  # noqa: F401
     verdict_fields,
@@ -178,55 +175,6 @@ def done_keys(out: Path) -> set[tuple]:
     return keys
 
 
-def _skip_key(key: tuple) -> tuple:
-    """Rung-agnostic cell key ``(model, arm, seed, rep)``: skip files come from boxes that
-    name the same rung differently (``m32`` vs ``stage2_m32``)."""
-    return (key[0],) + tuple(key[2:])
-
-
-class SkipSet:
-    """Cells found in other row files for the same rung, compared without the rung name;
-    files are re-read when they change (at most once a minute)."""
-
-    def __init__(self, paths: list[str], min_interval_s: float = 60.0):
-        self.paths = [Path(x) for x in paths]
-        self.min_interval_s = min_interval_s
-        self._stamps: dict[Path, float] = {}
-        self._keys: set[tuple] = set()
-        self._checked = 0.0
-        self._lock = threading.Lock()
-        self.refresh(force=True)
-
-    def refresh(self, force: bool = False) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if not force and now - self._checked < self.min_interval_s:
-                return
-            self._checked = now
-            changed = False
-            for pth in self.paths:
-                try:
-                    st = pth.stat().st_mtime
-                except OSError:
-                    continue
-                if self._stamps.get(pth) != st:
-                    self._stamps[pth] = st
-                    changed = True
-            if changed:
-                keys: set[tuple] = set()
-                for pth in self.paths:
-                    if pth.exists():
-                        keys |= {_skip_key(k) for k in done_keys(pth)}
-                self._keys = keys
-
-    def __contains__(self, key: tuple) -> bool:
-        self.refresh()
-        return _skip_key(key) in self._keys
-
-    def __len__(self) -> int:
-        return len(self._keys)
-
-
 def load_rendered(cell: Cell) -> tuple[Theory, Rendered]:
     """Theory and the arm's Rendered (from meta.json, prompt.md and system.md)."""
     arm_dir = cell.prompt_path.parent
@@ -242,13 +190,8 @@ def load_rendered(cell: Cell) -> tuple[Theory, Rendered]:
     return theory, rendered
 
 
-def score(
-    theory: Theory,
-    rendered: Rendered,
-    result: ChatResult,
-    scoring: str = DEFAULT_SCORING,
-) -> dict:
-    """Verdict fields for one response under ``scoring`` (see ``horn.extract``).
+def score(theory: Theory, rendered: Rendered, result: ChatResult) -> dict:
+    """Verdict fields for one response (see ``horn.extract``).
 
     A finish reason other than stop/length is infrastructure, not the model, and scores
     ``exception`` so the cell is retried.
@@ -261,11 +204,8 @@ def score(
             "route": "",
             "reason": f"finish_reason={result.finish_reason!r}",
             "ignored_lines": 0,
-            "scoring": scoring,
         }
-    return verdict_fields(
-        theory, rendered, result.content or "", result.finish_reason, scoring
-    )
+    return verdict_fields(theory, rendered, result.content or "", result.finish_reason)
 
 
 @dataclass(frozen=True)
@@ -279,7 +219,6 @@ class Settings:
     timeout: int
     max_retries: int
     system_prompt: str | None
-    scoring: str = DEFAULT_SCORING
 
 
 def _base_row(cell: Cell, st: Settings, rendered: Rendered | None) -> dict:
@@ -341,7 +280,7 @@ def run_cell(client: ChatClient, cell: Cell, st: Settings) -> dict:
         "content": result.content,
         "reasoning": result.reasoning,
     }
-    row.update(score(theory, rendered, result, st.scoring))
+    row.update(score(theory, rendered, result))
     return row
 
 
@@ -418,27 +357,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument(
-        "--order",
-        choices=["forward", "reverse"],
-        default="forward",
-        help="reverse runs the last replicate and highest seeds first, so a filler "
-        "box can work toward a forward-running box on the same rung",
-    )
-    ap.add_argument(
-        "--skip-from",
-        nargs="*",
-        default=[],
-        help="other row files (e.g. pulled from a box running the same rung); cells "
-        "already in them are skipped, and the files are re-read every minute",
-    )
-    ap.add_argument(
-        "--scoring",
-        choices=list(SCORING_MODES),
-        default=DEFAULT_SCORING,
-        help="proof extraction rule (see smolbench/deduction/horn/extract.py); "
-        "iclr reproduces the ICLR 2027 submission",
-    )
-    ap.add_argument(
         "--out", required=True, help="JSONL results file (appended; resumes)"
     )
     ap.add_argument(
@@ -468,7 +386,6 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         timeout=a.timeout,
         max_retries=a.max_retries,
         system_prompt=provider_system_prompt(spec_key) if a.thinking != "off" else None,
-        scoring=a.scoring,
     )
 
     out = Path(a.out)
@@ -481,12 +398,6 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
     all_cells = cells_in(Path(a.rung_dir), a.arms, seed_list(a.seeds), a.replicates)
     done = done_keys(out)
     todo = [c for c in all_cells if (a.model,) + c.key not in done]
-    if a.order == "reverse":
-        todo.reverse()
-    skip = SkipSet(a.skip_from) if a.skip_from else None
-    if skip is not None:
-        todo = [c for c in todo if (a.model,) + c.key not in skip]
-        logging.info("%s: %d cells found in --skip-from files at start", a.model, len(skip))
     logging.info(
         "%s: %d cells, %d done, %d to run (settings %s, provider system prompt: %s)",
         a.model,
@@ -512,23 +423,13 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         read_timeout_s=a.timeout,
     )
     rows: list[dict] = []
-    skipped = 0
     assert fh is not None
     with fh:
         with ThreadPoolExecutor(a.concurrency) as pool:
-            def _run(cell: Cell) -> dict | None:
-                if skip is not None and (a.model,) + cell.key in skip:
-                    return None
-                return run_cell(client, cell, st)
-
-            futs = {pool.submit(_run, c): c for c in todo}
-            skipped = 0
+            futs = {pool.submit(run_cell, client, c, st): c for c in todo}
             for fut in as_completed(futs):
                 c = futs[fut]
                 row = fut.result()
-                if row is None:
-                    skipped += 1
-                    continue
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 fh.flush()
                 rows.append(row)
@@ -546,9 +447,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         print(summarize(rows))
     failed = sum(r["verdict"] == "exception" for r in rows)
     n_done_before = len(all_cells) - len(todo)
-    missing = len(todo) - len(rows) - skipped
-    if skipped:
-        print(f"skipped {skipped} cells found in --skip-from files while running")
+    missing = len(todo) - len(rows)
     print(
         f"cells {len(all_cells)}: done before {n_done_before}, scored now {len(rows) - failed}, "
         f"failed {failed}, missing {missing}"

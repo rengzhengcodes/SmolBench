@@ -91,7 +91,7 @@ derive <atom> from <atom>[, <atom>]
 
 A step applies one library rule with `x` set to the constant; the atoms after `from` are
 that rule's body atoms, each a fact or an atom derived on an earlier line; the last line
-derives the goal. `examples/` holds a small rendered theory in every arm.
+derives the goal.
 
 ## 5. The checker
 
@@ -111,29 +111,10 @@ derives the goal. `examples/` holds a small rendered theory in every arm.
   otherwise, over the valid steps plus the failing step's rule. A `disc` rule counts as a
   tree rule (an attempt to enter a tree).
 
-Before `verify`, `extract.extract_answer(content, scoring)` removes inline reasoning and
-takes the final block of step lines. There are two scoring modes:
-
-- `iclr`: the block is the last contiguous run of step lines, so a prose line between two
-  steps drops every step above it. The ICLR 2027 submission's Horn table was scored this
-  way. Rows with no `scoring` field were scored this way.
-- `default`: prose lines between steps are skipped. A code fence, a reasoning close tag
-  (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
-  still ends the block, so a draft above it is not scored.
-
-The drivers take `--scoring` (default `default`) and store it in each row.
-`notebooks/deduction/analysis/horn_results.py --data <data-dir> --scoring iclr|default`
-reports either mode from the same rows: `iclr` keeps the stored verdicts, and `default`
-uses each row's saved `scoring_default` verdict. On the 16-model roster, `default`
-changes gemma-4-e2b (both 45.7 to 62.3, disc 60.7 to 80.0) and Ministral-3B
-(lem 33.3 to 29.7), and every other model by 1.3 points or less.
-
-`checker.certify(theory, rendered)` runs on every arm before it is written. It checks
-that rule content is unique; the goal is derivable; every library lemma lies on a path to
-the goal and fires for `c`; every fact is a premise of a chain lemma; the lemma route
-verifies in exactly `m` steps; in `both` the tree route (every chain lemma replaced by its
-axioms) verifies as a `long` route; in `pad` and `disc` the tree route is invalid and the
-added rules never fire and derive nothing new.
+Before `verify`, `extract.extract_answer(content)` removes inline reasoning blocks and
+takes the last contiguous run of step lines. A non-step line ends the run, so a draft
+written above the final proof is not scored. This is the rule the ICLR 2027 results were
+scored with.
 
 ## 6. Rendering a rung
 
@@ -155,8 +136,7 @@ Served models: `scripts/deduction/horn/sweep.py` sends each cell (arm x seed x r
 as one chat completion to an OpenAI-compatible endpoint (vLLM), with the system prompt,
 temperature 0.7, the roster model's thinking arguments, and no tools. The output cap is
 `--max-tokens` (default 32,768; the ICLR runs used 131,072), cut per cell so that prompt
-and output fit `--context-length` (131,072). The answer is extracted under `--scoring`
-(section 5), and `finish_reason = length` scores as a failure. Rows go to a JSONL file,
+and output fit `--context-length` (131,072). The answer is extracted as in section 5, and `finish_reason = length` scores as a failure. Rows go to a JSONL file,
 keyed by (model, rung, arm, seed, replicate); rerunning the same command resumes, and a
 second sweep on the same file is refused. `bedrock_sweep.py` does the same over the AWS
 Bedrock Converse API (`--extra-fields '{"reasoning_effort": "high"}'` switches thinking
@@ -200,29 +180,25 @@ python notebooks/deduction/analysis/make_figures.py --data <results-folder> --ou
 
 This checks the folder against its `MANIFEST.json`, then writes the paper table
 (`horn_table.tex`), the full table, the summary, the ladder figures, the proof-route
-figures and the reasoning-length figure to `results/iclr/` (scored as submitted) and
-`results/default/` (the default extractor). It takes about four minutes. The outputs match
+figures and the reasoning-length figure to `results/`. It takes about four minutes. The outputs match
 the submitted ones byte for byte (PDFs up to their embedded creation date).
 
 ### Running the experiments again
 
 `iclr.json` records the protocol of the submission's runs: seeds, replicates, sampling,
-scoring, each model's chain length and serving settings (the pinned checkpoint revision
+each model's chain length and serving settings (the pinned checkpoint revision
 of every self-hosted model, the Bedrock model id and request fields otherwise), a SHA-256
-digest of every served theory, and the published pass rates under both scoring modes.
+digest of every served theory, and the published pass rates.
 `repro.py` reads it.
 
 1. Check the pipeline offline, with no model (about ten seconds):
 
    ```
    python scripts/deduction/horn/demo.py --out /tmp/horn_demo
-   python scripts/deduction/horn/demo.py --out /tmp/horn_demo --style interleaved
    ```
 
    The demo renders a small rung, serves the designed proofs from a local
-   OpenAI-compatible server, runs `sweep.py` under both scoring modes and prints the
-   report. With `--style interleaved` the answers carry a prose line between steps; they
-   fail under `iclr` scoring and pass under `default`.
+   OpenAI-compatible server, runs `sweep.py` and prints the report. Every cell passes.
 
 2. List the models and their chain lengths:
 
@@ -238,7 +214,6 @@ digest of every served theory, and the published pass rates under both scoring m
 
    ```
    python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
-   python -m smolbench.deduction.horn.repro verify rungs/m48 --m 48
    ```
 
 4. Print the commands that run the model with the protocol's settings. For a
@@ -266,14 +241,13 @@ GPU types and tensor-parallel layouts.
 | `theory.py` | `Theory`, `Rule`, `Lemma`, `generate`; JSON round-trip |
 | `render.py` | `ARMS`, `render`, `Rendered`, `Tokenizer`; lorem and disc slot fillers |
 | `checker.py` | `verify`, `certify`, `designed_proof`, `closure`, `route_of` |
-| `extract.py` | the two scoring modes: `final_proof_block`, `extract_answer`, `verdict_fields` |
+| `extract.py` | `final_proof_block`, `extract_answer`, `verdict_fields`: the answer extraction |
 | `stats.py` | `load_rows` (dedupe by cell), `pass_rate`, `contrast` |
 | `cli.py` | `render` (certifies and writes a rung) and `check` |
-| `repro.py`, `iclr.json` | the ICLR protocol record; `models`, `render`, `verify`, `command`, `report` |
-| `examples/` | one small theory rendered in every arm, with its designed proofs |
+| `repro.py`, `iclr.json` | the ICLR protocol record; `models`, `render`, `command`, `report`, `check-data` |
 | `../../../scripts/deduction/horn/` | sweep drivers (`sweep.py`, `bedrock_sweep.py`), calibration, `demo.py` |
 | `../../../notebooks/deduction/analysis/` | `make_figures.py` and the table, route and reasoning-length scripts |
-| `../../../tests/deduction/test_horn_*.py` | generator, checker, certificate, drivers, scoring modes, reproduction |
+| `../../../tests/deduction/test_horn_*.py` | generator, checker, certificate, drivers, extraction, reproduction, figures |
 
 `Theory.from_json` ignores legacy `facts_by_const`, accepts retired setup fields only at
 their current values and a single matching `constants` entry, and drops `sublemma`

@@ -18,7 +18,7 @@ Proof length is ``steps`` (valid derive lines) on successes divided by the theor
 length ``m``. 1.0 is the designed lemma route; the full tree route at depth 2 is about 3.
 A lemma-only proof above 1.0 applied redundant alternative lemmas.
 
-usage: horn_routes.py --data DIR [--scoring iclr|default] [--out DIR] [--no-figures]
+usage: horn_routes.py --data DIR [--out DIR] [--no-figures]
 """
 
 from __future__ import annotations
@@ -662,17 +662,16 @@ def write_outputs(stats: dict[str, dict], out: Path = hr.OUT, figures: bool = Tr
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
     ap.add_argument("--data", type=Path, required=True, help="the released results folder")
-    ap.add_argument("--scoring", choices=list(hr.SCORING_MODES), default=hr.DEFAULT_SCORING)
-    ap.add_argument("--out", type=Path, default=hr.OUT, help="outputs go to <out>/<scoring>/")
+    ap.add_argument("--out", type=Path, default=hr.OUT)
     ap.add_argument("--no-figures", action="store_true")
     a = ap.parse_args(argv)
     if not a.no_figures:
         import matplotlib
 
         matplotlib.use("Agg")
-    res = hr.run_pipeline(a.data, scoring=a.scoring)
+    res = hr.run_pipeline(a.data)
     stats = route_stats(res)
-    written = write_outputs(stats, a.out / a.scoring, not a.no_figures)
+    written = write_outputs(stats, a.out, not a.no_figures)
     print(markdown(stats))
     print("Wrote " + ", ".join(str(p) for p in written))
     return 0

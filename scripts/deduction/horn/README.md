@@ -5,7 +5,7 @@ reproducing the ICLR 2027 results.
 
 | script | what it does |
 |---|---|
-| `demo.py` | End-to-end check with no model: renders a small rung, serves the designed proofs from a local stub server, runs `sweep.py` under both scoring modes, prints the report. |
+| `demo.py` | End-to-end check with no model: renders a small rung, serves the designed proofs from a local stub server, runs `sweep.py`, prints the report. |
 | `sweep.py` | Sends every cell (arm x seed x replicate) of a rung to an OpenAI-compatible endpoint (vLLM) and scores the answer. Rows go to a JSONL file; rerunning resumes. |
 | `bedrock_sweep.py` | The same over the AWS Bedrock Converse API, with the caller's AWS credentials (`uv sync --extra aws`). |
 | `calibrate_m.py` | Searches the ladder of lem-only calibration rungs for the chain length where a model's pass rate reaches the target. |
@@ -18,8 +18,5 @@ prints a model's sweep command with the ICLR settings.
 
 - `--spec-key` selects the roster model's thinking arguments; `--thinking on|off`
   overrides them.
-- `--scoring iclr|default` selects the proof extraction rule (default `default`).
-- `--order reverse` and `--skip-from <rows>...` let a second worker fill a rung from the
-  other end without repeating cells that another file already holds.
 - `exception` rows (transport failures) are retried on the next run. A second sweep on
   the same output file is refused.

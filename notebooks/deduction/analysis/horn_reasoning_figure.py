@@ -12,7 +12,7 @@ of tokens). Deduction ratios come from the Horn stage-2 rows through
 entry is ``None`` (no induction token means yet) is left out of the figure.
 No interval is drawn: the induction side has none.
 
-usage: horn_reasoning_figure.py --data DIR [--scoring iclr|default] [--out DIR]
+usage: horn_reasoning_figure.py --data DIR [--out DIR]
 """
 
 from __future__ import annotations
@@ -136,17 +136,15 @@ def figure(res: hr.Results, out: Path | None = None):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
     ap.add_argument("--data", type=Path, required=True, help="the released results folder")
-    ap.add_argument("--scoring", choices=list(hr.SCORING_MODES), default=hr.DEFAULT_SCORING)
-    ap.add_argument("--out", type=Path, default=hr.OUT, help="outputs go to <out>/<scoring>/")
+    ap.add_argument("--out", type=Path, default=hr.OUT)
     a = ap.parse_args(argv)
-    a.out = a.out / a.scoring
     a.out.mkdir(parents=True, exist_ok=True)
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    res = hr.run_pipeline(a.data, scoring=a.scoring)
+    res = hr.run_pipeline(a.data)
     fig, detail = figure(res, a.out)
     plt.close(fig)
     print("| Model | + irrelevant: induction | deduction | average | low density: induction | deduction | average |")
