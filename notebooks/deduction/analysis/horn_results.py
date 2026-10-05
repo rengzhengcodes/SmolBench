@@ -42,11 +42,14 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 
-from smolbench.deduction.horn.extract import DEFAULT_SCORING, SCORING_MODES  # noqa: E402
+from smolbench.deduction.horn.extract import (  # noqa: E402
+    DEFAULT_SCORING,
+    SCORING_MODES,
+)
 from smolbench.deduction.horn.stats import contrast  # noqa: E402
 
 OUT = REPO / "notebooks" / "deduction" / "results"
-#: A token in DeepSeek-V3.1 output (``bakal(极)``). Rows
+#: A token the Bedrock DeepSeek-V3.1 endpoint inserts into atoms (``bakal(极)``). Rows
 #: that contain it are scored as written and counted in the notes.
 CORRUPT_TOKEN = "极"
 
@@ -56,8 +59,16 @@ DELTAS = (("lem", "both"), ("pad", "both"), ("disc", "both"))
 #: The paper table (``horn_table.tex``): three arms, two deltas, full model names, no m or n.
 PAPER_ARMS = ("lem", "pad", "both")
 PAPER_DELTAS = (("lem", "both"), ("pad", "both"))
-ARM_NAME = {"lem": "high density", "pad": "high density + irrelevant", "both": "low density", "disc": "dead trees"}
-DELTA_NAME = {("lem", "both"): "$\\Delta$ (high $-$ low)", ("pad", "both"): "$\\Delta$ (irrelevant $-$ low)"}
+ARM_NAME = {
+    "lem": "high density",
+    "pad": "high density + irrelevant",
+    "both": "low density",
+    "disc": "dead trees",
+}
+DELTA_NAME = {
+    ("lem", "both"): "$\\Delta$ (high $-$ low)",
+    ("pad", "both"): "$\\Delta$ (irrelevant $-$ low)",
+}
 #: Model column of the paper table: the names the induction table used.
 PAPER_NAME = {
     "gemma-4-e2b": "Gemma4 E2B-it",
@@ -82,7 +93,10 @@ FAIL = {"length", "invalid_step", "incomplete", "given_up", "no_answer", "missin
 #: Family -> models, small to large, in the paper's family order.
 FAMILIES = (
     ("Gemma 4", ("gemma-4-e2b", "gemma-4-12b", "gemma-4-31b")),
-    ("Nemotron 3", ("nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b")),
+    (
+        "Nemotron 3",
+        ("nemotron-3-nano-4b", "nemotron-3-nano-30b-a3b", "nemotron-3-super-120b-a12b"),
+    ),
     ("Qwen3.5", ("qwen3.5-27b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b")),
     ("DeepSeek", ("deepseek-v4-flash", "deepseek-v3.1")),
     ("GLM", ("glm-4.7-flash", "glm-4.7")),
@@ -154,7 +168,10 @@ def rung_m(rung: str) -> int | None:
 
 
 def load_data(
-    data: Path, anomalies: list[str], scoring: str = DEFAULT_SCORING, keep_text: bool = False
+    data: Path,
+    anomalies: list[str],
+    scoring: str = DEFAULT_SCORING,
+    keep_text: bool = False,
 ) -> tuple[dict[tuple, dict], dict[str, int], set[str]]:
     """Read ``<data>/horn/rows/<model>.jsonl`` for every model.
 
@@ -189,11 +206,15 @@ def load_data(
             n_missing += r["verdict"] == "missing"
             rows[(model, m, r["arm"], int(r["seed"]), int(r["rep"]))] = r
         if len(levels) != 1:
-            raise ValueError(f"{path}: expected one chain length, found {sorted(levels)}")
+            raise ValueError(
+                f"{path}: expected one chain length, found {sorted(levels)}"
+            )
         chosen[model] = levels.pop()
         if n_missing:
             imputed.add(model)
-            anomalies.append(f"{model}: {n_missing} missing cells counted as failures (flag d)")
+            anomalies.append(
+                f"{model}: {n_missing} missing cells counted as failures (flag d)"
+            )
     anomalies.append(f"read {len(chosen)} models, {len(rows)} cells, scoring {scoring}")
     for model in sorted({mdl for mdl, _ in corrupt}):
         per_arm = {arm: corrupt[(model, arm)] for arm in ARMS}
@@ -204,9 +225,13 @@ def load_data(
     return rows, chosen, imputed
 
 
-def cells(rows: dict[tuple, dict], model: str, m: int) -> dict[str, dict[int, list[bool]]]:
+def cells(
+    rows: dict[tuple, dict], model: str, m: int
+) -> dict[str, dict[int, list[bool]]]:
     """``arm -> seed -> [pass per replicate]`` as ``stats.contrast`` expects."""
-    out: dict[str, dict[int, list[bool]]] = {a: collections.defaultdict(list) for a in ARMS}
+    out: dict[str, dict[int, list[bool]]] = {
+        a: collections.defaultdict(list) for a in ARMS
+    }
     for (mo, mm, arm, seed, _rep), r in rows.items():
         if mo == model and mm == m and arm in out:
             v = r.get("verdict")
@@ -249,7 +274,9 @@ def holm(pvals: dict[str, float], alpha: float = ALPHA) -> set[str]:
     return survivors
 
 
-def summarise(rows: dict[tuple, dict], chosen: dict[str, int], imputed: set[str] = frozenset()) -> dict[str, dict]:
+def summarise(
+    rows: dict[tuple, dict], chosen: dict[str, int], imputed: set[str] = frozenset()
+) -> dict[str, dict]:
     """Per model: m, arm stats, deltas, flags."""
     rng_np = np.random.default_rng(0)
     rng_py = random.Random(0)
@@ -263,7 +290,13 @@ def summarise(rows: dict[tuple, dict], chosen: dict[str, int], imputed: set[str]
         deltas = {}
         for a, b in DELTAS:
             mean, lo, hi, p, n = contrast(c[a], c[b], rng_py)
-            deltas[f"{a}-{b}"] = {"mean": mean, "lo": lo, "hi": hi, "p": p, "n_seeds": n}
+            deltas[f"{a}-{b}"] = {
+                "mean": mean,
+                "lo": lo,
+                "hi": hi,
+                "p": p,
+                "n_seeds": n,
+            }
         n_total = sum(s["n"] for s in arms.values())
         out[model] = {
             "m": m,
@@ -276,7 +309,11 @@ def summarise(rows: dict[tuple, dict], chosen: dict[str, int], imputed: set[str]
             "imputed": model in imputed,
         }
     for name in (f"{a}-{b}" for a, b in DELTAS):
-        pv = {mo: s["deltas"][name]["p"] for mo, s in out.items() if s["deltas"][name]["n_seeds"] > 0}
+        pv = {
+            mo: s["deltas"][name]["p"]
+            for mo, s in out.items()
+            if s["deltas"][name]["n_seeds"] > 0
+        }
         for mo in holm(pv):
             out[mo]["deltas"][name]["holm"] = True
     return out
@@ -284,10 +321,20 @@ def summarise(rows: dict[tuple, dict], chosen: dict[str, int], imputed: set[str]
 
 # ------------------------------------------------------------------------- diagnostics
 
-VERDICTS = ("success", "length", "invalid_step", "incomplete", "given_up", "no_answer", "missing")
+VERDICTS = (
+    "success",
+    "length",
+    "invalid_step",
+    "incomplete",
+    "given_up",
+    "no_answer",
+    "missing",
+)
 
 
-def diagnostics(rows: dict[tuple, dict], chosen: dict[str, int]) -> dict[str, dict[str, dict]]:
+def diagnostics(
+    rows: dict[tuple, dict], chosen: dict[str, int]
+) -> dict[str, dict[str, dict]]:
     """Per model and arm: verdict counts, cap hits and mean output tokens."""
     out: dict[str, dict[str, dict]] = {}
     for model in MODELS:
@@ -295,23 +342,60 @@ def diagnostics(rows: dict[tuple, dict], chosen: dict[str, int]) -> dict[str, di
             continue
         per_arm: dict[str, dict] = {}
         for arm in ARMS:
-            sel = [r for (mo, mm, a, _s, _r), r in rows.items() if mo == model and mm == chosen[model] and a == arm]
+            sel = [
+                r
+                for (mo, mm, a, _s, _r), r in rows.items()
+                if mo == model and mm == chosen[model] and a == arm
+            ]
             counts = collections.Counter(r.get("verdict") for r in sel)
-            toks = [r["completion_tokens"] for r in sel if isinstance(r.get("completion_tokens"), (int, float))]
+            toks = [
+                r["completion_tokens"]
+                for r in sel
+                if isinstance(r.get("completion_tokens"), (int, float))
+            ]
             per_arm[arm] = {
                 "n": len(sel),
                 **{v: counts.get(v, 0) for v in VERDICTS},
                 "finish_length": sum(r.get("finish_reason") == "length" for r in sel),
                 "mean_completion_tokens": float(np.mean(toks)) if toks else None,
-                "mean_prompt_tokens": float(np.mean([r["prompt_tokens"] for r in sel if r.get("prompt_tokens") is not None])) if sel else None,
+                "mean_prompt_tokens": (
+                    float(
+                        np.mean(
+                            [
+                                r["prompt_tokens"]
+                                for r in sel
+                                if r.get("prompt_tokens") is not None
+                            ]
+                        )
+                    )
+                    if sel
+                    else None
+                ),
             }
         out[model] = per_arm
     return out
 
 
-def diagnostics_markdown(diag: dict[str, dict[str, dict]], only: set[str] | None = None) -> str:
-    heads = ["Model", "arm", "n", "success", "length", "invalid_step", "incomplete", "no_answer", "missing", "mean out tok", "mean in tok"]
-    lines = ["| " + " | ".join(heads) + " |", "|" + "|".join(["---"] * len(heads)) + "|"]
+def diagnostics_markdown(
+    diag: dict[str, dict[str, dict]], only: set[str] | None = None
+) -> str:
+    heads = [
+        "Model",
+        "arm",
+        "n",
+        "success",
+        "length",
+        "invalid_step",
+        "incomplete",
+        "no_answer",
+        "missing",
+        "mean out tok",
+        "mean in tok",
+    ]
+    lines = [
+        "| " + " | ".join(heads) + " |",
+        "|" + "|".join(["---"] * len(heads)) + "|",
+    ]
     for model, per_arm in diag.items():
         if only and model not in only:
             continue
@@ -319,15 +403,25 @@ def diagnostics_markdown(diag: dict[str, dict[str, dict]], only: set[str] | None
             d = per_arm[arm]
             if d["n"] == 0:
                 continue
-            tok = f"{d['mean_completion_tokens']:,.0f}" if d["mean_completion_tokens"] is not None else "—"
-            ptok = f"{d['mean_prompt_tokens']:,.0f}" if d["mean_prompt_tokens"] is not None else "—"
+            tok = (
+                f"{d['mean_completion_tokens']:,.0f}"
+                if d["mean_completion_tokens"] is not None
+                else "—"
+            )
+            ptok = (
+                f"{d['mean_prompt_tokens']:,.0f}"
+                if d["mean_prompt_tokens"] is not None
+                else "—"
+            )
             lines.append(
                 f"| {model} | {arm} | {d['n']} | {d['success']} | {d['length']} | {d['invalid_step']} | "
                 f"{d['incomplete']} | {d['no_answer']} | {d['missing']} | {tok} | {ptok} |"
             )
-    note = ("\n`length` = verdict length (output cap hit before an answer). Cells whose finish_reason is "
-            "length but that still parsed an answer keep their checker verdict. `missing` = cell never written by a run "
-            "that stopped just short of 1200, counted as a failure. Token means are over the arm's cells.\n")
+    note = (
+        "\n`length` = verdict length (output cap hit before an answer). Cells whose finish_reason is "
+        "length but that still parsed an answer keep their checker verdict. `missing` = cell never written by a run "
+        "that stopped just short of 1200, counted as a failure. Token means are over the arm's cells.\n"
+    )
     return "\n".join(lines) + "\n" + note
 
 
@@ -360,7 +454,9 @@ def best_worst(arms: dict[str, dict]) -> tuple[str | None, str | None]:
     return max(vals, key=vals.get), min(vals, key=vals.get)
 
 
-def latex_table(summary: dict[str, dict], spread: str, with_n: bool, layout: str = "full") -> str:
+def latex_table(
+    summary: dict[str, dict], spread: str, with_n: bool, layout: str = "full"
+) -> str:
     """``layout="full"``: family groups, short ``DISPLAY`` names, m, n, four arms, three deltas.
     ``layout="paper"``: the induction table's layout. ``PAPER_NAME`` (family and size) in
     one flat column, ladder order, no family rows, no m or n, the three arms in
@@ -376,8 +472,19 @@ def latex_table(summary: dict[str, dict], spread: str, with_n: bool, layout: str
     heads = ["Model"] + (["$m$"] if with_m else []) + (["$n$"] if with_n else [])
     heads += [ARM_NAME[a] if paper else a for a in arms]
     heads += [DELTA_NAME[(a, b)] if paper else f"{a}$-${b}" for a, b in deltas]
-    align = "l" + ("r" if with_m else "") + ("r" if with_n else "") + "c" * len(arms) + "r" * len(deltas)
-    lines = [f"\\begin{{tabular}}{{{align}}}", "\\toprule", " & ".join(heads) + " \\\\", "\\midrule"]
+    align = (
+        "l"
+        + ("r" if with_m else "")
+        + ("r" if with_n else "")
+        + "c" * len(arms)
+        + "r" * len(deltas)
+    )
+    lines = [
+        f"\\begin{{tabular}}{{{align}}}",
+        "\\toprule",
+        " & ".join(heads) + " \\\\",
+        "\\midrule",
+    ]
     first = True
     for family, models in FAMILIES:
         if not paper:
@@ -389,12 +496,18 @@ def latex_table(summary: dict[str, dict], spread: str, with_n: bool, layout: str
             s = summary.get(model)
             name = PAPER_NAME[model] if paper else DISPLAY[model]
             if s is None:
-                lines.append(f"{name} & \\multicolumn{{{ncol - 1}}}{{l}}{{\\textit{{not run}}}} \\\\")
+                lines.append(
+                    f"{name} & \\multicolumn{{{ncol - 1}}}{{l}}{{\\textit{{not run}}}} \\\\"
+                )
                 continue
             f = flags(s)
             if f and not paper:
                 name += f"$^{{{f}}}$"
-            row = [name] + ([str(s["m"])] if with_m else []) + ([str(s["n"])] if with_n else [])
+            row = (
+                [name]
+                + ([str(s["m"])] if with_m else [])
+                + ([str(s["n"])] if with_n else [])
+            )
             best, worst = best_worst({a: s["arms"][a] for a in arms})
             for arm in arms:
                 st = s["arms"][arm]
@@ -421,7 +534,9 @@ def latex_table(summary: dict[str, dict], spread: str, with_n: bool, layout: str
                 if paper:
                     row.append(f"${d['mean']:.1f}$")
                 else:
-                    row.append(f"${d['mean']:+.1f}{sup}$ {{\\scriptsize $[{d['lo']:+.1f}, {d['hi']:+.1f}]$}}")
+                    row.append(
+                        f"${d['mean']:+.1f}{sup}$ {{\\scriptsize $[{d['lo']:+.1f}, {d['hi']:+.1f}]$}}"
+                    )
             lines.append(" & ".join(row) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
     return "\n".join(lines) + "\n"
@@ -429,13 +544,24 @@ def latex_table(summary: dict[str, dict], spread: str, with_n: bool, layout: str
 
 def markdown_table(summary: dict[str, dict], spread: str) -> str:
     pm_name = "sd" if spread == "sd" else "95% CI half-width"
-    heads = ["Family", "Model", "m", "n"] + [f"{a} (n)" for a in ARMS] + [f"{a} − {b}" for a, b in DELTAS]
-    lines = ["| " + " | ".join(heads) + " |", "|" + "|".join(["---"] * len(heads)) + "|"]
+    heads = (
+        ["Family", "Model", "m", "n"]
+        + [f"{a} (n)" for a in ARMS]
+        + [f"{a} − {b}" for a, b in DELTAS]
+    )
+    lines = [
+        "| " + " | ".join(heads) + " |",
+        "|" + "|".join(["---"] * len(heads)) + "|",
+    ]
     for family, models in FAMILIES:
         for model in models:
             s = summary.get(model)
             if s is None:
-                lines.append(f"| {family} | {DISPLAY[model]} | | 0 | " + " | ".join(["—"] * (len(ARMS) + len(DELTAS))) + " |")
+                lines.append(
+                    f"| {family} | {DISPLAY[model]} | | 0 | "
+                    + " | ".join(["—"] * (len(ARMS) + len(DELTAS)))
+                    + " |"
+                )
                 continue
             name = DISPLAY[model] + (f" ^{flags(s)}" if flags(s) else "")
             row = [family, name, str(s["m"]), str(s["n"])]
@@ -486,7 +612,8 @@ def _style(ax) -> None:
 
 def _tick_labels(models: tuple[str, ...], summary: dict[str, dict]) -> list[str]:
     return [
-        FIG_LABEL.get(mo, DISPLAY[mo]) + (f"\nm={summary[mo]['m']}" if mo in summary else "\n(not run)")
+        FIG_LABEL.get(mo, DISPLAY[mo])
+        + (f"\nm={summary[mo]['m']}" if mo in summary else "\n(not run)")
         for mo in models
     ]
 
@@ -494,7 +621,7 @@ def _tick_labels(models: tuple[str, ...], summary: dict[str, dict]) -> list[str]
 def _panels(plt):
     fig, axes = plt.subplots(2, 4, figsize=(11, 5.4), sharey=True)
     axes = axes.ravel()
-    for ax in axes[len(FAMILIES):]:
+    for ax in axes[len(FAMILIES) :]:
         ax.axis("off")
     return fig, axes
 
@@ -519,8 +646,18 @@ def figure_arms(summary: dict[str, dict], out: Path | None = None):
                 lo.append(st["mean"] - st["lo"])
                 hi.append(st["hi"] - st["mean"])
             if x:
-                ax.errorbar(x, y, yerr=[lo, hi], color=ARM_COLOR[arm], marker=ARM_MARKER[arm], markersize=5,
-                            linewidth=1.5, capsize=2, elinewidth=1, label=arm)
+                ax.errorbar(
+                    x,
+                    y,
+                    yerr=[lo, hi],
+                    color=ARM_COLOR[arm],
+                    marker=ARM_MARKER[arm],
+                    markersize=5,
+                    linewidth=1.5,
+                    capsize=2,
+                    elinewidth=1,
+                    label=arm,
+                )
         ax.set_xticks(xs, _tick_labels(models, summary))
         ax.set_xlim(-0.5, len(models) - 0.5)
         ax.set_ylim(0, 1.02)
@@ -528,9 +665,22 @@ def figure_arms(summary: dict[str, dict], out: Path | None = None):
     for ax in axes[::4]:
         ax.set_ylabel("pass@1", color=INK, fontsize=9)
     handles, labels = axes[0].get_legend_handles_labels()
-    axes[-1].legend(handles, labels, loc="center", frameon=False, fontsize=9, title="arm", title_fontsize=9)
-    fig.suptitle("Horn bench: pass rate per arm along each family ladder (95% CI over seeds)",
-                 fontsize=11, color=INK, x=0.01, ha="left")
+    axes[-1].legend(
+        handles,
+        labels,
+        loc="center",
+        frameon=False,
+        fontsize=9,
+        title="arm",
+        title_fontsize=9,
+    )
+    fig.suptitle(
+        "Horn bench: pass rate per arm along each family ladder (95% CI over seeds)",
+        fontsize=11,
+        color=INK,
+        x=0.01,
+        ha="left",
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     if out is not None:
         fig.savefig(out / "horn_ladder_arms.pdf")
@@ -561,10 +711,26 @@ def figure_deltas(summary: dict[str, dict], out: Path | None = None):
                 continue
             color = DELTA_COLOR[k]
             if len(x) == 1:
-                ax.errorbar(x, y, yerr=[[y[0] - lo[0]], [hi[0] - y[0]]], color=color, capsize=2, elinewidth=1, linewidth=0)
+                ax.errorbar(
+                    x,
+                    y,
+                    yerr=[[y[0] - lo[0]], [hi[0] - y[0]]],
+                    color=color,
+                    capsize=2,
+                    elinewidth=1,
+                    linewidth=0,
+                )
             else:
                 ax.fill_between(x, lo, hi, color=color, alpha=0.15, linewidth=0)
-            ax.plot(x, y, color=color, marker=DELTA_MARKER[k], markersize=5, linewidth=1.5, label=f"{a} − {b}")
+            ax.plot(
+                x,
+                y,
+                color=color,
+                marker=DELTA_MARKER[k],
+                markersize=5,
+                linewidth=1.5,
+                label=f"{a} − {b}",
+            )
         ax.set_xticks(np.arange(len(models)), _tick_labels(models, summary))
         ax.set_xlim(-0.5, len(models) - 0.5)
         ax.set_title(family, fontsize=10, color=INK, loc="left")
@@ -577,9 +743,22 @@ def figure_deltas(summary: dict[str, dict], out: Path | None = None):
             handles, labels = h, l
             break
     if handles:
-        axes[-1].legend(handles, labels, loc="center", frameon=False, fontsize=9, title="contrast", title_fontsize=9)
-    fig.suptitle("Horn bench: arm minus both along each family ladder (band = seed-paired 95% CI)",
-                 fontsize=11, color=INK, x=0.01, ha="left")
+        axes[-1].legend(
+            handles,
+            labels,
+            loc="center",
+            frameon=False,
+            fontsize=9,
+            title="contrast",
+            title_fontsize=9,
+        )
+    fig.suptitle(
+        "Horn bench: arm minus both along each family ladder (band = seed-paired 95% CI)",
+        fontsize=11,
+        color=INK,
+        x=0.01,
+        ha="left",
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     if out is not None:
         fig.savefig(out / "horn_ladder_deltas.pdf")
@@ -597,23 +776,41 @@ def data_checks(summary: dict[str, dict], anomalies: list[str]) -> None:
         ns = {arm: a[arm]["n"] for arm in ARMS}
         for arm in ARMS:
             if 0 < a[arm]["n"] and a[arm]["n"] > N_SEEDS * N_REPS:
-                anomalies.append(f"{model}/{arm}: {a[arm]['n']} cells, more than {N_SEEDS * N_REPS}")
+                anomalies.append(
+                    f"{model}/{arm}: {a[arm]['n']} cells, more than {N_SEEDS * N_REPS}"
+                )
         if s["n"] < MIN_CHECK_CELLS:
-            anomalies.append(f"{model}: n={s['n']} < {MIN_CHECK_CELLS}, early rows only; arm checks skipped")
+            anomalies.append(
+                f"{model}: n={s['n']} < {MIN_CHECK_CELLS}, early rows only; arm checks skipped"
+            )
             continue
         if max(ns.values()) - min(ns.values()) > 30:
             anomalies.append(f"{model}: unbalanced arms {ns}")
-        if a["pad"]["mean"] is not None and a["lem"]["mean"] is not None and a["pad"]["mean"] > a["lem"]["mean"] + 0.02:
-            anomalies.append(f"{model}: pad ({a['pad']['mean']:.3f}) above lem ({a['lem']['mean']:.3f})")
+        if (
+            a["pad"]["mean"] is not None
+            and a["lem"]["mean"] is not None
+            and a["pad"]["mean"] > a["lem"]["mean"] + 0.02
+        ):
+            anomalies.append(
+                f"{model}: pad ({a['pad']['mean']:.3f}) above lem ({a['lem']['mean']:.3f})"
+            )
         if a["lem"]["mean"] is not None and not (0.5 <= a["lem"]["mean"] <= 0.95):
-            anomalies.append(f"{model}: lem = {a['lem']['mean']:.3f} at m={s['m']}, outside the 50-95% band")
+            anomalies.append(
+                f"{model}: lem = {a['lem']['mean']:.3f} at m={s['m']}, outside the 50-95% band"
+            )
 
 
 class Results:
     """Everything one run of the pipeline produces, before any file is written."""
 
-    def __init__(self, rows: dict[tuple, dict], chosen: dict[str, int], summary: dict[str, dict],
-                 diag: dict[str, dict[str, dict]], anomalies: list[str]) -> None:
+    def __init__(
+        self,
+        rows: dict[tuple, dict],
+        chosen: dict[str, int],
+        summary: dict[str, dict],
+        diag: dict[str, dict[str, dict]],
+        anomalies: list[str],
+    ) -> None:
         self.rows = rows
         self.chosen = chosen
         self.summary = summary
@@ -621,7 +818,9 @@ class Results:
         self.anomalies = anomalies
 
 
-def run_pipeline(data: Path, scoring: str = DEFAULT_SCORING, keep_text: bool = False) -> Results:
+def run_pipeline(
+    data: Path, scoring: str = DEFAULT_SCORING, keep_text: bool = False
+) -> Results:
     """Load, summarise, check and diagnose. No files are written."""
     anomalies: list[str] = []
     rows, chosen, imputed = load_data(data, anomalies, scoring, keep_text)
@@ -631,7 +830,13 @@ def run_pipeline(data: Path, scoring: str = DEFAULT_SCORING, keep_text: bool = F
     return Results(rows, chosen, summary, diag, anomalies)
 
 
-def write_outputs(res: Results, out: Path = OUT, spread: str = "ci", with_n: bool = True, figures: bool = True) -> list[Path]:
+def write_outputs(
+    res: Results,
+    out: Path = OUT,
+    spread: str = "ci",
+    with_n: bool = True,
+    figures: bool = True,
+) -> list[Path]:
     """Write the tables, the JSON summary and (optionally) the figures under ``out``."""
     out.mkdir(parents=True, exist_ok=True)
     md = markdown_table(res.summary, spread)
@@ -643,12 +848,25 @@ def write_outputs(res: Results, out: Path = OUT, spread: str = "ci", with_n: boo
         out / "horn_table_full.tex",
         out / "horn_summary.json",
     ]
-    written[0].write_text(md + "\n## Diagnostics per arm\n\n" + diag_md, encoding="utf-8")
+    written[0].write_text(
+        md + "\n## Diagnostics per arm\n\n" + diag_md, encoding="utf-8"
+    )
     written[1].write_text(diag_md, encoding="utf-8")
-    written[2].write_text(latex_table(res.summary, spread, with_n, "paper"), encoding="utf-8")
-    written[3].write_text(latex_table(res.summary, spread, with_n, "full"), encoding="utf-8")
+    written[2].write_text(
+        latex_table(res.summary, spread, with_n, "paper"), encoding="utf-8"
+    )
+    written[3].write_text(
+        latex_table(res.summary, spread, with_n, "full"), encoding="utf-8"
+    )
     written[4].write_text(
-        json.dumps({"models": res.summary, "diagnostics": res.diag, "anomalies": res.anomalies}, indent=1),
+        json.dumps(
+            {
+                "models": res.summary,
+                "diagnostics": res.diag,
+                "anomalies": res.anomalies,
+            },
+            indent=1,
+        ),
         encoding="utf-8",
     )
     if figures:
@@ -656,17 +874,34 @@ def write_outputs(res: Results, out: Path = OUT, spread: str = "ci", with_n: boo
 
         plt.close(figure_arms(res.summary, out))
         plt.close(figure_deltas(res.summary, out))
-        written += [out / f"horn_ladder_{k}.{ext}" for k in ("arms", "deltas") for ext in ("pdf", "png")]
+        written += [
+            out / f"horn_ladder_{k}.{ext}"
+            for k in ("arms", "deltas")
+            for ext in ("pdf", "png")
+        ]
     return written
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n", maxsplit=1)[0])
-    ap.add_argument("--data", type=Path, required=True, help="the released results folder")
+    ap = argparse.ArgumentParser(
+        description=(__doc__ or "").split("\n\n", maxsplit=1)[0]
+    )
+    ap.add_argument(
+        "--data", type=Path, required=True, help="the released results folder"
+    )
     ap.add_argument("--scoring", choices=list(SCORING_MODES), default=DEFAULT_SCORING)
-    ap.add_argument("--out", type=Path, default=OUT, help="outputs go to <out>/<scoring>/")
-    ap.add_argument("--spread", choices=("ci", "sd"), default="ci", help="what ± means in the arm columns")
-    ap.add_argument("--no-n", action="store_true", help="drop the n column from the LaTeX table")
+    ap.add_argument(
+        "--out", type=Path, default=OUT, help="outputs go to <out>/<scoring>/"
+    )
+    ap.add_argument(
+        "--spread",
+        choices=("ci", "sd"),
+        default="ci",
+        help="what ± means in the arm columns",
+    )
+    ap.add_argument(
+        "--no-n", action="store_true", help="drop the n column from the LaTeX table"
+    )
     ap.add_argument("--no-figures", action="store_true")
     a = ap.parse_args(argv)
 
@@ -675,7 +910,9 @@ def main(argv: list[str] | None = None) -> int:
 
         matplotlib.use("Agg")
     res = run_pipeline(a.data, a.scoring)
-    written = write_outputs(res, a.out / a.scoring, a.spread, not a.no_n, not a.no_figures)
+    written = write_outputs(
+        res, a.out / a.scoring, a.spread, not a.no_n, not a.no_figures
+    )
 
     print(markdown_table(res.summary, a.spread))
     print("## Diagnostics per arm\n")

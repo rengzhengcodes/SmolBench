@@ -114,8 +114,7 @@ answers per replicate.
 one sample standard deviation across seeds, two standard deviations, and the half-width
 of the 95% t confidence interval for the mean. The submission's table was improperly
 captioned: its ± is one sample standard deviation, as in the first table, and the
-outputs open with a note saying so. The three LaTeX tables match the ones the earlier
-table notebook printed, byte for byte.
+outputs open with a note saying so.
 
 ## Run the tests
 

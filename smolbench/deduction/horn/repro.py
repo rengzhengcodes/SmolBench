@@ -133,18 +133,17 @@ def _scorings(paths: list[Path]) -> list[str]:
 
 
 def cmd_models(_: argparse.Namespace) -> int:
-    """List the models, their chain lengths, backends, and published results."""
+    """List the models, their chain lengths and backends."""
     proto = load_protocol()
     print(
         f"{'model':28s} {'m':>3s}  {'backend':8s} "
         f"{'lem':>6s} {'pad':>6s} {'both':>6s}  notes"
     )
-    for key, entry in proto["models"].items():
-        results = entry["results"]["iclr"]
+    for key, e in proto["models"].items():
+        r = e["results"]["iclr"]
         print(
-            f"{key:28s} {entry['m']:3d}  {entry['backend']:8s} "
-            f"{results['lem']:6.1f} {results['pad']:6.1f} {results['both']:6.1f}  "
-            f"{entry.get('notes', '')}"
+            f"{key:28s} {e['m']:3d}  {e['backend']:8s} "
+            f"{r['lem']:6.1f} {r['pad']:6.1f} {r['both']:6.1f}  {e.get('notes', '')}"
         )
     return 0
 
@@ -167,8 +166,8 @@ def cmd_fetch(a: argparse.Namespace) -> int:
 def cmd_check_data(a: argparse.Namespace) -> int:
     """Check a results folder against its MANIFEST checksums."""
     problems = check_data(Path(a.data))
-    for problem in problems:
-        print(f"  {problem}")
+    for p in problems[:20]:
+        print(f"  {p}")
     print(
         f"FAIL: {len(problems)} problems"
         if problems
@@ -179,16 +178,19 @@ def cmd_check_data(a: argparse.Namespace) -> int:
 
 def cmd_report(a: argparse.Namespace) -> int:
     """Summarize result rows next to the published values."""
-    print(report([Path(path) for path in a.rows]))
+    print(report([Path(p) for p in a.rows]))
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point."""
-    parser = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         prog="horn-repro", description=(__doc__ or "").split("\n\n", maxsplit=1)[0]
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("models", help="list the models of the ICLR run").set_defaults(
+        func=cmd_models
+    )
     pf = sub.add_parser("fetch", help="download the public results")
     pf.add_argument("--out", required=True)
     pf.set_defaults(func=cmd_fetch)
@@ -197,14 +199,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     pd.add_argument("data")
     pd.set_defaults(func=cmd_check_data)
-    sub.add_parser("models", help="list the models of the ICLR run").set_defaults(
-        func=cmd_models
-    )
     prep = sub.add_parser("report", help="summarize rows next to the published values")
     prep.add_argument("rows", nargs="+")
     prep.set_defaults(func=cmd_report)
-    args = parser.parse_args(argv)
-    return args.func(args)
+    a = p.parse_args(argv)
+    return a.func(a)
 
 
 if __name__ == "__main__":

@@ -28,15 +28,13 @@ disable =
     too-many-nested-blocks,
     # Tests and same-module collaborators legitimately touch privates.
     protected-access,
-    # Fixture args exist for ordering/side effect; SDK stubs must keep
-    # external keyword names.
+    # Fixture args can exist for ordering or side effects.
     unused-argument,
     # Test modules intentionally share fixture-import blocks.
     duplicate-code,
-    # External kwargs (Bucket, MaxKeys, Body) and BaseHTTPRequestHandler hooks
-    # (do_GET/do_POST) are naming contracts.
+    # External keyword names are API contracts.
     invalid-name,
-    # Broad catches are deliberate at provisioning/teardown boundaries.
+    # The Tokenizer fallback in horn/render.py is deliberate.
     broad-exception-caught,
 
 [FORMAT]
