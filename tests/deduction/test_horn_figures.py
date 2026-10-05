@@ -94,7 +94,7 @@ def data(tmp_path):
 def test_check_data_catches_a_changed_file(data):
     """The manifest catches changed files and missing prompts."""
     folder, _ = data
-    assert not check_data(folder)
+    assert check_data(folder) == []
     path = folder / "horn" / "rows" / f"{MODEL}.jsonl"
     path.write_bytes(path.read_bytes() + b"\n")
     assert check_data(folder) == [
