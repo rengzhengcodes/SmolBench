@@ -7,38 +7,35 @@
 
 ``iclr.json`` (next to this file) records the protocol: the public bucket, seeds, arms,
 every model's pinned checkpoint, a SHA-256 digest of each seed's published runs, and the
-published accuracies. ``fetch`` copies an ``induction/`` results prefix (the public one,
-or the bucket a ``run_study.py`` run wrote to) into a local folder with the store's key
-layout, ``<folder>/induction/<model>/seed=<seed>/<arm>--<run stamp>.yaml``.
-``check-data`` checks a folder against the recorded digests. ``report`` scores a folder
-and prints it next to the published values.
+published accuracies. ``fetch`` copies the released ``induction/`` results prefix into a
+local folder with its key layout,
+``<folder>/induction/<model>/seed=<seed>/<arm>--<run stamp>.yaml``. ``check-data`` checks
+a folder against the recorded digests. ``report`` scores a folder and prints it next to
+the published values.
 
 A replicate's accuracy is the fraction of its marks with a truthy ``score``; a ``null``
 score (an answer that could not be graded) counts as wrong. A replicate collected more
-than once keeps its earliest surviving run, as ``S3ResultsStore.load_marks`` does. The
-files are read as plain YAML because the released ones predate the ``server_config`` and
-``regraded_from`` fields ``Marks.loads`` requires.
+than once keeps its earliest surviving run. Files are read as plain YAML because the
+released records predate later metadata fields.
 """
 
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import hashlib
 import json
 import statistics
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
+
+from smolbench import public_release
 
 PROTOCOL_PATH = Path(__file__).with_name("iclr.json")
-#: The results-store key layout's ``.superseded`` marker suffix (``results_store``).
+#: Marker suffix identifying a superseded run.
 SUPERSEDED_SUFFIX = ".superseded"
 #: (a, b) -> delta "a-b", both relative to the low-density arm.
 DELTAS = (("intens", "extens"), ("noise_intens", "extens"))
-#: Parallel S3 requests in ``fetch``.
-FETCH_WORKERS = 32
-
 Cells = dict[tuple[str, str], dict[int, float]]
 
 
@@ -287,82 +284,6 @@ def report(data: Path) -> str:
     return "\n".join(lines)
 
 
-def s3_client(bucket: str, region: Optional[str]) -> Any:
-    """An S3 client: anonymous for the public bucket, signed for any other.
-
-    Parameters
-    ----------
-    bucket : str
-        Bucket the client will read.
-    region : Optional[str]
-        Bucket region, or ``None`` for boto3's resolution chain.
-
-    Returns
-    -------
-    Any
-        A boto3 S3 client.
-    """
-    import boto3  # pylint: disable=import-outside-toplevel
-    from botocore import UNSIGNED  # pylint: disable=import-outside-toplevel
-    from botocore.config import Config  # pylint: disable=import-outside-toplevel
-
-    public = bucket == load_protocol()["bucket"]
-    config = Config(
-        signature_version=UNSIGNED if public else None,
-        max_pool_connections=FETCH_WORKERS,
-    )
-    return boto3.client("s3", region_name=region, config=config)
-
-
-def fetch(out: Path, bucket: str, prefix: str, client: Any) -> tuple[int, int]:
-    """Copy every object under ``<prefix>/induction/`` into ``out``, keeping the key layout.
-
-    Files already present with the object's size are skipped, so an interrupted fetch
-    resumes. ``prefix`` is the key root above ``induction/``: empty for the public bucket
-    and for a ``SMOLBENCH_RESULTS_S3`` that names a bucket root.
-
-    Parameters
-    ----------
-    out : Path
-        Local results folder.
-    bucket : str
-        Source bucket.
-    prefix : str
-        Key root above the ``induction/`` segment, without edge slashes.
-    client : Any
-        A boto3 S3 client for ``bucket``.
-
-    Returns
-    -------
-    tuple[int, int]
-        ``(downloaded, skipped)`` object counts.
-    """
-    study = load_protocol()["prefix"]
-    root = "/".join(p for p in (prefix, study) if p) + "/"
-    keep = len(root) - len(study) - 1
-    todo, skipped = [], 0
-    for page in client.get_paginator("list_objects_v2").paginate(
-        Bucket=bucket, Prefix=root
-    ):
-        for obj in page.get("Contents", []):
-            dest = out / obj["Key"][keep:]
-            if dest.exists() and dest.stat().st_size == obj["Size"]:
-                skipped += 1
-            else:
-                todo.append((obj["Key"], dest))
-
-    def get(job: tuple[str, Path]) -> None:
-        key, dest = job
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
-        part.write_bytes(client.get_object(Bucket=bucket, Key=key)["Body"].read())
-        part.replace(dest)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
-        list(pool.map(get, todo))
-    return len(todo), skipped
-
-
 def cmd_models(_: argparse.Namespace) -> int:
     """List the models, their checkpoints and published accuracies.
 
@@ -399,10 +320,13 @@ def cmd_fetch(a: argparse.Namespace) -> int:
         Exit status.
     """
     proto = load_protocol()
-    bucket = a.bucket or proto["bucket"]
-    region = a.region or (proto["region"] if bucket == proto["bucket"] else None)
-    got, skipped = fetch(
-        Path(a.out), bucket, a.prefix.strip("/"), s3_client(bucket, region)
+    bucket, region, prefix = proto["bucket"], proto["region"], proto["prefix"]
+    got, skipped = public_release.fetch(
+        Path(a.out),
+        bucket,
+        f"{prefix}/",
+        "",
+        public_release.client(region),
     )
     print(
         f"fetched {got} files from s3://{bucket} to {a.out} ({skipped} already present)"
@@ -471,15 +395,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub.add_parser("models", help="list the models of the ICLR run").set_defaults(
         func=cmd_models
     )
-    pf = sub.add_parser("fetch", help="download a results prefix into a local folder")
+    pf = sub.add_parser("fetch", help="download released results into a local folder")
     pf.add_argument("--out", required=True)
-    pf.add_argument("--bucket", default=None, help="default: the public release bucket")
-    pf.add_argument(
-        "--prefix",
-        default="",
-        help="key root above induction/ (default: the bucket root)",
-    )
-    pf.add_argument("--region", default=None)
     pf.set_defaults(func=cmd_fetch)
     pd = sub.add_parser(
         "check-data", help="check a results folder against the published runs"

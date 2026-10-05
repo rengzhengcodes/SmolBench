@@ -3,40 +3,14 @@
 ## Running
 
 ```
-uv sync --all-extras          # the suite imports the notebook extra (dotenv, scipy, statsmodels)
-.venv/bin/python -m pytest tests/ -q
+uv sync --extra dev
+.venv/bin/python -m pytest -q
 ```
 
-A bare `pytest` from the repo root also works: `pyproject.toml` sets
-`pythonpath = ["."]` so `tests._paths` and `conftest` import cleanly
-without a `tests/__init__.py`.
+The tests run offline and need no credentials.
 
 ## Grouping
 
-Tests are grouped by subsystem under test:
-
-- `analysis/` -- the induction analysis chain (report rendering, statistics,
-  run_all driver) over synthetic result trees from `_trees.py`.
-- `tooling/` -- fleet and bucket provisioning, result audits and snapshots,
-  architecture tooling, and notebook/statistics integration.
-- `evals/` -- harness infrastructure and providers (EC2, AWS, OpenAI-compat,
-  results store, marks I/O, tokenization/parsing).
-- `induction/` -- the induction benchmark (periodic quizzes,
-  golden fixtures).
-- `deduction/` -- the Horn-rule benchmark (generator, checker, scoring
-  modes, sweep drivers, reproduction CLI, tables and figures).
-
-## Path conventions
-
-- `tests/conftest.py` and `tests/fixtures/` stay at the `tests/` root:
-  pytest resolves `conftest.py` by directory ancestry, so its fixtures reach
-  every group.
-- Import repo anchors from `tests/_paths.py` instead of hand-counting
-  `parents[N]`; see that file for why.
-
-## No `__init__.py` in subdirectories
-
-Test module basenames must stay globally unique across all subdirectories
-(pytest's rootdir-relative test IDs assume this when there's no package
-marker). Do not add `__init__.py` or `conftest.py` inside `analysis/`,
-`tooling/`, `evals/`, `induction/` or `deduction/`.
+- `deduction/` covers Horn theories, checking and scoring, result reproduction, and
+  analysis tables and figures.
+- `induction/` covers protocol reproduction and the induction results table.

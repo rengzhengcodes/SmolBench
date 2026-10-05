@@ -2,10 +2,10 @@
 
     python notebooks/induction/analysis/induction_results.py --data <results folder> --out <dir>
 
-Reads ``<data>/induction/<model>/seed=<seed>/<arm>--<run stamp>.yaml``: the released
-results, or a ``run_study.py`` run, as ``python -m smolbench.induction.repro fetch``
-downloads them. Checks the folder against the published runs (``--skip-check`` for your
-own run), then writes:
+Reads the released results in
+``<data>/induction/<model>/seed=<seed>/<arm>--<run stamp>.yaml``. Fetch them with
+``python -m smolbench.induction.repro fetch``. Checks the folder against the published
+runs (``--skip-check`` to skip that check), then writes:
 
 * ``induction_table.tex``: the paper table (``tab:induction-results``) three times, with
   the ``±`` as one sample standard deviation across seeds, two, and the half-width of the

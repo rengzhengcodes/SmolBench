@@ -4,9 +4,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
@@ -18,11 +15,8 @@ from smolbench.deduction.horn.checker import (
     parse,
     verify,
 )
-from smolbench.deduction.horn.cli import build_theory, main as cli_main
 from smolbench.deduction.horn.render import ARMS, Rendered, Tokenizer, arm_keys, render
 from smolbench.deduction.horn.theory import Theory, generate
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
@@ -42,7 +36,9 @@ def test_generate_is_deterministic():
 def test_theory_invariants(seed):
     """One constant, a chain, open alternatives, on-path library, trees, every fact used."""
     th = generate(seed, m=3, height=3, n_extra=30)
-    names = [r.head for r in th.rules.values()] + [b for r in th.rules.values() for b in r.body]
+    names = [r.head for r in th.rules.values()] + [
+        b for r in th.rules.values() for b in r.body
+    ]
     assert th.constant not in names
     for r in th.rules.values():
         assert 1 <= len(r.body) <= 2 and len(set(r.body)) == len(r.body)
@@ -86,9 +82,24 @@ def test_from_json_loads_recorded_theories_and_rejects_retired_setups():
     """Files written before the setup was fixed load when they match it; others raise."""
     th = generate(2, m=3, n_extra=2)
     d = json.loads(th.to_json())
-    d.update(open_frac=1.0, fact_height=0, fact_chain=0, deep_facts=[], constants=[th.constant])
+    d.update(
+        open_frac=1.0,
+        fact_height=0,
+        fact_chain=0,
+        deep_facts=[],
+        constants=[th.constant],
+    )
     d["facts_by_const"] = {th.constant: list(th.facts)}
-    d["rules"].append({"key": "sub1.0", "head": "x", "body": ["y"], "kind": "sublemma", "link": 1, "depth": 1})
+    d["rules"].append(
+        {
+            "key": "sub1.0",
+            "head": "x",
+            "body": ["y"],
+            "kind": "sublemma",
+            "link": 1,
+            "depth": 1,
+        }
+    )
     d["order"].append("sub1.0")
     back = Theory.from_json(json.dumps(d))
     assert back.to_json() == th.to_json()
@@ -144,7 +155,9 @@ def test_checker_rejects_bad_proofs():
     r = render(th, "lem")
     good = designed_proof(th)
     assert verify(th, r, "\n".join(good)).verdict == "success"
-    assert verify(th, r, "\n".join(line + " by R1" for line in good)).verdict == "success"
+    assert (
+        verify(th, r, "\n".join(line + " by R1" for line in good)).verdict == "success"
+    )
     v = verify(th, r, "\n".join(reversed(good)))
     assert v.verdict == "invalid_step" and "premise" in v.reason
     bad = good[0].replace(f"derive {th.links[0].head}", "derive nonsense", 1)
@@ -156,7 +169,9 @@ def test_checker_rejects_bad_proofs():
     assert v.verdict == "invalid_step" and "unknown constant" in v.reason
     # a tree axiom is not a lemma: applying one in lem is an invented rule
     ax = th.tree(1)[0]
-    step = f"derive {ax.head}({th.constant}) from " + ", ".join(f"{b}({th.constant})" for b in ax.body)
+    step = f"derive {ax.head}({th.constant}) from " + ", ".join(
+        f"{b}({th.constant})" for b in ax.body
+    )
     assert "no library rule" in verify(th, r, step).reason
 
 
@@ -179,7 +194,9 @@ def test_bare_atoms_read_as_the_constant():
     """A dropped ``(c)`` is read as the theory's constant."""
     th = generate(3, m=2, height=2)
     r = render(th, "lem")
-    bare = "\n".join(line.replace(f"({th.constant})", "") for line in designed_proof(th))
+    bare = "\n".join(
+        line.replace(f"({th.constant})", "") for line in designed_proof(th)
+    )
     assert verify(th, r, bare).verdict == "success"
 
 
@@ -216,9 +233,13 @@ def test_disc_trees_keep_roots_but_cannot_be_entered(tok):
         for k in both.ids.values()
         if th.rules[k].kind == "axiom" and th.rules[k].depth == 0
     }
-    roots_disc = {(d["head"], frozenset(d["body"])) for d in r.extra_rules if d["depth"] == 0}
+    roots_disc = {
+        (d["head"], frozenset(d["body"])) for d in r.extra_rules if d["depth"] == 0
+    }
     assert roots_both == roots_disc
-    assert verify(th, r, "\n".join(designed_proof(th, "long"))).verdict == "invalid_step"
+    assert (
+        verify(th, r, "\n".join(designed_proof(th, "long"))).verdict == "invalid_step"
+    )
     assert verify(th, r, "\n".join(designed_proof(th, "short"))).verdict == "success"
     # a step through a disc root rule fails on its undischarged intermediates and
     # counts as an attempt to enter a tree
@@ -232,7 +253,19 @@ def test_disc_trees_keep_roots_but_cannot_be_entered(tok):
 def test_arms_are_fixed():
     """Only the four arms render; unknown specs raise."""
     th = generate(1)
-    for bad in ("lem:1", "both:1", "pad:2", "ax", "unf:1", "bothm", "padm", "deep", "dpad", "junk", "nope"):
+    for bad in (
+        "lem:1",
+        "both:1",
+        "pad:2",
+        "ax",
+        "unf:1",
+        "bothm",
+        "padm",
+        "deep",
+        "dpad",
+        "junk",
+        "nope",
+    ):
         with pytest.raises(ValueError):
             render(th, bad)
 
@@ -243,7 +276,9 @@ def test_certify_flags_broken_instances(tok):
     r = render(th, "both", tok)
     # drop the last chain lemma and its tree: the goal is no longer derivable
     goal_keys = {k for k, ru in th.rules.items() if ru.link == th.m}
-    r2 = Rendered.from_meta({**vars(r), "ids": {i: k for i, k in r.ids.items() if k not in goal_keys}})
+    r2 = Rendered.from_meta(
+        {**vars(r), "ids": {i: k for i, k in r.ids.items() if k not in goal_keys}}
+    )
     reasons = certify(th, r2).reasons
     assert any("goal not derivable" in s for s in reasons)
     # a control arm that leaks the trees
@@ -251,46 +286,8 @@ def test_certify_flags_broken_instances(tok):
     assert any("tree route is valid in pad" in s for s in certify(th, r3).reasons)
 
 
-def test_build_theory_fixes_the_ratio(tok):
-    """A rung has exactly 5 m alternatives, every tree at depth 2, and its size follows m."""
-    sizes = {}
-    for m in (3, 12, 48):
-        th = build_theory(1, m=m)
-        assert th.n_extra == 5 * m and len(th.library) == 6 * m
-        assert {lm.height for lm in th.library} == {2}
-        assert len(th.tree_keys()) == 3 * len(th.library)
-        sizes[m] = render(th, "lem", tok).n_tokens
-    assert sizes[3] < sizes[12] < sizes[48]
-    th = build_theory(2, m=4, alt_per_lemma=0)
-    assert th.n_extra == 0 and certify(th, render(th, "both", tok)).ok
-
-
 @pytest.mark.parametrize("seed", range(4))
 def test_generate_exact_n_extra(seed):
     """The alternative count is met exactly even when detours are drawn."""
     for n in (1, 5, 11, 60):
         assert generate(seed, m=4, n_extra=n).n_extra == n
-
-
-def test_cli_render_and_check(tmp_path, tok):
-    """The CLI renders the four arms, writes meta and theory, and checks an answer."""
-    out = tmp_path / "rung"
-    subprocess.run(
-        [sys.executable, "-m", "smolbench.deduction.horn.cli", "render", "--seeds", "1",
-         "--m", "3", "--out", str(out)],
-        check=True, cwd=REPO_ROOT, capture_output=True,
-    )
-    sd = out / "s0001"
-    assert sorted(p.name for p in sd.iterdir() if p.is_dir()) == sorted(ARMS)
-    th = Theory.from_json((sd / "theory.json").read_text())
-    meta = json.loads((sd / "both" / "meta.json").read_text())
-    assert meta["certificate"]["ok"] and meta["certificate"]["min_steps"] == 3
-    answer = tmp_path / "answer.md"
-    answer.write_text("\n".join(designed_proof(th, "long")) + "\n")
-    assert cli_main(["check", str(sd / "both"), str(answer)]) == 0
-    assert cli_main(["check", str(sd / "disc"), str(answer)]) == 1
-    # rendering a different theory into the same directory is refused
-    with pytest.raises(RuntimeError):
-        from smolbench.deduction.horn.cli import write_seed  # pylint: disable=import-outside-toplevel
-
-        write_seed(out, generate(1, m=3, n_extra=1), ["lem"], tok=tok)

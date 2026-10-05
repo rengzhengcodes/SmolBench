@@ -1,5 +1,4 @@
-"""Induction benchmarks package.
+"""Induction release protocol and result reproduction.
 
-``periodic`` is the benchmark; ``_common`` holds its generation machinery,
-``experiment`` the replicated-evaluation facade.
+``repro`` reads the published results, and ``iclr.json`` records their protocol.
 """

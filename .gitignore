@@ -211,17 +211,9 @@ __marimo__/
 # Environment variables.
 *.env
 
-# EC2 spot-instance state written by smolbench/evals/providers/ec2.py (holds the
-# instance's control token and vLLM api key).
-.ec2_state*.json
-
-# SSH private keys and any loose HF token file -- secrets, must never be
-# committed. The .pem.pub public key is not secret but is machine-generated;
-# ignore it too.
+# Private keys and local credentials.
 *.pem
 *.pem.pub
-.hf_token
 
-# Experiment results trees are S3-backed (SMOLBENCH_RESULTS_S3) or local spool
-# dirs pruned after upload; never committed.
+# Default output directories of the analysis scripts.
 notebooks/*/results/

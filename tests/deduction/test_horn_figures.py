@@ -10,8 +10,7 @@ import sys
 
 import pytest
 
-from smolbench.deduction.horn.cli import build_theory, write_seed
-from smolbench.deduction.horn.render import ARMS, Tokenizer
+from smolbench.deduction.horn.render import ARMS
 from smolbench.deduction.horn.repro import check_data, seed_digest
 from tests._paths import REPO_ROOT
 
@@ -33,7 +32,14 @@ def _load(name: str):
 
 def _row(arm: str, seed: int, rep: int, ok: bool, ok_default: bool) -> dict:
     verdict = "success" if ok else "invalid_step"
-    fields = {"answer": "", "verdict": verdict, "steps": 6, "route": "short", "reason": "", "ignored_lines": 0}
+    fields = {
+        "answer": "",
+        "verdict": verdict,
+        "steps": 6,
+        "route": "short",
+        "reason": "",
+        "ignored_lines": 0,
+    }
     default = dict(fields, verdict="success" if ok_default else "invalid_step")
     return {
         "model": MODEL, "spec_key": MODEL, "rung": "m6", "arm": arm, "seed": seed, "rep": rep,
@@ -59,28 +65,53 @@ def data(tmp_path):
     body = "".join(json.dumps(r) + "\n" for r in rows).encode()
     path.write_bytes(body)
     prompts = tmp_path / "data" / "horn" / "prompts" / "m6"
-    write_seed(prompts, build_theory(100, 6), list(ARMS), Tokenizer())
+    seed = prompts / "s0100"
+    seed.mkdir(parents=True)
+    (seed / "theory.json").write_bytes(b"synthetic-theory")
+    for index, arm in enumerate(ARMS):
+        arm_dir = seed / arm
+        arm_dir.mkdir()
+        for name in ("prompt.md", "system.md", "meta.json"):
+            (arm_dir / name).write_bytes(f"{arm}-{name}-{index}".encode())
     manifest = {
-        "files": {f"horn/rows/{MODEL}.jsonl": {"sha256": hashlib.sha256(body).hexdigest(), "rows": len(rows)}},
-        "prompts": {"m6": {"arms": list(ARMS), "digests": {"100": seed_digest(prompts / "s0100")}}},
+        "files": {
+            f"horn/rows/{MODEL}.jsonl": {
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "rows": len(rows),
+            }
+        },
+        "prompts": {
+            "m6": {
+                "arms": list(ARMS),
+                "digests": {"100": seed_digest(prompts / "s0100")},
+            }
+        },
     }
     (tmp_path / "data" / "MANIFEST.json").write_text(json.dumps(manifest))
     return tmp_path / "data", rows
 
 
 def test_check_data_catches_a_changed_file(data):
+    """The manifest catches changed files and missing prompts."""
     folder, _ = data
     assert check_data(folder) == []
     path = folder / "horn" / "rows" / f"{MODEL}.jsonl"
     path.write_bytes(path.read_bytes() + b"\n")
-    assert check_data(folder) == [f"horn/rows/{MODEL}.jsonl: checksum differs from the MANIFEST"]
-    (folder / "horn" / "prompts" / "m6" / "s0100" / "pad" / "prompt.md").write_text("changed")
-    assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: digest differs from the MANIFEST"]
+    assert check_data(folder) == [
+        f"horn/rows/{MODEL}.jsonl: checksum differs from the MANIFEST"
+    ]
+    (folder / "horn" / "prompts" / "m6" / "s0100" / "pad" / "prompt.md").write_text(
+        "changed"
+    )
+    assert check_data(folder)[1:] == [
+        "horn/prompts/m6/s0100: digest differs from the MANIFEST"
+    ]
     (folder / "horn" / "prompts" / "m6" / "s0100" / "disc" / "meta.json").unlink()
     assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: meta.json missing"]
 
 
 def test_make_figures_writes_the_tables_and_figures(data, tmp_path):
+    """The figure script writes the paper tables and figures."""
     pytest.importorskip("matplotlib")
     folder, rows = data
     out = tmp_path / "out"
@@ -94,6 +125,11 @@ def test_make_figures_writes_the_tables_and_figures(data, tmp_path):
         expected = sum(sum(v) / len(v) for v in per_seed.values()) / len(per_seed)
         # the stored verdict counts; the released rows' extra scoring_default is ignored
         assert summary["arms"][arm]["mean"] == pytest.approx(expected)
-    for name in ("horn_table.tex", "horn_table_full.tex", "horn_ladder_arms.png", "horn_routes.md",
-                 "reasoning_length_increase.png"):
+    for name in (
+        "horn_table.tex",
+        "horn_table_full.tex",
+        "horn_ladder_arms.png",
+        "horn_routes.md",
+        "reasoning_length_increase.png",
+    ):
         assert (out / name).exists(), name
