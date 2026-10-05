@@ -149,13 +149,7 @@ holds the calibration runs that chose each model's chain length. The folder's
        --data path/to/smolbench-horn-data-v1 --out results
    ```
 
-   This takes about four minutes. It writes the outputs twice, once per scoring mode:
-
-   - `results/iclr/`: scored as in the submission.
-   - `results/default/`: scored with the default proof extractor, which also reads
-     proofs that have prose between their steps.
-
-The main outputs in each directory are:
+   This takes about four minutes. The main outputs in `results/` are:
 
 | File | Contents |
 |---|---|
@@ -173,20 +167,13 @@ embedded in each PDF.
 
 The demo runs the whole Horn pipeline on your machine in a few seconds. It renders a
 small benchmark, answers every prompt with a correct proof from a local stub server, runs
-the sweep driver under both scoring modes, and prints the results:
+the sweep driver, and prints the results:
 
 ```
 python scripts/deduction/horn/demo.py --out /tmp/horn_demo
 ```
 
-Every cell passes. To see how the two scoring modes differ, write a line of prose between
-proof steps:
-
-```
-python scripts/deduction/horn/demo.py --out /tmp/horn_demo --style interleaved
-```
-
-The answers then fail under `iclr` scoring and pass under `default` scoring.
+Every cell passes.
 
 ## Run the Horn benchmark on a model
 
@@ -367,7 +354,7 @@ The tests run offline. They use stub model servers and need no credentials.
 |---|---|
 | `smolbench/evals/` | Shared model client, serving specs, results storage, and tokenizers |
 | `smolbench/induction/` | The induction task generator, reproduction CLI, and `iclr.json` |
-| `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, scoring modes, statistics, reproduction CLI, and `iclr.json` |
+| `smolbench/deduction/horn/` | The Horn benchmark: theory generator, arms, checker, answer extraction, statistics, reproduction CLI, and `iclr.json` |
 | `scripts/deduction/horn/` | Sweep drivers for vLLM and Bedrock, chain-length calibration, and the demo |
 | `notebooks/induction/` | The induction study driver, its analysis chain, and the induction table |
 | `notebooks/statistical_analyses.ipynb` | The induction study's cross-cutting statistics |

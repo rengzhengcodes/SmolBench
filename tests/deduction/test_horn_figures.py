@@ -80,24 +80,20 @@ def test_check_data_catches_a_changed_file(data):
     assert check_data(folder)[1:] == ["horn/prompts/m6/s0100: meta.json missing"]
 
 
-def test_make_figures_writes_both_scorings(data, tmp_path):
+def test_make_figures_writes_the_tables_and_figures(data, tmp_path):
     pytest.importorskip("matplotlib")
     folder, rows = data
     out = tmp_path / "out"
     assert _load("make_figures").main(["--data", str(folder), "--out", str(out)]) == 0
-    for mode in ("iclr", "default"):
-        summary = json.loads((out / mode / "horn_summary.json").read_text())["models"][MODEL]
-        for arm in ARMS:
-            key = "verdict" if mode == "iclr" else None
-            sel = [r for r in rows if r["arm"] == arm]
-            passed = [(r[key] if key else r["scoring_default"]["verdict"]) == "success" for r in sel]
-            per_seed = {}
-            for r, ok in zip(sel, passed):
-                per_seed.setdefault(r["seed"], []).append(ok)
-            expected = sum(sum(v) / len(v) for v in per_seed.values()) / len(per_seed)
-            assert summary["arms"][arm]["mean"] == pytest.approx(expected)
-        for name in ("horn_table.tex", "horn_table_full.tex", "horn_ladder_arms.png", "horn_routes.md",
-                     "reasoning_length_increase.png"):
-            assert (out / mode / name).exists(), name
-    both_default = json.loads((out / "default" / "horn_summary.json").read_text())["models"][MODEL]["arms"]["both"]
-    assert both_default["mean"] == 1.0  # every both cell passes under default in this fixture
+    summary = json.loads((out / "horn_summary.json").read_text())["models"][MODEL]
+    for arm in ARMS:
+        per_seed = {}
+        for r in rows:
+            if r["arm"] == arm:
+                per_seed.setdefault(r["seed"], []).append(r["verdict"] == "success")
+        expected = sum(sum(v) / len(v) for v in per_seed.values()) / len(per_seed)
+        # the stored verdict counts; the released rows' extra scoring_default is ignored
+        assert summary["arms"][arm]["mean"] == pytest.approx(expected)
+    for name in ("horn_table.tex", "horn_table_full.tex", "horn_ladder_arms.png", "horn_routes.md",
+                 "reasoning_length_increase.png"):
+        assert (out / name).exists(), name

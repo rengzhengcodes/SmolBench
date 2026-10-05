@@ -15,9 +15,8 @@
   "max_tokens": 131072,
   "context_length": 131072
  },
- "scoring": "iclr",
  "vllm_image": "vllm/vllm-openai@sha256:26354b5efac552a9a0ac8e46beb16dde7490b14486c9bb7bd6b818f54d0e93f7",
- "results_note": "Pass rates in percent: mean over seeds of the per-seed pass rate over 3 replicates. Deltas are seed-paired, in points. 'iclr' uses the stored verdicts; 'default' rescores with the default extractor. The iclr Qwen3.5-122B row is the final value; the submitted table was built before that model's run finished (both 24.7 there).",
+ "results_note": "Pass rates in percent: mean over seeds of the per-seed pass rate over 3 replicates. Deltas are seed-paired, in points. The Qwen3.5-122B row is the final value; the submitted table was built before that model's run finished (both 24.7 there).",
  "models": {
   "gemma-4-e2b": {
    "m": 6,
@@ -25,24 +24,13 @@
    "hf_model_id": "google/gemma-4-E2B-it",
    "revision": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
    "results": {
-    "iclr": {
-     "lem": 91.3,
-     "pad": 78.3,
-     "disc": 60.7,
-     "both": 45.7,
-     "lem-both": 45.7,
-     "pad-both": 32.7,
-     "disc-both": 15.0
-    },
-    "default": {
-     "lem": 91.7,
-     "pad": 83.0,
-     "disc": 80.0,
-     "both": 62.3,
-     "lem-both": 29.3,
-     "pad-both": 20.7,
-     "disc-both": 17.7
-    }
+    "lem": 91.3,
+    "pad": 78.3,
+    "disc": 60.7,
+    "both": 45.7,
+    "lem-both": 45.7,
+    "pad-both": 32.7,
+    "disc-both": 15.0
    }
   },
   "gemma-4-12b": {
@@ -51,24 +39,13 @@
    "hf_model_id": "google/gemma-4-12B-it",
    "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
    "results": {
-    "iclr": {
-     "lem": 76.0,
-     "pad": 53.3,
-     "disc": 31.0,
-     "both": 23.7,
-     "lem-both": 52.3,
-     "pad-both": 29.7,
-     "disc-both": 7.3
-    },
-    "default": {
-     "lem": 76.0,
-     "pad": 53.3,
-     "disc": 31.0,
-     "both": 23.7,
-     "lem-both": 52.3,
-     "pad-both": 29.7,
-     "disc-both": 7.3
-    }
+    "lem": 76.0,
+    "pad": 53.3,
+    "disc": 31.0,
+    "both": 23.7,
+    "lem-both": 52.3,
+    "pad-both": 29.7,
+    "disc-both": 7.3
    }
   },
   "gemma-4-31b": {
@@ -77,24 +54,13 @@
    "hf_model_id": "google/gemma-4-31B-it",
    "revision": "842da3794eaa0b77d5f08bae87a17459d91ff475",
    "results": {
-    "iclr": {
-     "lem": 65.7,
-     "pad": 58.7,
-     "disc": 26.0,
-     "both": 14.0,
-     "lem-both": 51.7,
-     "pad-both": 44.7,
-     "disc-both": 12.0
-    },
-    "default": {
-     "lem": 65.7,
-     "pad": 58.7,
-     "disc": 26.0,
-     "both": 14.0,
-     "lem-both": 51.7,
-     "pad-both": 44.7,
-     "disc-both": 12.0
-    }
+    "lem": 65.7,
+    "pad": 58.7,
+    "disc": 26.0,
+    "both": 14.0,
+    "lem-both": 51.7,
+    "pad-both": 44.7,
+    "disc-both": 12.0
    }
   },
   "nemotron-3-nano-4b": {
@@ -103,24 +69,13 @@
    "hf_model_id": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
    "revision": "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
    "results": {
-    "iclr": {
-     "lem": 81.3,
-     "pad": 67.0,
-     "disc": 72.7,
-     "both": 55.0,
-     "lem-both": 26.3,
-     "pad-both": 12.0,
-     "disc-both": 17.7
-    },
-    "default": {
-     "lem": 81.7,
-     "pad": 67.7,
-     "disc": 72.7,
-     "both": 55.0,
-     "lem-both": 26.7,
-     "pad-both": 12.7,
-     "disc-both": 17.7
-    }
+    "lem": 81.3,
+    "pad": 67.0,
+    "disc": 72.7,
+    "both": 55.0,
+    "lem-both": 26.3,
+    "pad-both": 12.0,
+    "disc-both": 17.7
    }
   },
   "nemotron-3-nano-30b-a3b": {
@@ -133,24 +88,13 @@
    "notes": "1 cell never scored (Bedrock error), counted as a failure",
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 65.7,
-     "pad": 28.7,
-     "disc": 5.3,
-     "both": 4.3,
-     "lem-both": 61.3,
-     "pad-both": 24.3,
-     "disc-both": 1.0
-    },
-    "default": {
-     "lem": 65.7,
-     "pad": 28.7,
-     "disc": 5.3,
-     "both": 4.3,
-     "lem-both": 61.3,
-     "pad-both": 24.3,
-     "disc-both": 1.0
-    }
+    "lem": 65.7,
+    "pad": 28.7,
+    "disc": 5.3,
+    "both": 4.3,
+    "lem-both": 61.3,
+    "pad-both": 24.3,
+    "disc-both": 1.0
    }
   },
   "nemotron-3-super-120b-a12b": {
@@ -162,24 +106,13 @@
    },
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 64.3,
-     "pad": 47.7,
-     "disc": 10.3,
-     "both": 8.0,
-     "lem-both": 56.3,
-     "pad-both": 39.7,
-     "disc-both": 2.3
-    },
-    "default": {
-     "lem": 64.3,
-     "pad": 47.7,
-     "disc": 10.0,
-     "both": 8.0,
-     "lem-both": 56.3,
-     "pad-both": 39.7,
-     "disc-both": 2.0
-    }
+    "lem": 64.3,
+    "pad": 47.7,
+    "disc": 10.3,
+    "both": 8.0,
+    "lem-both": 56.3,
+    "pad-both": 39.7,
+    "disc-both": 2.3
    }
   },
   "qwen3.5-27b": {
@@ -188,24 +121,13 @@
    "hf_model_id": "Qwen/Qwen3.5-27B",
    "revision": "fc05daec18b0a78c049392ed2e771dde82bdf654",
    "results": {
-    "iclr": {
-     "lem": 69.7,
-     "pad": 66.7,
-     "disc": 50.3,
-     "both": 13.7,
-     "lem-both": 56.0,
-     "pad-both": 53.0,
-     "disc-both": 36.7
-    },
-    "default": {
-     "lem": 69.7,
-     "pad": 66.7,
-     "disc": 50.3,
-     "both": 13.7,
-     "lem-both": 56.0,
-     "pad-both": 53.0,
-     "disc-both": 36.7
-    }
+    "lem": 69.7,
+    "pad": 66.7,
+    "disc": 50.3,
+    "both": 13.7,
+    "lem-both": 56.0,
+    "pad-both": 53.0,
+    "disc-both": 36.7
    }
   },
   "qwen3.5-122b-a10b": {
@@ -214,24 +136,13 @@
    "hf_model_id": "Qwen/Qwen3.5-122B-A10B",
    "revision": "dc4d348443bc740c68e2d77492492c11606384d5",
    "results": {
-    "iclr": {
-     "lem": 69.0,
-     "pad": 62.7,
-     "disc": 57.7,
-     "both": 23.7,
-     "lem-both": 45.3,
-     "pad-both": 39.0,
-     "disc-both": 34.0
-    },
-    "default": {
-     "lem": 69.0,
-     "pad": 62.7,
-     "disc": 58.0,
-     "both": 23.7,
-     "lem-both": 45.3,
-     "pad-both": 39.0,
-     "disc-both": 34.3
-    }
+    "lem": 69.0,
+    "pad": 62.7,
+    "disc": 57.7,
+    "both": 23.7,
+    "lem-both": 45.3,
+    "pad-both": 39.0,
+    "disc-both": 34.0
    }
   },
   "qwen3.5-397b-a17b": {
@@ -241,24 +152,13 @@
    "hf_model_id": "Qwen/Qwen3.5-397B-A17B-FP8",
    "revision": "ea5b4f81096f3901c91dea97f81324302495781d",
    "results": {
-    "iclr": {
-     "lem": 68.3,
-     "pad": 64.3,
-     "disc": 67.3,
-     "both": 41.7,
-     "lem-both": 26.7,
-     "pad-both": 22.7,
-     "disc-both": 25.7
-    },
-    "default": {
-     "lem": 68.3,
-     "pad": 64.3,
-     "disc": 67.3,
-     "both": 41.7,
-     "lem-both": 26.7,
-     "pad-both": 22.7,
-     "disc-both": 25.7
-    }
+    "lem": 68.3,
+    "pad": 64.3,
+    "disc": 67.3,
+    "both": 41.7,
+    "lem-both": 26.7,
+    "pad-both": 22.7,
+    "disc-both": 25.7
    }
   },
   "deepseek-v4-flash": {
@@ -268,24 +168,13 @@
    "hf_model_id": "deepseek-ai/DeepSeek-V4-Flash",
    "revision": "60d8d70770c6776ff598c94bb586a859a38244f1",
    "results": {
-    "iclr": {
-     "lem": 73.0,
-     "pad": 85.0,
-     "disc": 65.3,
-     "both": 40.7,
-     "lem-both": 32.3,
-     "pad-both": 44.3,
-     "disc-both": 24.7
-    },
-    "default": {
-     "lem": 73.0,
-     "pad": 85.0,
-     "disc": 65.3,
-     "both": 40.7,
-     "lem-both": 32.3,
-     "pad-both": 44.3,
-     "disc-both": 24.7
-    }
+    "lem": 73.0,
+    "pad": 85.0,
+    "disc": 65.3,
+    "both": 40.7,
+    "lem-both": 32.3,
+    "pad-both": 44.3,
+    "disc-both": 24.7
    }
   },
   "deepseek-v3.1": {
@@ -298,24 +187,13 @@
    "notes": "120 rows contain a stray token inserted by the provider (lem 11, pad 42, disc 33, both 34)",
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 64.0,
-     "pad": 41.7,
-     "disc": 10.3,
-     "both": 15.7,
-     "lem-both": 48.3,
-     "pad-both": 26.0,
-     "disc-both": -5.3
-    },
-    "default": {
-     "lem": 64.0,
-     "pad": 41.7,
-     "disc": 10.3,
-     "both": 15.7,
-     "lem-both": 48.3,
-     "pad-both": 26.0,
-     "disc-both": -5.3
-    }
+    "lem": 64.0,
+    "pad": 41.7,
+    "disc": 10.3,
+    "both": 15.7,
+    "lem-both": 48.3,
+    "pad-both": 26.0,
+    "disc-both": -5.3
    }
   },
   "glm-4.7-flash": {
@@ -327,24 +205,13 @@
    },
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 64.0,
-     "pad": 49.3,
-     "disc": 22.0,
-     "both": 11.7,
-     "lem-both": 52.3,
-     "pad-both": 37.7,
-     "disc-both": 10.3
-    },
-    "default": {
-     "lem": 64.0,
-     "pad": 49.3,
-     "disc": 22.0,
-     "both": 11.7,
-     "lem-both": 52.3,
-     "pad-both": 37.7,
-     "disc-both": 10.3
-    }
+    "lem": 64.0,
+    "pad": 49.3,
+    "disc": 22.0,
+    "both": 11.7,
+    "lem-both": 52.3,
+    "pad-both": 37.7,
+    "disc-both": 10.3
    }
   },
   "glm-4.7": {
@@ -356,24 +223,13 @@
    },
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 74.0,
-     "pad": 65.7,
-     "disc": 31.3,
-     "both": 29.3,
-     "lem-both": 44.7,
-     "pad-both": 36.3,
-     "disc-both": 2.0
-    },
-    "default": {
-     "lem": 74.0,
-     "pad": 65.7,
-     "disc": 31.3,
-     "both": 29.3,
-     "lem-both": 44.7,
-     "pad-both": 36.3,
-     "disc-both": 2.0
-    }
+    "lem": 74.0,
+    "pad": 65.7,
+    "disc": 31.3,
+    "both": 29.3,
+    "lem-both": 44.7,
+    "pad-both": 36.3,
+    "disc-both": 2.0
    }
   },
   "ministral-3-3b": {
@@ -383,24 +239,13 @@
    "notes": "instruct checkpoint, no thinking; lem below 60% at m=1",
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 33.3,
-     "pad": 29.0,
-     "disc": 32.0,
-     "both": 25.3,
-     "lem-both": 8.0,
-     "pad-both": 3.7,
-     "disc-both": 6.7
-    },
-    "default": {
-     "lem": 29.7,
-     "pad": 24.3,
-     "disc": 29.3,
-     "both": 24.3,
-     "lem-both": 5.3,
-     "pad-both": 0.0,
-     "disc-both": 5.0
-    }
+    "lem": 33.3,
+    "pad": 29.0,
+    "disc": 32.0,
+    "both": 25.3,
+    "lem-both": 8.0,
+    "pad-both": 3.7,
+    "disc-both": 6.7
    }
   },
   "ministral-3-8b": {
@@ -410,24 +255,13 @@
    "notes": "instruct checkpoint, no thinking; lem below 60% at m=1",
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 54.0,
-     "pad": 50.7,
-     "disc": 57.7,
-     "both": 41.7,
-     "lem-both": 12.3,
-     "pad-both": 9.0,
-     "disc-both": 16.0
-    },
-    "default": {
-     "lem": 54.0,
-     "pad": 50.3,
-     "disc": 57.3,
-     "both": 41.7,
-     "lem-both": 12.3,
-     "pad-both": 8.7,
-     "disc-both": 15.7
-    }
+    "lem": 54.0,
+    "pad": 50.7,
+    "disc": 57.7,
+    "both": 41.7,
+    "lem-both": 12.3,
+    "pad-both": 9.0,
+    "disc-both": 16.0
    }
   },
   "ministral-3-14b": {
@@ -437,24 +271,13 @@
    "notes": "instruct checkpoint, no thinking",
    "bedrock_region": "us-east-2",
    "results": {
-    "iclr": {
-     "lem": 56.3,
-     "pad": 61.7,
-     "disc": 38.3,
-     "both": 35.3,
-     "lem-both": 21.0,
-     "pad-both": 26.3,
-     "disc-both": 3.0
-    },
-    "default": {
-     "lem": 57.0,
-     "pad": 63.0,
-     "disc": 38.3,
-     "both": 35.3,
-     "lem-both": 21.7,
-     "pad-both": 27.7,
-     "disc-both": 3.0
-    }
+    "lem": 56.3,
+    "pad": 61.7,
+    "disc": 38.3,
+    "both": 35.3,
+    "lem-both": 21.0,
+    "pad-both": 26.3,
+    "disc-both": 3.0
    }
   }
  },

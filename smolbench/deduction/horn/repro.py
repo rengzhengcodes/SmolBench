@@ -2,7 +2,6 @@
 
     python -m smolbench.deduction.horn.repro models
     python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
-    python -m smolbench.deduction.horn.repro verify rungs/m48 --m 48
     python -m smolbench.deduction.horn.repro command --model glm-4.7 --rung rungs/m48 --out rows.jsonl
     python -m smolbench.deduction.horn.repro report rows.jsonl
     python -m smolbench.deduction.horn.repro check-data <results folder>
@@ -169,7 +168,6 @@ def sweep_command(key: str, rung: Path, out: Path, endpoint: str | None, api_key
         "--max-tokens", str(samp["max_tokens"]),
         "--temperature", str(samp["temperature"]),
         "--context-length", str(samp["context_length"]),
-        "--scoring", proto["scoring"],
         "--out", str(out),
     ]  # fmt: skip
     if entry["backend"] == "bedrock":
@@ -198,14 +196,12 @@ def report(paths: list[Path], rng_seed: int = 0) -> str:
     cells, dropped = load_rows(paths)
     models = load_protocol()["models"]
     rng = random.Random(rng_seed)
-    scorings = _scorings(paths)
     lines = []
     for (model, rung), arms in sorted(cells.items()):
-        published = models.get(model, {}).get("results", {})
-        ref = published.get(scorings[0]) if len(scorings) == 1 else None
+        ref = models.get(model, {}).get("results")
         seeds = sorted({s for arm in arms.values() for s in arm})
         n = sum(len(v) for arm in arms.values() for v in arm.values())
-        lines.append(f"== {model} {rung}: {n} cells, {len(seeds)} seeds, scoring {'/'.join(scorings)}")
+        lines.append(f"== {model} {rung}: {n} cells, {len(seeds)} seeds")
         head = f"   {'':10s} {'pass %':>8s}"
         lines.append(head + (f" {'published':>10s}" if ref else ""))
         for arm in sorted(arms, key=arm_order):
@@ -226,25 +222,12 @@ def report(paths: list[Path], rng_seed: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _scorings(paths: list[Path]) -> list[str]:
-    """The scoring modes found in the rows (rows without the field were scored ``iclr``)."""
-    found: set[str] = set()
-    for path in paths:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    found.add(json.loads(line).get("scoring") or "iclr")
-                except json.JSONDecodeError:
-                    continue
-    return sorted(found) or ["iclr"]
-
-
 def cmd_models(_: argparse.Namespace) -> int:
     """List the models, their chain lengths and backends."""
     proto = load_protocol()
     print(f"{'model':28s} {'m':>3s}  {'backend':8s} {'lem':>6s} {'pad':>6s} {'both':>6s}  notes")
     for key, e in proto["models"].items():
-        r = e["results"]["iclr"]
+        r = e["results"]
         print(f"{key:28s} {e['m']:3d}  {e['backend']:8s} {r['lem']:6.1f} {r['pad']:6.1f} {r['both']:6.1f}  {e.get('notes', '')}")
     return 0
 
@@ -261,11 +244,6 @@ def cmd_render(a: argparse.Namespace) -> int:
         print(f"m={m} is not a level of the ICLR run; nothing to verify against")
         return 0
     return _print_verify(out, m, seeds)
-
-
-def cmd_verify(a: argparse.Namespace) -> int:
-    """Compare a rendered rung with the recorded digests."""
-    return _print_verify(Path(a.rung), a.m, parse_seeds(a.seeds) if a.seeds else None)
 
 
 def _print_verify(rung: Path, m: int, seeds: list[int] | None) -> int:
@@ -319,11 +297,6 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--seeds", default=None, help="default: the protocol's seeds (100-199)")
     pr.add_argument("--out", required=True)
     pr.set_defaults(func=cmd_render)
-    pv = sub.add_parser("verify", help="compare a rendered rung with the recorded digests")
-    pv.add_argument("rung")
-    pv.add_argument("--m", type=int, required=True)
-    pv.add_argument("--seeds", default=None)
-    pv.set_defaults(func=cmd_verify)
     pc = sub.add_parser("command", help="print the serve and sweep commands for a model")
     pc.add_argument("--model", required=True)
     pc.add_argument("--rung", required=True)
