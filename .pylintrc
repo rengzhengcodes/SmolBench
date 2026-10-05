@@ -29,12 +29,12 @@ disable =
     # Tests and same-module collaborators legitimately touch privates.
     protected-access,
     # Fixture args exist for ordering/side effect; SDK stubs must keep
-    # AWS keyword names.
+    # external keyword names.
     unused-argument,
     # Test modules intentionally share fixture-import blocks.
     duplicate-code,
-    # AWS kwargs (Bucket, MaxKeys, Body) and BaseHTTPRequestHandler hooks
-    # (do_GET/do_POST) are external naming contracts.
+    # External kwargs (Bucket, MaxKeys, Body) and BaseHTTPRequestHandler hooks
+    # (do_GET/do_POST) are naming contracts.
     invalid-name,
     # Broad catches are deliberate at provisioning/teardown boundaries.
     broad-exception-caught,

@@ -1,9 +1,8 @@
 """Pass rates and seed-paired contrasts for Horn result rows.
 
-Rows are the JSONL records that ``scripts/deduction/horn/sweep.py`` and
-``bedrock_sweep.py`` write (fields ``model``, ``spec_key``, ``rung``, ``arm``, ``seed``,
-``rep``, ``verdict``). The unit of analysis is the theory seed: a seed's pass rate in an
-arm is the mean over its replicates, and two arms are compared on the seeds they share.
+Rows are JSONL records with fields ``model``, ``spec_key``, ``rung``, ``arm``, ``seed``,
+``rep`` and ``verdict``. The unit of analysis is the theory seed: a seed's pass rate in
+an arm is the mean over its replicates, and two arms are compared on the seeds they share.
 """
 
 from __future__ import annotations

@@ -10,7 +10,7 @@ import sys
 import pytest
 import yaml
 
-from smolbench.evals.providers.ec2 import EC2_DEPLOY_SPECS
+from smolbench import public_release
 from smolbench.induction import repro
 from tests._paths import NOTEBOOKS
 
@@ -76,9 +76,6 @@ def test_protocol_record_is_complete():
         proto["models"]
     )
     for key, e in proto["models"].items():
-        args = EC2_DEPLOY_SPECS[key]["vllm_args"]
-        assert e["hf_model_id"] == EC2_DEPLOY_SPECS[key]["hf_model_id"], key
-        assert e["revision"] == args[args.index("--revision") + 1], key
         r = e["results"]
         for a, b in repro.DELTAS:
             assert (
@@ -183,15 +180,13 @@ class _FakeS3:
 
 def test_fetch_keeps_the_layout_and_resumes(tmp_path):
     """fetch keeps the key layout below the prefix and skips files it has."""
-    client = _FakeS3(
-        {"runs/induction/m/seed=0/intens--x.yaml": b"abc", "runs/other/k": b"no"}
-    )
-    assert repro.fetch(tmp_path, "b", "runs", client) == (1, 0)
+    client = _FakeS3({"induction/m/seed=0/intens--x.yaml": b"abc", "other/k": b"no"})
+    assert public_release.fetch(tmp_path, "b", "induction/", "", client) == (1, 0)
     assert (
         tmp_path / "induction" / "m" / "seed=0" / "intens--x.yaml"
     ).read_bytes() == b"abc"
-    assert repro.fetch(tmp_path, "b", "runs", client) == (0, 1)
-    assert client.gets == ["runs/induction/m/seed=0/intens--x.yaml"]
+    assert public_release.fetch(tmp_path, "b", "induction/", "", client) == (0, 1)
+    assert client.gets == ["induction/m/seed=0/intens--x.yaml"]
 
 
 def test_results_script_writes_the_tables(data, tmp_path, capsys):

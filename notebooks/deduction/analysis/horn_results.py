@@ -46,7 +46,7 @@ from smolbench.deduction.horn.extract import DEFAULT_SCORING, SCORING_MODES  # n
 from smolbench.deduction.horn.stats import contrast  # noqa: E402
 
 OUT = REPO / "notebooks" / "deduction" / "results"
-#: A token the Bedrock DeepSeek-V3.1 endpoint inserts into atoms (``bakal(极)``). Rows
+#: A token in DeepSeek-V3.1 output (``bakal(极)``). Rows
 #: that contain it are scored as written and counted in the notes.
 CORRUPT_TOKEN = "极"
 

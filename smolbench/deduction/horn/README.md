@@ -1,4 +1,4 @@
-# Horn bench: the experimental setup
+# Horn-rule deduction
 
 This package implements one fixed experiment. It measures whether adding *relevant*
 information to a prover's context (statements that could be used to reason to the goal)
@@ -10,8 +10,8 @@ render, check or score is described here.
 A prover is given facts about one object and a library of Horn rules that proves a goal
 about it. The library alone (`lem`) is enough. Adding a proof of every library rule
 (`both`) makes the prover fail more often than adding the same number of tokens of lorem
-filler (`pad`) or of the same proofs with their entry points removed (`disc`). The harm grows with the length of the proof the prover
-must find (the chain length `m`).
+filler (`pad`) or of the same proofs with their entry points removed (`disc`). The harm
+grows with the length of the proof the prover must find (the chain length `m`).
 
 ## 2. The theory
 
@@ -31,9 +31,9 @@ Every rule is unique by content (head and body set). The library is a DAG: a rul
 premises all have a lower level than its head (facts 0, chain head `i` at level `i`, a
 detour's intermediate half a level below its head).
 
-A rung is defined by its chain length `m` alone (`cli.build_theory`): the library holds
-the `m` chain lemmas and exactly `5 m` open alternatives, and every tree has depth 2, so
-the prompt size follows from `m`. Sizes (cl100k tokens, seed 100):
+A rung with chain length `m` has the `m` chain lemmas, exactly `5 m` open alternatives,
+and trees of depth 2. Thus, `m` determines the library size and prompt size. Sizes
+(cl100k tokens, seed 100):
 
 | m | lemmas | axioms | `lem` | `both` / `pad` / `disc` | rule lines in `both` |
 |---|---|---|---|---|---|
@@ -44,9 +44,6 @@ the prompt size follows from `m`. Sizes (cl100k tokens, seed 100):
 | 48 | 288 | 864 | 3,987 | 14,537 | 1,152 |
 | 96 | 576 | 1,728 | 7,750 | 28,911 | 2,304 |
 | 192 | 1,152 | 3,456 | 15,377 | 57,537 | 4,608 |
-
-So a rung fixes the composition of the library (six lemmas per chain level, three axioms
-per lemma) and `m` scales the chain, the search space and the tokens together.
 
 ## 3. The four arms
 
@@ -81,7 +78,7 @@ exactly the requested format and nothing else."
 
 User message, in this order: one line of instructions (the goal is always provable),
 `## Facts` (the `m + 1` fact atoms `F(c)`, shuffled once per seed), `## Library` (the
-arm's lines, one rule `a(x) ∧ b(x) → h(x)` or filler line per line, no ids), `## Goal`
+arm's lines, one rule `a(x) ∧ b(x) → h(x)` or filler line per line), `## Goal`
 (`Cm(c)`), `## Answer format`:
 
 ```
@@ -91,7 +88,7 @@ derive <atom> from <atom>[, <atom>]
 
 A step applies one library rule with `x` set to the constant; the atoms after `from` are
 that rule's body atoms, each a fact or an atom derived on an earlier line; the last line
-derives the goal. `examples/` holds a small rendered theory in every arm.
+derives the goal.
 
 ## 5. The checker
 
@@ -121,161 +118,57 @@ takes the final block of step lines. There are two scoring modes:
   (`</think>`, `[/THINK]`), a horizontal rule (`--` or longer) or a markdown heading
   still ends the block, so a draft above it is not scored.
 
-The drivers take `--scoring` (default `default`) and store it in each row.
-`notebooks/deduction/analysis/horn_results.py --data <data-dir> --scoring iclr|default`
-reports either mode from the same rows: `iclr` keeps the stored verdicts, and `default`
-uses each row's saved `scoring_default` verdict. On the 16-model roster, `default`
-changes gemma-4-e2b (both 45.7 to 62.3, disc 60.7 to 80.0) and Ministral-3B
-(lem 33.3 to 29.7), and every other model by 1.3 points or less.
+`checker.certify(theory, rendered)` checks that rule content is unique; the goal is
+derivable; every library lemma lies on a path to the goal and fires for `c`; every fact is
+a premise of a chain lemma; the lemma route verifies in exactly `m` steps; in `both` the
+tree route verifies as a `long` route; and in `pad` and `disc` the tree route is invalid.
 
-`checker.certify(theory, rendered)` runs on every arm before it is written. It checks
-that rule content is unique; the goal is derivable; every library lemma lies on a path to
-the goal and fires for `c`; every fact is a premise of a chain lemma; the lemma route
-verifies in exactly `m` steps; in `both` the tree route (every chain lemma replaced by its
-axioms) verifies as a `long` route; in `pad` and `disc` the tree route is invalid and the
-added rules never fire and derive nothing new.
+## 6. Design
 
-## 6. Rendering a rung
+The released study has 100 theories (seeds 100-199) and 3 replicates per arm, paired by
+theory. Each model's chain length is chosen from `lem` on disjoint calibration seeds.
+The picks are recorded in `iclr.json`, and the calibration rows are in the released
+results under `horn/calibration/`.
 
-```
-python -m smolbench.deduction.horn.cli render --seeds 100-199 --m 12 --out rungs/m12
-```
+## 7. Analysis
 
-writes `<out>/s<seed>/theory.json` and `<out>/s<seed>/<arm>/{prompt.md,system.md,meta.json}`
-for the four arms of every seed, and certifies each arm before it is written. Seeds are a
-comma list of numbers and `a-b` ranges. `meta.json` holds what the checker needs (rule
-ids by line, facts, goal), the certificate, the designed proof and the tree depths. The
-chain length `m` is the one parameter. Rendering is deterministic: the same seed at the
-same `m` gives the same files, byte for byte, on any machine. The same seed at different
-`m` shares nothing beyond the recipe.
+The unit is the per-seed pass rate (mean over replicates), paired by seed across arms.
+A pass rate is the mean over seeds. A contrast is the seed-paired difference in
+percentage points with a 95% percentile bootstrap CI over seeds and a two-sided sign-flip
+permutation p-value (exact up to 16 seeds, else 20,000 Monte Carlo draws). The reported
+contrasts are relative to `both` (low density): `lem − both`, `pad − both` and
+`disc − both`. `python -m smolbench.deduction.horn.repro report <rows.jsonl>...` prints
+them for any rows files. The paper tables and figures come from
+`notebooks/deduction/analysis/make_figures.py`.
 
-## 7. Running
+## 8. Reproducing the released results
 
-Served models: `scripts/deduction/horn/sweep.py` sends each cell (arm x seed x replicate)
-as one chat completion to an OpenAI-compatible endpoint (vLLM), with the system prompt,
-temperature 0.7, the roster model's thinking arguments, and no tools. The output cap is
-`--max-tokens` (default 32,768; the ICLR runs used 131,072), cut per cell so that prompt
-and output fit `--context-length` (131,072). The answer is extracted under `--scoring`
-(section 5), and `finish_reason = length` scores as a failure. Rows go to a JSONL file,
-keyed by (model, rung, arm, seed, replicate); rerunning the same command resumes, and a
-second sweep on the same file is refused. `bedrock_sweep.py` does the same over the AWS
-Bedrock Converse API (`--extra-fields '{"reasoning_effort": "high"}'` switches thinking
-on for GLM-4.7, DeepSeek-V3.1 and Nemotron-3).
-
-Design: 100 theories (seeds 100-199) x 3 replicates per arm, paired by theory. Per model,
-the chain length is chosen from `lem` alone on disjoint calibration seeds (200-209):
-`scripts/deduction/horn/calibrate_m.py` starts at a prior (the pick of the closest
-calibrated relative in the same family), steps up the ladder m in {1, 2, 3, 4, 6, 8, 10,
-12, 16, 20, 24, 32, 48, 64, 96, 192} while more than 8 of 10 pass and down while fewer than
-7 pass, and stops when 7 or 8 pass, when the target is bracketed by a level already run,
-or at the ladder's end. The pick is the level nearest the target crossing of a logistic
-fit over the levels run (`calibration_pick.py`; `--target` is 0.75 in `calibrate_m.py`
-and 0.70 in `calibration_pick.py`). Two models ran this search: `deepseek-v4-flash` and
-`qwen3.5-397b-a17b` (whose m was then set by hand). The other 14 ran a longer ladder
-(up to 17 levels) on seeds 200-229, with up to 30 theories per level; the levels and
-theory counts for each model are in the released calibration rows. The picks are
-recorded in `iclr.json`, and the calibration rows are in the released results
-(`horn/calibration/`).
-
-## 8. Analysis
-
-Unit: the per-seed pass rate (mean over replicates), paired by seed across arms
-(`stats.py`). A pass rate is the mean over seeds. A contrast is the seed-paired
-difference in percentage points with a 95% percentile bootstrap CI over seeds and a
-two-sided sign-flip permutation p-value (exact up to 16 seeds, else 20,000 Monte Carlo
-draws). The reported contrasts are relative to `both` (low density): `lem − both`,
-`pad − both` and `disc − both`. `python -m smolbench.deduction.horn.repro report
-<rows.jsonl>...` prints them for any rows files. The paper tables and figures come from
-`notebooks/deduction/analysis/make_figures.py` (section 9).
-
-## 9. Reproducing the ICLR 2027 results
-
-### From the released results (no model runs)
-
-The released results folder holds every prompt, model output and verdict behind the
-paper's Horn table, and the calibration runs (`README.md` in the folder describes the
-layout and fields). To regenerate the tables and figures:
+Fetch the results, check their manifest, and rebuild the tables and figures:
 
 ```
+python -m smolbench.deduction.horn.repro fetch --out <results-folder>
+python -m smolbench.deduction.horn.repro check-data <results-folder>
 python notebooks/deduction/analysis/make_figures.py --data <results-folder> --out results
 ```
 
-This checks the folder against its `MANIFEST.json`, then writes the paper table
-(`horn_table.tex`), the full table, the summary, the ladder figures, the proof-route
-figures and the reasoning-length figure to `results/iclr/` (scored as submitted) and
-`results/default/` (the default extractor). It takes about four minutes. The outputs match
-the submitted ones byte for byte (PDFs up to their embedded creation date).
+The analysis writes the paper table, the full table, the summary, ladder figures,
+proof-route figures and the reasoning-length figure to `results/iclr/` (scored as
+submitted) and `results/default/` (the default extractor). It takes about four minutes.
+The outputs match the submitted ones byte for byte, apart from embedded PDF creation
+dates.
 
-### Running the experiments again
-
-`iclr.json` records the protocol of the submission's runs: seeds, replicates, sampling,
-scoring, each model's chain length and serving settings (the pinned checkpoint revision
-of every self-hosted model, the Bedrock model id and request fields otherwise), a SHA-256
-digest of every served theory, and the published pass rates under both scoring modes.
-`repro.py` reads it.
-
-1. Check the pipeline offline, with no model (about ten seconds):
-
-   ```
-   python scripts/deduction/horn/demo.py --out /tmp/horn_demo
-   python scripts/deduction/horn/demo.py --out /tmp/horn_demo --style interleaved
-   ```
-
-   The demo renders a small rung, serves the designed proofs from a local
-   OpenAI-compatible server, runs `sweep.py` under both scoring modes and prints the
-   report. With `--style interleaved` the answers carry a prose line between steps; they
-   fail under `iclr` scoring and pass under `default`.
-
-2. List the models and their chain lengths:
-
-   ```
-   python -m smolbench.deduction.horn.repro models
-   ```
-
-3. Get a model's rung (seeds 100-199 at its `m`). The released results folder holds the
-   served prompts (`horn/prompts/m<m>/`, a rung directory the sweep runs directly). To
-   regenerate them instead, render from the seeds; the command checks the files against
-   the recorded digests, and `OK` means they are byte-identical to the prompts the model
-   was served:
-
-   ```
-   python -m smolbench.deduction.horn.repro render --model glm-4.7 --out rungs/m48
-   python -m smolbench.deduction.horn.repro verify rungs/m48 --m 48
-   ```
-
-4. Print the commands that run the model with the protocol's settings. For a
-   self-hosted model, the first command serves the pinned checkpoint with vLLM (the image
-   digest is in `iclr.json`); for a Bedrock model, the sweep uses your AWS credentials:
-
-   ```
-   python -m smolbench.deduction.horn.repro command --model qwen3.5-27b --rung rungs/m64 --out rows.jsonl
-   ```
-
-5. Compare the rows with the published values:
-
-   ```
-   python -m smolbench.deduction.horn.repro report rows.jsonl
-   ```
-
-Sampling runs at temperature 0.7, so a rerun reproduces the numbers up to sampling noise
-(the published CIs give the scale), not row for row. Serving numerics also differ across
-GPU types and tensor-parallel layouts.
-
-## 10. Files
+## 9. Files
 
 | file | role |
 |---|---|
 | `theory.py` | `Theory`, `Rule`, `Lemma`, `generate`; JSON round-trip |
 | `render.py` | `ARMS`, `render`, `Rendered`, `Tokenizer`; lorem and disc slot fillers |
 | `checker.py` | `verify`, `certify`, `designed_proof`, `closure`, `route_of` |
-| `extract.py` | the two scoring modes: `final_proof_block`, `extract_answer`, `verdict_fields` |
+| `extract.py` | Scoring modes: `final_proof_block`, `extract_answer`, `verdict_fields` |
 | `stats.py` | `load_rows` (dedupe by cell), `pass_rate`, `contrast` |
-| `cli.py` | `render` (certifies and writes a rung) and `check` |
-| `repro.py`, `iclr.json` | the ICLR protocol record; `models`, `render`, `verify`, `command`, `report` |
-| `examples/` | one small theory rendered in every arm, with its designed proofs |
-| `../../../scripts/deduction/horn/` | sweep drivers (`sweep.py`, `bedrock_sweep.py`), calibration, `demo.py` |
+| `repro.py`, `iclr.json` | Protocol record; `fetch`, `check-data`, `models`, `report` |
 | `../../../notebooks/deduction/analysis/` | `make_figures.py` and the table, route and reasoning-length scripts |
-| `../../../tests/deduction/test_horn_*.py` | generator, checker, certificate, drivers, scoring modes, reproduction |
+| `../../../tests/deduction/test_horn_*.py` | Theory, checker, scoring, reproduction, tables and figures |
 
 `Theory.from_json` ignores legacy `facts_by_const`, accepts retired setup fields only at
 their current values and a single matching `constants` entry, and drops `sublemma`

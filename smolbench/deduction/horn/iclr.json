@@ -1,5 +1,8 @@
 {
  "description": "Protocol of the Horn benchmark runs in the ICLR 2027 submission. Read by smolbench.deduction.horn.repro.",
+ "bucket": "smolbench-public-release",
+ "region": "us-west-2",
+ "prefix": "deduction/smolbench-horn-data-v1/",
  "seeds": "100-199",
  "replicates": 3,
  "arms": [

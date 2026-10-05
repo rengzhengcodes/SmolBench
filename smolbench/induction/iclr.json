@@ -10,7 +10,6 @@
   "extens"
  ],
  "marks_per_replicate": 9,
- "driver": "notebooks/induction/run_study.py",
  "results_note": "Accuracy per replicate is the fraction of its 9 marks scored correct (a null score is wrong). A cell is the mean over the 30 seeds and the sample standard deviation (ddof = 1). Deltas are 100 x (a - b) in points, from the means rounded to three decimals as printed.",
  "models": {
   "gemma-4-e2b": {
