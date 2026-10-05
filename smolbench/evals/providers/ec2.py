@@ -156,8 +156,8 @@ EC2_S3_MODEL_CACHE: str = os.getenv("EC2_S3_MODEL_CACHE", "").rstrip("/")
 EC2_S3_CACHE_REGION: str = os.getenv("EC2_S3_CACHE_REGION", AWS_REGION)
 EC2_INSTANCE_ROLE_NAME: str = os.getenv("EC2_INSTANCE_ROLE_NAME", "smolbench-ec2-role")
 # EC2_INFERENCE_BASE_URL / EC2_VLLM_API_KEY bypass the state file and point
-# the inference path at any OpenAI-compatible server (the stub server in
-# tests/evals/test_openai_compat.py). They are read at call time, in
+# the inference path at any OpenAI-compatible server (the StubServer in
+# tests/conftest.py). They are read at call time, in
 # _base_url/_api_key/_connection, not here; so are EC2_INFO and
 # EC2_INFO_RESPONSE (verbose logging), by the shared ChatClient.
 
@@ -909,7 +909,7 @@ def server_config(model: str) -> Optional[Dict[str, Any]]:
 
         # Guarded individually, not just by the function-wide except below:
         # both parse an env var, and a malformed override (e.g.
-        # EC2_STREAM_COMPLETIONS=true instead of "1") must degrade only THIS
+        # EC2_STREAM_COMPLETIONS=maybe) must degrade only THIS
         # field to None, not blank the whole already-computed snapshot.
         try:
             max_parallel_requests = _CLIENT._default_max_parallel()
@@ -1246,7 +1246,7 @@ evaluate = _CLIENT.evaluate
 # EC2 spot provisioning / lifecycle (lazy boto3; opt-in)
 # ---------------------------------------------------------------------------
 # These functions import boto3/botocore internally (via _aws.fresh_client),
-# so the inference path stays dependency-free (see the module docstring).
+# so the inference path stays boto3-free.
 # Each client is a FRESH boto3 Session per operation: boto3.client()'s default
 # session caches credentials, so a refreshed ~/.aws/credentials (~12h IdP
 # sessions) keeps raising RequestExpired until kernel restart. Rationale in
@@ -1483,7 +1483,8 @@ def _decode_user_data(raw: bytes) -> str:
     UnicodeDecodeError
         `raw` is neither valid gzip nor valid UTF-8 text.
     EOFError
-        `raw` is gzip-magic-prefixed but truncated (the magic matches, so.
+        `raw` is gzip-magic-prefixed but truncated (the magic matches, so the
+        BadGzipFile plain-text fallback is not taken).
     """
     try:
         return gzip.decompress(raw).decode()
@@ -2061,7 +2062,8 @@ def _run_instances_kwargs(
     capacity_reservation_id : Optional[str]
         Purchased EC2 Capacity Block id.
     max_price : Optional[str]
-        Spot bid ceiling in USD/hour as the API's string; ``None`` leaves.
+        Spot bid ceiling in USD/hour as the API's string; ``None`` omits
+        MaxPrice, leaving EC2's on-demand-price ceiling.
 
     Returns
     -------

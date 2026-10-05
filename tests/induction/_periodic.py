@@ -1,4 +1,4 @@
-"""Fixtures pinned by three test files so the production template stays one copy."""
+"""Fixtures shared by three test files so the test template stays one copy."""
 
 import string
 

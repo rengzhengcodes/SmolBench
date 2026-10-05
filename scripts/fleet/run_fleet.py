@@ -39,7 +39,7 @@ def _load_fleet_config() -> ModuleType:
 _config = _load_fleet_config()
 
 # Load `lane_env` first so dotenv precedes frozen ``EC2_*`` constants. Keep these
-# exact private module names, never unpacked aliases, so moved symbols retain one
+# exact private module names, never unpacked aliases, so each symbol has one
 # home and tests reach both modules the same way.
 _lane_env = _config.load_fleet_module("lane_env")
 _supervisor = _config.load_fleet_module("supervisor")

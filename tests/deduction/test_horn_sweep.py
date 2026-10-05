@@ -474,5 +474,5 @@ def test_reverse_order_and_skip_from(tmp_path):
     import os
     os.utime(other, None)
     assert ("mm", "m4", "lem", 100, 0) in skip
-    assert ("mm", "stage2_m4", "lem", 100, 0) in skip  # rung names differ across boxes
+    assert ("mm", "calib_m4", "lem", 100, 0) in skip  # the skip key ignores the rung name
     assert len(skip) == 2

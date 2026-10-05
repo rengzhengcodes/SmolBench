@@ -76,7 +76,7 @@ def test_dump_dumps_load_loads_round_trip(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compliant_is_a_written_label(tmp_path: Path) -> None:
+def test_compliant_is_a_written_label() -> None:
     """The string is what lands in the YAML, so a stored row says what it means."""
     marks = Marks(
         model="m", marks=(mark(),), date=datetime(2026, 7, 1, tzinfo=timezone.utc)

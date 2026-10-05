@@ -376,6 +376,9 @@ def provision_endpoint(model: str, timeout_min: int = 40):
 
     Parameters
     ----------
+    model : str
+        Endpoint/model key in ``SAGEMAKER_DEPLOY_SPECS`` (yielded unchanged for
+        non-SageMaker providers).
     timeout_min : int
         Minutes to wait for ``InService``; large multi-GPU DLC images are slow
         to pull and load.

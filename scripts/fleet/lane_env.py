@@ -144,8 +144,7 @@ TIER_REQUIRE_GPU: dict[str, str] = {
     tier: _tier_gpu_pin(tier) for tier in TIER_INSTANCE_TYPES
 }
 
-# Tier D retains DEFAULT_REGIONS rather than a literal because B200 placement is
-# shifting; unlike p5e, which is limited to us-east-2/us-west-2, this cannot drift independently.
+# Tier D uses DEFAULT_REGIONS rather than a literal because B200 placement is shifting.
 TIER_REGIONS = {"D": DEFAULT_REGIONS}
 TIER_BUDGET_HOURS = {"A": 9, "B": 9, "C": 10, "D": 14}
 

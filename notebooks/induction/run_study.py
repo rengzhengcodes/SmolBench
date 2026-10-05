@@ -259,7 +259,6 @@ MIN_DECODE_TOK_S: int = 10
 #: Avoids an EC2 environment override below its default timeout.
 REQUEST_TIMEOUT_FLOOR_SECONDS: int = 600
 
-# Prompt wording is shared across induction studies.
 template = string.Template(
     "You are a precise integer counter.\n"
     "\n"
@@ -548,7 +547,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             request_timeout=request_timeout_seconds(budgets[model]),
         )
         EXPERIMENT.summarize(model)
-    # The fleet may reuse this instance for deduction.
+    # The fleet owns teardown.
     print(
         f"INDUCTION STUDY RUN COMPLETE: {list(models)} (no teardown -- fleet-owned)",
         flush=True,

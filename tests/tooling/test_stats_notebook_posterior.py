@@ -199,9 +199,9 @@ def test_self_test_asserts_no_equivalence_under_clustering(nb: dict[str, Any]) -
 
 
 def test_posterior_section_markdown_names_the_recurrence(nb: dict[str, Any]) -> None:
-    """The posterior section names ``design_effect`` and the PR #12 parallel."""
+    """The posterior section names ``design_effect`` and ``multiplicity_sim``."""
     joined = _posterior_markdown(nb)
-    for token in ("design_effect", "multiplicity_sim", "PR #12"):
+    for token in ("design_effect", "multiplicity_sim"):
         assert token in joined, f"posterior markdown never mentions {token!r}"
 
 

@@ -52,14 +52,13 @@ class Verdict:
     """Outcome of checking one answer.
 
     ``route`` is ``short`` (lemma steps only), ``long`` (tree steps only) or
-    ``mixed``, over the valid steps plus, for a failure, the failing step's
-    rule. ``used_kinds`` lists those rules' kinds in order.
+    ``mixed``, over the valid steps plus, for a failure on a recognised rule,
+    that rule; it is empty when no step used a recognised rule.
     """
 
     verdict: str
     steps: int = 0
     route: str = ""
-    used_kinds: tuple[str, ...] = ()
     reason: str = ""
     ignored_lines: int = 0
     step_lines: list[str] = field(default_factory=list)
@@ -132,7 +131,6 @@ def _bad(  # pylint: disable=too-many-arguments
         "invalid_step",
         i,
         route=route_of(kinds) if kinds else "",
-        used_kinds=tuple(kinds),
         reason=f"step {i}: {why}",
         ignored_lines=ignored,
         step_lines=list(lines),
@@ -200,7 +198,6 @@ def verify(  # pylint: disable=too-many-locals,too-many-return-statements
             "incomplete",
             len(steps),
             route=route_of(kinds),
-            used_kinds=tuple(kinds),
             reason="goal not derived",
             ignored_lines=ignored,
             step_lines=lines,
@@ -209,7 +206,6 @@ def verify(  # pylint: disable=too-many-locals,too-many-return-statements
         "success",
         len(steps),
         route=route_of(kinds),
-        used_kinds=tuple(kinds),
         ignored_lines=ignored,
         step_lines=lines,
     )
