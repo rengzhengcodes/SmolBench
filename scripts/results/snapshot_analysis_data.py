@@ -19,10 +19,6 @@ from smolbench.evals.results_store import resolve_results_location
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# No bucket literal here: `main` resolves it at call time via
-# `resolve_results_location()`, so a redirected `SMOLBENCH_RESULTS_S3` is
-# honored instead of silently missed. `iter_source_keys`/`copy_one` take
-# `bucket` explicitly rather than reaching for a module global.
 #: Prefixes that are not study data: smoke-test canaries and verifier scratch.
 SKIP_SUBSTRINGS = ("canary", "/_verify/", "live_smoke")
 #: Provenance documents copied alongside the induction data.
@@ -197,7 +193,6 @@ def main() -> int:
             counts["provenance"] += 1
             provenance_keys.append(dest_key)
 
-    # No `notes` field: every field here is computed from this run's walk.
     manifest = {
         "snapshot_prefix": args.dest,
         "source_bucket": bucket,

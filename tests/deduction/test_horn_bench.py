@@ -69,10 +69,9 @@ def test_theory_invariants(seed):
 
 
 def test_per_lemma_depths():
-    """Depth overrides change tree size per lemma and the max height."""
+    """Depth overrides change tree size per lemma."""
     th = generate(4, m=2, height=2, n_extra=3, depths={2: 4, 5: 3})
     assert [lm.height for lm in th.library][:5] == [2, 4, 2, 2, 3]
-    assert th.max_height == 4
     assert len(th.tree(2)) == 15 and len(th.tree(1)) == 3
 
 
@@ -231,7 +230,7 @@ def test_disc_trees_keep_roots_but_cannot_be_entered(tok):
 
 
 def test_arms_are_fixed():
-    """Only the five arms render; unknown specs raise."""
+    """Only the four arms render; unknown specs raise."""
     th = generate(1)
     for bad in ("lem:1", "both:1", "pad:2", "ax", "unf:1", "bothm", "padm", "deep", "dpad", "junk", "nope"):
         with pytest.raises(ValueError):
@@ -286,7 +285,6 @@ def test_cli_render_and_check(tmp_path, tok):
     th = Theory.from_json((sd / "theory.json").read_text())
     meta = json.loads((sd / "both" / "meta.json").read_text())
     assert meta["certificate"]["ok"] and meta["certificate"]["min_steps"] == 3
-    assert "max_steps" not in meta
     answer = tmp_path / "answer.md"
     answer.write_text("\n".join(designed_proof(th, "long")) + "\n")
     assert cli_main(["check", str(sd / "both"), str(answer)]) == 0

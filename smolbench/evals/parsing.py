@@ -144,14 +144,11 @@ def is_degenerate(text: str) -> bool:
     """Return whether `text` is repetition collapse rather than an answer.
 
     Structural, not pattern-based: a long stretch drawn from a tiny alphabet is
-    degenerate whatever it repeats. Three shapes seen live, all under the
-    whitespace-padded noise arm, motivate the three tests -- collapse from the
-    start (Nemotron-Ultra-253B: 24,576 characters of "0"), collapse after a real
-    beginning (Olmo-3.1-32B-Think: ~16,400 U+2010 hyphens, the TAIL check), and
-    collapse onto a PHRASE with a wide character alphabet (Llama-4-Maverick
-    looping ``"## Step 1\\n\\n"``, the WORD checks). Misclassifying these would
-    blame the completion budget (`TRUNCATED`) or the parser (`MULTIPLE_VALUES`)
-    for a finding about the condition breaking the model.
+    degenerate whatever it repeats. The three tests cover collapse from the
+    start, collapse after a genuine prefix (the TAIL check), and phrase-level
+    collapse despite a broad character alphabet (the WORD checks);
+    misclassifying these would attribute a condition failure to the completion
+    budget (`TRUNCATED`) or the parser (`MULTIPLE_VALUES`).
     """
     stripped = text.strip()
     if not stripped:
@@ -248,8 +245,7 @@ def _safe_int(digits: str) -> Optional[int]:
     """Convert `digits` to int, or return None past `_MAX_ANSWER_DIGITS`.
 
     Python raises ValueError on int/str conversion beyond 4,300 digits, so an
-    unguarded ``int()`` crashes grading -- a 20,379-digit run took a live run
-    down.
+    unguarded ``int()`` would crash grading; the length guard prevents that.
     """
     stripped = digits.lstrip("-")
     if len(stripped) > _MAX_ANSWER_DIGITS:

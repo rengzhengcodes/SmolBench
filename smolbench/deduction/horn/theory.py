@@ -36,11 +36,6 @@ from dataclasses import asdict, dataclass
 _CONSONANTS = "bdfgklmnprstvz"
 _VOWELS = "aeiou"
 
-#: Kinds of rules a theory holds.
-PATH_KINDS = frozenset({"lemma", "axiom"})
-#: Kind of rule the ``disc`` control adds at render time; never part of a theory.
-EXTRA_KINDS = frozenset({"disc"})
-
 _RETIRED_FIELDS = {"open_frac": 1.0, "fact_height": 0, "fact_chain": 0, "deep_facts": []}
 
 
@@ -116,11 +111,6 @@ class Theory:
     def links(self) -> list[Lemma]:
         """The ``m`` chain lemmas, in chain order."""
         return self.library[: self.m]
-
-    @property
-    def max_height(self) -> int:
-        """Deepest tree in the library."""
-        return max(lm.height for lm in self.library)
 
     def fact_atoms(self) -> list[str]:
         """Every fact as ``pred(c)``."""
@@ -278,8 +268,7 @@ def generate(  # pylint: disable=too-many-locals
     n_extra : int
         Open alternatives to add, exactly (a detour counts as two).
     depths : dict[int, int], optional
-        Per-lemma tree depth overrides (1-based lemma index -> depth >= 2);
-        the token fitter uses them to meet a derivation budget.
+        Per-lemma tree depth overrides (1-based lemma index -> depth >= 2).
 
     Returns
     -------

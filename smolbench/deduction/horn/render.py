@@ -102,11 +102,6 @@ class Rendered:
         kw["facts"] = tuple(kw["facts"])
         return cls(prompt=prompt, system=system, **kw)
 
-    def rule_of(self, rid: str, theory: Theory) -> Rule | None:
-        """Rule behind a display id."""
-        key = self.ids.get(rid)
-        return theory.rules[key] if key else None
-
 
 _LOREM = (
     "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor "

@@ -715,8 +715,8 @@ def _monitor_tick(
             if run.halted
             else ("done" if run.done else (run.current_phase or "?"))
         )
-        # _tail_log drops its first line after a seek; a newline-free 4 KiB
-        # window blanked this, so use 65536 bytes.
+        # _tail_log drops its first line after a seek, so use a 65536-byte window
+        # to keep a long last line visible.
         last_line = _tail_log(log_dir, key, n=1, max_bytes=65536)
         print(
             f"{key:<28} status={status:<10} alive={str(alive):<5} last: {last_line[-120:]}"

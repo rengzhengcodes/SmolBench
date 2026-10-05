@@ -1,8 +1,8 @@
 """KV-cache sizing for the family-ladder roster.
 
-Account for layer mix, sharing, latent KV, and tp replication. Boxes budget
-``weights + 2.0 x KV@131k`` (about 8 requests) against ``0.90 x total VRAM``
-because one-sequence sizing goes negative at concurrency.
+Account for layer mix, sharing, latent KV, and tp replication. ``main`` prints
+per-model KV GB at ``--ctx``: naive (every layer full KV heads), actual (after
+layer mix, shared and latent KV), and at the deployment spec's tp.
     kv_budget.py [--ctx 131072]
 """
 

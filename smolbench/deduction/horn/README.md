@@ -150,10 +150,12 @@ calibrated relative in the same family), steps up the ladder m in {1, 2, 3, 4, 6
 7 pass, and stops when 7 or 8 pass, when the target is bracketed by a level already run,
 or at the ladder's end. The pick is the level nearest the target crossing of a logistic
 fit over the levels run (`calibration_pick.py`; `--target` is 0.75 in `calibrate_m.py`
-and 0.70 in `calibration_pick.py`). The first seven models were calibrated on the full
-ladder with 30 theories per level (seeds 200-229) before this rule was set; their picks
-stand. The picks are recorded in `iclr.json`, and the calibration rows are in the
-released results (`horn/calibration/`).
+and 0.70 in `calibration_pick.py`). Two models ran this search: `deepseek-v4-flash` and
+`qwen3.5-397b-a17b` (whose m was then set by hand). The other 14 ran a longer ladder
+(up to 17 levels) on seeds 200-229, with up to 30 theories per level; the levels and
+theory counts for each model are in the released calibration rows. The picks are
+recorded in `iclr.json`, and the calibration rows are in the released results
+(`horn/calibration/`).
 
 ## 8. Analysis
 

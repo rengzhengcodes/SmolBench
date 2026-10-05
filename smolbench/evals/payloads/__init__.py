@@ -10,8 +10,8 @@ do not reformat them, and keep them LF-only (pinned by ``.gitattributes``). The
 non-``.py`` extension keeps formatters and the import machinery away from a
 production byte contract (the agent also reads required env vars at module
 top, so importing it would raise). EC2's 16 KB user-data cap (before base64)
-binds on the GZIP-COMPRESSED bootstrap (``pack_user_data``); the raw render no
-longer fits.
+binds on the GZIP-COMPRESSED bootstrap (``pack_user_data``); the raw render
+exceeds it.
 
 Assets are read ONCE at import into plain ``str`` constants, so a test can
 ``ast.parse()`` them directly and a missing file surfaces at import, not
@@ -41,8 +41,8 @@ AGENT_PY: str = _asset("agent.py.txt")
 
 # Idle watchdog: checks once a minute. A plain loop under Restart=always, NOT
 # the obvious OnUnitActiveSec=60 + Type=oneshot timer -- a oneshot unit never
-# enters the "active" state the timer measures from, so it fires exactly once
-# (measured live: the smoke instance's watchdog never re-armed). Activity =
+# enters the "active" state the timer measures from, so it fires exactly once.
+# Activity is any of:
 #   (a) any authenticated control-agent request (the agent touches last_active),
 #   (b) movement in vLLM's request-token counters, or requests in flight
 #       (clients hit vLLM directly during evals, invisible to the agent), or

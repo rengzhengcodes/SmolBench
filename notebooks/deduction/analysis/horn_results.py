@@ -113,9 +113,9 @@ FIG_LABEL = {
     "qwen3.5-397b-a17b": "397B",
 }
 
-#: m was set by hand, not by the calibration rule.
+#: m set by hand, outside the calibration rule (flag b).
 FORCED = {"qwen3.5-397b-a17b"}
-#: lem below 60% at m = 1 on the calibration seeds; run at m = 1 for the record.
+#: lem below 60% at m = 1 on the calibration seeds, so run at m = 1 (flag c).
 BELOW_FLOOR = {"ministral-3-3b", "ministral-3-8b"}
 
 N_FULL = 1200
@@ -145,7 +145,7 @@ AXIS = "#c3c2b7"
 
 
 def rung_m(rung: str) -> int | None:
-    """``m48`` or ``stage2_m48`` -> 48."""
+    """``m48`` or ``calib_m48`` -> 48."""
     mt = re.search(r"m(\d+)$", str(rung))
     return int(mt.group(1)) if mt else None
 
@@ -459,12 +459,8 @@ def markdown_table(summary: dict[str, dict], spread: str) -> str:
         "over seeds. Bold = best arm, italic = worst arm in the row. Deltas in points, "
         "seed-paired, with 95% bootstrap CI; * p<0.05, ** p<0.01, *** p<0.001 (sign-flip), "
         "† survives Holm across models in that column. Flags: a = incomplete "
-        f"(n < {N_FULL} cells, still running), b = m set by hand, c = below floor (lem < 60% at m=1 on "
-        "calibration seeds), d = a few missing cells counted as failures. Dropped by decision and absent here: exaone-4.0-32b, exaone-4.5-33b, "
-        "k-exaone-236b-a23b, glm-4.5-air (stopped early), deepseek-v4-pro (not run).\n"
-        "Rows for a running box arrive in completion order, so a partial pass rate (flag a) is biased "
-        "toward short generations: quick failures for hard models, quick successes for easy ones. Do not "
-        f"read a flagged row until n is a good fraction of {N_FULL}.\n"
+        f"(n < {N_FULL} cells), b = m set by hand, c = below floor (lem < 60% at m=1 on "
+        "calibration seeds), d = a few missing cells counted as failures.\n"
     )
     return "\n".join(lines) + "\n" + note
 

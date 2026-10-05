@@ -3,7 +3,7 @@
 Use deploy-spec revision pins so moving branch tips cannot alter audited KV
 figures; config wins over model cards because it matches served weights.
 Keep pinned and resolved SHAs to detect moved or deleted pins. ``--check``
-writes nothing so disagreement preserves prior audit files.
+writes nothing on a mismatch, so disagreement preserves prior audit files.
 """
 
 from __future__ import annotations
@@ -245,7 +245,7 @@ def _rle(items: List[Any]) -> List[Dict[str, Any]]:
 def _motif(items: List[Any]) -> Optional[Dict[str, Any]]:
     """Find the shortest repeating motif that tiles ``items`` exactly.
 
-    Diagrams use the motif and multiplier rather than 61 individual layers.
+    Report the motif and multiplier rather than 61 individual layers.
 
     Parameters
     ----------
@@ -302,7 +302,7 @@ def _hoist(config: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
 
 
 def _classify(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Group a hoisted config's keys into the diagram's structural sections."""
+    """Group a hoisted config's keys into structural sections."""
     groups = {
         "shape": _SHAPE_KEYS,
         "attention": _ATTENTION_KEYS,

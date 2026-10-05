@@ -38,6 +38,8 @@ def fresh_client(service: str, region: Optional[str] = None):
 
     Parameters
     ----------
+    service : str
+        AWS service name passed to boto3's Session.client.
     region : str, optional
         None defers to boto3's own resolution order; callers pass None for IAM,
         a global service.

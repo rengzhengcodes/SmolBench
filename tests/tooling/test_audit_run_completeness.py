@@ -55,7 +55,7 @@ def fake_driver(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 def test_a_cell_with_nothing_landed_is_examined_and_reported(
     fake_driver: SimpleNamespace,
 ) -> None:
-    """An empty store used to yield {} and read as 'ok'."""
+    """A cell with nothing landed is examined and reported missing, not read as 'ok'."""
     store = FakeStore()  # every cell empty
     gaps, examined = audit.audit_induction(store=store)
     assert examined == 4
@@ -87,7 +87,7 @@ def test_a_complete_grid_reports_nothing(fake_driver: SimpleNamespace) -> None:
 def test_an_extra_seed_is_named_not_counted_negative(
     fake_driver: SimpleNamespace,
 ) -> None:
-    """`EXPECTED_SEEDS - len(seeds)` turned a 4th seed into missing = -1."""
+    """An extra seed is reported as unexpected, never as a negative missing count."""
     store = FakeStore(
         seeds_by_cell={("model-a", "zero"): (0, 1, 2, 3)}, default=(0, 1, 2)
     )

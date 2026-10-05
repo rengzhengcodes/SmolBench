@@ -539,7 +539,7 @@ def test_presence_reads_an_empty_first_sweep_as_unknown_not_as_gone() -> None:
     assert presence.lanes == set(), "once a lane has been seen, empty means empty"
 
 
-def test_an_empty_sweep_no_longer_turns_a_crash_into_an_endless_reclaim(
+def test_an_empty_sweep_does_not_turn_a_crash_into_an_endless_reclaim(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -867,7 +867,7 @@ def test_a_completed_shard_still_terminates_its_own_box(
     assert terminated == [shard]
 
 
-def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
+def test_run_fleet_is_a_thin_entry_point_over_lane_env_and_supervisor() -> None:
     """run_fleet remains a thin entry point."""
     assert fleet._lane_env is laneenv and fleet._supervisor is sup
     for name in (
@@ -883,7 +883,7 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
         "FLEET_IMAGE",
     ):
         assert hasattr(laneenv, name), name
-        assert not hasattr(fleet, name), f"run_fleet still owns {name}"
+        assert not hasattr(fleet, name), f"run_fleet defines {name}"
     for name in (
         "_LaneRun",
         "_Presence",
@@ -901,7 +901,7 @@ def test_run_fleet_is_a_thin_entry_point_over_the_split_modules() -> None:
         "preflight",
     ):
         assert hasattr(sup, name), name
-        assert not hasattr(fleet, name), f"run_fleet still owns {name}"
+        assert not hasattr(fleet, name), f"run_fleet defines {name}"
     for name in ("main", "_build_arg_parser", "_selected_lanes", "_print_dry_run_plan"):
         assert hasattr(fleet, name), name
     body = (SCRIPTS / "fleet" / "run_fleet.py").read_text()

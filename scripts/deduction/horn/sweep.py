@@ -7,8 +7,9 @@ message, sent once with the model's thinking arguments, a sampling temperature a
 output cap. No tools, no file reading: the served model sees the whole prompt in one
 context. Responses stream by default so a long generation does not hit an idle timeout.
 
-The answer is the last contiguous block of ``derive`` lines after any reasoning block is
-removed, scored with ``smolbench.deduction.horn.checker.verify``. A response cut at the
+The answer is the final proof block after any reasoning block is removed
+(``smolbench.deduction.horn.extract``, mode set by ``--scoring``), scored with
+``smolbench.deduction.horn.checker.verify``. A response cut at the
 output cap (``finish_reason == "length"``) scores as ``length``. A cell whose request
 failed, or whose finish reason is neither ``stop`` nor ``length``, is written with verdict
 ``exception`` and is retried on the next run.

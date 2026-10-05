@@ -7,8 +7,7 @@ model's reasoning. It holds two studies:
   examples. See `smolbench/induction/README.md`.
 - **Horn-rule deduction.** Models prove a goal from a library of Horn rules. The library
   is shown compactly (high density), with every lemma's full derivation tree (low
-  density), with length-matched irrelevant text, or with dead trees that can't be used.
-  This is the deduction benchmark of the ICLR 2027 submission. See
+  density), with length-matched irrelevant text, or with dead trees that can't be used. See
   `smolbench/deduction/horn/README.md`.
 
 This page explains how to install the code, rebuild the Horn and induction tables from the
