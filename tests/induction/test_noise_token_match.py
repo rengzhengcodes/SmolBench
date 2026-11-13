@@ -178,15 +178,20 @@ def test_a_target_the_pad_unit_cannot_step_to_raises() -> None:
 
 
 @pytest.mark.parametrize("n", (1, 2))
-def test_tiny_configs_raise_rather_than_ship_an_unpadded_noise_arm(
+def test_tiny_configs_still_pad_because_extens_carries_the_rules(
     tokenizer: StubTokenizer | TiktokenTokenizer,
     n: int,
 ) -> None:
-    """Reject tiny configs: extens listings cannot pad their noise controls."""
-    with pytest.raises(ValueError):
-        get_periodic_numeric_quiz(
-            PeriodicConfig(n=n, labels=n, seed=0),
-            PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
-            tokenizer=tokenizer,
-            conditions=POSITIVE_ARMS,
-        )
+    """Even tiny configs pad: extens prepends the rules, so it always exceeds intens."""
+    quizzes = get_periodic_numeric_quiz(
+        PeriodicConfig(n=n, labels=n, seed=0),
+        PeriodicPrompter(PERIODIC_TMPL, numeric_count_query_gen),
+        tokenizer=tokenizer,
+        conditions=POSITIVE_ARMS,
+    )
+    for intens_q, extens_q, noise_q in zip(
+        quizzes["intens"], quizzes["extens"], quizzes["noise_intens"]
+    ):
+        assert extens_q.prompt.startswith(intens_q.prompt.split("\nQ:")[0])
+        assert tokenizer.count(extens_q.prompt) > tokenizer.count(intens_q.prompt)
+        assert tokenizer.count(noise_q.prompt) == tokenizer.count(extens_q.prompt)

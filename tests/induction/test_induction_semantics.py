@@ -256,7 +256,7 @@ def test_a_single_digit_range_does_not_refuse_a_range_free_template() -> None:
     quizzes = _quizzes(
         PeriodicConfig(n=1, labels=1, seed=3),
         numeric_prompter(range_free_template=counting),
-        # n=1 leaves the extensional arm too short to pad against.
+        # Only the range-free arm is under test here.
         conditions={"zero": CONDITIONS["zero"]},
     )
     assert all("counted starting from 1" in q.prompt for q in quizzes["zero"])

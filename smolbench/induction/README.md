@@ -1,9 +1,10 @@
 # Induction
 
-This study compares extensional evidence lists with intensional pattern rules.
+This study compares intensional pattern rules alone with the same rules
+followed by their extensional evidence list.
 
 `noise_intens` pads the intensional prompt to the extensional token count under
-the tested model's tokenizer, separating length from representation. `zero`
+the tested model's tokenizer, separating length from the added evidence. `zero`
 uses an empty context and omits `$seq_len`, which would reveal the period-1
 answer.
 
@@ -14,8 +15,9 @@ Conditions (`intens`, `extens`, `noise_intens`, `zero`) come from
 
 A periodic pattern combines labels from rules firing at multiples of each period.
 
-Extensional: "Position 2: fizz. Position 3: buzz. ... Position 6: fizz|buzz."
 Intensional: "Every 2 positions write fizz. Every 3 positions write buzz."
+Extensional: the intensional rules, then "Position 2: fizz. Position 3: buzz.
+... Position 6: fizz|buzz."
 
 Queries ask membership at a position or a count across one period.
 

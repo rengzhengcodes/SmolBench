@@ -225,7 +225,8 @@ class Condition:
 CONDITIONS: Mapping[str, Condition] = MappingProxyType(
     {
         "intens": Condition(context=lambda c: c.intensional),
-        "extens": Condition(context=lambda c: c.extensional),
+        # The listing follows the rules, so extens is intens plus the evidence.
+        "extens": Condition(context=lambda c: c.intensional + c.extensional),
         # Matches extens length to isolate prompt length.
         "noise_intens": Condition(
             context=lambda c: c.intensional, match_tokens_to="extens"
