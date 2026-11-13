@@ -24,6 +24,11 @@ Keep these files together: sibling loading resolves via `Path(__file__).parent`.
 
 The Horn sweep and calibration drivers live in [`scripts/deduction/horn/`](deduction/horn/); see the [Horn benchmark documentation](../smolbench/deduction/horn/README.md).
 
+## scripts/cloud/ -- Claude Code cloud sessions
+
+`setup.sh` and `session_start.sh` prepare a Claude Code cloud environment for
+development on this repository; see the [runbook](cloud/README.md).
+
 ## scripts/results/ -- results-store admin, grading, and audit tooling
 
 | File | What it's for |
