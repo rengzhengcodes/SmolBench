@@ -1828,6 +1828,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     poll_s: int = attention.DEFAULT_POLL_S,
     batch_timeout_s: int = attention.DEFAULT_BATCH_TIMEOUT_S,
     url_ttl_s: int = attention.DEFAULT_URL_TTL_S,
+    audit_arrays: str = "all",
     tokenizer_for: Optional[Callable[[str], Any]] = None,
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
@@ -1861,6 +1862,10 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         Run a model listed in ``CAPTURE_UNSUPPORTED`` anyway.
     batch_size, poll_s, batch_timeout_s, url_ttl_s : int, optional
         Passed to ``attention.run_capture_batches``.
+    audit_arrays : str, optional
+        ``"all"`` (default) downloads and checks the arrays of every captured job;
+        ``"sample"`` checks one job per run and only the meta of the rest (see
+        ``audit_captures``).
     tokenizer_for, template_for, config_for : Callable, optional
         Overrides of the pinned tokenizer, chat template and config (see ``plan_replay``).
     ec2 : Any, optional
@@ -1903,7 +1908,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     A failure while writing the manifests does not lose the report: it is recorded
     in ``ReplayReport.manifest_error``, logged at ERROR, the manifests written so
     far stay in ``ReplayReport.manifests``, the box is still terminated and the
-    report is returned. The content audit uses the default ``arrays="sample"``.
+    report is returned.
     """
     # Phase 1: offline plan and the launch summary, shown before the gate.
     from smolbench.evals.providers import ec2 as real_ec2
@@ -1932,6 +1937,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         raise ValueError(f"batch_size must be >= 1, got {batch_size}")
     if url_ttl_s <= batch_timeout_s:
         raise ValueError(f"url_ttl_s={url_ttl_s} must exceed batch_timeout_s={batch_timeout_s}")
+    if audit_arrays not in ("sample", "all"):
+        raise ValueError(f"audit_arrays must be 'sample' or 'all', got {audit_arrays!r}")
     if not planned and plan.errors:
         raise RuntimeError(f"{model_key}: nothing to capture, the plan failed: {plan.errors[0]}")
 
@@ -2019,7 +2026,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             verified_set = set(result.verified)
             audit = audit_captures(
                 make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
-                model=model_key, config=config,
+                model=model_key, config=config, arrays=audit_arrays,
             )
             for job_id, reason in audit.items():
                 if reason is None:

@@ -18,6 +18,8 @@ ICLR runs: Bedrock's output caps, the induction temperature default, and seeding
 |---|---|
 | `bedrock_trio.ipynb` | The notebook: authenticate, force reasoning, check prompts, run, report |
 | `bedrock_trio.py` | Roster, endpoint switch, results store and reasoning checks over the existing run code |
+| `attention_replay.py` | Replays stored induction transcripts through self-hosted checkpoints to capture attention (see below) |
+| `attention_state/` | EC2 state of a replay in progress (not committed) |
 | `results/` | Local mirror of the bucket (not committed), described below |
 | `rungs/` | Rendered Horn rungs (not committed) |
 
@@ -32,6 +34,8 @@ overwritten or deleted, and a rerun adds new stamped keys.
 | `induction/<model>/seed=<s>/<arm>--<stamp>.yaml` | One induction replicate, in the released-results layout |
 | `deduction/horn/<model>/rows--<stamp>.jsonl` | A part of Horn rows: the rows one push added |
 | `probes/probes--<stamp>.json` | Model ids and the reasoning fields each model accepted |
+| `attention/induction/<model>/seed=<s>/<arm>--<stamp>/q<i>.r<rank>.{npz,json}` | Attention summary of one induction mark, one object pair per tensor-parallel rank |
+| `attention/induction/<model>/seed=<s>/<arm>--<stamp>/manifest--<ts>.json` | What one replay captured for that run |
 
 `results/` is a mirror that the report cells read: `results/induction/induction/<model>/seed=<s>/...`
 (what `smolbench.induction.repro` reads), `results/horn/<model>.jsonl` (what
@@ -68,6 +72,37 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
   carried the listing only, so only `intens` is like-for-like with the published values. The
   notebook's prompt check compares each arm with the released prompts in the way that
   matches this.
+
+## Attention
+
+Bedrock returns no attention weights. `attention_replay.py` replays each stored induction
+mark (prompt, returned reasoning, answer) through the matching open-weights checkpoint on a
+self-hosted vLLM server on EC2, teacher-forced, with a capture plugin. For each response
+token, layer and head it stores the attention mass on four classes of earlier tokens (the
+informative prompt, the whitespace padding of `noise_intens`, template tokens, the response
+so far) and the entropy. The captures measure the open checkpoint reading Bedrock's text,
+not Bedrock's own serving. `attention_replay.APPROXIMATIONS` lists the differences: token
+ids are encoded again from text, the chat template is the open repository's, and newlines
+around the thinking delimiters are not restored.
+
+The notebook section is off by default and has two switches:
+
+- `ATTENTION = True` plans the replay offline (jobs, tokens, errors, storage estimate). It
+  makes no AWS call.
+- `ATTENTION_APPROVED = True` launches. `replay_model` provisions one billed EC2 spot GPU
+  instance, serves the checkpoint, captures, audits every stored array against the model's
+  shape and terminates the instance. It refuses anything but the literal `True` before
+  any AWS client is built.
+
+Safeguards: a mark with mis-decoded text is listed as an error and never sent; jobs already
+in the bucket are skipped; uploads use `If-None-Match: *`, so they cannot replace an
+object; a job with only some of its rank objects is reported as partial.
+
+`deepseek-v3.1` is refused. vLLM serves it with multi-head latent attention (a separate
+MLA layer), which the capture hook does not reach, so a run would store nothing.
+
+The replay has never run against a live instance. Its offline tests are in
+`tests/rebuttal/test_attention_replay.py` and `tests/evals/test_attention*.py`.
 
 ## Run
 

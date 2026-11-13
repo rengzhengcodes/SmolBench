@@ -370,6 +370,29 @@ def test_replay_refuses_deepseek_before_any_aws_call(tmp_path) -> None:
     assert box.calls == []
 
 
+@pytest.mark.parametrize("kw, expected", [({}, "all"), ({"audit_arrays": "sample"}, "sample")])
+def test_replay_audits_every_jobs_arrays_unless_told_to_sample(tmp_path, monkeypatch, kw, expected) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3, seen, real = FakeS3(), [], ar.audit_captures
+
+    def audit(*args, **kwargs):
+        seen.append(kwargs["arrays"])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ar, "audit_captures", audit)
+    report = _replay(tmp_path, AuditedBox(s3), s3, **kw)
+    assert seen == [expected]
+    assert report.verified and not report.audit_failures
+
+
+def test_replay_rejects_a_bad_audit_mode_before_the_box_is_provisioned(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ValueError, match="audit_arrays"):
+        _replay(tmp_path, box, box.s3, audit_arrays="every")
+    assert box.calls == []
+
+
 def test_replay_resumes_and_never_writes_a_key_twice(tmp_path) -> None:
     _write_results(tmp_path, GEMMA)
     s3 = FakeS3()

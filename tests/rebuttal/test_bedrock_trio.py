@@ -211,6 +211,10 @@ def test_induction_s3_writes_expected_keys_resumes_and_pulls_a_readable_tree(
     assert set(cells) == {("deepseek-v3.1", arm) for arm in bt.INDUCTION_ARMS}
     assert (mirror / "induction" / "induction" / "deepseek-v3.1" / "seed=0").is_dir()
     assert not list(mirror.rglob("*.part")) and not list(mirror.rglob("README.txt"))
+    # The attention replay reads the same mirror, from the same root as the report.
+    ar = load_by_path(REPO_ROOT / "rebuttal" / "attention_replay.py", "attention_replay_for_bedrock_trio")
+    runs = ar.find_runs(mirror / "induction", "deepseek-v3.1")
+    assert sorted(run.path.name.split("--")[0] for run in runs) == sorted(bt.INDUCTION_ARMS)
 
     stamp = harness.store.list_runs(_addr("noise_intens"))[0]
     harness.store.supersede(_addr("noise_intens"), stamp, "test")
