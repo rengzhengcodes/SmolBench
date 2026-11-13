@@ -56,6 +56,13 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
 
 - **Horn arms.** `horn_repro.report` gives contrasts for the four paper arms only; the four
   review arms appear in its per-arm pass rates and in the notebook's per-arm breakdown.
+- **Horn output caps.** The published DeepSeek and Nemotron Horn rows ran through the
+  Bedrock Converse API in `us-east-2` with a 131,072-token output cap. This notebook sends
+  the model-card caps (8K and 32K) to bedrock-mantle, and most generations need more: in
+  the published cells every DeepSeek success is longer than 8K. Horn pass rates from this
+  notebook are therefore not comparable with the published ones until the cap is raised.
+  The report prints the published rates next to what they would be under the caps here
+  (`bedrock_trio.horn_reference`, from `notebooks/deduction/review/bedrock_cells.csv`).
 - **`extens`.** On this branch the `extens` context is the intensional rules followed by the
   listing. The published `extens` and `noise_intens` values come from the earlier arm, which
   carried the listing only, so only `intens` is like-for-like with the published values. The

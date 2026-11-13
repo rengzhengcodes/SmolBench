@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import csv
 import importlib.util
 import json
 import logging
@@ -50,6 +51,9 @@ REBUTTAL_DIR = REPO_ROOT / "rebuttal"
 RESULTS_DIR = REBUTTAL_DIR / "results"
 #: Rendered Horn rungs; deterministic and digest-checked, so not committed.
 RUNGS_DIR = REBUTTAL_DIR / "rungs"
+# Per-cell verdicts of the paper's Bedrock Horn cells and of the review-round ``rep`` and
+# ``tjunk`` cells (Converse API, us-east-2, 131,072-token output cap).
+REVIEW_CELLS = REPO_ROOT / "notebooks" / "deduction" / "review" / "bedrock_cells.csv"
 
 MANTLE_URL = "https://bedrock-mantle.{region}.api.aws{path}"
 DEFAULT_REGION = "us-east-1"
@@ -1228,3 +1232,48 @@ def horn_breakdown(paths: Sequence[Path]) -> dict[tuple[str, str], dict]:
                 c[f"finish:{r.get('finish_reason')}"] += 1
                 c["unreasoned"] += not reasoned(r.get("reasoning"))
     return {k: dict(v) for k, v in out.items()}
+
+
+def horn_reference(
+    keys: Sequence[str], path: Path = REVIEW_CELLS
+) -> dict[tuple[str, str], dict]:
+    """Per (model, arm): the published Bedrock Horn cells, as run and under the caps here.
+
+    The cells in `path` ran through the Converse API with a 131,072-token output cap.
+    This notebook sends each model's ``max_tokens``, which is lower, so the published
+    rate is not what the same generations would score here.
+
+    Parameters
+    ----------
+    keys : Sequence[str]
+        Roster keys. A model with no cell in `path` (Gemma 4 ran on vLLM) is left out.
+    path : Path, optional
+        The per-cell CSV (columns ``model``, ``m``, ``arm``, ``verdict``,
+        ``completion_tokens``).
+
+    Returns
+    -------
+    dict[tuple[str, str], dict]
+        ``cells``; ``m``; ``pass``, the published pass rate in percent; ``pass_capped``,
+        the rate when a success counts only if its completion fits ``max_tokens``; and
+        ``over_cap``, the percentage of cells whose completion is longer than that.
+    """
+    wanted = set(keys)
+    cells: dict[tuple[str, str], list[tuple[bool, int, int]]] = collections.defaultdict(list)
+    with Path(path).open(newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            if r["model"] in wanted:
+                cells[(r["model"], r["arm"])].append(
+                    (r["verdict"] == "success", int(r["completion_tokens"]), int(r["m"]))
+                )
+    out = {}
+    for (key, arm), rows in cells.items():
+        cap, n = TRIO[key].max_tokens, len(rows)
+        out[(key, arm)] = {
+            "cells": n,
+            "m": rows[0][2],
+            "pass": 100 * sum(ok for ok, _, _ in rows) / n,
+            "pass_capped": 100 * sum(ok and toks <= cap for ok, toks, _ in rows) / n,
+            "over_cap": 100 * sum(toks > cap for _, toks, _ in rows) / n,
+        }
+    return out

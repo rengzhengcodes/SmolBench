@@ -470,3 +470,30 @@ def test_a_torn_last_line_is_neither_pushed_nor_counted(fake_s3, tmp_path):
     out.write_text(out.read_text() + '{"torn')
     breakdown = bt.horn_breakdown([out])
     assert sum(c["rows"] for c in breakdown.values()) == 2
+
+
+def test_horn_reference_recomputes_published_rates_under_the_caps_here(tmp_path):
+    deep, nemo = DSV31.key, NEMO.key
+    cells = tmp_path / "cells.csv"
+    cells.write_text(
+        "model,model_id,m,arm,seed,rep,verdict,route,steps,finish_reason,completion_tokens,batch\n"
+        f"{deep},x,64,lem,100,0,success,short,1,stop,8192,2026-09\n"
+        f"{deep},x,64,lem,100,1,success,short,1,stop,8193,2026-09\n"
+        f"{deep},x,64,lem,101,0,invalid_step,short,1,stop,90000,2026-09\n"
+        f"{deep},x,64,lem,101,1,invalid_step,short,1,stop,10,2026-09\n"
+        "glm-4.7,x,48,lem,100,0,success,short,1,stop,10,2026-09\n",
+        encoding="utf-8",
+    )
+    ref = bt.horn_reference([deep, GEMMA.key], cells)
+    assert ref == {
+        (deep, "lem"): {"cells": 4, "m": 64, "pass": 50.0, "pass_capped": 25.0, "over_cap": 50.0}
+    }
+
+    # The committed cells: the paper table's rate, and no DeepSeek success fits in 8K.
+    real = bt.horn_reference(list(bt.TRIO))
+    assert {k for k, _ in real} == {deep, nemo}
+    assert {arm for _, arm in real} == {"lem", "pad", "disc", "both", "rep", "tjunk"}
+    assert all(v["cells"] == 300 for v in real.values())
+    assert round(real[(deep, "lem")]["pass"], 1) == 64.0
+    assert real[(deep, "lem")]["pass_capped"] == 0.0
+    assert round(real[(nemo, "rep")]["pass"], 1) == 61.3
