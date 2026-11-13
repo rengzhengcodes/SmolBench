@@ -19,7 +19,13 @@ bt = load_by_path(REPO_ROOT / "rebuttal" / "bedrock_trio.py", "bedrock_trio_unde
 GEMMA = bt.TRIO["gemma-4-31b"]
 NEMO = bt.TRIO["nemotron-3-super-120b-a12b"]
 DSV31 = replace(bt.TRIO["deepseek-v3.1"], bedrock_id="deepseek.v3-v1:0")
-ROUTED_ENV = ("INFERENCE_PROVIDER", "AWS_INFERENCE_BASE_URL", "AWS_INFERENCE_BODY_MODEL")
+ROUTED_ENV = (
+    "INFERENCE_PROVIDER",
+    "AWS_INFERENCE_BASE_URL",
+    "AWS_INFERENCE_BODY_MODEL",
+    "AWS_BEDROCK_STREAM_COMPLETIONS",
+    "HORN_STREAM_COMPLETIONS",
+)
 
 
 def _final(content, reasoning=None, finish_reason="stop"):
@@ -54,6 +60,7 @@ def test_probe_routes_per_model_and_sends_seed_and_reasoning(mantle, model, path
     assert body["seed"] == 5
     assert body["reasoning_effort"] == "high"
     assert body["max_completion_tokens"] == min(model.max_tokens, 4096)
+    assert body["stream"] is True
     assert not any(k in os.environ for k in ROUTED_ENV), "use_model must restore the env"
 
 
@@ -80,8 +87,8 @@ def test_resolve_ids_fills_deepseek_v31_and_checks_known_ids():
     listing = ["google.gemma-4-31b", "nvidia.nemotron-super-3-120b", "deepseek.v3.2", "deepseek.v3-v1:0"]
     out = bt.resolve_ids(listing)
     assert out["deepseek-v3.1"].bedrock_id == "deepseek.v3-v1:0"
-    with pytest.raises(LookupError, match="gemma"):
-        bt.resolve_ids(listing[1:])
+    # A known id missing from the listing is left for the probe to check.
+    assert bt.resolve_ids(listing[1:])["gemma-4-31b"].bedrock_id == "google.gemma-4-31b"
     with pytest.raises(LookupError, match="deepseek"):
         bt.resolve_ids(listing[:3])
 
@@ -118,6 +125,7 @@ def test_horn_rows_score_and_load_through_stats(mantle, tmp_path):
     assert {r["verdict"] for r in rows} == {"success"}
     body = mantle.requests[-1]["body"]
     assert body["temperature"] == 0.7 and body["seed"] == 0 and body["reasoning_effort"] == "high"
+    assert body["stream"] is True and all(r["reasoning"] == "plan" for r in rows)
     assert mantle.requests[-1]["path"] == "/v1/chat/completions"
 
     cells, dropped = stats.load_rows([out])

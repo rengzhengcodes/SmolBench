@@ -15,6 +15,7 @@ import collections
 import contextlib
 import importlib.util
 import json
+import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -176,13 +177,17 @@ def resolve_ids(
     Raises
     ------
     LookupError
-        If a known id is not listed, or the hints match no id or more than one.
+        If the hints of an unresolved id match no id or more than one. A known id
+        missing from the listing only logs a warning.
     """
     out = {}
     for key, model in trio.items():
         if model.bedrock_id is not None:
             if model.bedrock_id not in listing:
-                raise LookupError(f"{key}: {model.bedrock_id!r} not listed: {sorted(listing)}")
+                # The probe is the access check: it reports the HTTP error body (such as
+                # a 401 for a model not enabled on the account), which says more than
+                # an absence from a listing that may not cover every path.
+                logging.warning("%s: %r not in GET /models; the probe will check it", key, model.bedrock_id)
             out[key] = model
             continue
         hits = [i for i in listing if all(h in i.lower() for h in model.id_hints)]
@@ -195,22 +200,8 @@ def resolve_ids(
 
 
 @contextlib.contextmanager
-def use_model(model: BedrockModel, region: str) -> Iterator[None]:
-    """Route ``smolbench.evals.provider`` calls to this model on bedrock-mantle.
-
-    ``providers.aws`` reads these variables when each request is made, so the roster key
-    stays the model name everywhere else (harness tags, tokenizer, result paths) while
-    the request body carries the Bedrock id.
-    """
-    if model.bedrock_id is None:
-        raise ValueError(f"{model.key}: resolve the Bedrock id first (resolve_ids)")
-    env = {
-        "INFERENCE_PROVIDER": "aws",
-        "AWS_REGION": region,
-        "AWS_INFERENCE_BASE_URL": base_url(model, region),
-        "AWS_INFERENCE_BODY_MODEL": model.bedrock_id,
-        "AWS_BEDROCK_CONTEXT_LENGTH": str(model.context_length),
-    }
+def _env(**env: str) -> Iterator[None]:
+    """Set environment variables for the duration of a block, then restore them."""
     saved = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     try:
@@ -221,6 +212,26 @@ def use_model(model: BedrockModel, region: str) -> Iterator[None]:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+def use_model(model: BedrockModel, region: str, stream: bool = True) -> contextlib.AbstractContextManager:
+    """Route ``smolbench.evals.provider`` calls to this model on bedrock-mantle.
+
+    ``providers.aws`` reads these variables when each request is made, so the roster key
+    stays the model name everywhere else (harness tags, tokenizer, result paths) while
+    the request body carries the Bedrock id. Streaming is on by default: long reasoning
+    responses can outlast an idle non-streamed connection.
+    """
+    if model.bedrock_id is None:
+        raise ValueError(f"{model.key}: resolve the Bedrock id first (resolve_ids)")
+    return _env(
+        INFERENCE_PROVIDER="aws",
+        AWS_REGION=region,
+        AWS_INFERENCE_BASE_URL=base_url(model, region),
+        AWS_INFERENCE_BODY_MODEL=model.bedrock_id,
+        AWS_BEDROCK_CONTEXT_LENGTH=str(model.context_length),
+        AWS_BEDROCK_STREAM_COMPLETIONS="1" if stream else "0",
+    )
 
 
 # ---------------------------------------------------------------------- reasoning
@@ -412,13 +423,14 @@ def run_induction(
     region: str,
     reasoning_args: dict,
     max_parallel: int = 8,
+    stream: bool = True,
 ) -> None:
     """Collect every outstanding induction replicate of one model.
 
     Temperature is not sent: the ICLR induction runs used the server default.
     """
     extra_args = {"max_completion_tokens": model.max_tokens} | reasoning_args
-    with use_model(model, region):
+    with use_model(model, region, stream):
         harness.run_replicates(
             model.key,
             extra_args=extra_args,
@@ -542,6 +554,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     reps: int,
     concurrency: int = 8,
     out: Optional[Path] = None,
+    stream: bool = True,
 ) -> list[dict]:
     """Run and score every outstanding Horn cell of one model with ``sweep.run_cell``.
 
@@ -588,7 +601,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     cells = sweep.cells_in(rung, list(HORN_ARMS), list(seeds), reps)
     todo = [c for c in cells if (st.model,) + c.key not in done]
     rows: list[dict] = []
-    with fh, ThreadPoolExecutor(concurrency) as pool:
+    with fh, _env(HORN_STREAM_COMPLETIONS="1" if stream else "0"), ThreadPoolExecutor(concurrency) as pool:
         futs = [pool.submit(sweep.run_cell, client, c, st) for c in todo]
         for fut in as_completed(futs):
             row = fut.result() | {"provider": f"bedrock-mantle:{region}"}
