@@ -110,9 +110,19 @@ def collect_stream(response: requests.Response) -> Dict[str, Any]:
     saw_content = False
     saw_done = False
 
-    for line in response.iter_lines(decode_unicode=True):
-        if not line:
+    # Lines are read as bytes and decoded here, for two reasons. SSE is UTF-8 by definition,
+    # but ``requests`` reads a ``text/event-stream`` response that names no charset as
+    # ISO-8859-1, which corrupts every non-ASCII character. And a decoded stream is split with
+    # ``str.splitlines``, which also breaks at U+2028, U+2029 and U+0085 inside a JSON string.
+    for raw in response.iter_lines():
+        if not raw:
             continue
+        try:
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        except UnicodeDecodeError as err:
+            raise requests.exceptions.ChunkedEncodingError(
+                f"SSE line is not UTF-8: {raw[:200]!r}"
+            ) from err
         if not line.startswith("data:"):
             continue  # SSE comment/keepalive line
         payload = line[len("data:") :].strip()

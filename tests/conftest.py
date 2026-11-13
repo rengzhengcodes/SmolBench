@@ -79,7 +79,8 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         def frame(chunk: Any) -> None:
             """Write one server-sent event frame."""
-            self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+            # Raw UTF-8, as real servers send it; the header above names no charset.
+            self.wfile.write(f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode())
 
         for key in ("reasoning_content", "reasoning"):
             for ch in message.get(key) or "":

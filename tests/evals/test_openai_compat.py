@@ -150,6 +150,15 @@ def test_collect_stream_rejects_malformed_or_truncated_streams(frames):
         collect_stream(_stream_of(frames))
 
 
+def test_collect_stream_decodes_utf8_bytes_and_keeps_unicode_line_separators():
+    text = "a ∧ b → c\u2028next\x85end"
+    frame = "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}, ensure_ascii=False)
+    body = collect_stream(_stream_of([frame.encode("utf-8"), b"data: [DONE]"]))
+    assert body["choices"][0]["message"]["content"] == text
+    with pytest.raises(requests.exceptions.ChunkedEncodingError):
+        collect_stream(_stream_of([b"data: \xff\xfe", b"data: [DONE]"]))
+
+
 def test_collect_stream_accepts_finish_reason_without_done():
     """Some servers end the stream after the final chunk without a [DONE] sentinel."""
     frames = [
