@@ -86,12 +86,18 @@ The directory name repeats the stored result file's ``<arm>--<stamp>`` so a
 capture can always be traced to the one file it was built from. ``rank`` runs
 over the tensor-parallel ranks of the box.
 
-The bucket is APPEND-ONLY. A presigned PUT silently replaces an existing
-object, so before provisioning this module lists every job's keys; a job with
-ANY key present is never sent and is reported (``skipped_existing``). A job
-with some but not all of its rank-0 objects is also reported as ``partial``:
-inspect those by hand. Manifests are written once under a microsecond stamp
-after the key is shown to be absent. Nothing here deletes or overwrites.
+The bucket is APPEND-ONLY. The presigned PUT URLs sign ``If-None-Match: *``,
+so S3 refuses a PUT onto an existing key with 412. Before provisioning this
+module still lists every job's keys, because a re-sent job would only fail
+with 412 on a billed box and a partial rank set cannot be completed by
+re-sending: a job with ANY key present is never sent and is reported
+(``skipped_existing``). Each tensor-parallel rank uploads its own npz and json,
+so a stored job is complete only when both objects of every rank ``0..tp-1``
+exist; a job with some but not all of them is also reported as ``partial``
+(every missing key is logged): inspect those by hand. When the tp of the plan
+is unknown only the two rank-0 objects can be checked, and the log line says
+so. Manifests are written once under a microsecond stamp after the key is
+shown to be absent. Nothing here deletes or overwrites.
 
 Spending money needs an explicit decision. ``replay_model`` raises
 ``ApprovalRequired`` unless ``approved is True`` (the singleton; ``1`` and
@@ -121,7 +127,9 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +174,7 @@ __all__ = [
     "job_id_for",
     "load_chat_template",
     "load_model_config",
+    "looks_misdecoded",
     "plan_replay",
     "read_captures",
     "rebuild_sequence",
@@ -294,6 +303,9 @@ _SPECIAL_TOKEN_RE = re.compile(r"<[^<>\s]*>")
 _ROW_SUM_TOL: float = 2e-2
 #: Allowed negative excess of an entropy value (float16 rounding of a zero).
 _ENTROPY_FLOOR: float = -1e-3
+#: Slack added to the entropy ceiling ``ln(attended keys)``: the box stores entropy
+#: as float16, whose spacing near the largest values (~12 nats) is about 8e-3.
+_ENTROPY_CEIL_TOL: float = 1e-2
 
 # --------------------------------------------------------------------------- errors
 
@@ -608,11 +620,14 @@ def load_chat_template(model: str, *, local_files_only: bool = False) -> ChatTem
     TemplateUnavailable
         When no template can be read. The message gives the repo, revision and the
         underlying error. A fetch error on ``chat_template.jinja`` that is not
-        "file absent" also raises, because falling back to the config's template
-        could then pick a different template than the repository's.
+        a real "file absent" answer also raises, because falling back to the
+        config's template could then pick a different template than the
+        repository's. With `local_files_only`, a file that is merely not cached
+        is such an error; only the hub's cached "not in the repository" marker
+        (or a live "not in the repository" answer) allows the fallback.
     """
-    from huggingface_hub import hf_hub_download
-    from huggingface_hub.errors import EntryNotFoundError
+    from huggingface_hub import _CACHED_NO_EXIST, hf_hub_download, try_to_load_from_cache
+    from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
 
     _spec, repo, revision = _spec_repo_revision(model)
     where = f"{repo}@{revision or 'HEAD'}"
@@ -630,8 +645,22 @@ def load_chat_template(model: str, *, local_files_only: bool = False) -> ChatTem
             repo, "chat_template.jinja", revision=revision, local_files_only=local_files_only
         )
         source = Path(path).read_text(encoding="utf-8")
+    except LocalEntryNotFoundError as exc:
+        # LocalEntryNotFoundError subclasses EntryNotFoundError, so it must be
+        # caught first. Offline, the hub raises it both for a file that is simply
+        # not cached and for a file the hub once answered "not in the repository"
+        # (recorded as a .no_exist marker). Only the second is a real absence;
+        # falling back on the first could pick a different template than the
+        # repository's own file.
+        marker = try_to_load_from_cache(repo, "chat_template.jinja", revision=revision)
+        if marker is not _CACHED_NO_EXIST:
+            raise TemplateUnavailable(
+                f"{model}: cannot fetch chat_template.jinja of {where}: it is not in the local "
+                "cache and no cached 'not in the repository' answer exists: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
     except EntryNotFoundError:
-        pass  # the repository has no template file: the config entry decides
+        pass  # the hub said the repository has no template file: the config entry decides
     except Exception as exc:  # noqa: BLE001
         raise TemplateUnavailable(
             f"{model}: cannot fetch chat_template.jinja of {where}: {type(exc).__name__}: {exc}"
@@ -1023,6 +1052,56 @@ class PlannedJob:
     bedrock_token_counts: None = None
 
 
+def looks_misdecoded(text: Optional[str]) -> bool:
+    """Return whether `text` is UTF-8 text that was read as ISO-8859-1.
+
+    A stored transcript can hold the bytes of a UTF-8 character as separate
+    Latin-1 characters (an arrow stored as three characters starting with
+    ``"\\u00e2"``). Such text would be rebuilt into a different token sequence
+    than the model produced. The test is a round trip: encode the text as
+    Latin-1 and decode the bytes as UTF-8. Text that is mis-decoded decodes to
+    something different from itself; clean text either fails one of the two
+    steps (it holds a character above U+00FF, or its Latin-1 bytes are not valid
+    UTF-8) or comes back unchanged (pure ASCII).
+
+    Parameters
+    ----------
+    text : Optional[str]
+        A stored query, reasoning or response; ``None`` is allowed.
+
+    Returns
+    -------
+    bool
+        ``False`` for ``None``, the empty string and pure-ASCII text, and when
+        either round-trip step raises. Otherwise ``True`` exactly when the
+        round trip succeeds and differs from `text`.
+
+    Notes
+    -----
+    Text that really holds Latin-1 characters forming a valid UTF-8 sequence
+    (a capital A with tilde followed by a copyright sign, written on purpose)
+    is flagged too; the check cannot tell it from the defect, and such text is
+    far rarer than the defect.
+
+    Examples
+    --------
+    >>> looks_misdecoded("a \\u00e2\\u0086\\u0092 b")
+    True
+    >>> looks_misdecoded("a \\u2192 b")
+    False
+    >>> looks_misdecoded("plain ascii"), looks_misdecoded(""), looks_misdecoded(None)
+    (False, False, False)
+    """
+    if not text or text.isascii():
+        return False
+    try:
+        return text.encode("latin-1").decode("utf-8") != text
+    except UnicodeError:
+        # UnicodeEncodeError (a character above U+00FF) or UnicodeDecodeError
+        # (the bytes are not UTF-8): the text was not produced by the defect.
+        return False
+
+
 @dataclass
 class _Built:
     """Internal result of reading and rebuilding every run of one model."""
@@ -1067,6 +1146,22 @@ def _build(
             built.marks += 1
             if not bt.reasoned(mark.reasoning):
                 built.unreasoned += 1
+            # A mis-decoded field would be re-encoded into tokens the model never
+            # saw, and the error would surface only as a skewed class mix. Refuse
+            # the mark here, naming the fields; the run's other marks still plan.
+            bad_fields = [
+                name
+                for name, value in (
+                    ("query", mark.query), ("reasoning", mark.reasoning), ("response", mark.response)
+                )
+                if looks_misdecoded(value)
+            ]
+            if bad_fields:
+                built.errors.append(
+                    f"{run.path}#q{idx}: mis-decoded text (UTF-8 read as ISO-8859-1) in "
+                    f"{', '.join(bad_fields)}; not planned"
+                )
+                continue
             try:
                 rebuilt = rebuild_sequence(
                     mark.query, mark.reasoning, mark.response,
@@ -1373,8 +1468,15 @@ def _object_size(client: Any, bucket: str, key: str) -> int:
     raise FileNotFoundError(f"s3://{bucket}/{key} is not listed")
 
 
-def _audit_arrays(arrays: Any, job: attention.Job) -> Tuple[Optional[str], Optional[Tuple[int, ...]]]:
-    """Content-check one rank's arrays; return ``(failure or None, mass.shape[:2])``."""
+def _audit_arrays(
+    arrays: Any, job: attention.Job, n_layers: int, heads_local: int
+) -> Tuple[Optional[str], Optional[Tuple[int, ...]]]:
+    """Content-check one rank's arrays; return ``(failure or None, mass.shape[:2])``.
+
+    `n_layers` and `heads_local` are the config's attention layer count and its
+    heads per tensor-parallel rank; the entropy ceiling is derived in
+    ``audit_captures``.
+    """
     classes = np.asarray(arrays["classes"])
     if not np.array_equal(classes, np.asarray(job.classes)):
         return "classes differ from the job's", None
@@ -1382,6 +1484,12 @@ def _audit_arrays(arrays: Any, job: attention.Job) -> Tuple[Optional[str], Optio
     expected_p = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
     if mass.ndim != 4 or mass.shape[1] != expected_p or mass.shape[3] != attention.N_TOKEN_CLASSES:
         return f"mass shape {mass.shape} is not (L, {expected_p}, H_local, {attention.N_TOKEN_CLASSES})", None
+    if mass.shape[0] != n_layers or mass.shape[2] != heads_local:
+        return (
+            f"mass shape {mass.shape} has {mass.shape[0]} layers and {mass.shape[2]} local heads, "
+            f"the config gives {n_layers} layers and {heads_local} local heads",
+            None,
+        )
     entropy, sink = arrays["entropy"], arrays["sink"]
     if entropy.shape != mass.shape[:3] or sink.shape != mass.shape[:3]:
         return f"entropy {entropy.shape} / sink {sink.shape} differ from mass[:3] {mass.shape[:3]}", None
@@ -1395,21 +1503,90 @@ def _audit_arrays(arrays: Any, job: attention.Job) -> Tuple[Optional[str], Optio
         return f"mass.sum(-1) + sink deviates from 1 by {worst:.4g} (> {_ROW_SUM_TOL})", None
     if entropy32.size and float(entropy32.min()) < _ENTROPY_FLOOR:
         return f"entropy minimum {float(entropy32.min()):.4g} is below {_ENTROPY_FLOOR}", None
+
+    # Entropy ceiling: completion row i sits at absolute position query_start + i
+    # and attends at most that many keys plus itself, plus one sink column on the
+    # layers that have one; the box computes entropy over exactly those columns,
+    # so it cannot exceed ln(count). Sliding windows only shrink the support, so
+    # ignoring them keeps the bound valid. Without a has_sink array the looser
+    # bound (a sink on every layer) is used.
+    if "has_sink" in getattr(arrays, "files", ()):
+        has_sink = np.asarray(arrays["has_sink"], dtype=bool)
+        if has_sink.shape != (n_layers,):
+            return f"has_sink shape {has_sink.shape} is not ({n_layers},)", None
+        sink_cols = has_sink.astype(np.int64)
+    else:
+        sink_cols = np.ones(n_layers, dtype=np.int64)
+    attended = (
+        int(job.query_start)  # type: ignore[arg-type]
+        + np.arange(expected_p, dtype=np.int64)[None, :]
+        + 1
+        + sink_cols[:, None]
+    )
+    ceiling = (np.log(attended.astype(np.float64)) + _ENTROPY_CEIL_TOL)[:, :, None]
+    excess = entropy32.astype(np.float64) - ceiling
+    if excess.size and float(excess.max()) > 0.0:
+        layer, row, head = (int(i) for i in np.unravel_index(int(excess.argmax()), excess.shape))
+        return (
+            f"entropy {float(entropy32[layer, row, head]):.4g} at (layer {layer}, row {row}, "
+            f"head {head}) exceeds the ceiling ln(attended keys) + {_ENTROPY_CEIL_TOL} = "
+            f"{float(ceiling[layer, row, 0]):.4g}",
+            None,
+        )
     return None, tuple(mass.shape[:2])
 
 
-def _audit_job(client: Any, bucket: str, job: attention.Job, tp: int, sampled: bool) -> Optional[str]:
-    """Audit every rank of one job; return the first failure reason, or ``None``."""
+def _audit_job(
+    client: Any,
+    bucket: str,
+    job: attention.Job,
+    tp: int,
+    sampled: bool,
+    model: str,
+    n_layers: int,
+    n_heads: int,
+) -> Optional[str]:
+    """Audit every rank of one job; return the first failure reason, or ``None``.
+
+    Meta checks run in a fixed order (see ``audit_captures``); the first failing
+    check of the first failing rank is the reason. A missing meta key is reported
+    as a mismatch against ``None``, not as a crash. A failing meta check returns at
+    once; an array failure is held until every rank's arrays have been read.
+    """
+    if n_heads % tp != 0:
+        return f"config has {n_heads} heads, not divisible by tp={tp}; local heads are undefined"
+    heads_local = n_heads // tp
+    expected_p = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
     shapes = set()
+    array_failure: Optional[str] = None
     for rank in range(tp):
         npz_key, meta_key = attention.rank_keys(job.key, rank)
         meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
+        if meta.get("job_id") != job.job_id:
+            return f"rank {rank}: meta job_id {meta.get('job_id')!r} != job's {job.job_id!r}"
+        if meta.get("rank") != rank:
+            return f"rank {rank}: meta rank {meta.get('rank')!r} != {rank}"
+        if meta.get("model") != model:
+            return f"rank {rank}: meta model {meta.get('model')!r} != {model!r}"
         if int(meta["n_tokens"]) != job.n_tokens:
             return f"rank {rank}: meta n_tokens {meta['n_tokens']} != job's {job.n_tokens}"
         if meta.get("mode") != "mass":
             return f"rank {rank}: meta mode {meta.get('mode')!r} is not 'mass'"
         if int(meta["query_start"]) != job.query_start:
             return f"rank {rank}: meta query_start {meta['query_start']} != job's {job.query_start}"
+        layers_meta = meta.get("layers")
+        if not isinstance(layers_meta, list) or len(layers_meta) != n_layers:
+            count = len(layers_meta) if isinstance(layers_meta, list) else layers_meta
+            return f"rank {rank}: meta has {count} layers, the config has {n_layers} attention layers"
+        if meta.get("num_heads_local") != heads_local:
+            return (
+                f"rank {rank}: meta num_heads_local {meta.get('num_heads_local')!r} != "
+                f"{heads_local} (config heads {n_heads} / tp {tp})"
+            )
+        expected_shape = [n_layers, expected_p, heads_local, attention.N_TOKEN_CLASSES]
+        rows_shape = meta.get("rows_shape")
+        if not isinstance(rows_shape, list) or rows_shape != expected_shape:
+            return f"rank {rank}: meta rows_shape {rows_shape!r} != {expected_shape}"
         gate, tol = meta.get("gate_max_rel"), meta.get("gate_tol")
         if gate is None or tol is None or not float(gate) <= float(tol):
             return f"rank {rank}: self-consistency gate {gate} exceeds tolerance {tol}"
@@ -1418,10 +1595,16 @@ def _audit_job(client: Any, bucket: str, job: attention.Job, tp: int, sampled: b
             return f"rank {rank}: npz size {size} != meta bytes {meta['bytes']}"
         if sampled:
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
-            failure, shape = _audit_arrays(np.load(io.BytesIO(body)), job)
+            failure, shape = _audit_arrays(np.load(io.BytesIO(body)), job, n_layers, heads_local)
             if failure:
-                return f"rank {rank}: {failure}"
-            shapes.add(shape)
+                # Deferred, not returned: every rank's arrays are examined, so a
+                # defect that sits in one rank only is not hidden behind the first
+                # rank that fails. The first failure by rank order is the reason.
+                array_failure = array_failure or f"rank {rank}: {failure}"
+            else:
+                shapes.add(shape)
+    if array_failure:
+        return array_failure
     if len(shapes) > 1:
         return f"ranks disagree about the (L, P) shape: {sorted(shapes)}"
     return None
@@ -1433,19 +1616,46 @@ def audit_captures(
     jobs: Sequence[attention.Job],
     tp: int,
     *,
+    model: str,
+    config: Mapping[str, Any],
     sample_per_run: int = 1,
+    arrays: str = "sample",
 ) -> Dict[str, Optional[str]]:
     """Audit captured objects by content; file counts prove nothing.
 
-    For EVERY job and rank: read the meta json and check ``n_tokens``, ``mode ==
-    "mass"``, ``query_start``, ``gate_max_rel <= gate_tol`` and that ``bytes``
-    equals the npz object's real size (``head_object`` when the client has it,
-    else the listing's ``Size``). For the first `sample_per_run` jobs of each run
-    prefix, additionally download every rank's npz and check that ``classes``
-    equals the job's classes exactly, ``mass`` is ``(L, P, H_local, 4)`` with
-    ``P = n_tokens - query_start``, entropy and sink share its first three axes,
-    all arrays are finite, ``mass.sum(-1) + sink`` is within 2e-2 of 1, entropy
-    is at least ``-1e-3``, and the ranks agree about ``(L, P)``.
+    With ``L, H = attention_shape(config)`` and ``H_local = H // tp``, for EVERY
+    job and rank the meta json is read and checked, in this order (the first
+    failure is the job's reason, each prefixed ``rank <r>: ``): ``job_id`` equals
+    the job's; ``rank`` equals the rank read; ``model`` equals `model`;
+    ``n_tokens`` and ``query_start`` equal the job's; ``mode == "mass"``;
+    ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
+    [L, P, H_local, 4]`` with ``P = n_tokens - query_start``; ``gate_max_rel <=
+    gate_tol``; and ``bytes`` equals the npz object's real size (``head_object``
+    when the client has it, else the listing's ``Size``). A missing meta key is a
+    failure reason, never a crash of the audit (a mismatch against ``None`` for
+    the identity, layer and shape keys, ``audit raised KeyError`` for the others).
+    When ``H`` is
+    not divisible by `tp`, every job fails with a reason saying so.
+
+    The arrays are downloaded for the jobs `arrays` selects: ``"sample"`` takes
+    the first `sample_per_run` jobs of each run prefix, ``"all"`` takes every
+    job. For those jobs every rank's npz must hold ``classes`` equal to the
+    job's classes exactly; ``mass`` of shape ``(L, P, H_local, 4)``; entropy and
+    sink sharing its first three axes; only finite values;
+    ``mass.sum(-1) + sink`` within 2e-2 of 1; entropy at least ``-1e-3``; and
+    entropy at most ``ln(query_start + i + 1 + s_l) + 1e-2`` for completion row
+    ``i`` on layer ``l``. The ranks must also agree about ``(L, P)``. A meta
+    failure ends a job's audit at once; an array failure is held until every
+    rank's arrays have been read, and the first one by rank order is reported.
+
+    The ceiling follows from how the box computes entropy: over the row's
+    attended tokens plus the sink column. Row ``i`` sits at absolute position
+    ``query_start + i`` and attends at most ``query_start + i + 1`` tokens (itself
+    included), plus one sink column when ``has_sink[l]`` is true, so ``s_l`` is 1
+    or 0. An entropy over ``n`` columns is at most ``ln(n)``. The 1e-2 slack
+    covers float16 storage. Sliding windows only shrink the attended set, so
+    ignoring them keeps the bound valid. An npz without a ``has_sink`` array
+    gets ``s_l = 1`` on every layer (the looser bound).
 
     Parameters
     ----------
@@ -1456,9 +1666,18 @@ def audit_captures(
     jobs : Sequence[attention.Job]
         Mass jobs the box reported as captured, in order.
     tp : int
-        Tensor-parallel degree: ranks per job.
+        Tensor-parallel degree: ranks per job. Must be at least 1.
+    model : str
+        Served model name every rank's meta must carry (required: an audit that
+        skips a check silently proves less than it appears to).
+    config : Mapping[str, Any]
+        Parsed ``config.json`` of the model; gives ``L`` and ``H`` through
+        ``attention_shape``. Required for the same reason as `model`.
     sample_per_run : int, optional
-        Jobs per run prefix whose arrays are downloaded (default 1).
+        Jobs per run prefix whose arrays are downloaded when `arrays` is
+        ``"sample"`` (default 1).
+    arrays : str, optional
+        ``"sample"`` (default) or ``"all"``: which jobs get their arrays checked.
 
     Returns
     -------
@@ -1466,19 +1685,29 @@ def audit_captures(
         Job id -> failure reason, or ``None`` when the job passed. A failure of
         any kind (including an unreadable object) is a reason, never an exception.
 
+    Raises
+    ------
+    ValueError
+        When `arrays` is not ``"sample"`` or ``"all"`` (before any read), or when
+        `config` has no readable attention shape (``attention_shape``).
+
     Notes
     -----
     Network: per job and rank one GET of the meta and one size lookup; the
-    sampled jobs also download their arrays. Read-only.
+    jobs selected by `arrays` also download their arrays (``"all"`` downloads
+    every capture, which can be large). Read-only.
     """
+    if arrays not in ("sample", "all"):
+        raise ValueError(f"arrays must be 'sample' or 'all', got {arrays!r}")
+    n_layers, n_heads = attention_shape(config)
     results: Dict[str, Optional[str]] = {}
     seen: Dict[str, int] = {}
     for job in jobs:
         prefix = job.key.rsplit("/", 1)[0]
-        sampled = seen.get(prefix, 0) < sample_per_run
+        sampled = arrays == "all" or seen.get(prefix, 0) < sample_per_run
         seen[prefix] = seen.get(prefix, 0) + 1
         try:
-            reason = _audit_job(client, bucket, job, tp, sampled)
+            reason = _audit_job(client, bucket, job, tp, sampled, model, n_layers, n_heads)
         except Exception as exc:  # noqa: BLE001 -- recorded per job, none hidden
             reason = f"audit raised {type(exc).__name__}: {exc}"
         if reason:
@@ -1541,14 +1770,20 @@ class ReplayReport:
     failed: Dict[str, str] = field(default_factory=dict)
     #: job id -> keys already in the bucket; such a job was not sent.
     skipped_existing: Dict[str, List[str]] = field(default_factory=dict)
-    #: Skipped jobs with some but not all rank-0 objects: inspect by hand.
+    #: Skipped jobs that have some but not all expected rank objects (both objects of
+    #: every rank ``0..tp-1``; only rank 0 when the plan's tp is unknown). A re-send
+    #: could not complete them, so inspect them by hand.
     partial: List[str] = field(default_factory=list)
     #: job id -> reason, for jobs the box reported as captured but the audit rejected.
     audit_failures: Dict[str, str] = field(default_factory=dict)
     #: Jobs longer than the context limit, excluded before sending.
     over_context: List[str] = field(default_factory=list)
-    #: Manifest keys written.
+    #: Manifest keys written (each key is added as soon as it is written, so the
+    #: keys written before a manifest failure are kept).
     manifests: List[str] = field(default_factory=list)
+    #: ``"<ExceptionType>: <message>"`` when writing the manifests failed; the capture
+    #: results above are still valid, and the report is returned instead of lost.
+    manifest_error: Optional[str] = None
     plan: Optional[ReplayPlan] = None
 
 
@@ -1651,14 +1886,24 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         invalid (before any AWS call).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
-        unavailable), before any AWS call.
+        unavailable), or when its ``config.json`` cannot be loaded or has no
+        attention shape (the content audit needs it); both before any AWS call.
 
     Notes
     -----
     The box is terminated in a ``finally`` block however the capture ends. If that
     termination itself fails while another error propagates, the failure is logged
     at ERROR level (a box may still be billing) and the original error propagates;
-    on the success path the termination error is raised.
+    on the success path the termination error is raised. An interrupt
+    (``KeyboardInterrupt`` or another ``BaseException``) that escapes
+    ``shutdown_instance`` before it terminated the box triggers one retry with
+    ``wait=False`` and SIGINT ignored; a failed retry is logged at ERROR and the
+    interrupt is re-raised either way.
+
+    A failure while writing the manifests does not lose the report: it is recorded
+    in ``ReplayReport.manifest_error``, logged at ERROR, the manifests written so
+    far stay in ``ReplayReport.manifests``, the box is still terminated and the
+    report is returned. The content audit uses the default ``arrays="sample"``.
     """
     # Phase 1: offline plan and the launch summary, shown before the gate.
     from smolbench.evals.providers import ec2 as real_ec2
@@ -1690,6 +1935,17 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     if not planned and plan.errors:
         raise RuntimeError(f"{model_key}: nothing to capture, the plan failed: {plan.errors[0]}")
 
+    # The content audit needs the model's attention shape, and it only runs after
+    # the box has been paid for. Load and validate the config now so a missing or
+    # unreadable one stops the run before any AWS client exists.
+    try:
+        config = config_for(model_key) if config_for is not None else load_model_config(model_key)
+        attention_shape(config)
+    except (TemplateUnavailable, ValueError, OSError) as exc:
+        raise RuntimeError(
+            f"{model_key}: cannot audit captures without the model config: {exc}"
+        ) from exc
+
     # Phase 3: bind the real collaborators now that the gate is passed.
     ec2 = ec2 or real_ec2
     make_s3 = s3_client_factory or _default_s3_factory
@@ -1701,8 +1957,14 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     report.over_context = [p.job.job_id for p in planned if p.job.n_tokens > max_len]
     candidates = [p.job for p in planned if p.job.n_tokens <= max_len]
 
-    # Phase 4: resume. Append-only: a job with any existing key is never sent,
-    # because the presigned PUT would silently replace the object.
+    # Phase 4: resume. Append-only: a job with any existing key is never sent.
+    # The presigned URLs sign ``If-None-Match: *``, so S3 would refuse a PUT onto
+    # an existing key with 412; skipping here matters because a re-sent job would
+    # only fail that way on a billed box, and a partial rank set cannot be
+    # completed by re-sending. Every rank uploads its own two objects, so the
+    # complete set is both keys of every rank 0..tp-1. The plan's tp is the one
+    # known before the box exists; when it is unknown only rank 0 can be checked.
+    expected_tp = plan.tp_estimate
     client = make_s3()
     remaining: List[attention.Job] = []
     for job in candidates:
@@ -1711,12 +1973,24 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             remaining.append(job)
             continue
         report.skipped_existing[job.job_id] = present
-        rank0 = set(attention.rank_keys(job.key, 0))
-        if not rank0 <= set(present):
+        expected = [
+            key
+            for rank in range(expected_tp if isinstance(expected_tp, int) else 1)
+            for key in attention.rank_keys(job.key, rank)
+        ]
+        present_set = set(present)
+        missing = [key for key in expected if key not in present_set]
+        if missing:
             report.partial.append(job.job_id)
+            scope = (
+                f"ranks 0..{expected_tp - 1}"
+                if isinstance(expected_tp, int)
+                else "rank 0 only (tp is unknown, so the higher ranks were not checked)"
+            )
             logging.warning(
-                f"attention_replay: {job.job_id} has {len(present)} key(s) but not both rank-0 "
-                "objects; inspect it by hand"
+                f"attention_replay: {job.job_id} has {len(present)} key(s) but is missing "
+                f"{len(missing)} expected object(s) ({scope}); inspect it by hand. "
+                f"Missing keys: {missing}"
             )
     if not remaining:
         return report
@@ -1744,16 +2018,29 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                 report.skipped_existing[job_id] = keys
             verified_set = set(result.verified)
             audit = audit_captures(
-                make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp
+                make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
+                model=model_key, config=config,
             )
             for job_id, reason in audit.items():
                 if reason is None:
                     report.verified.append(job_id)
                 else:
                     report.audit_failures[job_id] = reason
-            report.manifests = _write_manifests(
-                make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp
-            )
+            # A manifest failure must not discard the capture results: they are
+            # the only record of what the box just did. It is recorded on the
+            # report (the manifests written so far are already on it) and is not
+            # the primary error.
+            try:
+                _write_manifests(
+                    make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp
+                )
+            except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
+                report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
+                logging.error(
+                    f"attention_replay: writing the manifests failed after {len(report.manifests)} "
+                    f"were written; the capture results are kept on the report: "
+                    f"{report.manifest_error}"
+                )
         except BaseException as exc:
             primary = exc
             raise
@@ -1771,14 +2058,80 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                     "attention_replay: shutdown_instance FAILED while another error was "
                     f"propagating; a billed instance may still be running: {shutdown_exc!r}"
                 )
+            except BaseException:
+                # An interrupt inside shutdown_instance (its graceful /shutdown POST
+                # only guards against Exception) escapes before TerminateInstances.
+                # Terminate anyway, then let the interrupt continue.
+                _retry_shutdown_after_interrupt(ec2)
+                raise
     return report
 
 
-def _default_s3_factory() -> Any:
-    """Return a fresh boto3 S3 client in ``REGION`` (fresh session: credentials rotate)."""
-    from smolbench.evals._aws import fresh_client
+def _retry_shutdown_after_interrupt(ec2: Any) -> None:
+    """Terminate the box again after an interrupt cut ``shutdown_instance`` short.
 
-    return fresh_client("s3", REGION)
+    The interrupted call never reached its state clearing, so the state file still
+    names the instance and a second call can terminate it. ``wait=False`` skips the
+    termination waiter, which keeps the retry short. SIGINT is ignored while the
+    retry runs, so a second Ctrl-C cannot cut it short; the previous handler is
+    restored afterwards. The handler is only touched from the main thread (the only
+    thread that may set one) and when the current handler is known to Python
+    (``signal.getsignal`` returns ``None`` for one installed from C, which cannot be
+    restored); otherwise the retry runs without that protection.
+
+    Parameters
+    ----------
+    ec2 : Any
+        Provider module or fake with ``shutdown_instance(wait=...)``.
+
+    Notes
+    -----
+    Never raises an ``Exception``: a failed retry is logged at ERROR (a billed
+    instance may still be running) so the interrupt that triggered it stays the
+    error the caller sees.
+    """
+    logging.warning("attention_replay: retrying termination after an interrupt")
+    previous = signal.getsignal(signal.SIGINT)
+    can_defer = threading.current_thread() is threading.main_thread() and previous is not None
+    if can_defer:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        ec2.shutdown_instance(wait=False)
+    except Exception as retry_exc:  # noqa: BLE001 -- must not replace the interrupt
+        logging.error(
+            "attention_replay: the termination retry after an interrupt FAILED; a billed "
+            f"instance may still be running: {retry_exc!r}"
+        )
+    finally:
+        if can_defer:
+            signal.signal(signal.SIGINT, previous)
+
+
+def _default_s3_factory() -> Any:
+    """Return a fresh boto3 S3 client in ``REGION`` that presigns with Signature V4.
+
+    boto3 presigns S3 URLs with Signature V2 unless the client is configured
+    otherwise, and V2 silently drops the ``IfNoneMatch`` condition (the URL is
+    byte-identical with and without it). Only ``signature_version="s3v4"`` puts
+    ``if-none-match`` into the signed headers, which is what makes S3 refuse a
+    PUT onto an existing key. The client is therefore configured explicitly.
+
+    A NEW ``Session`` is built on every call because credentials rotate: a client
+    kept across a long capture would sign with expired ones. The shared helper
+    ``smolbench.evals._aws.fresh_client`` also builds a fresh session but takes no
+    client config, and other modules depend on it, so it is not used here.
+
+    Returns
+    -------
+    Any
+        A boto3 S3 client for ``REGION`` with ``signature_version="s3v4"``.
+    """
+    import boto3.session
+    from botocore.config import Config
+
+    return boto3.session.Session().client(
+        "s3", region_name=REGION, config=Config(signature_version="s3v4")
+    )
 
 
 def _write_manifests(
@@ -1792,7 +2145,12 @@ def _write_manifests(
     result: attention.CaptureResult,
     tp: int,
 ) -> List[str]:
-    """Write one manifest per run that had at least one job sent in this invocation."""
+    """Write one manifest per run that had at least one job sent in this invocation.
+
+    Each key is appended to ``report.manifests`` as soon as it is written, so the
+    manifests written before a later failure stay on the report. The same keys are
+    returned.
+    """
     sent = set(result.verified) | set(result.failed)
     by_run: Dict[Tuple[int, str, str], List[PlannedJob]] = {}
     for item in planned:
@@ -1843,7 +2201,9 @@ def _write_manifests(
             "approximations": list(APPROXIMATIONS),
             "bedrock_token_counts": None,
         }
-        keys.append(write_manifest(client, bucket, run_prefix(prefix, run), payload))
+        key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
+        keys.append(key)
+        report.manifests.append(key)
     return keys
 
 
@@ -1877,7 +2237,11 @@ _CAPTURE_FILE_RE = re.compile(r"^q(\d+)\.r(\d+)\.npz$")
 
 
 def read_captures(
-    model_key: str, mirror_root: Path, *, arms: Sequence[str] = ARMS
+    model_key: str,
+    mirror_root: Path,
+    *,
+    arms: Sequence[str] = ARMS,
+    config: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Compute the pad-mass ratio per arm from a local mirror of the S3 captures.
 
@@ -1888,7 +2252,16 @@ def read_captures(
     Files are grouped per run directory and ``q<idx>``; ``tp`` is the number of
     rank files, which must be exactly ranks ``0..tp-1``. Each job is loaded with
     ``attention_analysis.load_mass`` (ranks joined head-wise in rank order) and
-    reduced with ``attention_analysis.whitespace_ratio``.
+    reduced with ``attention_analysis.whitespace_ratio``. The ranks present must
+    also be the WHOLE set: the head axis of the joined job must equal the
+    config's head count, because ranks ``0..6`` of an 8-way job are a valid
+    ``0..tp-1`` set for ``tp = 7`` and a missing top rank would otherwise pass.
+
+    Several ``<arm>--<stamp>`` directories under one ``seed=<s>`` are re-collections
+    of the same arm. As in ``find_runs``, only the directory with the
+    lexicographically smallest stamp (the part after ``<arm>--``) is read; later
+    ones are ignored and logged at INFO. The mirror has no ``.superseded``
+    markers, so that clause of ``find_runs`` does not apply.
 
     Parameters
     ----------
@@ -1898,6 +2271,10 @@ def read_captures(
         Root of the local mirror.
     arms : Sequence[str], optional
         Arms to read (default ``ARMS``).
+    config : Mapping[str, Any], optional
+        Parsed ``config.json`` of the model, for the expected head count
+        (``attention_shape``). Defaults to ``load_model_config(model_key)``, which
+        may download the file when the vendored copy does not apply.
 
     Returns
     -------
@@ -1912,19 +2289,38 @@ def read_captures(
     Raises
     ------
     ValueError
-        When the ranks of a job are not exactly ``0..tp-1``, or jobs of one arm
-        differ in layer or head count.
+        When the ranks of a job are not exactly ``0..tp-1``, when the joined
+        job's head count differs from the config's (a rank is missing), or when
+        jobs of one arm differ in layer or head count; also when `config` has no
+        readable attention shape.
     """
     base = Path(mirror_root) / "induction" / model_key
     store = _MirrorStore(Path(mirror_root))
+    if config is None:
+        config = load_model_config(model_key)
+    expected_heads = attention_shape(config)[1]
     out: Dict[str, Dict[str, Any]] = {}
     for arm in arms:
         sums: Optional[np.ndarray] = None
         counts: Optional[np.ndarray] = None
         n_jobs, pad_total = 0, 0
-        for run_dir in sorted(base.glob(f"seed=*/{arm}--*")):
-            if not run_dir.is_dir():
-                continue
+        # Earliest wins, per seed and arm: the directories of one seed are
+        # re-collections of the same arm, and the released results count the first.
+        stamp_prefix = f"{arm}--"
+        by_seed: Dict[Path, List[Path]] = {}
+        for candidate in base.glob(f"seed=*/{stamp_prefix}*"):
+            if candidate.is_dir():
+                by_seed.setdefault(candidate.parent, []).append(candidate)
+        run_dirs: List[Path] = []
+        for seed_dir in sorted(by_seed):
+            ordered = sorted(by_seed[seed_dir], key=lambda d: d.name[len(stamp_prefix):])
+            run_dirs.append(ordered[0])
+            for later in ordered[1:]:
+                logging.info(
+                    f"attention_replay: ignoring {later}: an earlier {arm} run of "
+                    f"{seed_dir.name} exists ({ordered[0].name})"
+                )
+        for run_dir in run_dirs:
             ranks: Dict[int, set] = {}
             for path in run_dir.iterdir():
                 match = _CAPTURE_FILE_RE.match(path.name)
@@ -1938,6 +2334,11 @@ def read_captures(
                         f"{run_dir}/q{idx}: ranks {sorted(ranks[idx])} are not exactly 0..{tp - 1}"
                     )
                 job = attention_analysis.load_mass(store, rel, f"q{idx}", tp)
+                if job["mass"].shape[2] != expected_heads:
+                    raise ValueError(
+                        f"{run_dir}/q{idx}: the {tp} rank(s) hold {job['mass'].shape[2]} heads in "
+                        f"total, the config has {expected_heads}; a rank is missing"
+                    )
                 ratio = attention_analysis.whitespace_ratio(
                     job["mass"].astype(np.float32), job["classes"], job["query_start"]
                 )

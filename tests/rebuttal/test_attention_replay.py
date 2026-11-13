@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import math
 import re
+import signal
 from pathlib import Path
 
 import numpy as np
@@ -312,9 +315,12 @@ class AuditedBox:
                 key = line["put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
                 meta_key = line["meta_put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
                 self.s3.put_object(Bucket="b", Key=key, Body=blob)
+                # The meta json the plugin writes, with the fields the content audit checks.
                 self.s3.put_object(Bucket="b", Key=meta_key, Body=json.dumps(
-                    {"n_tokens": n, "bytes": len(blob), "mode": "mass", "query_start": qs,
-                     "gate_max_rel": 0.001, "gate_tol": 0.03, "rank": rank}).encode())
+                    {"job_id": line["job_id"], "rank": rank, "tp": payload["tp"],
+                     "model": payload["served_model_name"], "n_tokens": n, "bytes": len(blob),
+                     "mode": "mass", "query_start": qs, "layers": [0, 1], "num_heads_local": 2,
+                     "rows_shape": [2, p, 2, 4], "gate_max_rel": 0.001, "gate_tol": 0.03}).encode())
                 ranks[str(rank)] = {"ok": True, "gate_max_rel": 0.001}
             results[line["job_id"]] = ranks
         self._status = {"running": False, "results": results, "error": None}
@@ -424,6 +430,10 @@ def test_the_audit_rejects_classes_that_differ_from_the_job(tmp_path) -> None:
 
 # ---------------------------------------------------------------- offline read
 
+#: Config of the mirror fixtures: 3 attention layers, 4 heads (2 ranks x 2 local heads).
+_MIRROR_CONFIG = {"num_hidden_layers": 3, "num_attention_heads": 4}
+
+
 def test_read_captures_returns_the_per_arm_pad_ratio(tmp_path) -> None:
     root = tmp_path / "mirror"
     base = root / "induction" / GEMMA / "seed=0" / f"noise_intens--{STAMP_A}"
@@ -437,9 +447,470 @@ def test_read_captures_returns_the_per_arm_pad_ratio(tmp_path) -> None:
                  entropy=np.zeros((3, 2, 2), np.float16), sink=np.zeros((3, 2, 2), np.float16),
                  classes=classes, query_start=np.asarray(7, np.int32),
                  layers=np.arange(3, dtype=np.int32), positions=np.asarray([8], np.int32))
-    out = ar.read_captures(GEMMA, root)
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
     assert set(out) == {"noise_intens"}
     summary = out["noise_intens"]
     assert summary["jobs"] == 1
     assert summary["ratio_layer_head"].shape == (3, 4)
     assert summary["ratio_mean"] == pytest.approx(1.0, abs=2e-3)
+
+
+# ------------------------------------------------------------ mis-decoded transcripts
+
+@pytest.mark.parametrize("text", ["a â\u0086\u0092 b", "á»«", "x Ã© y"])
+def test_looks_misdecoded_flags_utf8_text_read_as_latin1(text) -> None:
+    assert ar.looks_misdecoded(text) is True
+
+
+@pytest.mark.parametrize("text", ["a ∧ b → c", "ừ", "plain ascii", "", None, "café"])
+def test_looks_misdecoded_passes_clean_text(text) -> None:
+    assert ar.looks_misdecoded(text) is False
+
+
+def test_looks_misdecoded_is_public() -> None:
+    assert "looks_misdecoded" in ar.__all__
+
+
+def test_a_misdecoded_mark_is_reported_and_not_planned(tmp_path: Path) -> None:
+    """One bad field drops that mark into the error list; the run's other marks still plan."""
+    seed_dir = tmp_path / "induction" / DSV31 / "seed=0"
+    seed_dir.mkdir(parents=True)
+    rows = [
+        ("ab", "r", "1"),                          # q0 clean
+        ("ab", "r", "â\u0086\u0092"),         # q1 response mis-decoded ("→" read as latin-1)
+        ("a → b", "r", "1"),                  # q2 clean, non-ASCII
+        ("ab", "x Ã©", "1"),             # q3 reasoning mis-decoded
+        ("a á»« b", "r", "1"),      # q4 query mis-decoded
+    ]
+    marks = Marks(model=DSV31, marks=tuple(
+        Mark(query=q, answer=1, response=resp, score=1, compliance=COMPLIANT, reasoning=reason)
+        for q, reason, resp in rows))
+    path = seed_dir / f"intens--{STAMP_A}.yaml"
+    path.write_text(marks.dumps())
+    assert Marks.loads(path.read_text()).marks[1].response == "â\u0086\u0092"  # stored as-is
+
+    jobs, errors = ar.build_jobs(DSV31, tmp_path, "pfx", tokenizer=CharTokenizer(DS_SPECIALS),
+                                 template=ds_template())
+    assert [j.mark_index for j in jobs] == [0, 2]
+    assert len(errors) == 3, errors
+    for idx, field_name in ((1, "response"), (3, "reasoning"), (4, "query")):
+        (line,) = [e for e in errors if f"#q{idx}:" in e]
+        assert str(path) in line and field_name in line, line
+
+
+# ------------------------------------------------------------ chat-template fallback
+
+_TPL_REV = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _fake_hub_cache(root: Path, *, not_in_repo_marker: bool) -> Path:
+    """A hub cache holding tokenizer_config.json, and optionally the hub's "not in repo" marker."""
+    repo = root / "models--org--tpl"
+    snap = repo / "snapshots" / _TPL_REV
+    snap.mkdir(parents=True)
+    (snap / "tokenizer_config.json").write_text(json.dumps(
+        {"chat_template": "CONFIG {{ messages[0]['content'] }}", "bos_token": "<s>", "eos_token": "</s>"}))
+    if not_in_repo_marker:
+        marker = repo / ".no_exist" / _TPL_REV / "chat_template.jinja"
+        marker.parent.mkdir(parents=True)
+        marker.touch()
+    return snap
+
+
+def _point_hub_at(monkeypatch, root: Path) -> None:
+    import huggingface_hub.constants as hub_constants
+
+    monkeypatch.setattr(hub_constants, "HF_HUB_CACHE", str(root))
+    monkeypatch.setattr(ar, "_spec_repo_revision", lambda model: ({}, "org/tpl", _TPL_REV))
+
+
+def test_an_uncached_template_file_offline_is_not_replaced_by_the_config_entry(tmp_path, monkeypatch) -> None:
+    """Offline, "not in the cache" is not "not in the repo": falling back could pick another template."""
+    _fake_hub_cache(tmp_path, not_in_repo_marker=False)
+    _point_hub_at(monkeypatch, tmp_path)
+    with pytest.raises(ar.TemplateUnavailable, match="chat_template.jinja"):
+        ar.load_chat_template("any", local_files_only=True)
+
+
+def test_a_cached_not_in_repo_answer_falls_back_to_the_config_entry(tmp_path, monkeypatch) -> None:
+    """The hub's .no_exist marker records a real "file not in the repo" answer: fallback is allowed."""
+    _fake_hub_cache(tmp_path, not_in_repo_marker=True)
+    _point_hub_at(monkeypatch, tmp_path)
+    template = ar.load_chat_template("any", local_files_only=True)
+    assert template.source.startswith("CONFIG") and template.bos_token == "<s>"
+
+
+def test_a_remote_not_in_repo_answer_falls_back_to_the_config_entry(tmp_path, monkeypatch) -> None:
+    import httpx
+    import huggingface_hub
+    from huggingface_hub.errors import RemoteEntryNotFoundError
+
+    snap = _fake_hub_cache(tmp_path, not_in_repo_marker=False)
+    _point_hub_at(monkeypatch, tmp_path)
+
+    def fake_download(repo, filename, revision=None, local_files_only=False, **kw):
+        if filename == "chat_template.jinja":
+            raise RemoteEntryNotFoundError(
+                "404", response=httpx.Response(404, request=httpx.Request("HEAD", "https://hub/x")))
+        return str(snap / filename)
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_download)
+    template = ar.load_chat_template("any")
+    assert template.source.startswith("CONFIG")
+
+
+# ------------------------------------------------------------ resume: partial rank sets
+
+def _gemma_jobs(tmp_path):
+    jobs, errors = ar.build_jobs(GEMMA, tmp_path, "bedrock-trio/attention",
+                                 tokenizer=CharTokenizer(GEMMA_SPECIALS), template=gemma_template())
+    assert not errors
+    return [p.job for p in jobs]
+
+
+def _store_keys(s3, job, ranks, *, meta=True):
+    for rank in ranks:
+        npz_key, meta_key = attention.rank_keys(job.key, rank)
+        s3.objects[npz_key] = b"x"
+        if meta:
+            s3.objects[meta_key] = b"{}"
+
+
+def _plan_tp(tmp_path) -> int:
+    tok = CharTokenizer(GEMMA_SPECIALS)
+    plan = ar.plan_replay(tmp_path, [GEMMA], tokenizer_for=lambda m: tok,
+                          template_for=lambda m: gemma_template(),
+                          config_for=lambda m: {"num_hidden_layers": 2, "num_attention_heads": 4})[GEMMA]
+    return plan.tp_estimate
+
+
+def test_a_job_missing_a_top_rank_is_reported_partial(tmp_path, caplog) -> None:
+    """Ranks 0..tp-2 stored, rank tp-1 missing: skipped forever unless reported."""
+    _write_results(tmp_path, GEMMA)
+    tp = _plan_tp(tmp_path)
+    assert tp is not None and tp >= 2
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    _store_keys(s3, jobs[0], range(tp))
+    _store_keys(s3, jobs[1], range(tp - 1))
+    _store_keys(s3, jobs[2], range(tp))
+    box = AuditedBox(s3)
+    with caplog.at_level(logging.WARNING):
+        report = _replay(tmp_path, box, s3)
+    assert box.calls == []  # everything has keys: nothing is provisioned
+    assert report.partial == [jobs[1].job_id]
+    for key in attention.rank_keys(jobs[1].key, tp - 1):
+        assert key in caplog.text, caplog.text
+
+
+def test_partial_falls_back_to_rank_zero_when_tp_is_unknown(tmp_path, caplog, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    monkeypatch.setitem(ar.INSTANCE_TYPES, GEMMA, ())  # the plan cannot derive tp
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    s3.objects[attention.rank_keys(jobs[0].key, 0)[0]] = b"x"  # rank-0 npz without its json
+    _store_keys(s3, jobs[1], [0])
+    _store_keys(s3, jobs[2], [0, 1])
+    box = AuditedBox(s3)
+    with caplog.at_level(logging.WARNING):
+        report = _replay(tmp_path, box, s3, instance_types=("p5.48xlarge",))
+    assert box.calls == []
+    assert report.partial == [jobs[0].job_id]
+    assert "unknown" in caplog.text.lower()
+
+
+# ------------------------------------------------------------ content audit
+
+_AUDIT_CONFIG = {"num_hidden_layers": 2, "num_attention_heads": 4}
+
+
+class CountingS3(FakeS3):
+    def __init__(self) -> None:
+        super().__init__()
+        self.gets: list[str] = []
+
+    def get_object(self, Bucket: str, Key: str) -> dict:
+        self.gets.append(Key)
+        return super().get_object(Bucket, Key)
+
+
+def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=None, entropy=None):
+    """Store one job's per-rank objects as the plugin writes them; ``meta_over[rank]`` edits a meta."""
+    p = job.n_tokens - int(job.query_start)
+    local = heads // tp
+    for rank in range(tp):
+        mass = np.zeros((layers, p, local, 4), np.float16)
+        mass[..., 0], mass[..., 3] = 0.5, 0.5
+        ent = np.full((layers, p, local), 0.5, np.float16) if entropy is None else entropy
+        buf = io.BytesIO()
+        np.savez(buf, mass=mass, entropy=ent.astype(np.float16), sink=np.zeros((layers, p, local), np.float16),
+                 classes=np.asarray(job.classes, np.uint8), query_start=np.asarray(job.query_start, np.int32),
+                 layers=np.arange(layers, dtype=np.int32), has_sink=np.zeros(layers, bool),
+                 sliding_window=np.zeros(layers, np.int32), positions=np.asarray([job.n_tokens - 1], np.int32))
+        blob = buf.getvalue()
+        meta = {"job_id": job.job_id, "rank": rank, "tp": tp, "model": model, "n_tokens": job.n_tokens,
+                "query_start": job.query_start, "mode": "mass", "layers": list(range(layers)),
+                "num_heads_local": local, "rows_shape": [layers, p, local, 4],
+                "gate_max_rel": 0.001, "gate_tol": 0.03, "bytes": len(blob)}
+        meta.update((meta_over or {}).get(rank, {}))
+        npz_key, meta_key = attention.rank_keys(job.key, rank)
+        s3.objects[npz_key] = blob
+        s3.objects[meta_key] = json.dumps(meta).encode()
+
+
+def _audit(s3, jobs, **kw):
+    return ar.audit_captures(s3, "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG, **kw)
+
+
+def test_the_audit_passes_a_consistent_capture(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    assert _audit(s3, jobs, arrays="all") == {j.job_id: None for j in jobs}
+
+
+@pytest.mark.parametrize("meta_over, word", [
+    ({1: {"rank": 0}}, "meta rank"),
+    ({0: {"model": "nemotron-3-super-120b-a12b"}}, "meta model"),
+    ({0: {"job_id": "s0.intens.other.q9"}}, "meta job_id"),
+    ({0: {"layers": [0, 1, 2], "rows_shape": [3, None, 2, 4]}}, "layer"),
+    ({0: {"num_heads_local": 4}}, "num_heads_local"),
+])
+def test_the_audit_checks_every_meta_against_the_job_and_the_config(tmp_path, meta_over, word) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    # The defect sits on the LAST job of a run, which the array sample never downloads:
+    # the meta checks must run for every job.
+    victim = jobs[1]
+    p = victim.n_tokens - int(victim.query_start)
+    for rank_meta in meta_over.values():
+        if "rows_shape" in rank_meta:
+            rank_meta["rows_shape"] = [3, p, 2, 4]
+    _store_capture(s3, victim, meta_over=meta_over)
+    result = _audit(s3, jobs)
+    assert result[victim.job_id] and word in result[victim.job_id].lower(), result
+    assert result[jobs[0].job_id] is None and result[jobs[2].job_id] is None
+
+
+def test_the_audit_rejects_a_wrong_rows_shape(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    _store_capture(s3, jobs[1], meta_over={0: {"rows_shape": [2, 1, 2, 4]}})
+    assert "rows_shape" in (_audit(s3, jobs)[jobs[1].job_id] or "")
+
+
+def test_the_audit_rejects_entropy_above_the_log_of_the_attended_positions(tmp_path) -> None:
+    """Row i attends query_start + i + 1 keys, so its entropy is at most ln(query_start + i + 1)."""
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    job = jobs[0]
+    p = job.n_tokens - int(job.query_start)
+    ceiling0 = math.log(int(job.query_start) + 1)  # the first completion row's bound
+    s3 = FakeS3()
+    ok = np.full((2, p, 2), 0.5, np.float32)
+    ok[:, 0, :] = ceiling0 - 0.05  # just under row 0's own bound: legal
+    _store_capture(s3, job, entropy=ok)
+    assert _audit(s3, [job])[job.job_id] is None
+    bad = ok.copy()
+    bad[1, 0, 1] = math.log(int(job.query_start) + 2) + 0.2  # above the bound even with a sink column
+    _store_capture(s3, job, entropy=bad)
+    reason = _audit(s3, [job])[job.job_id]
+    assert reason and "entropy" in reason.lower(), reason
+
+
+def test_arrays_all_downloads_and_checks_every_job(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = CountingS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    victim = jobs[1]  # second job of the intens run: outside the default sample
+    p = victim.n_tokens - int(victim.query_start)
+    bad = np.full((2, p, 2), 0.5, np.float32)
+    bad[0, -1, 0] = 40.0
+    _store_capture(s3, victim, entropy=bad)
+
+    sampled = _audit(s3, jobs)
+    assert sampled[victim.job_id] is None  # the sample never looked at its arrays
+    sampled_npz = {k for k in s3.gets if k.endswith(".npz")}
+    assert attention.rank_keys(victim.key, 0)[0] not in sampled_npz
+
+    s3.gets.clear()
+    full = _audit(s3, jobs, arrays="all")
+    assert full[victim.job_id] and "entropy" in full[victim.job_id].lower()
+    read = {k for k in s3.gets if k.endswith(".npz")}
+    assert read == {attention.rank_keys(j.key, r)[0] for j in jobs for r in range(2)}
+
+
+def test_the_audit_refuses_an_unknown_arrays_mode(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        _audit(FakeS3(), [], arrays="some")
+
+
+# ------------------------------------------------------------ offline reader: rank sets, runs
+
+def _mirror_job(run_dir: Path, idx: int, ranks, *, local_heads=2, pad_scale=1.0) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    classes = np.asarray([2, 0, 1, 1, 1, 1, 0, 3, 3], np.uint8)  # 4 pads, query_start 7
+    for rank in ranks:
+        mass = np.zeros((3, 2, local_heads, 4), np.float32)
+        mass[..., 1] = np.asarray([[4 / 8], [4 / 9]]) * pad_scale
+        mass[..., 0] = 1 - mass[..., 1]
+        np.savez(run_dir / f"q{idx}.r{rank}.npz", mass=mass.astype(np.float16),
+                 entropy=np.zeros((3, 2, local_heads), np.float16),
+                 sink=np.zeros((3, 2, local_heads), np.float16), classes=classes,
+                 query_start=np.asarray(7, np.int32), layers=np.arange(3, dtype=np.int32),
+                 positions=np.asarray([8], np.int32))
+
+
+def test_read_captures_refuses_a_job_missing_its_top_rank(tmp_path) -> None:
+    """Ranks 0..6 of an 8-way job look like a complete tp=7 job unless heads are counted."""
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_job(run, 0, range(7), local_heads=1)
+    with pytest.raises(ValueError, match="q0"):
+        ar.read_captures(GEMMA, root, config={"num_hidden_layers": 3, "num_attention_heads": 8})
+
+
+def test_read_captures_reads_only_the_earliest_run_per_seed_and_arm(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    seed0 = root / "induction" / GEMMA / "seed=0"
+    _mirror_job(seed0 / f"noise_intens--{STAMP_A}", 0, range(2))                 # ratio 1
+    _mirror_job(seed0 / f"noise_intens--{STAMP_B}", 0, range(2), pad_scale=0.0)  # later: ratio 0
+    _mirror_job(root / "induction" / GEMMA / "seed=1" / f"noise_intens--{STAMP_B}", 0, range(2))
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
+    assert out["noise_intens"]["jobs"] == 2  # seed 0's earliest run + seed 1's only run
+    assert out["noise_intens"]["ratio_mean"] == pytest.approx(1.0, abs=2e-3)
+
+
+# ------------------------------------------------------------ shutdown and manifests
+
+class ShutdownBox(AuditedBox):
+    """AuditedBox whose provision / capture / shutdown can be scripted to fail."""
+
+    def __init__(self, s3, *, provision_exc=None, attn_exc=None, shutdown_script=()):
+        super().__init__(s3)
+        self.provision_exc, self.attn_exc = provision_exc, attn_exc
+        self.shutdown_script = list(shutdown_script)
+        self.shutdowns: list[dict] = []
+
+    def provision_spot_instance(self, instance_types=None, **kw):
+        if self.provision_exc is not None:
+            self.calls.append("provision-failed")
+            raise self.provision_exc
+        return super().provision_spot_instance(instance_types, **kw)
+
+    def attn_start(self, state, payload):
+        if self.attn_exc is not None:
+            raise self.attn_exc
+        return super().attn_start(state, payload)
+
+    def shutdown_instance(self, wait=True):
+        self.calls.append("shutdown")
+        self.shutdowns.append({"wait": wait, "sigint": signal.getsignal(signal.SIGINT)})
+        step = self.shutdown_script.pop(0) if self.shutdown_script else None
+        if step is not None:
+            raise step
+
+
+def test_a_keyboard_interrupt_during_capture_still_shuts_the_box_down(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    box = ShutdownBox(s3, attn_exc=KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        _replay(tmp_path, box, s3)
+    assert box.calls[-1] == "shutdown"
+
+
+def test_a_failed_provision_still_attempts_shutdown(tmp_path) -> None:
+    """A spot request can land a box and then fail: termination must run for provisioning too."""
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    box = ShutdownBox(s3, provision_exc=RuntimeError("spot request failed after launch"))
+    with pytest.raises(RuntimeError, match="spot request failed"):
+        _replay(tmp_path, box, s3)
+    assert box.calls == ["provision-failed", "shutdown"]
+
+
+def test_a_shutdown_failure_on_the_success_path_surfaces(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    box = ShutdownBox(s3, shutdown_script=[RuntimeError("TerminateInstances denied")])
+    with pytest.raises(RuntimeError, match="TerminateInstances denied"):
+        _replay(tmp_path, box, s3)
+
+
+def test_an_interrupt_inside_shutdown_still_terminates_the_box(tmp_path) -> None:
+    """Ctrl-C during the graceful /shutdown POST escapes before TerminateInstances: retry it.
+
+    The retry skips the termination waiter and runs with SIGINT ignored, so a second
+    Ctrl-C cannot cut it short; the interrupt is re-raised afterwards.
+    """
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    before = signal.getsignal(signal.SIGINT)
+    box = ShutdownBox(s3, shutdown_script=[KeyboardInterrupt(), None])
+    with pytest.raises(KeyboardInterrupt):
+        _replay(tmp_path, box, s3)
+    assert len(box.shutdowns) == 2, box.shutdowns
+    assert box.shutdowns[1]["wait"] is False
+    assert box.shutdowns[1]["sigint"] == signal.SIG_IGN
+    assert signal.getsignal(signal.SIGINT) == before  # restored
+
+
+def test_a_failed_retry_after_an_interrupt_is_logged_and_the_interrupt_propagates(tmp_path, caplog) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    box = ShutdownBox(s3, shutdown_script=[KeyboardInterrupt(), RuntimeError("terminate failed")])
+    with caplog.at_level(logging.ERROR), pytest.raises(KeyboardInterrupt):
+        _replay(tmp_path, box, s3)
+    assert len(box.shutdowns) == 2
+    assert "terminate failed" in caplog.text
+
+
+def test_a_manifest_failure_keeps_the_report(tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    real_write = ar.write_manifest
+    written: list[str] = []
+
+    def flaky_write(client, bucket, prefix, payload):
+        if written:
+            raise OSError("manifest PUT denied")
+        written.append(real_write(client, bucket, prefix, payload))
+        return written[-1]
+
+    monkeypatch.setattr(ar, "write_manifest", flaky_write)
+    box = ShutdownBox(s3)
+    report = _replay(tmp_path, box, s3)
+    assert len(report.verified) == 3
+    assert report.manifests == written  # the manifest written before the failure is kept
+    assert report.manifest_error and "manifest PUT denied" in report.manifest_error
+    assert box.calls[-1] == "shutdown"
+
+
+# ------------------------------------------------------------ presigning client
+
+def test_the_default_s3_client_signs_the_no_overwrite_condition(monkeypatch) -> None:
+    """boto3 presigns S3 with SigV2 unless told otherwise, and SigV2 drops IfNoneMatch."""
+    from urllib.parse import parse_qs, urlsplit
+
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", "/dev/null")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "x" * 40)
+    url = attention.presign_put(ar._default_s3_factory(), ar.BUCKET,
+                                "bedrock-trio/attention/induction/m/seed=0/intens--t/q0.r0.npz",
+                                "application/octet-stream", 60)
+    signed = parse_qs(urlsplit(url).query).get("X-Amz-SignedHeaders", [""])[0].split(";")
+    assert "if-none-match" in signed, url
