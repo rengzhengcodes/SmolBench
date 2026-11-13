@@ -304,7 +304,9 @@ class AuditedBox:
             for rank in range(payload["tp"]):
                 p = n - qs
                 mass = np.zeros((2, p, 2, 4), np.float16)
-                mass[..., 0], mass[..., 3] = 0.5, 0.5
+                # A rank-dependent term keeps rows summing to 1 and makes the ranks differ,
+                # as ranks holding different heads do (the audit refuses identical ranks).
+                mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
                 buf = io.BytesIO()
                 np.savez(buf, mass=mass, entropy=np.ones((2, p, 2), np.float16),
                          sink=np.zeros((2, p, 2), np.float16),
@@ -457,6 +459,13 @@ def test_the_audit_rejects_classes_that_differ_from_the_job(tmp_path) -> None:
 _MIRROR_CONFIG = {"num_hidden_layers": 3, "num_attention_heads": 4}
 
 
+def _write_manifest_file(run_dir: Path, idx: int, status: str) -> None:
+    """Write the manifest entry ``_write_manifests`` would record for mark ``idx``."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    entry = {"job_id": f"s0.x.q{idx}", "mark_index": idx, "status": status}
+    (run_dir / f"manifest--q{idx}.json").write_text(json.dumps({"jobs": [entry]}))
+
+
 def test_read_captures_returns_the_per_arm_pad_ratio(tmp_path) -> None:
     root = tmp_path / "mirror"
     base = root / "induction" / GEMMA / "seed=0" / f"noise_intens--{STAMP_A}"
@@ -470,6 +479,7 @@ def test_read_captures_returns_the_per_arm_pad_ratio(tmp_path) -> None:
                  entropy=np.zeros((3, 2, 2), np.float16), sink=np.zeros((3, 2, 2), np.float16),
                  classes=classes, query_start=np.asarray(7, np.int32),
                  layers=np.arange(3, dtype=np.int32), positions=np.asarray([8], np.int32))
+    _write_manifest_file(base, 0, "verified")
     out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
     assert set(out) == {"noise_intens"}
     summary = out["noise_intens"]
@@ -657,13 +667,20 @@ class CountingS3(FakeS3):
         return super().get_object(Bucket, Key)
 
 
-def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=None, entropy=None):
-    """Store one job's per-rank objects as the plugin writes them; ``meta_over[rank]`` edits a meta."""
+def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=None, entropy=None,
+                   mass_row=None):
+    """Store one job's per-rank objects as the plugin writes them; ``meta_over[rank]`` edits a meta.
+
+    Ranks differ by a small rank-dependent term (they hold different heads); ``mass_row``
+    replaces every row's four class masses.
+    """
     p = job.n_tokens - int(job.query_start)
     local = heads // tp
     for rank in range(tp):
         mass = np.zeros((layers, p, local, 4), np.float16)
-        mass[..., 0], mass[..., 3] = 0.5, 0.5
+        mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
+        if mass_row is not None:
+            mass[...] = np.asarray(mass_row, np.float16)
         ent = np.full((layers, p, local), 0.5, np.float16) if entropy is None else entropy
         buf = io.BytesIO()
         np.savez(buf, mass=mass, entropy=ent.astype(np.float16), sink=np.zeros((layers, p, local), np.float16),
@@ -773,6 +790,28 @@ def test_arrays_all_downloads_and_checks_every_job(tmp_path) -> None:
     assert read == {attention.rank_keys(j.key, r)[0] for j in jobs for r in range(2)}
 
 
+def test_the_audit_rejects_negative_mass_that_sums_to_one(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, jobs[0], mass_row=[1.5, -0.5, 0.0, 0.0])  # sums to 1, sink 0
+    reason = _audit(s3, jobs[:1])[jobs[0].job_id]
+    assert reason and "mass minimum" in reason, reason
+
+
+def test_the_audit_rejects_ranks_that_hold_identical_mass(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    victim = jobs[1]
+    s3.objects[attention.rank_keys(victim.key, 1)[0]] = s3.objects[attention.rank_keys(victim.key, 0)[0]]
+    result = _audit(s3, jobs, arrays="all")
+    assert result[victim.job_id] and "rank 1 duplicates rank 0" in result[victim.job_id], result
+    assert result[jobs[0].job_id] is None and result[jobs[2].job_id] is None
+
+
 def test_the_audit_refuses_an_unknown_arrays_mode(tmp_path) -> None:
     with pytest.raises(ValueError):
         _audit(FakeS3(), [], arrays="some")
@@ -780,8 +819,12 @@ def test_the_audit_refuses_an_unknown_arrays_mode(tmp_path) -> None:
 
 # ------------------------------------------------------------ offline reader: rank sets, runs
 
-def _mirror_job(run_dir: Path, idx: int, ranks, *, local_heads=2, pad_scale=1.0) -> None:
+def _mirror_job(run_dir: Path, idx: int, ranks, *, local_heads=2, pad_scale=1.0,
+                status: str | None = "verified") -> None:
+    """Write one job's rank files; ``status`` goes into a manifest entry, ``None`` writes none."""
     run_dir.mkdir(parents=True, exist_ok=True)
+    if status is not None:
+        _write_manifest_file(run_dir, idx, status)
     classes = np.asarray([2, 0, 1, 1, 1, 1, 0, 3, 3], np.uint8)  # 4 pads, query_start 7
     for rank in ranks:
         mass = np.zeros((3, 2, local_heads, 4), np.float32)
@@ -814,7 +857,75 @@ def test_read_captures_reads_only_the_earliest_run_per_seed_and_arm(tmp_path) ->
     assert out["noise_intens"]["ratio_mean"] == pytest.approx(1.0, abs=2e-3)
 
 
+def test_read_captures_reads_only_jobs_a_manifest_records_as_verified(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_job(run, 0, range(2))                                               # ratio 1, verified
+    _mirror_job(run, 1, range(2), pad_scale=0.0, status="audit_failed: bad")    # ratio 0, rejected
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
+    assert out["intens"]["jobs"] == 1 and out["intens"]["skipped_unverified"] == 1
+    assert out["intens"]["ratio_mean"] == pytest.approx(1.0, abs=2e-3)  # the rejected job is absent
+
+
+def test_read_captures_without_a_manifest_reads_nothing_and_reports_it(tmp_path, caplog) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_job(run, 0, range(2), status=None)
+    _mirror_job(run, 1, range(2), status=None)
+    with caplog.at_level(logging.WARNING):
+        out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
+    assert out == {}
+    assert "skipping 2 job(s)" in caplog.text and str(run) in caplog.text, caplog.text
+
+
+def test_read_captures_require_verified_false_reads_every_capture(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_job(run, 0, range(2))
+    _mirror_job(run, 1, range(2), status="audit_failed: bad")
+    _mirror_job(run, 2, range(2), status=None)
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG, require_verified=False)
+    assert out["intens"]["jobs"] == 3 and out["intens"]["skipped_unverified"] == 0
+
+
 # ------------------------------------------------------------ shutdown and manifests
+
+def test_write_manifest_sends_the_no_overwrite_condition() -> None:
+    s3 = FakeS3()
+    key = ar.write_manifest(s3, "b", "p/run/", {"jobs": []})
+    assert s3.if_none_match == ["*"] and key in s3.objects
+
+
+def test_write_manifest_refuses_a_key_the_listing_shows(monkeypatch) -> None:
+    s3 = FakeS3()
+    monkeypatch.setattr(ar, "format_run_ts", lambda _now: "fixed")
+    s3.objects["p/run/manifest--fixed.json"] = b"{}"
+    with pytest.raises(FileExistsError):
+        ar.write_manifest(s3, "b", "p/run/", {"jobs": []})
+    assert s3.puts == []  # refused before any put
+
+
+def test_write_manifest_maps_s3_precondition_failed_to_file_exists(monkeypatch) -> None:
+    """The key appeared between the listing and the put: S3 answers 412."""
+    from botocore.exceptions import ClientError
+
+    class RacyS3(FakeS3):
+        def list_objects_v2(self, **kw):
+            return {"Contents": []}  # the listing is blind to the racing writer
+
+    s3 = RacyS3()
+    monkeypatch.setattr(ar, "format_run_ts", lambda _now: "fixed")
+    s3.objects["p/run/manifest--fixed.json"] = b"{}"
+    with pytest.raises(FileExistsError):
+        ar.write_manifest(s3, "b", "p/run/", {"jobs": []})
+
+    class DeniedS3(FakeS3):
+        def put_object(self, **kw):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+
+    with pytest.raises(ClientError):  # any other S3 error still surfaces unchanged
+        ar.write_manifest(DeniedS3(), "b", "p/run/", {"jobs": []})
+
 
 class ShutdownBox(AuditedBox):
     """AuditedBox whose provision / capture / shutdown can be scripted to fail."""

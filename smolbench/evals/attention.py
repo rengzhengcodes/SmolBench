@@ -1057,8 +1057,9 @@ def run_capture_batches(
         client = s3_client_factory()
 
         # Phase 3: append-only skip, then mint URLs for the rest. The skip is
-        # decided BEFORE any URL exists: a presigned PUT replaces an existing
-        # object without complaint, so a job with any key present is never sent.
+        # decided BEFORE any URL exists: each URL carries If-None-Match: *, so S3
+        # answers 412 for a key that already exists, and the pre-check avoids
+        # sending a job with any key present at all.
         sent: Dict[str, Job] = {}
         lines: List[Dict[str, Any]] = []
         for job in batch:

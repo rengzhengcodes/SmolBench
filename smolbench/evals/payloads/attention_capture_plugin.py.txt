@@ -413,15 +413,25 @@ def _finalize(layer, session):
         _write_done(job, False, error="no presigned URLs for rank %d" % rank,
                     gate_max_rel=meta["gate_max_rel"], nbytes=len(blob))
         return
-    statuses = [_put(put_url, blob, "application/octet-stream"),
-                _put(meta_url, json.dumps(meta).encode(), "application/json")]
-    ok = all(s == PUT_LANDED_EARLIER or 200 <= s < 300 for s in statuses)
+    # The array goes first and the meta only after it landed: a meta json
+    # without its npz is a permanently partial job in an append-only bucket
+    # (the key exists, so it can never be re-sent), whereas an npz without a
+    # meta fails the audit and is reported.
+    statuses = [_put(put_url, blob, "application/octet-stream")]
+    if _landed(statuses[0]):
+        statuses.append(_put(meta_url, json.dumps(meta).encode(), "application/json"))
+    ok = len(statuses) == 2 and all(_landed(s) for s in statuses)
     _log("job %s (%s): %d layers, shape %s, %.1f MB, gate max_rel=%.3g, upload=%s"
          % (job["job_id"], mode, len(order), main_shape, len(blob) / 1e6,
             meta["gate_max_rel"], statuses))
     _write_done(job, ok, error=None if ok else "upload failed: %r" % (statuses,),
                 gate_max_rel=meta["gate_max_rel"], nbytes=len(blob), uploaded=ok,
                 http=statuses)
+
+
+def _landed(status):
+    """True when a PUT status means the object is stored (2xx or landed earlier)."""
+    return status == PUT_LANDED_EARLIER or 200 <= status < 300
 
 
 def _put(url, data, content_type):

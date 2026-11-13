@@ -121,6 +121,7 @@ works, so its token sizes are known.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -303,6 +304,9 @@ _SPECIAL_TOKEN_RE = re.compile(r"<[^<>\s]*>")
 _ROW_SUM_TOL: float = 2e-2
 #: Allowed negative excess of an entropy value (float16 rounding of a zero).
 _ENTROPY_FLOOR: float = -1e-3
+#: Smallest mass or sink entry the audit accepts: float16 rounding only, so a row with a
+#: negative entry that compensates a large positive one (sum still 1) is refused.
+_MASS_FLOOR: float = -1e-3
 #: Slack added to the entropy ceiling ``ln(attended keys)``: the box stores entropy
 #: as float16, whose spacing near the largest values (~12 nats) is about 8e-3.
 _ENTROPY_CEIL_TOL: float = 1e-2
@@ -1498,6 +1502,12 @@ def _audit_arrays(
     mass32, entropy32, sink32 = (np.asarray(a, dtype=np.float32) for a in (mass, entropy, sink))
     if not (np.isfinite(mass32).all() and np.isfinite(entropy32).all() and np.isfinite(sink32).all()):
         return "non-finite values in mass, entropy or sink", None
+    # Probabilities are non-negative: the row-sum check alone passes [1.5, -0.5, 0, 0].
+    # Cast to float64 so the comparison sees the stored float16 values unrounded further.
+    for name, values in (("mass", mass), ("sink", sink)):
+        low = float(np.asarray(values, dtype=np.float64).min()) if values.size else 0.0
+        if low < _MASS_FLOOR:
+            return f"{name} minimum {low:.4g} is below {_MASS_FLOOR}", None
     worst = float(np.abs(mass32.sum(-1) + sink32 - 1.0).max()) if mass32.size else 0.0
     if worst > _ROW_SUM_TOL:
         return f"mass.sum(-1) + sink deviates from 1 by {worst:.4g} (> {_ROW_SUM_TOL})", None
@@ -1559,6 +1569,9 @@ def _audit_job(
     expected_p = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
     shapes = set()
     array_failure: Optional[str] = None
+    # Digest of each rank's mass bytes, for the duplicate-rank check below.
+    digests: Dict[bytes, int] = {}
+    duplicate: Optional[str] = None
     for rank in range(tp):
         npz_key, meta_key = attention.rank_keys(job.key, rank)
         meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
@@ -1595,7 +1608,8 @@ def _audit_job(
             return f"rank {rank}: npz size {size} != meta bytes {meta['bytes']}"
         if sampled:
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
-            failure, shape = _audit_arrays(np.load(io.BytesIO(body)), job, n_layers, heads_local)
+            loaded = np.load(io.BytesIO(body))
+            failure, shape = _audit_arrays(loaded, job, n_layers, heads_local)
             if failure:
                 # Deferred, not returned: every rank's arrays are examined, so a
                 # defect that sits in one rank only is not hidden behind the first
@@ -1603,8 +1617,22 @@ def _audit_job(
                 array_failure = array_failure or f"rank {rank}: {failure}"
             else:
                 shapes.add(shape)
+                # Each rank holds a different slice of the heads, so byte-identical
+                # mass means a duplicated or swapped upload. All-zero mass and zero
+                # completion positions are skipped: degenerate arrays are identical
+                # across ranks legitimately, and must not trip the check.
+                mass = np.asarray(loaded["mass"])
+                if mass.size and mass.any():
+                    digest = hashlib.sha256(
+                        str(mass.shape).encode() + str(mass.dtype).encode() + mass.tobytes()
+                    ).digest()
+                    if digest in digests and duplicate is None:
+                        duplicate = f"rank {rank} duplicates rank {digests[digest]}: identical mass arrays"
+                    digests.setdefault(digest, rank)
     if array_failure:
         return array_failure
+    if duplicate:
+        return duplicate
     if len(shapes) > 1:
         return f"ranks disagree about the (L, P) shape: {sorted(shapes)}"
     return None
@@ -1642,11 +1670,16 @@ def audit_captures(
     job. For those jobs every rank's npz must hold ``classes`` equal to the
     job's classes exactly; ``mass`` of shape ``(L, P, H_local, 4)``; entropy and
     sink sharing its first three axes; only finite values;
-    ``mass.sum(-1) + sink`` within 2e-2 of 1; entropy at least ``-1e-3``; and
+    ``mass.sum(-1) + sink`` within 2e-2 of 1; mass and sink at least ``-1e-3``; entropy at least ``-1e-3``; and
     entropy at most ``ln(query_start + i + 1 + s_l) + 1e-2`` for completion row
     ``i`` on layer ``l``. The ranks must also agree about ``(L, P)``. A meta
     failure ends a job's audit at once; an array failure is held until every
     rank's arrays have been read, and the first one by rank order is reported.
+    Mass and sink must have no entry below ``-1e-3``. When a job's arrays are
+    read for more than one rank, no two ranks may hold byte-identical ``mass``
+    (each rank holds different heads, so identical arrays mean a duplicated or
+    swapped upload); the failure reads ``rank r duplicates rank s``. Ranks whose
+    mass is all zeros are not compared.
 
     The ceiling follows from how the box computes entropy: over the row's
     attended tokens plus the sink column. Row ``i`` sits at absolute position
@@ -1720,7 +1753,9 @@ def write_manifest(client: Any, bucket: str, run_prefix: str, payload: Mapping[s
     """Write one run's manifest, never overwriting.
 
     The key is ``<run_prefix>manifest--<utc stamp with microseconds>.json``. The
-    key is shown to be absent with ``list_objects_v2`` before the put.
+    key is shown to be absent with ``list_objects_v2`` before the put, and the put
+    carries ``IfNoneMatch="*"`` so S3 itself refuses to replace an object that
+    appeared between the listing and the put.
 
     Parameters
     ----------
@@ -1741,14 +1776,29 @@ def write_manifest(client: Any, bucket: str, run_prefix: str, payload: Mapping[s
     Raises
     ------
     FileExistsError
-        When the key already exists (two writers within one microsecond).
+        When the key already exists (two writers within one microsecond), whether
+        the listing shows it or S3 answers ``PreconditionFailed`` (HTTP 412).
     """
+    from botocore.exceptions import ClientError
+
     key = f"{run_prefix}manifest--{format_run_ts(datetime.now(timezone.utc))}.json"
     listing = client.list_objects_v2(Bucket=bucket, Prefix=key)
     if any(o["Key"] == key for o in listing.get("Contents") or []):
         raise FileExistsError(f"s3://{bucket}/{key} already exists; manifests are append-only")
     body = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
-    client.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+    try:
+        client.put_object(
+            Bucket=bucket, Key=key, Body=body, ContentType="application/json", IfNoneMatch="*"
+        )
+    except ClientError as exc:
+        if (
+            exc.response.get("Error", {}).get("Code") == "PreconditionFailed"
+            or exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 412
+        ):
+            raise FileExistsError(
+                f"s3://{bucket}/{key} already exists; manifests are append-only"
+            ) from exc
+        raise
     return key
 
 
@@ -2243,12 +2293,33 @@ class _MirrorStore:
 _CAPTURE_FILE_RE = re.compile(r"^q(\d+)\.r(\d+)\.npz$")
 
 
+def _verified_marks(run_dir: Path) -> set:
+    """Return the mark indices some ``manifest--*.json`` in `run_dir` records as verified.
+
+    Raises
+    ------
+    ValueError
+        When a manifest is not valid JSON or lacks the ``jobs`` entries
+        ``_write_manifests`` writes (the reader must not guess what it holds).
+    """
+    verified: set = set()
+    for path in sorted(run_dir.glob("manifest--*.json")):
+        try:
+            for entry in json.loads(path.read_text())["jobs"]:
+                if entry["status"] == "verified":
+                    verified.add(int(entry["mark_index"]))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f"{path}: unreadable manifest: {exc!r}") from exc
+    return verified
+
+
 def read_captures(
     model_key: str,
     mirror_root: Path,
     *,
     arms: Sequence[str] = ARMS,
     config: Optional[Mapping[str, Any]] = None,
+    require_verified: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
     """Compute the pad-mass ratio per arm from a local mirror of the S3 captures.
 
@@ -2270,6 +2341,13 @@ def read_captures(
     ones are ignored and logged at INFO. The mirror has no ``.superseded``
     markers, so that clause of ``find_runs`` does not apply.
 
+    By default a job is read only when some ``manifest--<stamp>.json`` in its run
+    directory (written by ``_write_manifests``, mirrored with the captures) lists
+    it, by ``mark_index``, with ``status == "verified"``. A capture the audit
+    rejected (``audit_failed: ...``), one whose upload failed, and one with no
+    manifest at all is skipped, counted, and reported with one WARNING per run
+    directory. `require_verified` ``False`` reads every capture file instead.
+
     Parameters
     ----------
     model_key : str
@@ -2282,6 +2360,9 @@ def read_captures(
         Parsed ``config.json`` of the model, for the expected head count
         (``attention_shape``). Defaults to ``load_model_config(model_key)``, which
         may download the file when the vendored copy does not apply.
+    require_verified : bool, optional
+        Read only jobs a manifest records as verified (default ``True``). Pass
+        ``False`` to read every ``q*.r*.npz`` regardless of the manifests.
 
     Returns
     -------
@@ -2291,7 +2372,10 @@ def read_captures(
         layer, head and job that has a defined ratio) and ``ratio_layer_head``
         (``[L, H]`` array, mean over queries and jobs). Queries are pooled, so
         longer completions weigh more. An arm without any pad token has an
-        undefined ratio: ``nan``, not 0.
+        undefined ratio: ``nan``, not 0. ``skipped_unverified`` counts the jobs of
+        the arm left unread because no manifest records them as verified (always 0
+        with ``require_verified=False``). An arm whose every job was skipped has no
+        entry, as an arm without captures has none; its skips are in the WARNINGs.
 
     Raises
     ------
@@ -2310,7 +2394,7 @@ def read_captures(
     for arm in arms:
         sums: Optional[np.ndarray] = None
         counts: Optional[np.ndarray] = None
-        n_jobs, pad_total = 0, 0
+        n_jobs, pad_total, n_skipped = 0, 0, 0
         # Earliest wins, per seed and arm: the directories of one seed are
         # re-collections of the same arm, and the released results count the first.
         stamp_prefix = f"{arm}--"
@@ -2334,7 +2418,17 @@ def read_captures(
                 if match:
                     ranks.setdefault(int(match.group(1)), set()).add(int(match.group(2)))
             rel = run_dir.relative_to(Path(mirror_root)).as_posix() + "/"
+            verified = _verified_marks(run_dir) if require_verified else None
+            unverified = [i for i in sorted(ranks) if verified is not None and i not in verified]
+            if unverified:
+                n_skipped += len(unverified)
+                logging.warning(
+                    f"attention_replay: {run_dir}: skipping {len(unverified)} job(s) no manifest "
+                    f"records as verified: q{unverified}"
+                )
             for idx in sorted(ranks):
+                if idx in unverified:
+                    continue
                 tp = len(ranks[idx])
                 if ranks[idx] != set(range(tp)):
                     raise ValueError(
@@ -2364,7 +2458,7 @@ def read_captures(
                 n_jobs += 1
                 pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
         if n_jobs == 0 or sums is None or counts is None:
-            continue
+            continue  # nothing read; any skips were already logged per run directory
         # nan, not 0, where no query had a defined baseline (no pad token anywhere);
         # np.divide with ``where`` never emits a divide warning.
         layer_head = np.full(sums.shape, np.nan, dtype=np.float64)
@@ -2375,5 +2469,6 @@ def read_captures(
             "pad_tokens_mean": pad_total / n_jobs,
             "ratio_mean": float(sums.sum() / total) if total else float("nan"),
             "ratio_layer_head": layer_head,
+            "skipped_unverified": n_skipped,
         }
     return out

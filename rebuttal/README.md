@@ -97,12 +97,15 @@ The notebook section is off by default and has two switches:
 Safeguards: a mark with mis-decoded text is listed as an error and never sent; jobs already
 in the bucket are skipped; uploads use `If-None-Match: *`, so they cannot replace an
 object; a job with only some of its rank objects is reported as partial.
+The offline reader `read_captures` reads only captures that a manifest records as verified.
 
 `deepseek-v3.1` is refused. vLLM serves it with multi-head latent attention (a separate
 MLA layer), which the capture hook does not reach, so a run would store nothing.
 
 The replay has never run against a live instance. Its offline tests are in
-`tests/rebuttal/test_attention_replay.py` and `tests/evals/test_attention*.py`.
+`tests/rebuttal/test_attention_replay.py` and `tests/evals/test_attention*.py`. The capture
+plugin tests need torch and are skipped by the default suite. In an environment with torch,
+run `python -m pytest tests/evals/test_attention_capture_plugin.py`.
 
 ## Run
 

@@ -467,7 +467,25 @@ def test_done_file_records_a_put_that_landed_on_an_earlier_attempt(monkeypatch, 
 
 def test_done_file_fails_a_job_whose_key_already_existed(monkeypatch, tmp_path: Path) -> None:
     plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
-    done, _sent = _one_layer_job(monkeypatch, plugin, tmp_path, [412, 200], "exists")
+    done, sent = _one_layer_job(monkeypatch, plugin, tmp_path, [412, 200], "exists")
     assert done["ok"] is False and done["uploaded"] is False, done
-    assert done["http_status"] == [412, 200]
+    assert done["http_status"] == [412]  # the meta PUT is not attempted
+    assert len(sent) == 1
     assert "upload failed" in done["error"]
+
+
+def test_no_meta_put_is_attempted_when_the_npz_put_fails(monkeypatch, tmp_path: Path) -> None:
+    """A meta json without its npz would be a permanently partial job."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    done, sent = _one_layer_job(monkeypatch, plugin, tmp_path, [403, 403, 403, 200], "denied")
+    assert len(sent) == 3, "only the npz PUT's three attempts, no meta PUT"
+    assert done["ok"] is False and done["uploaded"] is False, done
+    assert done["http_status"] == [403]
+    assert "upload failed" in done["error"]
+
+
+def test_meta_put_is_attempted_after_a_successful_npz_put(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    done, sent = _one_layer_job(monkeypatch, plugin, tmp_path, [200, 200], "fine")
+    assert len(sent) == 2
+    assert done["ok"] is True and done["http_status"] == [200, 200], done

@@ -23,8 +23,14 @@ class FakeS3:
         self.objects: dict[str, bytes] = {}
         self.presigned: list[str] = []
         self.puts: list[str] = []
+        self.if_none_match: list[Any] = []  # the IfNoneMatch of each put, None when absent
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes, **_: Any) -> None:
+    def put_object(self, Bucket: str, Key: str, Body: bytes, IfNoneMatch: Any = None, **_: Any) -> None:
+        self.if_none_match.append(IfNoneMatch)
+        # S3's conditional write: "*" refuses to replace an existing key.
+        if IfNoneMatch == "*" and Key in self.objects:
+            raise ClientError({"Error": {"Code": "PreconditionFailed"},
+                               "ResponseMetadata": {"HTTPStatusCode": 412}}, "PutObject")
         self.puts.append(Key)
         self.objects[Key] = Body
 

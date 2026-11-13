@@ -101,6 +101,12 @@ Upload (per rank, via the presigned URLs in the job file):
   "uploaded": bool, "http_status": [npz_status, json_status]}`; each entry is
   an int or the string `"412-landed-earlier"`.
 
+Order: the `.npz` is PUT first, and the `.json` meta only when the npz PUT
+succeeded (a 2xx or `"412-landed-earlier"`). When the npz PUT fails, no meta
+PUT is attempted, the done file has `ok: false`, `uploaded: false` and
+`http_status` holds the npz status alone (one entry). Reason: a meta without
+its npz would be a permanently partial job in an append-only bucket.
+
 Every PUT carries `If-None-Match: *`, signed into the presigned URL, so S3
 answers 412 instead of replacing an existing key. A 412 on the first attempt
 means the key already existed: a failure, not retried. A 412 on a retry,
