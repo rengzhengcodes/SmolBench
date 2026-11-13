@@ -106,6 +106,76 @@ class HFTokenizer:
         """Return `text`'s token count under this checkpoint's tokenizer."""
         return len(self._tokenizer.encode(text, add_special_tokens=False).ids)
 
+    def decode_tokens(self, ids: "list[int]") -> "list[str]":
+        """Return the text of each token id in `ids`, one string per id.
+
+        Parameters
+        ----------
+        ids : list[int]
+            Token ids to decode.
+
+        Returns
+        -------
+        list[str]
+            One decoded string per id, special tokens included.
+        """
+        return [
+            self._tokenizer.decode([int(i)], skip_special_tokens=False) for i in ids
+        ]
+
+    def encode_ids(self, text: str) -> "list[int]":
+        """Return the exact token ids of `text`, adding no special tokens.
+
+        For callers that rebuild a token sequence from text that already
+        contains the chat template's special-token strings.
+
+        Parameters
+        ----------
+        text : str
+            Text to encode.
+
+        Returns
+        -------
+        list[int]
+            Token ids under this checkpoint's tokenizer.
+        """
+        return list(self._tokenizer.encode(text, add_special_tokens=False).ids)
+
+    def encode_offsets(self, text: str) -> "list[tuple[int, int]]":
+        """Return each token's character span in `text`, adding no special tokens.
+
+        Offsets are character (not byte) positions into `text`, so a token that
+        covers only part of a multi-byte character still has a well-defined
+        span; decoding such a token alone would not.
+
+        Parameters
+        ----------
+        text : str
+            Text to encode.
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            One ``(start, end)`` pair per id of ``encode_ids(text)``, same
+            order.
+        """
+        return list(self._tokenizer.encode(text, add_special_tokens=False).offsets)
+
+    def token_to_id(self, token: str) -> "int | None":
+        """Return the id of the vocabulary entry `token`, or None if absent.
+
+        Parameters
+        ----------
+        token : str
+            Exact vocabulary string, for example a special-token string.
+
+        Returns
+        -------
+        int | None
+            The id, or None when `token` is not in the vocabulary.
+        """
+        return self._tokenizer.token_to_id(token)
+
 
 class TiktokenTokenizer:
     """A fixed ``tiktoken`` encoding for tests and offline work.
@@ -128,6 +198,10 @@ class TiktokenTokenizer:
     def count(self, text: str) -> int:
         """Return `text`'s token count under this encoding."""
         return len(self._encoding.encode(text))
+
+    def decode_tokens(self, ids: "list[int]") -> "list[str]":
+        """Return the text of each token id in `ids`, one string per id."""
+        return [self._encoding.decode([int(i)]) for i in ids]
 
 
 def _pinned_revision(spec: Mapping[str, Any]) -> str | None:

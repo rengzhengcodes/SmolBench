@@ -5,6 +5,8 @@ import json
 import os
 import shlex
 import subprocess
+import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,6 +17,12 @@ AGENT_PORT = int(os.environ.get("SMOLBENCH_AGENT_PORT", "9000"))
 VLLM_PORT = int(os.environ.get("SMOLBENCH_VLLM_PORT", "8000"))
 SERVE_LOG = os.path.join(RUN_DIR, "serve.log")
 SYNC_LOG = os.path.join(RUN_DIR, "sync.log")
+HF_CACHE = "/opt/hf-cache"
+ATTN_DIR = HF_CACHE + "/attn"
+ATTN = {"running": False, "total": 0, "done": 0, "current": None, "results": {}, "error": None}
+ATTN_THREAD = None
+ATTN_SEQ = int(time.time())  # clock-seeded, never 0: the plugin skips a seq it already finished
+ATTN_WAIT_S = 1800  # per-job ceiling on collecting the ranks
 CONTROL_TOKEN = os.environ["CONTROL_TOKEN"]
 VLLM_API_KEY = os.environ["VLLM_API_KEY"]
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
@@ -175,6 +183,88 @@ def fingerprint():
     return out
 
 
+def unlink(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def attn_sweep():
+    """Disarm any job and drop done files left by an earlier serve."""
+    unlink(os.path.join(ATTN_DIR, "current.json"))
+    done = os.path.join(ATTN_DIR, "done")
+    for name in os.listdir(done) if os.path.isdir(done) else []:
+        unlink(os.path.join(done, name))
+
+
+def attn_collect(job_id, paths):
+    """Poll for every rank's done file until ATTN_WAIT_S runs out."""
+    deadline = time.time() + ATTN_WAIT_S
+    while True:
+        out = {}
+        for rank, path in enumerate(paths):
+            try:
+                with open(path) as fh:
+                    out[str(rank)] = json.load(fh)
+            except (OSError, ValueError):
+                pass
+        if len(out) == len(paths):
+            return out
+        if time.time() > deadline:
+            raise RuntimeError("%s: %d/%d ranks done" % (job_id, len(out), len(paths)))
+        time.sleep(1)
+
+
+def attn_job(name, tp, job):
+    """Arm one job, prefill it through the local vLLM, return {"<rank>": done-json}."""
+    global ATTN_SEQ
+    job_id = job["job_id"]
+    paths = [os.path.join(ATTN_DIR, "done", "%s.r%d.json" % (job_id, r)) for r in range(tp)]
+    for path in paths:
+        unlink(path)
+    ATTN_SEQ += 1
+    os.makedirs(ATTN_DIR, exist_ok=True)
+    ids = list(job["prompt_token_ids"]) + list(job["completion_token_ids"])
+    cur = os.path.join(ATTN_DIR, "current.json")
+    doc = {"job_id": job_id, "seq": ATTN_SEQ, "n_tokens": len(ids),
+           "positions": job["positions"], "put_urls": job["put_urls"],
+           "meta_put_urls": job["meta_put_urls"]}
+    for key in ("mode", "query_start", "classes"):  # mass mode; absent stays absent
+        if key in job:
+            doc[key] = job[key]
+    with open(cur + ".tmp", "w") as fh:
+        json.dump(doc, fh)
+    os.replace(cur + ".tmp", cur)
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d/v1/completions" % VLLM_PORT,
+        data=json.dumps({"model": name, "prompt": ids, "max_tokens": 1, "seed": 0,
+                         "temperature": 0}).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + VLLM_API_KEY})
+    with urllib.request.urlopen(req, timeout=1200) as resp:
+        resp.read()
+    return attn_collect(job_id, paths)
+
+
+def attn_run(name, tp, jobs):
+    """Run every job in order; one job's failure never abandons the batch."""
+    try:
+        for job in jobs:
+            ATTN["current"] = job["job_id"]
+            try:
+                ATTN["results"][job["job_id"]] = attn_job(name, tp, job)
+            except Exception as exc:
+                ATTN["results"][job["job_id"]] = {"error": str(exc)}
+            ATTN["done"] += 1
+    except Exception as exc:
+        ATTN["error"] = str(exc)
+    finally:
+        ATTN["current"] = None
+        ATTN["running"] = False
+        unlink(os.path.join(ATTN_DIR, "current.json"))
+
+
 class Handler(BaseHTTPRequestHandler):
     """Token-authed control API: GET /status; POST /serve, /sync-up, /stop, /shutdown."""
 
@@ -217,6 +307,7 @@ class Handler(BaseHTTPRequestHandler):
             "serve_log_tail": tail(SERVE_LOG),
             "sync_log_tail": tail(SYNC_LOG, 2000),
             "fingerprint": fingerprint(),
+            "attn": dict(ATTN),
         })
 
     def do_POST(self):
@@ -232,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
             self._serve(payload)
         elif self.path == "/sync-up":
             self._sync_up(payload)
+        elif self.path == "/attn":
+            self._attn(payload)
         elif self.path == "/stop":
             docker("rm", "-f", "vllm")
             self._reply(200, {"ok": True})
@@ -241,6 +334,33 @@ class Handler(BaseHTTPRequestHandler):
             subprocess.Popen(["shutdown", "-h", "now"])
         else:
             self._reply(404, {"error": "unknown path"})
+
+    def _attn(self, payload):
+        """Run attention-capture jobs in a background thread; reply 202."""
+        global ATTN_THREAD
+        try:
+            name = str(payload["served_model_name"])
+            tp = int(payload["tp"])
+            jobs = payload["jobs"]
+            if not isinstance(jobs, list):
+                raise ValueError("jobs must be a list")
+            for job in jobs:
+                for key in ("job_id", "prompt_token_ids", "completion_token_ids",
+                            "positions", "put_urls", "meta_put_urls"):
+                    if key not in job:
+                        raise KeyError(key)
+        except (KeyError, TypeError, ValueError) as exc:
+            self._reply(400, {"error": "bad payload: %s" % (exc,)})
+            return
+        if ATTN_THREAD is not None and ATTN_THREAD.is_alive():
+            self._reply(409, {"error": "attn already running"})
+            return
+        # Reset and reply first: a short batch could finish before the client reads 202.
+        ATTN.update({"running": True, "total": len(jobs), "done": 0, "current": None,
+                     "results": {}, "error": None})
+        self._reply(202, {"ok": True, "jobs": len(jobs)})
+        ATTN_THREAD = threading.Thread(target=attn_run, args=(name, tp, jobs), daemon=True)
+        ATTN_THREAD.start()
 
     def _serve(self, payload):
         """Replace the vLLM container with one serving the requested model.
@@ -257,6 +377,14 @@ class Handler(BaseHTTPRequestHandler):
             max_len = int(payload.get("max_model_len", 16384))
             vllm_args = [str(a) for a in payload.get("vllm_args", [])]
             adapters = payload.get("adapters") or []  # LoRA: staged from S3 below
+            env = dict(payload.get("env") or {})  # -> docker -e NAME=value
+            files = dict(payload.get("files") or {})  # -> HF_CACHE/<relpath>
+            for k, v in list(env.items()) + list(files.items()):
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise TypeError("env/files must map str to str")
+            for rel in files:
+                if rel.startswith("/") or ".." in rel:
+                    raise ValueError("files path escapes the cache: %s" % rel)
         except (KeyError, TypeError, ValueError) as exc:
             self._reply(400, {"error": "bad payload: %s" % (exc,)})
             return
@@ -266,6 +394,12 @@ class Handler(BaseHTTPRequestHandler):
             SERVE_PROC.kill(); SERVE_PROC.wait()
         docker("rm", "-f", "vllm")
         touch("serve_started")  # opens the watchdog's startup-grace window
+        attn_sweep()  # a job armed by the last serve must not fire in this one
+        for rel, text in files.items():
+            path = os.path.join(HF_CACHE, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                fh.write(text)
         cmd = [
             "docker", "run", "-d", "--name", "vllm",
             # --ipc=host mandatory at tp>1: NCCL needs >docker's 64 MB /dev/shm.
@@ -277,6 +411,7 @@ class Handler(BaseHTTPRequestHandler):
             "-v", "/opt/hf-cache/vllm-cache:/root/.cache/vllm",
             "-e", "HF_TOKEN=" + HF_TOKEN,
             "-e", "HUGGING_FACE_HUB_TOKEN=" + HF_TOKEN,
+        ] + [a for kv in env.items() for a in ("-e", "%s=%s" % kv)] + [
             VLLM_IMAGE,
             "--model", hf_id,
             "--served-model-name", name,

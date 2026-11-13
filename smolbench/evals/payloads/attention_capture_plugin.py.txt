@@ -1,0 +1,467 @@
+"""smolbench_attn: capture the answer tokens' attention rows inside vLLM's prefill.
+
+A vLLM *general plugin* (entry point ``smolbench_attn = smolbench_attn:register``,
+loaded in every process including tensor-parallel workers). It wraps
+``Attention.forward`` so that, while a job is armed, the post-RoPE queries and
+keys the layer receives are turned into the softmax rows of the job's
+positions -- the very rows the kernel used, because causal attention at a
+position depends only on the prefix and this is the same checkpoint in the
+same serving stack that generated the sequence.
+
+Contract: ``smolbench/evals/payloads/ATTENTION_CAPTURE_CONTRACT.md``. In short:
+the box's agent writes ``$SMOLBENCH_ATTN_DIR/current.json`` (job id, seq,
+n_tokens, positions, per-rank presigned PUT URLs) and then sends ONE
+completions request whose prompt is the stored token ids with
+``max_tokens=1``. The serve is ``--enforce-eager`` (this wrapper is plain
+Python; it cannot live inside a fullgraph compile), ``--max-num-seqs 1`` and
+``--max-num-batched-tokens <max_model_len>`` (one un-chunked prefill), so
+``query.shape[0] == n_tokens`` identifies the job's forward.
+
+Per layer the rows honour: the impl's ``scale``; the layer's sliding window
+(vLLM/flash-attn convention ``window=(w-1, 0)``: keys ``j >= p-(w-1)``);
+grouped-query head mapping; ``logits_soft_cap`` (tanh) when the impl has one;
+attention sinks (gpt-oss: one extra softmax column per head, its mass stored
+separately so the row over tokens is exactly the kernel's); KV sharing
+(Gemma-4: ``key is None`` -- the target layer's keys/values, cached earlier in
+the same forward, are used). Mamba blocks never call in; the captured layer
+indices are recorded.
+
+Self-consistency gate, every layer, every job: ``rows @ V`` at the captured
+positions must match the kernel's own output rows from the same forward
+(max relative difference <= ``SMOLBENCH_ATTN_GATE_TOL``, default 3e-2 for
+bf16). A failed gate fails the job: nothing is uploaded, the done file says
+why. The gate is what proves the wrapper read the right tensors with the
+right masks, sinks and scale; without it a silently wrong capture would look
+exactly like a right one.
+
+Mode ``mass`` (the study's actual question -- do response tokens attend to
+the whitespace padding less than uniform dispersion predicts?): the job also
+carries a key CLASS per token and ``query_start``; for EVERY completion query
+the row is reduced on the box to its mass per class (4 classes), its entropy
+(over tokens plus the sink column) and the sink mass, in query chunks that
+keep the float32 logits under ~1 GB. The gate rows at ``positions`` validate
+the same arithmetic. No T x T matrix ever leaves the GPU.
+
+Never raises into vLLM: every failure is recorded in the job's done file and
+serving continues.
+"""
+import io
+import json
+import os
+import re
+import threading
+import time
+
+_STATE = {
+    "patched": False,
+    "job": None,          # the armed job dict (from current.json), or None
+    "job_mtime": None,    # mtime of current.json when `job` was read
+    "session": None,      # per-forward capture in progress
+    "done_seq": -1,       # seq of the last job finalised (ok or failed) on this rank
+    "lock": threading.Lock(),
+}
+
+_LAYER_IDX = re.compile(r"\.layers\.(\d+)\.")
+
+
+def _attn_dir():
+    return os.environ.get("SMOLBENCH_ATTN_DIR", "/root/.cache/huggingface/attn")
+
+
+def _gate_tol():
+    return float(os.environ.get("SMOLBENCH_ATTN_GATE_TOL", "3e-2"))
+
+
+def _rank():
+    try:
+        from vllm.distributed.parallel_state import get_tensor_model_parallel_rank
+
+        return int(get_tensor_model_parallel_rank())
+    except Exception:  # noqa: BLE001 -- single-process fallback (tests, tp=1 before init)
+        return 0
+
+
+def _log(msg):
+    print("[smolbench_attn r%d] %s" % (_rank(), msg), flush=True)
+
+
+# --------------------------------------------------------------------------- jobs
+def _read_job():
+    """Return the armed job (re-read when current.json changed), else None."""
+    path = os.path.join(_attn_dir(), "current.json")
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        _STATE["job"] = None
+        _STATE["job_mtime"] = None
+        return None
+    if mtime != _STATE["job_mtime"]:
+        try:
+            with open(path) as fh:
+                job = json.load(fh)
+            job["positions"] = [int(p) for p in job["positions"]]
+            job["n_tokens"] = int(job["n_tokens"])
+            job["seq"] = int(job["seq"])
+            job["mode"] = str(job.get("mode") or "rows")
+            if job["mode"] == "mass":
+                job["query_start"] = int(job["query_start"])
+                job["classes"] = [int(c) for c in job["classes"]]
+                if len(job["classes"]) != job["n_tokens"]:
+                    raise ValueError("classes has %d entries for %d tokens"
+                                     % (len(job["classes"]), job["n_tokens"]))
+                if not (0 <= job["query_start"] < job["n_tokens"]):
+                    raise ValueError("query_start %d outside sequence" % job["query_start"])
+            elif job["mode"] != "rows":
+                raise ValueError("unknown mode %r" % job["mode"])
+            _STATE["job"] = job
+        except Exception as exc:  # noqa: BLE001 -- a half-written file is retried next call
+            _log("current.json unreadable: %r" % (exc,))
+            _STATE["job"] = None
+        _STATE["job_mtime"] = mtime
+    job = _STATE["job"]
+    if job is not None and job["seq"] <= _STATE["done_seq"]:
+        return None
+    return job
+
+
+def _write_done(job, ok, error=None, gate_max_rel=None, nbytes=0, uploaded=False, http=None):
+    done_dir = os.path.join(_attn_dir(), "done")
+    os.makedirs(done_dir, exist_ok=True)
+    path = os.path.join(done_dir, "%s.r%d.json" % (job["job_id"], _rank()))
+    body = {"ok": bool(ok), "error": error, "gate_max_rel": gate_max_rel,
+            "bytes": int(nbytes), "uploaded": bool(uploaded), "http_status": http,
+            "seq": job["seq"], "rank": _rank()}
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(body, fh)
+    os.replace(tmp, path)
+    _STATE["done_seq"] = max(_STATE["done_seq"], job["seq"])
+    _STATE["session"] = None
+
+
+# --------------------------------------------------------------------------- rows
+def _layer_index(name):
+    m = _LAYER_IDX.search(name)
+    return int(m.group(1)) if m else -1
+
+
+def _attention_layers(attention_cls):
+    """All Attention layers of the model (static forward context), in model order."""
+    from vllm.forward_context import get_forward_context
+
+    layers = get_forward_context().no_compile_layers
+    names = [n for n, layer in layers.items() if isinstance(layer, attention_cls)]
+    return names, {n: layers[n] for n in names}
+
+
+def _rows_for(layer, q3, k3, positions):
+    """Softmax rows of `positions` over all keys, honouring window, GQA, softcap, sinks.
+
+    Returns (rows float32 [P, H, T], sink float32 [P, H] or None).
+    """
+    import torch
+
+    n = q3.shape[0]
+    heads = layer.num_heads
+    kv_heads = layer.num_kv_heads
+    group = heads // kv_heads
+    pos = torch.tensor(positions, device=q3.device, dtype=torch.long)
+    qp = q3[pos].float()                                   # [P, H, D]
+    qp = qp.view(len(positions), kv_heads, group, -1)       # [P, Hkv, g, D]
+    kf = k3.float().permute(1, 0, 2)                        # [Hkv, T, D]
+    scale = float(getattr(layer.impl, "scale", layer.head_size ** -0.5))
+    logits = torch.einsum("pkgd,knd->pkgn", qp, kf) * scale  # [P, Hkv, g, T]
+    logits = logits.reshape(len(positions), heads, n)       # [P, H, T]
+    cap = float(getattr(layer.impl, "logits_soft_cap", 0) or 0)
+    if cap > 0:
+        logits = cap * torch.tanh(logits / cap)
+    j = torch.arange(n, device=q3.device)
+    mask = j[None, :] > pos[:, None]                        # future keys
+    window = layer.sliding_window
+    if window is not None and int(window) > 0:
+        mask |= j[None, :] < (pos[:, None] - (int(window) - 1))
+    logits = logits.masked_fill(mask[:, None, :], float("-inf"))
+    sinks = getattr(layer.impl, "sinks", None) if getattr(layer, "has_sink", False) else None
+    if sinks is not None:
+        s = sinks.detach().float().view(1, heads, 1).expand(len(positions), heads, 1)
+        full = torch.softmax(torch.cat([logits, s], dim=-1), dim=-1)
+        return full[..., :n], full[..., n]
+    return torch.softmax(logits, dim=-1), None
+
+
+#: Float32 logits elements per query chunk (~1 GB); chunks keep P x T off the GPU.
+MASS_CHUNK_ELEMENTS = 1 << 28
+N_CLASSES = 4
+
+
+def _logits_for(layer, q3, k3, pos):
+    """Masked, scaled, soft-capped logits [P, H, T] for query positions `pos` (a tensor)."""
+    import torch
+
+    n = q3.shape[0]
+    heads = layer.num_heads
+    kv_heads = layer.num_kv_heads
+    group = heads // kv_heads
+    qp = q3[pos].float().view(len(pos), kv_heads, group, -1)
+    kf = k3.float().permute(1, 0, 2)
+    scale = float(getattr(layer.impl, "scale", layer.head_size ** -0.5))
+    logits = torch.einsum("pkgd,knd->pkgn", qp, kf) * scale
+    logits = logits.reshape(len(pos), heads, n)
+    cap = float(getattr(layer.impl, "logits_soft_cap", 0) or 0)
+    if cap > 0:
+        logits = cap * torch.tanh(logits / cap)
+    j = torch.arange(n, device=q3.device)
+    mask = j[None, :] > pos[:, None]
+    window = layer.sliding_window
+    if window is not None and int(window) > 0:
+        mask |= j[None, :] < (pos[:, None] - (int(window) - 1))
+    return logits.masked_fill(mask[:, None, :], float("-inf"))
+
+
+def _mass_for(layer, q3, k3, query_start, classes):
+    """Per-class attention mass and row entropy for every query >= query_start.
+
+    Returns (mass float16 [P, H, C], entropy float16 [P, H], sink float16 [P, H] or None).
+    """
+    import torch
+
+    n = q3.shape[0]
+    heads = layer.num_heads
+    onehot = torch.zeros(n, N_CLASSES, device=q3.device, dtype=torch.float32)
+    onehot[torch.arange(n, device=q3.device), classes] = 1.0
+    sinks = getattr(layer.impl, "sinks", None) if getattr(layer, "has_sink", False) else None
+    s = sinks.detach().float().view(1, heads, 1) if sinks is not None else None
+    chunk = max(1, MASS_CHUNK_ELEMENTS // (heads * n))
+    total = n - query_start
+    mass = torch.empty(total, heads, N_CLASSES, dtype=torch.float16, device=q3.device)
+    entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
+    sink = torch.empty(total, heads, dtype=torch.float16, device=q3.device) if s is not None else None
+    for start in range(query_start, n, chunk):
+        pos = torch.arange(start, min(start + chunk, n), device=q3.device)
+        logits = _logits_for(layer, q3, k3, pos)                       # [p, H, T]
+        if s is not None:
+            logits = torch.cat([logits, s.expand(len(pos), heads, 1)], dim=-1)
+        probs = torch.softmax(logits, dim=-1)
+        ent = -(probs * torch.log(probs.clamp_min(1e-30))).sum(-1)      # [p, H]
+        tok = probs[..., :n]
+        m = torch.einsum("phn,nc->phc", tok, onehot)
+        sl = slice(start - query_start, start - query_start + len(pos))
+        mass[sl] = m.to(torch.float16)
+        entropy[sl] = ent.to(torch.float16)
+        if sink is not None:
+            sink[sl] = probs[..., n].to(torch.float16)
+        del logits, probs, tok, m
+    return mass, entropy, sink
+
+
+def _gate(layer, rows, v3, out_p):
+    """Max abs/relative difference between rows @ V and the kernel's output rows."""
+    import torch
+
+    heads = layer.num_heads
+    kv_heads = layer.num_kv_heads
+    group = heads // kv_heads
+    p = rows.shape[0]
+    r = rows.view(p, kv_heads, group, -1)                    # [P, Hkv, g, T]
+    vf = v3.float().permute(1, 0, 2)                        # [Hkv, T, Dv]
+    o = torch.einsum("pkgn,knd->pkgd", r, vf).reshape(p, heads, -1)
+    ref = out_p.float().reshape(p, heads, -1)
+    diff = (o - ref).abs()
+    max_abs = float(diff.max())
+    denom = float(ref.abs().max()) + 1e-6
+    return max_abs, max_abs / denom
+
+
+# --------------------------------------------------------------------------- capture
+def _maybe_capture(attention_cls, layer, query, key, value, output):
+    import torch
+
+    job = _read_job()
+    if job is None:
+        return
+    n = int(query.shape[0])
+    if n != job["n_tokens"]:
+        return
+    if not job["positions"] or max(job["positions"]) >= n or min(job["positions"]) < 0:
+        _write_done(job, False, error="positions %r outside sequence of %d tokens"
+                    % (job["positions"], n))
+        return
+
+    session = _STATE["session"]
+    if session is None or session["seq"] != job["seq"]:
+        names, layers = _attention_layers(attention_cls)
+        targets = {
+            getattr(layers[nm], "kv_sharing_target_layer_name", None) for nm in names
+        }
+        targets.discard(None)
+        session = {"seq": job["seq"], "job": job, "names": names, "targets": targets,
+                   "kv": {}, "captured": {}, "gate": {}, "t0": time.time(),
+                   "failed": None}
+        _STATE["session"] = session
+    if session["failed"] is not None:
+        return
+    name = layer.layer_name
+    if name in session["captured"]:
+        return  # a second forward with the same token count; ignore
+
+    heads, head_size = layer.num_heads, layer.head_size
+    head_size_v = getattr(layer, "head_size_v", head_size)
+    q3 = query.view(n, heads, head_size)
+    if key is None or value is None:
+        target = getattr(layer, "kv_sharing_target_layer_name", None)
+        if target is None or target not in session["kv"]:
+            session["failed"] = "layer %s has no key/value and no cached KV target (%r)" % (name, target)
+            _write_done(job, False, error=session["failed"])
+            return
+        k3, v3 = session["kv"][target]
+        shared_from = _layer_index(target)
+    else:
+        k3 = key.view(n, layer.num_kv_heads, head_size)
+        v3 = value.view(n, layer.num_kv_heads, head_size_v)
+        shared_from = -1
+        if name in session["targets"]:
+            session["kv"][name] = (k3, v3)
+
+    with torch.no_grad():
+        rows, sink = _rows_for(layer, q3, k3, job["positions"])
+        out_p = output.view(n, heads * head_size_v)[
+            torch.tensor(job["positions"], device=output.device, dtype=torch.long)
+        ]
+        max_abs, max_rel = _gate(layer, rows, v3, out_p)
+        entry = {
+            "index": _layer_index(name),
+            "has_sink": sink is not None,
+            "window": int(layer.sliding_window or 0),
+            "kv_shared_from": shared_from,
+        }
+        if job["mode"] == "mass":
+            # The gate rows above validate the same q/k/mask/sink arithmetic
+            # the mass reduction uses; only the reduced statistics are kept.
+            classes = torch.tensor(job["classes"], device=q3.device, dtype=torch.long)
+            mass, entropy, msink = _mass_for(layer, q3, k3, job["query_start"], classes)
+            entry["mass"] = mass.cpu().numpy()
+            entry["entropy"] = entropy.cpu().numpy()
+            entry["sink"] = msink.cpu().numpy() if msink is not None else None
+            del mass, entropy, msink
+        else:
+            entry["rows"] = rows.to(torch.float16).cpu().numpy()
+            entry["sink"] = sink.to(torch.float16).cpu().numpy() if sink is not None else None
+    session["captured"][name] = entry
+    session["gate"][name] = {"max_abs": max_abs, "max_rel": max_rel}
+    if max_rel > _gate_tol():
+        session["failed"] = "gate failed at %s: max_rel=%.3g > tol=%.3g (max_abs=%.3g)" % (
+            name, max_rel, _gate_tol(), max_abs)
+        _log(session["failed"])
+        _write_done(job, False, error=session["failed"], gate_max_rel=max_rel)
+        return
+    if len(session["captured"]) == len(session["names"]):
+        _finalize(layer, session)
+
+
+def _finalize(layer, session):
+    import numpy as np
+
+    job = session["job"]
+    order = sorted(session["captured"].values(), key=lambda e: e["index"])
+    mode = job["mode"]
+    arrays = {}
+    if mode == "mass":
+        arrays["mass"] = np.stack([e["mass"] for e in order])         # [L, P, H, C]
+        arrays["entropy"] = np.stack([e["entropy"] for e in order])   # [L, P, H]
+        lead = arrays["entropy"].shape[1:]
+        arrays["classes"] = np.asarray(job["classes"], dtype=np.uint8)
+        arrays["query_start"] = np.asarray(job["query_start"], dtype=np.int32)
+        main_shape = list(arrays["mass"].shape)
+    else:
+        arrays["rows"] = np.stack([e["rows"] for e in order])         # [L, P, H, T]
+        lead = arrays["rows"].shape[1:3]
+        main_shape = list(arrays["rows"].shape)
+    sink = np.stack([e["sink"] if e["sink"] is not None
+                     else np.zeros(lead, dtype=np.float16) for e in order])
+    layers = np.asarray([e["index"] for e in order], dtype=np.int32)
+    meta = {
+        "job_id": job["job_id"], "seq": job["seq"], "rank": _rank(),
+        "tp": len(job.get("put_urls", [])) or 1,
+        "n_tokens": job["n_tokens"], "positions": list(job["positions"]),
+        "layers": layers.tolist(), "num_heads_local": int(layer.num_heads),
+        "num_kv_heads_local": int(layer.num_kv_heads), "head_size": int(layer.head_size),
+        "dtype": "float16", "rows_shape": main_shape, "mode": mode,
+        "query_start": job.get("query_start"), "n_classes": N_CLASSES if mode == "mass" else None,
+        "gate": {nm: session["gate"][nm] for nm in session["gate"]},
+        "gate_tol": _gate_tol(),
+        "gate_max_rel": max(g["max_rel"] for g in session["gate"].values()),
+        "vllm_commit": os.environ.get("VLLM_BUILD_COMMIT"),
+        "model": os.environ.get("SMOLBENCH_ATTN_MODEL"),
+        "wall_s": time.time() - session["t0"],
+    }
+    buf = io.BytesIO()
+    np.savez(
+        buf, sink=sink, layers=layers, **arrays,
+        positions=np.asarray(job["positions"], dtype=np.int32),
+        has_sink=np.asarray([e["has_sink"] for e in order], dtype=bool),
+        sliding_window=np.asarray([e["window"] for e in order], dtype=np.int32),
+        kv_shared_from=np.asarray([e["kv_shared_from"] for e in order], dtype=np.int32),
+    )
+    blob = buf.getvalue()
+    meta["bytes"] = len(blob)
+    rank = _rank()
+    try:
+        put_url = job["put_urls"][rank]
+        meta_url = job["meta_put_urls"][rank]
+    except (KeyError, IndexError, TypeError):
+        _write_done(job, False, error="no presigned URLs for rank %d" % rank,
+                    gate_max_rel=meta["gate_max_rel"], nbytes=len(blob))
+        return
+    statuses = [_put(put_url, blob, "application/octet-stream"),
+                _put(meta_url, json.dumps(meta).encode(), "application/json")]
+    ok = all(200 <= s < 300 for s in statuses)
+    _log("job %s (%s): %d layers, shape %s, %.1f MB, gate max_rel=%.3g, upload=%s"
+         % (job["job_id"], mode, len(order), main_shape, len(blob) / 1e6,
+            meta["gate_max_rel"], statuses))
+    _write_done(job, ok, error=None if ok else "upload failed: %r" % (statuses,),
+                gate_max_rel=meta["gate_max_rel"], nbytes=len(blob), uploaded=ok,
+                http=statuses)
+
+
+def _put(url, data, content_type):
+    import requests
+
+    last = 0
+    for attempt in range(3):
+        try:
+            resp = requests.put(url, data=data, headers={"Content-Type": content_type},
+                                timeout=900)
+            last = resp.status_code
+            if 200 <= last < 300:
+                return last
+        except Exception as exc:  # noqa: BLE001 -- retried
+            _log("PUT attempt %d failed: %r" % (attempt, exc))
+            last = -1
+        time.sleep(2 * (attempt + 1))
+    return last
+
+
+# --------------------------------------------------------------------------- entry
+def register():
+    """vLLM general-plugin entry point: wrap ``Attention.forward`` once per process."""
+    if _STATE["patched"]:
+        return
+    from vllm.model_executor.layers.attention.attention import Attention
+
+    original = Attention.forward
+
+    def forward(self, query, key, value, output_shape=None, output_dtype=None):
+        output = original(self, query, key, value, output_shape=output_shape,
+                          output_dtype=output_dtype)
+        try:
+            _maybe_capture(Attention, self, query, key, value, output)
+        except Exception as exc:  # noqa: BLE001 -- serving must never break
+            job = _STATE["job"]
+            _log("capture error at %s: %r" % (getattr(self, "layer_name", "?"), exc))
+            if job is not None and _STATE["session"] is not None:
+                _write_done(job, False, error="%s: %s" % (type(exc).__name__, exc))
+        return output
+
+    Attention.forward = forward
+    _STATE["patched"] = True
+    _log("registered (attn dir %s, gate tol %g)" % (_attn_dir(), _gate_tol()))

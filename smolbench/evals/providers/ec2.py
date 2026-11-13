@@ -2581,7 +2581,10 @@ def _wait_model_ready(
 
 @contextlib.contextmanager
 def serve_model(
-    model: str, timeout_min: Optional[int] = None, force: bool = False
+    model: str,
+    timeout_min: Optional[int] = None,
+    force: bool = False,
+    capture: bool = False,
 ) -> Iterator[str]:
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
@@ -2597,6 +2600,22 @@ def serve_model(
         Health-wait budget; None means ``EC2_SERVE_TIMEOUT_MIN``.
     force : bool
         Whether to replace a healthy serving process for ``model``.
+    capture : bool
+        Serve the SAME checkpoint for attention capture rather than for
+        generation: the spec's own args plus ``--enforce-eager`` and
+        ``--max-num-batched-tokens <max_model_len>`` (each appended only when
+        the spec does not already carry it; every spec already carries
+        ``--enforce-eager`` through ``DETERMINISM_ARGS``), the capture
+        plugin's environment, and the plugin package in the payload's
+        ``files``. Eager mode is needed because the plugin wraps
+        ``Attention.forward`` with tensor math and file IO, which cannot live
+        inside vLLM's fullgraph compile. The batched-token ceiling must cover
+        the full context because one un-chunked prefill is what puts a whole
+        sequence's queries and keys into a single ``Attention.forward``;
+        chunked prefill would split them and no complete softmax row would
+        exist. The payload differs from the generation one, so the
+        already-serving fast path (which compares the whole payload) swaps the
+        container in both directions between the two serves of one checkpoint.
 
     Yields
     ------
@@ -2607,6 +2626,15 @@ def serve_model(
     ------
     KeyError
         ``model`` has no ``EC2_DEPLOY_SPECS`` entry.
+    FileNotFoundError
+        ``capture=True`` and the plugin asset is missing. Raised while the
+        payload is built, before ``/serve`` is posted, so the box is never
+        left running vLLM with ``VLLM_PLUGINS`` set and no plugin to load.
+    ValueError
+        ``capture=True`` and the spec carries ``--kv-sharing-fast-prefill``
+        (KV-shared layers would skip the captured query positions), or
+        carries a ``--max-num-batched-tokens`` below ``max_model_len``
+        (chunked prefill).
     RuntimeError
         The instance became healthy serving something else.
     """
@@ -2634,6 +2662,70 @@ def serve_model(
         # LoRA adapters staged from S3 on the box before launch (see
         # _serve).
         serve_payload["adapters"] = [dict(a) for a in spec["adapters"]]
+    if capture:
+        # Lazy import: capture-off callers never touch the plugin asset, and
+        # an import-time read would turn a missing asset into an ImportError
+        # for every eval.
+        from smolbench.evals.payloads import attention_capture_plugin_py
+
+        vllm_args = serve_payload["vllm_args"]
+        if "--kv-sharing-fast-prefill" in vllm_args:
+            raise ValueError(
+                f"{model!r}: --kv-sharing-fast-prefill cannot be combined with attention "
+                "capture: KV-shared layers would skip the query positions the plugin "
+                "captures."
+            )
+        max_len = serve_payload["max_model_len"]
+        # Container-side paths. The agent resolves `files` relpaths against
+        # its /opt/hf-cache, which is bind-mounted at the container's
+        # /root/.cache/huggingface -- one tree, two names -- so what the
+        # client writes as "attn_plugin/..." vLLM reads as
+        # "/root/.cache/huggingface/attn_plugin/...".
+        plugin_dir = "/root/.cache/huggingface/attn_plugin"
+        dist_info = "attn_plugin/smolbench_attn-0.1.dist-info"
+        # Appended, never substituted: the study's own args stay identical to
+        # the generation serve, so the two differ only by what is added here
+        # plus the env and files below. Each flag is added only when absent:
+        # DETERMINISM_ARGS already puts --enforce-eager on every spec, and a
+        # repeated flag is at best noise to vLLM's argument parser.
+        if "--enforce-eager" not in vllm_args:
+            vllm_args.append("--enforce-eager")
+        if "--max-num-batched-tokens" in vllm_args:
+            at = vllm_args.index("--max-num-batched-tokens")
+            present = int(vllm_args[at + 1])
+            if present < max_len:
+                raise ValueError(
+                    f"{model!r}: --max-num-batched-tokens {present} is below "
+                    f"max_model_len {max_len}; attention capture needs one "
+                    "un-chunked prefill."
+                )
+        else:
+            vllm_args += ["--max-num-batched-tokens", str(max_len)]
+        serve_payload["env"] = {
+            "PYTHONPATH": plugin_dir,
+            "VLLM_PLUGINS": "smolbench_attn",
+            "SMOLBENCH_ATTN_DIR": "/root/.cache/huggingface/attn",
+            # The plugin stamps this into every meta json, so an uploaded
+            # capture names its own checkpoint instead of relying on the
+            # reader to trust the S3 key it was filed under.
+            "SMOLBENCH_ATTN_MODEL": model,
+        }
+        serve_payload["files"] = {
+            # Read HERE, at serve time, not at import.
+            "attn_plugin/smolbench_attn/__init__.py": attention_capture_plugin_py(),
+            # The hand-written dist-info IS the discovery mechanism:
+            # importlib.metadata finds distributions by scanning sys.path, so
+            # a *.dist-info beside the package on PYTHONPATH is enough for
+            # vLLM to see the vllm.general_plugins entry point in every
+            # process it starts -- the tensor-parallel workers included,
+            # which matters because each rank captures its own heads.
+            f"{dist_info}/METADATA": (
+                "Metadata-Version: 2.1\nName: smolbench-attn\nVersion: 0.1\n"
+            ),
+            f"{dist_info}/entry_points.txt": (
+                "[vllm.general_plugins]\nsmolbench_attn = smolbench_attn:register\n"
+            ),
+        }
     if not force:
         # Decide BEFORE yielding: the yield must sit outside this try, or an
         # exception raised by the with-body would be swallowed here and the
@@ -2727,6 +2819,83 @@ def serve_model(
 def agent_status() -> Dict[str, Any]:
     """Return the control agent's view: container state, health, recent docker logs."""
     return _agent(_require_state(), "GET", "/status")
+
+
+def attn_start(state: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Hand the box one batch of attention-capture jobs; return the agent's reply.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Instance state (needs ``public_ip`` and ``control_token``). Taken as an
+        argument rather than resolved from the state file the way
+        :func:`agent_status` does, because the caller already holds the state
+        of the box it provisioned and served for capture; re-reading the file
+        could retarget a replacement instance mid-run.
+    payload : Dict[str, Any]
+        The ``/attn`` body: ``served_model_name``, ``tp`` and ``jobs``, each
+        job carrying its prompt/completion token ids, the positions to capture
+        and its presigned PUT URLs. Sent verbatim.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The parsed agent response. ``/attn`` answers as soon as the background
+        trigger loop starts, so a reply means "accepted", not "finished": poll
+        :func:`attn_status` for progress.
+
+    Raises
+    ------
+    RuntimeError
+        The agent answered non-2xx (``_agent`` includes the body).
+    requests.exceptions.RequestException
+        The box stayed unreachable through ``_agent``'s connect retries.
+
+    Notes
+    -----
+    The 600 s timeout is long because the body carries a whole batch of
+    token-id sequences (tens of MB), so the upload alone can outlast a default
+    timeout on a slow uplink.
+    """
+    return _agent(state, "POST", "/attn", payload, timeout=600)
+
+
+def attn_status(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the ``attn`` block of the box's ``/status``, or ``{}`` when absent.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Instance state, passed explicitly for the same reason as in
+        :func:`attn_start`.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The agent's capture progress (``running``, ``total``, ``done``,
+        ``current``, ``results``, ``error``), or ``{}`` when the box reports
+        no such block: an older agent, or one never given a capture batch. A
+        missing block is a normal state, so callers can poll before, during
+        and after a run alike.
+
+    Raises
+    ------
+    RuntimeError
+        The agent answered non-2xx (``_agent`` includes the body).
+    requests.exceptions.RequestException
+        The box stayed unreachable through ``_agent``'s connect retries.
+
+    Notes
+    -----
+    Every authenticated agent request touches the box's ``last_active``, so
+    polling this also feeds the idle watchdog. Keep the poll cadence well
+    inside the idle window during a long capture, or the box halts under its
+    own run.
+    """
+    status = _agent(state, "GET", "/status", timeout=60, connect_retries=4)
+    # ``or {}`` rather than ``.get("attn", {})``: an agent that reports an
+    # explicit null must read the same as one that omits the key.
+    return status.get("attn") or {}
 
 
 def shutdown_instance(wait: bool = True) -> None:

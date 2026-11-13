@@ -15,7 +15,9 @@ exceeds it.
 
 Assets are read ONCE at import into plain ``str`` constants, so a test can
 ``ast.parse()`` them directly and a missing file surfaces at import, not
-mid-provision.
+mid-provision. The one exception is the attention-capture plugin, which
+:func:`attention_capture_plugin_py` re-reads on every call instead -- see that
+function for why an import-time read would be the wrong trade there.
 """
 
 import gzip
@@ -153,3 +155,41 @@ def pack_user_data(rendered: str) -> bytes:
     packed = gzip.compress(rendered.encode(), mtime=0)
     assert len(packed) < 16384, f"compressed user-data too large: {len(packed)} bytes"
     return packed
+
+
+def attention_capture_plugin_py() -> str:
+    """Read the vLLM attention-capture general plugin's source, fresh per call.
+
+    The plugin ships to the box inside the control agent's ``/serve`` payload
+    (``files``), which writes it to ``/opt/hf-cache/attn_plugin/smolbench_attn/``
+    -- the container's ``/root/.cache/huggingface/...``. It never rides in
+    cloud-init user-data, so it costs nothing against the 16 KB cap and carries
+    no size ceiling of its own. Unlike the stdlib-only user-data payloads it may
+    import torch: it runs inside the vLLM image.
+
+    This asset is deliberately NOT hoisted into a module-level constant like
+    every other one here. It is written and revised independently of this
+    package, while ``smolbench.evals.providers.ec2`` -- and therefore every eval
+    -- imports ``smolbench.evals.payloads``. An import-time read would turn a
+    briefly absent or half-written plugin file into an ImportError for the whole
+    suite; reading inside the function confines that failure to a capture serve,
+    the only caller.
+
+    Returns
+    -------
+    str
+        The plugin source verbatim, LF-only (pinned by ``.gitattributes``);
+        ships as ``attn_plugin/smolbench_attn/__init__.py``.
+
+    Raises
+    ------
+    FileNotFoundError
+        The asset is missing. By design this surfaces at serve time -- raised
+        while the ``/serve`` payload is being built, so no container is ever
+        launched with ``VLLM_PLUGINS`` set and no plugin to load -- rather than
+        at import of an unrelated eval.
+    """
+    # The filename stays an inline literal on a per-call read: a test walks
+    # this module's AST for `_asset("attention_capture_plugin.py.txt")` and
+    # fails if any such call sits at module level.
+    return _asset("attention_capture_plugin.py.txt")
