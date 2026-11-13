@@ -72,7 +72,7 @@ def test_probe_routes_per_model_and_sends_seed_and_reasoning(mantle, model, path
     assert body["model"] == model.bedrock_id
     assert body["seed"] == 5
     assert body["reasoning_effort"] == "high"
-    assert body["max_completion_tokens"] == min(model.max_tokens, 4096)
+    assert body["max_completion_tokens"] == bt.PROBE_MAX_TOKENS
     assert body["stream"] is True
     assert not any(k in os.environ for k in ROUTED_ENV), "use_model must restore the env"
 
@@ -120,7 +120,10 @@ def test_induction_writes_released_layout_and_resumes(mantle, tmp_path, monkeypa
     assert set(cells) == {("deepseek-v3.1", arm) for arm in bt.INDUCTION_ARMS}
     run = next((tmp_path / "induction" / "induction" / "deepseek-v3.1" / "seed=0").glob("extens--*.yaml"))
     data = yaml.safe_load(run.read_text())
-    assert data["server_config"]["extra_args"] == {"max_completion_tokens": 8192, "reasoning_effort": "high"}
+    # The ICLR budget: the context limit less the longest prompt and the template reserve.
+    budget = bt.induction_budget("deepseek-v3.1")
+    assert rs.MIN_VIABLE_BUDGET <= budget < rs.CONTEXT_LIMIT - rs.TEMPLATE_RESERVE
+    assert data["server_config"]["extra_args"] == {"max_completion_tokens": budget, "reasoning_effort": "high"}
     report = bt.induction_reasoning_report(tmp_path)
     assert all(v["unreasoned"] == 0 and v["marks"] == 9 for v in report.values())
 
@@ -140,6 +143,15 @@ def test_horn_rows_score_and_load_through_stats(mantle, tmp_path):
     assert body["temperature"] == 0.7 and body["seed"] == 0 and body["reasoning_effort"] == "high"
     assert body["stream"] is True and all(r["reasoning"] == "plan: a ∧ b → c" for r in rows)
     assert mantle.requests[-1]["path"] == "/v1/chat/completions"
+    # The ICLR budget: the protocol's cap, cut so that prompt and output fit its context.
+    sent = {r["max_tokens_sent"] for r in rows}
+    assert body["max_tokens"] in sent and all(100_000 < s < bt.HORN_MAX_TOKENS for s in sent)
+    assert (bt.HORN_MAX_TOKENS, bt.HORN_CONTEXT_LENGTH) == (131072, 131072)
+    sampling = json.loads((REPO_ROOT / "smolbench/deduction/horn/iclr.json").read_text())["sampling"]
+    assert (sampling["max_tokens"], sampling["context_length"]) == (bt.HORN_MAX_TOKENS, bt.HORN_CONTEXT_LENGTH)
+    capped = bt.run_horn(NEMO, "us-east-1", {}, rung, [100], reps=1, out=tmp_path / "capped.jsonl",
+                         arms=("lem",), max_tokens=4096)
+    assert [r["max_tokens_sent"] for r in capped] == [4096]
 
     cells, dropped = stats.load_rows([out])
     assert not dropped and set(cells) == {("nemotron-3-super-120b-a12b", "m2")}
@@ -476,7 +488,7 @@ def test_a_torn_last_line_is_neither_pushed_nor_counted(fake_s3, tmp_path):
     assert sum(c["rows"] for c in breakdown.values()) == 2
 
 
-def test_horn_reference_recomputes_published_rates_under_the_caps_here(tmp_path):
+def test_horn_reference_gives_published_rates_and_output_lengths(tmp_path):
     deep, nemo = DSV31.key, NEMO.key
     cells = tmp_path / "cells.csv"
     cells.write_text(
@@ -490,14 +502,16 @@ def test_horn_reference_recomputes_published_rates_under_the_caps_here(tmp_path)
     )
     ref = bt.horn_reference([deep, GEMMA.key], cells)
     assert ref == {
-        (deep, "lem"): {"cells": 4, "m": 64, "pass": 50.0, "pass_capped": 25.0, "over_cap": 50.0}
+        (deep, "lem"): {"cells": 4, "m": 64, "pass": 50.0, "tokens_median": 8193, "tokens_max": 90000}
     }
 
-    # The committed cells: the paper table's rate, and no DeepSeek success fits in 8K.
+    # The committed cells: the paper table's rates, with outputs far above the 8K and 32K
+    # caps of the model cards and within the budget sent here.
     real = bt.horn_reference(list(bt.TRIO))
     assert {k for k, _ in real} == {deep, nemo}
     assert {arm for _, arm in real} == {"lem", "pad", "disc", "both", "rep", "tjunk"}
     assert all(v["cells"] == 300 for v in real.values())
     assert round(real[(deep, "lem")]["pass"], 1) == 64.0
-    assert real[(deep, "lem")]["pass_capped"] == 0.0
     assert round(real[(nemo, "rep")]["pass"], 1) == 61.3
+    assert real[(deep, "lem")]["tokens_median"] > 8192
+    assert all(v["tokens_max"] <= bt.HORN_MAX_TOKENS for v in real.values())

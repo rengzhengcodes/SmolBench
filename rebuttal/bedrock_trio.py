@@ -64,6 +64,15 @@ HORN_PAPER_ARMS = ("lem", "pad", "disc", "both")
 #: The paper arms, then the four review arms (``render.ALL_ARMS``).
 HORN_ARMS = tuple(ALL_ARMS)
 HORN_TEMPERATURE = 0.7
+# Output budgets are the ICLR ones; bedrock-mantle honours them (``cap_probe.py``; the model
+# cards list 8K and 32K output caps, which the first smoke sent and which truncated it).
+# Horn: the protocol's cap and context (``sampling`` in ``horn/iclr.json``).
+# ``sweep.run_cell`` cuts the cap per cell so that prompt and output fit the context.
+# Induction: ``induction_budget``.
+HORN_MAX_TOKENS = 131072
+HORN_CONTEXT_LENGTH = 131072
+# Output cap of the one-question reasoning probe.
+PROBE_MAX_TOKENS = 4096
 #: Store of record for both studies (private, append-only); ``None`` keeps results local.
 RESULTS_S3 = "s3://smolbench-rebuttals-414266451290/bedrock-trio"
 #: Region of the results bucket; Bedrock inference has its own region (``DEFAULT_REGION``).
@@ -89,8 +98,6 @@ class BedrockModel:
     bedrock_id: Optional[str]
     #: Base path on bedrock-mantle, up to ``/chat/completions``.
     base_path: str
-    #: Bedrock's output-token cap for the model (reasoning included).
-    max_tokens: int
     #: Context window from the Bedrock model card.
     context_length: int
     #: Request fields that switch reasoning on, tried in order by ``pick_reasoning_args``.
@@ -101,10 +108,9 @@ class BedrockModel:
     id_hints: tuple[str, ...] = field(default=())
 
 
-# Output caps and context windows come from the Bedrock model cards. Gemma 4's card gives
-# no output cap, so it gets Nemotron's 32K; the probe reports a lower one if Bedrock
-# enforces it. DeepSeek and Nemotron take ``reasoning_effort`` (the ICLR Horn Bedrock
-# rows used exactly that); for Gemma 4 the working spelling is found by the probe.
+# Context windows come from the Bedrock model cards. DeepSeek and Nemotron take
+# ``reasoning_effort`` (the ICLR Horn Bedrock rows used exactly that); for Gemma 4 the
+# working spelling is found by the probe.
 TRIO: dict[str, BedrockModel] = {
     m.key: m
     for m in (
@@ -112,7 +118,6 @@ TRIO: dict[str, BedrockModel] = {
             key="gemma-4-31b",
             bedrock_id="google.gemma-4-31b",
             base_path="/openai/v1",
-            max_tokens=32768,
             context_length=262144,
             reasoning_candidates=(
                 {"reasoning_effort": "high"},
@@ -124,7 +129,6 @@ TRIO: dict[str, BedrockModel] = {
             key="nemotron-3-super-120b-a12b",
             bedrock_id="nvidia.nemotron-super-3-120b",
             base_path="/v1",
-            max_tokens=32768,
             context_length=262144,
             reasoning_candidates=({"reasoning_effort": "high"},),
             tag="nemo3_120b",
@@ -133,7 +137,6 @@ TRIO: dict[str, BedrockModel] = {
             key="deepseek-v3.1",
             bedrock_id=None,
             base_path="/v1",
-            max_tokens=8192,
             context_length=131072,
             reasoning_candidates=(
                 {"reasoning_effort": "high"},
@@ -308,7 +311,7 @@ def probe(model: BedrockModel, region: str, extra_args: dict, seed: int = 0) -> 
                 "What is 17 * 23? Answer with the integer only.",
                 model.key,
                 seed,
-                extra_args={"max_completion_tokens": min(model.max_tokens, 4096)} | extra_args,
+                extra_args={"max_completion_tokens": PROBE_MAX_TOKENS} | extra_args,
                 request_timeout=600,
                 max_retries=2,
             )
@@ -641,6 +644,16 @@ def pull_induction(s3_uri: str, results_dir: Path = RESULTS_DIR, region: str = R
     return written
 
 
+def induction_budget(key: str) -> int:
+    """The model's ICLR completion budget for induction.
+
+    ``run_study.completion_budget`` over the protocol's seeds: the context limit of the
+    ICLR runs less the longest prompt under the model's tokenizer and a template reserve.
+    """
+    rs = load_run_study()
+    return rs.completion_budget(key, range(rs.BASE_SEED, rs.BASE_SEED + rs.N_REPLICATES))
+
+
 def run_induction(
     harness,
     model: BedrockModel,
@@ -648,18 +661,21 @@ def run_induction(
     reasoning_args: dict,
     max_parallel: int = 8,
     stream: bool = True,
+    budget: Optional[int] = None,
 ) -> None:
     """Collect every outstanding induction replicate of one model.
 
-    Temperature is not sent: the ICLR induction runs used the server default.
+    Temperature is not sent: the ICLR induction runs used the server default. ``budget``
+    is the completion budget; the default is ``induction_budget(model.key)``.
     """
-    extra_args = {"max_completion_tokens": model.max_tokens} | reasoning_args
+    budget = induction_budget(model.key) if budget is None else budget
+    extra_args = {"max_completion_tokens": budget} | reasoning_args
     with use_model(model, region, stream):
         harness.run_replicates(
             model.key,
             extra_args=extra_args,
             max_parallel=max_parallel,
-            request_timeout=max(600, model.max_tokens // 10),
+            request_timeout=max(600, budget // 10),
             server_config={
                 "provider": f"bedrock-mantle:{region}",
                 "bedrock_id": model.bedrock_id,
@@ -1076,6 +1092,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     s3_uri: Optional[str] = None,
     s3_region: str = RESULTS_S3_REGION,
     push_every: int = 200,
+    max_tokens: int = HORN_MAX_TOKENS,
 ) -> list[dict]:
     """Run and score every outstanding Horn cell of one model with ``sweep.run_cell``.
 
@@ -1115,6 +1132,9 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
         Region of the bucket.
     push_every : int
         New rows per push; at least 1.
+    max_tokens : int
+        Output cap requested; ``sweep.run_cell`` cuts it per cell so that prompt and
+        output fit ``HORN_CONTEXT_LENGTH``.
 
     Returns
     -------
@@ -1147,10 +1167,9 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     st = sweep.Settings(
         model=model.bedrock_id,
         spec_key=model.key,
-        extra_args={"max_tokens": model.max_tokens, "temperature": HORN_TEMPERATURE}
-        | reasoning_args,
-        context_length=model.context_length,
-        timeout=max(900, model.max_tokens // 10),
+        extra_args={"max_tokens": max_tokens, "temperature": HORN_TEMPERATURE} | reasoning_args,
+        context_length=HORN_CONTEXT_LENGTH,
+        timeout=max(900, max_tokens // 10),
         max_retries=8,
         system_prompt=None,
     )
@@ -1159,7 +1178,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
         name="horn-bedrock",
         env_prefix="HORN",
         connection=lambda _: (url, os.environ["AWS_BEARER_TOKEN_BEDROCK"]),
-        context_length=lambda _: model.context_length,
+        context_length=lambda _: HORN_CONTEXT_LENGTH,
         retry_backoff_s=30,
         read_timeout_s=st.timeout,
     )
@@ -1237,11 +1256,10 @@ def horn_breakdown(paths: Sequence[Path]) -> dict[tuple[str, str], dict]:
 def horn_reference(
     keys: Sequence[str], path: Path = REVIEW_CELLS
 ) -> dict[tuple[str, str], dict]:
-    """Per (model, arm): the published Bedrock Horn cells, as run and under the caps here.
+    """Per (model, arm): pass rate and output length of the published Bedrock Horn cells.
 
-    The cells in `path` ran through the Converse API with a 131,072-token output cap.
-    This notebook sends each model's ``max_tokens``, which is lower, so the published
-    rate is not what the same generations would score here.
+    The cells in `path` ran through the Converse API in us-east-2 with the budget this
+    notebook sends (``HORN_MAX_TOKENS``, cut to fit ``HORN_CONTEXT_LENGTH``).
 
     Parameters
     ----------
@@ -1254,9 +1272,8 @@ def horn_reference(
     Returns
     -------
     dict[tuple[str, str], dict]
-        ``cells``; ``m``; ``pass``, the published pass rate in percent; ``pass_capped``,
-        the rate when a success counts only if its completion fits ``max_tokens``; and
-        ``over_cap``, the percentage of cells whose completion is longer than that.
+        ``cells``; ``m``; ``pass``, the pass rate in percent; and ``tokens_median`` and
+        ``tokens_max``, the median and longest completion in tokens.
     """
     wanted = set(keys)
     cells: dict[tuple[str, str], list[tuple[bool, int, int]]] = collections.defaultdict(list)
@@ -1268,12 +1285,12 @@ def horn_reference(
                 )
     out = {}
     for (key, arm), rows in cells.items():
-        cap, n = TRIO[key].max_tokens, len(rows)
+        tokens = sorted(toks for _, toks, _ in rows)
         out[(key, arm)] = {
-            "cells": n,
+            "cells": len(rows),
             "m": rows[0][2],
-            "pass": 100 * sum(ok for ok, _, _ in rows) / n,
-            "pass_capped": 100 * sum(ok and toks <= cap for ok, toks, _ in rows) / n,
-            "over_cap": 100 * sum(toks > cap for _, toks, _ in rows) / n,
+            "pass": 100 * sum(ok for ok, _, _ in rows) / len(rows),
+            "tokens_median": tokens[len(tokens) // 2],
+            "tokens_max": tokens[-1],
         }
     return out

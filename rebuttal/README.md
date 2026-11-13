@@ -12,12 +12,14 @@ paper arms `lem`, `pad`, `disc`, `both` and the review arms `fwd`, `tjunk`, `rep
 | `deepseek-v3.1` | DeepSeek | 685B MoE, 37B active | 64 |
 
 The notebook's first cell explains the choice and lists how these runs differ from the
-ICLR runs: Bedrock's output caps, the induction temperature default, and seeding.
+ICLR runs: the induction temperature default and seeding. The output budgets are the ICLR
+ones.
 
 | File | Contents |
 |---|---|
 | `bedrock_trio.ipynb` | The notebook: authenticate, force reasoning, check prompts, run, report |
 | `bedrock_trio.py` | Roster, endpoint switch, results store and reasoning checks over the existing run code |
+| `cap_probe.py` | Probes whether an endpoint honours an output cap above the model-card cap |
 | `attention_replay.py` | Replays stored induction transcripts through self-hosted checkpoints to capture attention (see below) |
 | `attention_state/` | EC2 state of a replay in progress (not committed) |
 | `results/` | Local mirror of the bucket (not committed), described below |
@@ -34,6 +36,7 @@ overwritten or deleted, and a rerun adds new stamped keys.
 | `induction/<model>/seed=<s>/<arm>--<stamp>.yaml` | One induction replicate, in the released-results layout |
 | `deduction/horn/<model>/rows--<stamp>.jsonl` | A part of Horn rows: the rows one push added |
 | `probes/probes--<stamp>.json` | Model ids and the reasoning fields each model accepted |
+| `probes/cap-probe--<label>--<stamp>.jsonl` | Rows of one output-cap probe (`cap_probe.py`) |
 | `attention/induction/<model>/seed=<s>/<arm>--<stamp>/q<i>.r<rank>.{npz,json}` | Attention summary of one induction mark, one object pair per tensor-parallel rank |
 | `attention/induction/<model>/seed=<s>/<arm>--<stamp>/manifest--<ts>.json` | What one replay captured for that run |
 
@@ -60,13 +63,19 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
 
 - **Horn arms.** `horn_repro.report` gives contrasts for the four paper arms only; the four
   review arms appear in its per-arm pass rates and in the notebook's per-arm breakdown.
-- **Horn output caps.** The published DeepSeek and Nemotron Horn rows ran through the
-  Bedrock Converse API in `us-east-2` with a 131,072-token output cap. This notebook sends
-  the model-card caps (8K and 32K) to bedrock-mantle, and most generations need more: in
-  the published cells every DeepSeek success is longer than 8K. Horn pass rates from this
-  notebook are therefore not comparable with the published ones until the cap is raised.
-  The report prints the published rates next to what they would be under the caps here
-  (`bedrock_trio.horn_reference`, from `notebooks/deduction/review/bedrock_cells.csv`).
+- **Output budgets.** Both studies send the ICLR budgets: for Horn a 131,072-token cap cut
+  to fit a 131,072-token context, for induction `run_study.completion_budget`.
+  bedrock-mantle honours them. `cap_probe.py` checked this on 2026-11-13 on mantle in
+  `us-east-1` and `us-east-2` and on the Converse API in `us-east-2`: all three returned
+  completions above the output caps on the model cards (8K for DeepSeek V3.1, 32K for
+  Nemotron Super), up to the full 131,072 tokens. Its rows are in the bucket as
+  `probes/cap-probe--<label>--<stamp>.jsonl`. The first smoke sent the model-card caps, so
+  most of its Horn answers were truncated; that is one more reason `bedrock-trio/smoke/`
+  is not read.
+- **Horn reference.** The published DeepSeek and Nemotron Horn rows ran through the Bedrock
+  Converse API in `us-east-2` without a seed. The notebook prints their pass rates and
+  answer lengths (`bedrock_trio.horn_reference`, from
+  `notebooks/deduction/review/bedrock_cells.csv`) next to its own seeded mantle runs.
 - **`extens`.** On this branch the `extens` context is the intensional rules followed by the
   listing. The published `extens` and `noise_intens` values come from the earlier arm, which
   carried the listing only, so only `intens` is like-for-like with the published values. The
