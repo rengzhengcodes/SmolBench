@@ -13,10 +13,27 @@ The four arms
           their same-head root rules and their token counts, but no tree can be
           entered from the facts.
 
+Review arms (``REVIEW_ARMS``; not in the default ladder)
+--------------------------------------------------------
+Each changes only what ``both``'s tree slots hold. A tree touches the rest of
+the theory at its leaves (the lemma's body atoms) and its root head (the
+lemma's head); its internal predicates are private to it.
+
+``fwd``          ``both`` with every tree's root head renamed to a fresh
+                 predicate: each tree fires from the facts but derives nothing
+                 any other rule uses (the mirror of ``disc``).
+``tjunk``        ``both`` with leaves and root head renamed: the same tree
+                 shapes, connected to nothing.
+``rep``          ``lem`` with each tree slot holding a copy of its own lemma:
+                 the same proof graph, each lemma shown ``1 + |tree|`` times.
+``marked-lemma`` ``both`` with every lemma line tagged ``[lemma]`` and one line
+                 stating that a proof using only ``[lemma]`` rules exists.
+
 Rules are listed without ids; a proof step names a rule by its content (the
 derived atom and the ``from`` atoms). ``Rendered.ids`` maps the display index
 ``R<n>`` (line order) to the rule key for the checker's bookkeeping, and
-``Rendered.extra_rules`` holds the disc rules, which are not theory rules.
+``Rendered.extra_rules`` holds the rules of ``disc``, ``fwd`` and ``tjunk``,
+which are not theory rules.
 """
 
 from __future__ import annotations
@@ -29,6 +46,18 @@ from .theory import Rule, Theory, _Names
 
 #: The arms, in ladder order.
 ARMS = ("lem", "pad", "disc", "both")
+#: Control arms added for the ICLR 2027 review round; rendered on request only.
+REVIEW_ARMS = ("fwd", "tjunk", "rep", "marked-lemma")
+ALL_ARMS = ARMS + REVIEW_ARMS
+#: Arms whose tree slots hold renamed tree rules.
+RENAMED_ARMS = frozenset({"disc", "fwd", "tjunk"})
+#: Arms in which the trees can be used to reach the goal.
+USABLE_TREE_ARMS = frozenset({"both", "marked-lemma"})
+
+LEMMA_TAG = "[lemma] "
+MARKED_NOTE = (
+    "Rules marked [lemma] are enough: the goal has a proof that uses only [lemma] rules."
+)
 
 SYSTEM = (
     "You are a careful theorem prover. Answer with a proof in exactly the "
@@ -55,9 +84,9 @@ class Tokenizer:
 
 
 def check_arm(arm: str) -> str:
-    """``arm`` if it is one of ``ARMS``; raises otherwise."""
-    if arm not in ARMS:
-        raise ValueError(f"bad arm {arm!r}; the arms are {', '.join(ARMS)}")
+    """``arm`` if it is one of ``ALL_ARMS``; raises otherwise."""
+    if arm not in ALL_ARMS:
+        raise ValueError(f"bad arm {arm!r}; the arms are {', '.join(ALL_ARMS)}")
     return arm
 
 
@@ -68,9 +97,9 @@ def arm_keys(theory: Theory, arm: str) -> tuple[list[str], set[str]]:
     trees = set(theory.tree_keys())
     if arm == "lem":
         present, padded = lemmas, set()
-    elif arm == "both":
+    elif arm in USABLE_TREE_ARMS:
         present, padded = lemmas | trees, set()
-    else:  # pad, disc: the axioms' slots hold something else
+    else:  # pad, disc, fwd, tjunk, rep: the axioms' slots hold something else
         present, padded = lemmas, trees
     shown = [k for k in theory.order if k in present or k in padded]
     return shown, padded
@@ -92,7 +121,7 @@ class Rendered:
     n_rules: int
     filler_tokens: int = 0
     lemma_offsets: dict[str, int] = field(default_factory=dict)  # key -> token offset
-    extra_rules: list[dict] = field(default_factory=list)  # disc rules, as dicts
+    extra_rules: list[dict] = field(default_factory=list)  # disc/fwd/tjunk rules, as dicts
 
     @classmethod
     def from_meta(cls, meta: dict, prompt: str = "", system: str = "") -> Rendered:
@@ -153,34 +182,51 @@ def _fresh_names(theory: Theory, salt: int) -> _Names:
     return names
 
 
-def _disc_rule(
+def _fresh_like(
+    pred: str, tok: Tokenizer, names: _Names, cache: dict[tuple[int, str], str], key: tuple[int, str]
+) -> str:
+    """A fresh word costing as many tokens as ``pred`` in ``pred(x)``, memoized on ``key``."""
+    if key not in cache:
+        want = tok.count(f"{pred}(x)")
+        best, best_gap = None, 10**9
+        for _ in range(40):
+            w = names.word()
+            gap = abs(tok.count(f"{w}(x)") - want)
+            if gap < best_gap:
+                best, best_gap = w, gap
+                if gap == 0:
+                    break
+        cache[key] = best or names.word()
+    return cache[key]
+
+
+def _renamed_rule(
     slot: Rule,
+    arm: str,
     theory: Theory,
     tok: Tokenizer,
     names: _Names,
-    leafmap: dict[tuple[int, str], str],
+    cache: dict[tuple[int, str], str],
 ) -> Rule:
-    """``slot`` with its leaf predicates (the lemma's body atoms) renamed to fresh
-    words of the same token count, so the tree cannot be entered from the facts."""
-    leaves = set(theory.library[slot.link - 1].body)
+    """``slot`` (an axiom) as ``arm`` shows it.
 
-    def fresh(pred: str) -> str:
-        key = (slot.link, pred)
-        if key not in leafmap:
-            want = tok.count(f"{pred}(x)")
-            best, best_gap = None, 10**9
-            for _ in range(40):
-                w = names.word()
-                gap = abs(tok.count(f"{w}(x)") - want)
-                if gap < best_gap:
-                    best, best_gap = w, gap
-                    if gap == 0:
-                        break
-            leafmap[key] = best or names.word()
-        return leafmap[key]
-
-    body = tuple(fresh(b) if b in leaves else b for b in slot.body)
-    return Rule(f"disc.{slot.key}", slot.head, body, "disc", slot.link, slot.depth)
+    ``disc`` and ``tjunk`` rename the leaf predicates (the lemma's body atoms),
+    so the tree cannot be entered from the facts. ``fwd`` and ``tjunk`` rename
+    the root head (the lemma's head), so the tree derives nothing on a path to
+    the goal. Renames are per tree and token-matched; internal predicates are
+    private to the tree and kept.
+    """
+    lemma = theory.library[slot.link - 1]
+    body, head = slot.body, slot.head
+    if arm in ("disc", "tjunk"):
+        leaves = set(lemma.body)
+        body = tuple(
+            _fresh_like(b, tok, names, cache, (slot.link, b)) if b in leaves else b
+            for b in body
+        )
+    if arm in ("fwd", "tjunk") and slot.depth == 0:
+        head = _fresh_like(head, tok, names, cache, (slot.link, "^" + head))
+    return Rule(f"{arm}.{slot.key}", head, body, arm, slot.link, slot.depth)
 
 
 def _fact_lines(theory: Theory) -> list[str]:
@@ -195,12 +241,16 @@ def render(theory: Theory, arm: str, tok: Tokenizer | None = None) -> Rendered:
     tok = tok or Tokenizer()
     shown, padded = arm_keys(theory, arm)
     extra: list[Rule] = []
-    names = _fresh_names(theory, 3) if arm == "disc" else None
-    leafmap: dict[tuple[int, str], str] = {}
+    # disc keeps its September salt so its renames reproduce; fwd/tjunk get their own.
+    salt = {"disc": 3, "fwd": 5, "tjunk": 7}.get(arm)
+    names = _fresh_names(theory, salt) if salt is not None else None
+    cache: dict[tuple[int, str], str] = {}
     c = theory.constant
+    tag = LEMMA_TAG if arm == "marked-lemma" else ""
     head = [
         "Prove the goal from the facts using the library rules. The goal is always "
         "provable from the facts and the library rules.",
+        *([MARKED_NOTE] if arm == "marked-lemma" else []),
         "",
         "## Facts",
         *_fact_lines(theory),
@@ -218,10 +268,13 @@ def render(theory: Theory, arm: str, tok: Tokenizer | None = None) -> Rendered:
         rule = theory.rules[key]
         if key in padded:
             target += tok.count(f"{rule.text()}\n")
-            if arm == "disc" and names is not None:
-                dr = _disc_rule(rule, theory, tok, names, leafmap)
+            if arm in RENAMED_ARMS and names is not None:
+                dr = _renamed_rule(rule, arm, theory, tok, names, cache)
                 extra.append(dr)
                 block = dr.text()
+                n += 1
+            elif arm == "rep":
+                block = theory.rules[Theory.lemma_key(rule.link)].text()
                 n += 1
             else:
                 block = _filler_line(tok, target - filler, len(lines))  # carry rounding debt
@@ -232,7 +285,7 @@ def render(theory: Theory, arm: str, tok: Tokenizer | None = None) -> Rendered:
         ids[f"R{n}"] = key
         if rule.kind == "lemma":
             offsets[key] = tok.count(prefix + "\n".join(lines) + ("\n" if lines else ""))
-        lines.append(rule.text())
+        lines.append(tag + rule.text() if rule.kind == "lemma" else rule.text())
     tail = [
         "",
         "## Goal",

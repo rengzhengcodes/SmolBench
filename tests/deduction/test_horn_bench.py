@@ -19,7 +19,17 @@ from smolbench.deduction.horn.checker import (
     verify,
 )
 from smolbench.deduction.horn.cli import build_theory, main as cli_main
-from smolbench.deduction.horn.render import ARMS, Rendered, Tokenizer, arm_keys, render
+from smolbench.deduction.horn.render import (
+    ALL_ARMS,
+    ARMS,
+    LEMMA_TAG,
+    MARKED_NOTE,
+    USABLE_TREE_ARMS,
+    Rendered,
+    Tokenizer,
+    arm_keys,
+    render,
+)
 from smolbench.deduction.horn.theory import Theory, generate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -108,9 +118,9 @@ def test_from_json_loads_recorded_theories_and_rejects_retired_setups():
 
 
 @pytest.mark.parametrize("seed", range(3))
-@pytest.mark.parametrize("arm", ARMS)
+@pytest.mark.parametrize("arm", ALL_ARMS)
 def test_certificate_and_designed_proofs(seed, arm, tok):
-    """Every arm certifies; the lemma route verifies; the tree route only in both."""
+    """Every arm certifies; the lemma route verifies; the tree route only where trees are usable."""
     th = generate(seed, m=4, height=2, n_extra=6, depths={2: 3})
     r = render(th, arm, tok)
     cert = certify(th, r)
@@ -119,7 +129,7 @@ def test_certificate_and_designed_proofs(seed, arm, tok):
     v = verify(th, r, "\n".join(designed_proof(th, "short")))
     assert v.verdict == "success" and v.route == "short" and v.steps == th.m
     v2 = verify(th, r, "\n".join(designed_proof(th, "long")))
-    if arm == "both":
+    if arm in USABLE_TREE_ARMS:
         assert v2.verdict == "success" and v2.route == "long"
     else:
         assert v2.verdict == "invalid_step"
@@ -230,8 +240,105 @@ def test_disc_trees_keep_roots_but_cannot_be_entered(tok):
     assert "premise not derived" in v.reason and v.route == "long"
 
 
+@pytest.mark.parametrize("seed", range(3))
+def test_review_arms_match_both(seed, tok):
+    """fwd, tjunk and rep keep both's line count and lemma positions; fwd and tjunk
+    also keep its rule count and token count to one token per slot."""
+    th = generate(seed, m=4, height=2, n_extra=8, depths={3: 3, 6: 3})
+    both = render(th, "both", tok)
+    lem = render(th, "lem", tok)
+    n_slots = len(th.tree_keys())
+    for arm in ("fwd", "tjunk", "rep"):
+        r = render(th, arm, tok)
+        assert r.prompt.count("\n") == both.prompt.count("\n")
+        assert r.n_rules == both.n_rules
+        assert list(r.ids.values()) == list(lem.ids.values())
+        assert render(th, arm, tok).prompt == r.prompt  # deterministic
+        if arm != "rep":
+            assert abs(r.n_tokens - both.n_tokens) <= n_slots
+            assert len(r.extra_rules) == n_slots
+            for key, off in both.lemma_offsets.items():
+                assert abs(r.lemma_offsets[key] - off) <= n_slots
+
+
+def _roots(rendered, th):
+    """(head, body set) of the depth-0 rule of every tree slot, by lemma index."""
+    if rendered.extra_rules:
+        return {d["link"]: (d["head"], frozenset(d["body"])) for d in rendered.extra_rules if d["depth"] == 0}
+    return {
+        th.rules[k].link: (th.rules[k].head, frozenset(th.rules[k].body))
+        for k in rendered.ids.values()
+        if th.rules[k].kind == "axiom" and th.rules[k].depth == 0
+    }
+
+
+def test_renamed_arms_cut_one_end_each(tok):
+    """disc cuts the leaves, fwd the root head, tjunk both; internal predicates stay."""
+    th = generate(4, m=3, height=2, n_extra=5)
+    both, disc, fwd, tjunk = (render(th, a, tok) for a in ("both", "disc", "fwd", "tjunk"))
+    rb, rd, rf, rt = (_roots(r, th) for r in (both, disc, fwd, tjunk))
+    lemma_bodies = {lm.index: set(lm.body) for lm in th.library}
+    for i, (head, body) in rb.items():
+        lm = th.library[i - 1]
+        assert head == lm.head
+        assert rd[i] == (head, body)  # disc keeps the root rule
+        assert rf[i][1] == body and rf[i][0] != head  # fwd renames the root head
+        assert rt[i][1] == body and rt[i][0] != head  # tjunk too
+    for r in (disc, tjunk):  # leaves renamed: no extra rule has a lemma body atom in its body
+        for d in r.extra_rules:
+            assert not set(d["body"]) & lemma_bodies[d["link"]]
+    leaf_rules = [d for d in fwd.extra_rules if set(d["body"]) & lemma_bodies[d["link"]]]
+    assert leaf_rules, "fwd keeps the lemma body atoms as leaves"
+
+
+def test_fwd_trees_fire_but_reach_nothing(tok):
+    """A fwd tree can be followed from the facts to its root, and the root atom is
+    a dead end: the goal still needs the lemma route."""
+    th = generate(5, m=3, height=2, n_extra=4)
+    r = render(th, "fwd", tok)
+    c = th.constant
+    i = 1  # the first chain lemma's body atoms are facts
+    tree = sorted(
+        (d for d in r.extra_rules if d["link"] == i), key=lambda d: -d["depth"]
+    )
+    proof = [
+        f"derive {d['head']}({c}) from " + ", ".join(f"{b}({c})" for b in d["body"]) for d in tree
+    ]
+    v = verify(th, r, "\n".join(proof))
+    assert v.verdict != "invalid_step", v.reason  # every fwd step is valid
+    assert v.route == "long"
+    root = next(d for d in tree if d["depth"] == 0)
+    assert root["head"] != th.library[i - 1].head
+    v2 = verify(th, r, "\n".join(proof + designed_proof(th, "short")))
+    assert v2.verdict == "success" and v2.route == "mixed"
+
+
+def test_rep_repeats_each_lemma_in_its_tree_slots(tok):
+    """rep shows each lemma once per tree slot plus once in its own position."""
+    th = generate(6, m=3, height=2, n_extra=4, depths={2: 3})
+    r = render(th, "rep", tok)
+    lib = r.prompt.split("## Library\n", 1)[1].split("\n\n## Goal", 1)[0].splitlines()
+    for lm in th.library:
+        text = th.rules[Theory.lemma_key(lm.index)].text()
+        assert lib.count(text) == 1 + len(th.tree(lm.index))
+    assert not r.extra_rules
+    assert list(r.ids.values()) == list(render(th, "lem", tok).ids.values())
+
+
+def test_marked_lemma_tags_only_lemmas(tok):
+    """marked-lemma is both with every lemma line tagged and one note line."""
+    th = generate(7, m=3, height=2, n_extra=4)
+    both = render(th, "both", tok)
+    r = render(th, "marked-lemma", tok)
+    assert MARKED_NOTE in r.prompt and MARKED_NOTE not in both.prompt
+    assert r.ids == both.ids
+    tagged = [ln for ln in r.prompt.splitlines() if ln.startswith(LEMMA_TAG)]
+    assert len(tagged) == len(th.library)
+    assert r.prompt.replace(MARKED_NOTE + "\n", "").replace(LEMMA_TAG, "") == both.prompt
+
+
 def test_arms_are_fixed():
-    """Only the five arms render; retired specs raise."""
+    """Only the ladder and review arms render; retired specs raise."""
     th = generate(1)
     for bad in ("lem:1", "both:1", "pad:2", "ax", "unf:1", "bothm", "padm", "deep", "dpad", "junk", "nope"):
         with pytest.raises(ValueError):

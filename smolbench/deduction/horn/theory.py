@@ -38,8 +38,8 @@ _VOWELS = "aeiou"
 
 #: Kinds of rules a theory holds.
 PATH_KINDS = frozenset({"lemma", "axiom"})
-#: Kind of rule the ``disc`` control adds at render time; never part of a theory.
-EXTRA_KINDS = frozenset({"disc"})
+#: Kinds of rule the renamed-tree controls add at render time; never part of a theory.
+EXTRA_KINDS = frozenset({"disc", "fwd", "tjunk"})
 
 _RETIRED_FIELDS = {"open_frac": 1.0, "fact_height": 0, "fact_chain": 0, "deep_facts": []}
 

@@ -20,7 +20,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .checker import certify, designed_proof, verify
-from .render import ARMS, Rendered, Tokenizer, check_arm, render
+from .render import ALL_ARMS, ARMS, Rendered, Tokenizer, check_arm, render
 from .theory import Theory, generate
 
 DEFAULT_ALT_PER_LEMMA = 5
@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_ALT_PER_LEMMA,
         help="open alternatives per chain lemma",
     )
-    pr.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    pr.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ALL_ARMS))
     pr.add_argument("--out", required=True)
     pr.set_defaults(func=cmd_render)
     pc = sub.add_parser("check")

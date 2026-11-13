@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .render import Rendered, arm_keys
+from .render import USABLE_TREE_ARMS, Rendered, arm_keys
 from .theory import Rule, Theory
 
 _STEP_RE = re.compile(
@@ -218,7 +218,8 @@ def verify(  # pylint: disable=too-many-locals,too-many-return-statements
 def route_of(kinds: list[str] | tuple[str, ...]) -> str:
     """``short`` if only lemmas, ``long`` if only tree rules, else ``mixed``.
 
-    ``disc`` rules count as tree rules (an attempt to enter a tree).
+    ``disc``, ``fwd`` and ``tjunk`` rules count as tree rules (an attempt to
+    enter a tree).
     """
     path = set(kinds)
     if path <= {"lemma"}:
@@ -295,9 +296,12 @@ def certify(theory: Theory, rendered: Rendered) -> Certificate:  # pylint: disab
     Every arm: rule content is unique; the goal is derivable; every library
     lemma lies on a path to the goal and fires for the constant; every given
     fact is a premise of a chain lemma; the chain heads are distinct; the
-    lemma route verifies in ``m`` steps. Control arms (``pad``, ``disc``): the
-    added rules never fire and derive nothing new; the tree route is invalid.
-    ``both``: the tree route verifies as a ``long`` route.
+    lemma route verifies in ``m`` steps. Control arms (``pad``, ``disc``,
+    ``tjunk``, ``rep``): the added rules never fire and derive nothing new; the
+    tree route is invalid. ``fwd``: the added rules fire, but no atom they add is
+    a premise of any other shown rule, so they derive nothing on a path to the
+    goal; the tree route is invalid. ``both`` and ``marked-lemma``: the tree route
+    verifies as a ``long`` route.
     """
     arm_keys(theory, rendered.arm)  # validates the arm
     rules = [theory.rules[k] for k in rendered.ids.values()]
@@ -327,7 +331,19 @@ def certify(theory: Theory, rendered: Rendered) -> Certificate:  # pylint: disab
     heads = [lk.head for lk in theory.links]
     if len(set(heads)) != len(heads):
         reasons.append("chain heads not distinct")
-    if extra:
+    if extra and rendered.arm == "fwd":
+        full_all = closure(rules + extra, facts)
+        added = full_all - full
+        roots = [r for r in extra if r.depth == 0]
+        if not all(r.head in added for r in roots):
+            reasons.append("a fwd root rule does not fire for the constant")
+        used = {b for r in rules for b in r.body} | {theory.goal}
+        if added & used:
+            reasons.append(f"fwd rules derive atoms other rules use: {sorted(added & used)[:5]}")
+        own_body = {b for r in extra for b in r.body}
+        if {r.head for r in roots} & own_body:
+            reasons.append("a fwd root head is a premise of another fwd rule")
+    elif extra:
         full_all = closure(rules + extra, facts)
         for r in extra:
             if all(b in full_all for b in r.body):
@@ -340,7 +356,7 @@ def certify(theory: Theory, rendered: Rendered) -> Certificate:  # pylint: disab
     elif short.steps != theory.m:
         reasons.append(f"lemma route has {short.steps} steps, expected {theory.m}")
     long = verify(theory, rendered, "\n".join(designed_proof(theory, "long")))
-    if rendered.arm == "both":
+    if rendered.arm in USABLE_TREE_ARMS:
         if long.verdict != "success" or long.route != "long":
             reasons.append(f"tree route fails in both: {long.reason}")
     elif long.verdict == "success":

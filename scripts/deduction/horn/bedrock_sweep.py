@@ -37,7 +37,7 @@ for _p in (str(REPO_ROOT), str(Path(__file__).resolve().parent)):
 
 # pylint: disable=wrong-import-position
 import sweep  # noqa: E402  (scripts/deduction/horn/sweep.py, same directory)
-from smolbench.deduction.horn.render import ARMS  # noqa: E402
+from smolbench.deduction.horn.render import ALL_ARMS, ARMS  # noqa: E402
 from smolbench.evals.openai_compat import ChatResult  # noqa: E402
 
 _STOP_TO_FINISH = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length"}
@@ -181,7 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--spec-key", default=None, help="roster key recorded in the rows")
     ap.add_argument("--region", default="us-east-2")
     ap.add_argument("--rung-dir", required=True)
-    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ALL_ARMS))
     ap.add_argument("--seeds", default=None, help="comma list or a-b range")
     ap.add_argument("--replicates", type=int, default=3)
     ap.add_argument("--max-tokens", type=int, default=32768)

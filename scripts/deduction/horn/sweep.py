@@ -52,7 +52,7 @@ from smolbench.deduction.horn.extract import (  # noqa: E402
     strip_reasoning,  # noqa: F401
     verdict_fields,
 )
-from smolbench.deduction.horn.render import ARMS, Rendered  # noqa: E402
+from smolbench.deduction.horn.render import ALL_ARMS, ARMS, Rendered  # noqa: E402
 from smolbench.deduction.horn.theory import Theory  # noqa: E402
 from smolbench.evals.openai_compat import ChatClient, ChatResult  # noqa: E402
 
@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--thinking", choices=["auto", "on", "off"], default="auto")
     ap.add_argument("--rung-dir", required=True)
-    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ALL_ARMS))
     ap.add_argument(
         "--seeds",
         default=None,
