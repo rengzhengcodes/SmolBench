@@ -48,7 +48,9 @@ and trees of depth 2. Thus, `m` determines the library size and prompt size. Siz
 ## 3. The four arms
 
 `render.render(theory, arm)` produces one prompt per arm. `ARMS = (lem, pad, disc, both)`.
-Only these four exist.
+These four are the arms the paper reports. `REVIEW_ARMS = (fwd, tjunk, rep, marked-lemma)` are
+control arms added for the review round; the module docstring of `render.py` defines them, and
+they render only when named.
 
 | arm | library section | what the extra lines are |
 |---|---|---|
