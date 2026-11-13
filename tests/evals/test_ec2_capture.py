@@ -175,3 +175,24 @@ def test_a_capture_serve_refuses_a_chunked_prefill_ceiling(monkeypatch):
     with pytest.raises(ValueError, match="un-chunked prefill"):
         with ec2.serve_model("ministral-3-14b", capture=True):
             pass
+
+
+def test_a_capture_serve_refuses_prefix_caching(monkeypatch):
+    """Without --no-enable-prefix-caching a cached prefix splits the prefill into two forwards.
+
+    The capture hook would then record one job as two sequences, so the capture
+    branch must refuse a spec that does not switch prefix caching off.
+    """
+    _capture_harness(monkeypatch, dict(_S5_STATE))
+    spec = dict(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    spec["vllm_args"] = [a for a in spec["vllm_args"] if a != "--no-enable-prefix-caching"]
+    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "ministral-3-14b", spec)
+    with pytest.raises(ValueError, match="prefix-caching"):
+        with ec2.serve_model("ministral-3-14b", capture=True):
+            pass
+
+
+def test_every_spec_switches_prefix_caching_off_for_capture():
+    """Invariant: DETERMINISM_ARGS puts the flag on every spec, so no capture serve trips the check."""
+    for key, spec in ec2.EC2_DEPLOY_SPECS.items():
+        assert "--no-enable-prefix-caching" in spec["vllm_args"], key

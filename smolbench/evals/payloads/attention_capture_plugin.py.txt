@@ -192,6 +192,7 @@ def _rows_for(layer, q3, k3, positions):
 #: Float32 logits elements per query chunk (~1 GB); chunks keep P x T off the GPU.
 MASS_CHUNK_ELEMENTS = 1 << 28
 N_CLASSES = 4
+PUT_LANDED_EARLIER = "412-landed-earlier"  # 412 after an unclear try: it stored
 
 
 def _logits_for(layer, q3, k3, pos):
@@ -414,7 +415,7 @@ def _finalize(layer, session):
         return
     statuses = [_put(put_url, blob, "application/octet-stream"),
                 _put(meta_url, json.dumps(meta).encode(), "application/json")]
-    ok = all(200 <= s < 300 for s in statuses)
+    ok = all(s == PUT_LANDED_EARLIER or 200 <= s < 300 for s in statuses)
     _log("job %s (%s): %d layers, shape %s, %.1f MB, gate max_rel=%.3g, upload=%s"
          % (job["job_id"], mode, len(order), main_shape, len(blob) / 1e6,
             meta["gate_max_rel"], statuses))
@@ -426,17 +427,25 @@ def _finalize(layer, session):
 def _put(url, data, content_type):
     import requests
 
-    last = 0
+    last, shaky = 0, False
     for attempt in range(3):
         try:
-            resp = requests.put(url, data=data, headers={"Content-Type": content_type},
-                                timeout=900)
+            resp = requests.put(url, data=data, timeout=900, headers={
+                "Content-Type": content_type, "If-None-Match": "*"})
             last = resp.status_code
             if 200 <= last < 300:
                 return last
+            if last == 412 and attempt:
+                if not shaky:
+                    return last
+                _log("PUT: an earlier attempt landed")
+                return PUT_LANDED_EARLIER
+            if last == 412:
+                return last
+            shaky = shaky or last >= 500
         except Exception as exc:  # noqa: BLE001 -- retried
             _log("PUT attempt %d failed: %r" % (attempt, exc))
-            last = -1
+            last, shaky = -1, True
         time.sleep(2 * (attempt + 1))
     return last
 

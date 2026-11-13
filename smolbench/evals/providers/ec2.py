@@ -2634,7 +2634,7 @@ def serve_model(
         ``capture=True`` and the spec carries ``--kv-sharing-fast-prefill``
         (KV-shared layers would skip the captured query positions), or
         carries a ``--max-num-batched-tokens`` below ``max_model_len``
-        (chunked prefill).
+        (chunked prefill), or does not carry ``--no-enable-prefix-caching``.
     RuntimeError
         The instance became healthy serving something else.
     """
@@ -2674,6 +2674,14 @@ def serve_model(
                 f"{model!r}: --kv-sharing-fast-prefill cannot be combined with attention "
                 "capture: KV-shared layers would skip the query positions the plugin "
                 "captures."
+            )
+        # Prefix caching would split Nemotron-H's single prefill into two
+        # forwards, which the capture hook would record as two sequences.
+        if "--no-enable-prefix-caching" not in vllm_args:
+            raise ValueError(
+                f"{model!r}: attention capture requires --no-enable-prefix-caching: "
+                "a prefix-cache hit splits one prefill into two forwards, recorded "
+                "as two sequences."
             )
         max_len = serve_payload["max_model_len"]
         # Container-side paths. The agent resolves `files` relpaths against

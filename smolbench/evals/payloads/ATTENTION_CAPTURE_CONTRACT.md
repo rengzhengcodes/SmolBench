@@ -98,7 +98,15 @@ Upload (per rank, via the presigned URLs in the job file):
   max_rel}}, gate_tol, vllm_commit, model, bytes, wall_s`.
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
   `{"ok": bool, "error": str|null, "gate_max_rel": float, "bytes": int,
-  "uploaded": bool, "http_status": [npz_status, json_status]}`.
+  "uploaded": bool, "http_status": [npz_status, json_status]}`; each entry is
+  an int or the string `"412-landed-earlier"`.
+
+Every PUT carries `If-None-Match: *`, signed into the presigned URL, so S3
+answers 412 instead of replacing an existing key. A 412 on the first attempt
+means the key already existed: a failure, not retried. A 412 on a retry,
+after an attempt that raised or returned >= 500 (the object may have been
+stored without a usable answer), is recorded as `"412-landed-earlier"` and
+counts as uploaded; a 412 after only clear failures (e.g. 403) stays 412.
 
 S3 keys (beside the marks run, invisible to the marks-log parser):
 `<exp>/<model>/seed=<seed>/attn/<info>--<run_ts>/q<idx>.r<rank>.npz` and

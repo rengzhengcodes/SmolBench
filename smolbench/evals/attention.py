@@ -50,6 +50,7 @@ import json
 import logging
 import re
 import time
+from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -513,17 +514,20 @@ def rank_keys(key: str, rank: int) -> Tuple[str, str]:
 
 
 def presign_put(client: Any, bucket: str, key: str, content_type: str, ttl_s: int) -> str:
-    """Return a presigned PUT URL for `key` in `bucket`.
+    """Return a presigned PUT URL for `key` in `bucket` that refuses to replace.
 
-    The URL pins the ``Content-Type``: the box must upload with exactly the
-    type signed here, or S3 refuses the request.
+    The URL pins the ``Content-Type`` and ``If-None-Match: *``: the box must
+    upload with exactly that type and that header, or S3 refuses the request,
+    and S3 answers 412 when the key already exists instead of overwriting it.
 
     Parameters
     ----------
     client : Any
         boto3 S3 client (anything with ``generate_presigned_url``). The URL dies
         with the credential that signs it, so pass a client built from current
-        credentials.
+        credentials. It must sign with SigV4
+        (``Config(signature_version="s3v4")``): SigV2 drops ``IfNoneMatch``
+        without an error, which would leave the URL able to overwrite.
     bucket : str
         Destination bucket.
     key : str
@@ -536,13 +540,34 @@ def presign_put(client: Any, bucket: str, key: str, content_type: str, ttl_s: in
     Returns
     -------
     str
-        The presigned URL.
+        The presigned URL; its ``X-Amz-SignedHeaders`` lists ``if-none-match``.
+
+    Raises
+    ------
+    ValueError
+        The minted URL does not sign ``if-none-match`` (the client signs with
+        SigV2), so it would not protect an existing object.
     """
-    return client.generate_presigned_url(
+    url = client.generate_presigned_url(
         "put_object",
-        Params={"Bucket": bucket, "Key": key, "ContentType": content_type},
+        Params={
+            "Bucket": bucket,
+            "Key": key,
+            "ContentType": content_type,
+            "IfNoneMatch": "*",
+        },
         ExpiresIn=ttl_s,
     )
+    # Check the URL itself, not the client's config: a client of any type is
+    # accepted, and only the minted URL shows whether the header got signed.
+    signed = parse_qs(urlsplit(url).query).get("X-Amz-SignedHeaders", [""])[0]
+    if "if-none-match" not in signed.split(";"):
+        raise ValueError(
+            "presigned PUT URL does not sign If-None-Match, so it could replace an "
+            "existing object; build the S3 client with "
+            'botocore.config.Config(signature_version="s3v4")'
+        )
+    return url
 
 
 def _check_url_ttl(url_ttl_s: int, batch_timeout_s: int) -> None:
@@ -967,7 +992,9 @@ def run_capture_batches(
         Tensor-parallel degree of the box: ranks, hence uploads, per job.
         At least 1.
     s3_client_factory : Callable[[], Any]
-        Returns a NEW boto3 S3 client on each call.
+        Returns a NEW boto3 S3 client on each call. The client must be built
+        with ``Config(signature_version="s3v4")`` so the presigned URLs sign
+        ``If-None-Match`` (``presign_put`` raises otherwise).
     bucket : str
         Destination bucket.
     mode : str, optional

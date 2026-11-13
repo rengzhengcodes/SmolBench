@@ -46,7 +46,10 @@ class FakeS3:
     def generate_presigned_url(self, op: str, Params: dict, ExpiresIn: int) -> str:
         assert op == "put_object"
         self.presigned.append(Params["Key"])
-        return f"https://signed/{Params['Key']}?ttl={ExpiresIn}"
+        # Mirror a SigV4 URL: the signed-headers list names If-None-Match only when the
+        # condition was passed, as boto3 does under signature_version="s3v4".
+        signed = "content-type%3Bhost" + ("%3Bif-none-match" if Params.get("IfNoneMatch") == "*" else "")
+        return f"https://signed/{Params['Key']}?ttl={ExpiresIn}&X-Amz-SignedHeaders={signed}"
 
 
 def mass_npz(n_tokens: int, query_start: int, classes: list[int], *, heads: int = 2,
@@ -259,3 +262,49 @@ def test_a_fresh_client_is_built_for_every_batch() -> None:
 
     run(FakeBox(s3), s3, [job("a", 3, 2), job("b", 4, 2), job("c", 5, 2)], batch_size=1, factory=factory)
     assert len(built) >= 3
+
+
+# ------------------------------------------------------------ no-overwrite presigned PUT
+
+def _offline_boto3_s3(monkeypatch, config=None):
+    """A real boto3 S3 client with static fake credentials and no user config (presigning is offline)."""
+    import boto3
+
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", "/dev/null")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
+    return boto3.session.Session().client(
+        "s3", region_name="us-west-2", aws_access_key_id="AKIDEXAMPLE",
+        aws_secret_access_key="x" * 40, config=config)
+
+
+def _signed_headers(url: str) -> list[str]:
+    from urllib.parse import parse_qs, urlsplit
+
+    values = parse_qs(urlsplit(url).query).get("X-Amz-SignedHeaders", [""])
+    return values[0].split(";") if values[0] else []
+
+
+def test_presign_put_signs_if_none_match_into_a_sigv4_url(monkeypatch) -> None:
+    """The URL itself carries the no-overwrite condition: S3 then refuses a PUT onto an existing key."""
+    from botocore.config import Config
+
+    client = _offline_boto3_s3(monkeypatch, Config(signature_version="s3v4"))
+    url = attention.presign_put(client, "smolbench-rebuttals-414266451290",
+                                "bedrock-trio/attention/q0.r0.npz", "application/octet-stream", 60)
+    headers = _signed_headers(url)
+    assert "if-none-match" in headers and "content-type" in headers, url
+
+
+def test_presign_put_refuses_a_client_that_drops_the_condition(monkeypatch) -> None:
+    """A default boto3 client presigns S3 with SigV2, which silently drops IfNoneMatch: refuse it."""
+    client = _offline_boto3_s3(monkeypatch)
+    with pytest.raises(ValueError, match="(?i)if-none-match"):
+        attention.presign_put(client, "smolbench-rebuttals-414266451290",
+                              "bedrock-trio/attention/q0.r0.npz", "application/octet-stream", 60)
+
+
+def test_presign_put_passes_the_condition_to_the_signer() -> None:
+    s3 = FakeS3()
+    url = attention.presign_put(s3, "b", "p/q0.r0.json", "application/json", 30)
+    assert "if-none-match" in _signed_headers(url.replace("%3B", ";"))

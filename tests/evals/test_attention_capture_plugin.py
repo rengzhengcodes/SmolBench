@@ -99,6 +99,12 @@ class StubAttention:
         return self.reference(q3, k3, v3)
 
 
+#: The unwrapped forward. ``register()`` wraps the class attribute in place, so without a
+#: reset every earlier test's plugin instance stays in the chain and captures (and PUTs)
+#: again on each later forward.
+_STUB_FORWARD = StubAttention.forward
+
+
 def _install_stub_vllm(monkeypatch):
     vllm = types.ModuleType("vllm")
     layers_pkg = types.ModuleType("vllm.model_executor.layers.attention.attention")
@@ -127,6 +133,7 @@ def _install_stub_vllm(monkeypatch):
 def _load_plugin(monkeypatch, tmp_path):
     _install_stub_vllm(monkeypatch)
     StubAttention.registry.clear()
+    monkeypatch.setattr(StubAttention, "forward", _STUB_FORWARD)
     spec = importlib.util.spec_from_loader("smolbench_attn", loader=None)
     module = importlib.util.module_from_spec(spec)
     exec(compile(PLUGIN.read_text(), str(PLUGIN), "exec"), module.__dict__)
@@ -376,3 +383,91 @@ def test_mass_mode_rejects_malformed_class_vectors(monkeypatch, tmp_path: Path) 
     (tmp_path / "current.json").write_text(json.dumps(job))
     _run_forward([layer], 10, 8)
     assert not uploads and not (tmp_path / "done").exists()  # unreadable job: ignored, never armed
+
+
+# --------------------------------------------------------------------------- no-overwrite PUT
+def _scripted_put(monkeypatch, plugin, script):
+    """Replace ``requests.put`` with a scripted sequence of statuses or exceptions.
+
+    Returns the list of header dicts the plugin sent, one per attempt. The
+    retry back-off is stubbed so the tests do not sleep.
+    """
+    import time as real_time
+
+    sent = []
+
+    def put(url, data=None, headers=None, timeout=None):
+        sent.append(dict(headers or {}))
+        step = script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return types.SimpleNamespace(status_code=step)
+
+    monkeypatch.setattr(sys.modules["requests"], "put", put)
+    monkeypatch.setattr(plugin, "time", types.SimpleNamespace(sleep=lambda s: None,
+                                                               time=real_time.time))
+    return sent
+
+
+def test_put_sends_the_no_overwrite_condition(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    sent = _scripted_put(monkeypatch, plugin, [200])
+    assert plugin._put("put://x", b"blob", "application/octet-stream") == 200
+    assert len(sent) == 1
+    assert sent[0]["If-None-Match"] == "*"
+    assert sent[0]["Content-Type"] == "application/octet-stream"
+
+
+def test_put_412_on_the_first_attempt_is_a_failure(monkeypatch, tmp_path: Path) -> None:
+    """The key existed before this upload: report 412 and do not retry."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    sent = _scripted_put(monkeypatch, plugin, [412, 200, 200])
+    status = plugin._put("put://x", b"blob", "application/json")
+    assert status == 412
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("first", [ConnectionError("connection reset"), 503])
+def test_put_412_after_an_ambiguous_attempt_means_the_earlier_put_landed(
+    monkeypatch, tmp_path: Path, first
+) -> None:
+    """An attempt that raised (or got a 5xx) may have stored the object; its retry then sees 412."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    sent = _scripted_put(monkeypatch, plugin, [first, 412])
+    status = plugin._put("put://x", b"blob", "application/octet-stream")
+    assert status == plugin.PUT_LANDED_EARLIER
+    assert status != 412 and len(sent) == 2
+    assert all(h["If-None-Match"] == "*" for h in sent)
+
+
+def test_put_412_after_a_definite_refusal_is_still_a_failure(monkeypatch, tmp_path: Path) -> None:
+    """A 403 stored nothing, so a later 412 means someone else's object: a failure."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    _scripted_put(monkeypatch, plugin, [403, 412])
+    assert plugin._put("put://x", b"blob", "application/octet-stream") == 412
+
+
+def _one_layer_job(monkeypatch, plugin, tmp_path, script, job_id):
+    sent = _scripted_put(monkeypatch, plugin, script)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    _arm(tmp_path, job_id, 1, 12, [11])
+    _run_forward([layer], 12, 8)
+    return json.loads((tmp_path / "done" / f"{job_id}.r0.json").read_text()), sent
+
+
+def test_done_file_records_a_put_that_landed_on_an_earlier_attempt(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    # npz: the first attempt raises, the retry sees 412 (it landed); meta: 200.
+    done, sent = _one_layer_job(monkeypatch, plugin, tmp_path,
+                                [ConnectionError("reset"), 412, 200], "landed")
+    assert done["ok"] is True and done["uploaded"] is True, done
+    assert done["http_status"] == [plugin.PUT_LANDED_EARLIER, 200]
+    assert len(sent) == 3
+
+
+def test_done_file_fails_a_job_whose_key_already_existed(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    done, _sent = _one_layer_job(monkeypatch, plugin, tmp_path, [412, 200], "exists")
+    assert done["ok"] is False and done["uploaded"] is False, done
+    assert done["http_status"] == [412, 200]
+    assert "upload failed" in done["error"]
