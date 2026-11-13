@@ -177,6 +177,38 @@ def test_main_provisions_the_bucket_smolbench_results_s3_names(
     ) == p.policy_document("redirected-bucket")
 
 
+def test_bucket_and_policy_flags_provision_another_private_bucket(
+    fake_aws: FakeAwsClient,
+) -> None:
+    """The flags retarget every step; nothing still names the results bucket."""
+    bucket, policy = "smolbench-rebuttals-414266451290", "SmolbenchRebuttalsBucketRW"
+    assert p.main(["--bucket", bucket, "--policy-name", policy]) == 0
+    calls = fake_aws.calls
+    for op in ("create_bucket", "put_public_access_block", "put_bucket_versioning"):
+        assert [kw["Bucket"] for kw in _kwargs_for(calls, op)] == [bucket], op
+    assert _kwargs_for(calls, "create_bucket")[0]["CreateBucketConfiguration"] == {
+        "LocationConstraint": "us-west-2"
+    }
+    create_policy = _kwargs_for(calls, "create_policy")[0]
+    assert create_policy["PolicyName"] == policy
+    assert json.loads(create_policy["PolicyDocument"]) == p.policy_document(bucket)
+    attach = _kwargs_for(calls, "attach_group_policy")[0]
+    assert attach["GroupName"] == "smolbench-ec2-operators"
+    assert attach["PolicyArn"].endswith(f"policy/{policy}")
+    assert "smolbench-results-414266451290" not in json.dumps(calls)
+
+
+def test_a_new_bucket_without_its_own_policy_name_is_refused(
+    fake_aws: FakeAwsClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Reuse-by-name would attach the results grant and leave the new bucket with none."""
+    with pytest.raises(SystemExit) as stop:
+        p.main(["--bucket", "smolbench-rebuttals-414266451290"])
+    assert stop.value.code == 2
+    assert "--policy-name" in capsys.readouterr().err
+    assert fake_aws.calls == []
+
+
 def test_ensure_bucket_tolerates_already_owned(
     fake_aws: FakeAwsClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

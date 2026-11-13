@@ -100,8 +100,9 @@ What you set up yourself:
 4. **Results bucket.** Create your own S3 bucket with Block Public Access enabled and
    versioning enabled, or run
    `.venv/bin/python scripts/results/provision_results_bucket.py`.
-   The script takes no arguments, resolves the bucket from `SMOLBENCH_RESULTS_S3` or
-   `[results].bucket`, creates it in `us-west-2` (tolerating an existing bucket), enables
+   With no arguments the script resolves the bucket from `SMOLBENCH_RESULTS_S3` or
+   `[results].bucket` (`--bucket` with `--policy-name` provisions another private
+   bucket of the same shape), creates it in `us-west-2` (tolerating an existing bucket), enables
    all four public-access blocks and versioning. It creates or reuses the
    `SmolbenchResultsBucketRW` policy (`ListBucket`, `GetObject`, `PutObject`, and
    `DeleteObject`) and attaches it to the existing `smolbench-ec2-operators` IAM group.

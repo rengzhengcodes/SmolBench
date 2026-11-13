@@ -28,7 +28,7 @@ The Horn sweep and calibration drivers live in [`scripts/deduction/horn/`](deduc
 
 | File | What it's for |
 | --- | --- |
-| `provision_results_bucket.py` | ADMIN-credentialed, one-time idempotent runbook that provisions the S3-backed results bucket. |
+| `provision_results_bucket.py` | ADMIN-credentialed, one-time idempotent runbook that provisions the S3-backed results bucket. `--bucket` with `--policy-name` provisions another private bucket of the same shape (used for `smolbench-rebuttals-414266451290`). |
 | `audit_run_completeness.py` | Finds data faults that row/key counts miss. |
 | `snapshot_analysis_data.py` | Publishes current data with its repair audit trail. |
 

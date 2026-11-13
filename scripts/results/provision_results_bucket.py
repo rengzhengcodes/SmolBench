@@ -5,6 +5,12 @@ the operator policy; every step is idempotent and nothing runs at import time.
 Versioning makes deletes recoverable; denied calls exit 1 because keys are EC2-only.
 The bucket starts empty; write to it through ``S3ResultsStore``.
     .venv/bin/python scripts/results/provision_results_bucket.py
+
+``--bucket`` with ``--policy-name`` provisions another private bucket of the
+same shape. The policy is reused by name, so a new bucket needs its own name.
+    .venv/bin/python scripts/results/provision_results_bucket.py \
+        --bucket smolbench-rebuttals-414266451290 \
+        --policy-name SmolbenchRebuttalsBucketRW
 """
 
 from __future__ import annotations
@@ -248,22 +254,66 @@ def _run_step(label: str, operation: str, call: Callable[[], Any]) -> Any:
         raise
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Provision the results bucket. Returns 1 when an AWS call was denied, else 0."""
-    argparse.ArgumentParser(
-        description=(
-            "Idempotently provision the S3-backed replicate results bucket "
-            "(smolbench.evals.results_store)."
-        ),
-    ).parse_args(argv)
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line and resolve the target bucket and policy.
 
+    Parameters
+    ----------
+    argv : list of str, optional
+        Argument vector; ``None`` reads ``sys.argv``.
+
+    Returns
+    -------
+    argparse.Namespace
+        With ``bucket`` and ``policy_name``.
+
+    Raises
+    ------
+    SystemExit
+        ``--bucket`` names another bucket without its own ``--policy-name``.
+    """
     # Resolve at call time so provisioning matches the store destination.
-    bucket, _base_prefix = resolve_results_location()
+    results_bucket, _base_prefix = resolve_results_location()
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Idempotently provision a private, versioned S3 bucket with a "
+            "read/write policy for the operator group. The defaults provision "
+            "the replicate results bucket (smolbench.evals.results_store)."
+        ),
+    )
+    parser.add_argument(
+        "--bucket",
+        default=results_bucket,
+        help=f"bucket name (default {results_bucket})",
+    )
+    parser.add_argument(
+        "--policy-name",
+        default=POLICY_NAME,
+        help=(
+            f"managed read/write policy to create or reuse (default {POLICY_NAME}); "
+            "required with --bucket"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.bucket != results_bucket and args.policy_name == POLICY_NAME:
+        # ensure_policy reuses by name, so the new bucket would get no grant.
+        parser.error(
+            f"--bucket {args.bucket} needs its own --policy-name: {POLICY_NAME} "
+            f"grants access to {results_bucket} and would be reused unchanged"
+        )
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Provision the bucket. Returns 1 when an AWS call was denied, else 0."""
+    args = parse_args(argv)
+    bucket, policy_name = args.bucket, args.policy_name
 
     # Delay AWS import so offline tests can patch fresh_client.
     from smolbench.evals._aws import fresh_client
 
-    print(f"Provisioning {bucket!r} in {REGION}...")
+    print(f"Provisioning {bucket!r} in {REGION} (policy {policy_name!r})...")
     s3 = fresh_client("s3", REGION)
     iam = fresh_client("iam")
 
@@ -286,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         policy_arn = _run_step(
             "ensure IAM policy",
             "iam:CreatePolicy",
-            lambda: ensure_policy(iam, bucket, POLICY_NAME),
+            lambda: ensure_policy(iam, bucket, policy_name),
         )
         _run_step(
             "attach policy to group",
