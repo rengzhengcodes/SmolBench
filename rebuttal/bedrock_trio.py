@@ -7,6 +7,11 @@ the induction study, and ``scripts/deduction/horn/sweep.py`` runs and scores the
 cells. This module adds only what Bedrock needs on top: the model roster, a per-model
 endpoint switch, a results store with the released-results layout, and a check that
 every response was reasoned.
+
+The private S3 bucket (``RESULTS_S3``) is the store of record for both studies and
+``RESULTS_DIR`` is a local mirror of it that the report cells read. Objects in the bucket
+are append-only: every writer here adds a new stamped key and none replaces one.
+Pass ``s3_uri=None`` everywhere to keep the results local only.
 """
 
 from __future__ import annotations
@@ -17,22 +22,31 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import ModuleType
-from typing import Iterator, Mapping, Optional, Sequence
+from typing import Any, Iterator, Mapping, Optional, Sequence
 
 import requests
 
-from smolbench.evals import Marks
-from smolbench.evals.results_store import ReplicateAddress, ResultsStore, format_run_ts
+from smolbench.deduction.horn.render import ALL_ARMS
+from smolbench.evals import Marks, _aws
+from smolbench.evals.results_store import (
+    ReplicateAddress,
+    ResultsStore,
+    S3ResultsStore,
+    format_run_ts,
+    parse_s3_uri,
+    utcnow,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REBUTTAL_DIR = REPO_ROOT / "rebuttal"
-#: Results kept in the repo: induction YAMLs and Horn rows.
+#: Local mirror of the bucket (``RESULTS_S3``), not committed: induction YAMLs and Horn rows.
 RESULTS_DIR = REBUTTAL_DIR / "results"
 #: Rendered Horn rungs; deterministic and digest-checked, so not committed.
 RUNGS_DIR = REBUTTAL_DIR / "rungs"
@@ -41,8 +55,24 @@ MANTLE_URL = "https://bedrock-mantle.{region}.api.aws{path}"
 DEFAULT_REGION = "us-east-1"
 #: The three induction arms of the ICLR table (``zero`` is left out, as there).
 INDUCTION_ARMS = ("intens", "noise_intens", "extens")
-HORN_ARMS = ("lem", "pad", "disc", "both")
+#: The arms the paper reports; ``horn_repro.report`` contrasts cover these only.
+HORN_PAPER_ARMS = ("lem", "pad", "disc", "both")
+#: The paper arms, then the four review arms (``render.ALL_ARMS``).
+HORN_ARMS = tuple(ALL_ARMS)
 HORN_TEMPERATURE = 0.7
+#: Store of record for both studies (private, append-only); ``None`` keeps results local.
+RESULTS_S3 = "s3://smolbench-rebuttals-414266451290/bedrock-trio"
+#: Region of the results bucket; Bedrock inference has its own region (``DEFAULT_REGION``).
+RESULTS_S3_REGION = "us-west-2"
+# Sub-prefix (and local mirror folder) of smoke runs. ``smoke/`` holds the first smoke of
+# 2026-11-13, whose non-ASCII text was stored mis-decoded (UTF-8 read as ISO-8859-1); the
+# bucket is append-only, so that run stays where it is and is not read.
+SMOKE_PREFIX = "smoke-2"
+#: Opening of the listing in a released ``extens`` prompt (positions are listed from 1).
+LISTING_START = "Position 1: "
+#: Opening of the template text after the context (``run_study.template``); rules and
+#: listing lines never contain it, as labels are lowercase letters.
+QUESTION_START = "\nQuestion:"
 
 
 @dataclass(frozen=True)
@@ -312,6 +342,119 @@ def pick_reasoning_args(model: BedrockModel, region: str) -> tuple[dict, list[di
     raise RuntimeError(f"{model.key}: no reasoning candidate worked: {tried}")
 
 
+# ---------------------------------------------------------------------- bucket
+
+
+def _join_key(*parts: str) -> str:
+    """Join key segments with single slashes, skipping empty ones."""
+    return "/".join(p.strip("/") for p in parts if p.strip("/"))
+
+
+def _s3(region: str) -> Any:
+    """An uncached S3 client, as ``S3ResultsStore`` builds one: rotated credentials apply."""
+    return _aws.fresh_client("s3", region)
+
+
+def _list_objects(client: Any, bucket: str, prefix: str) -> list[dict]:
+    """Every object under ``prefix``, in key order (paginated)."""
+    out: list[dict] = []
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+        out += page.get("Contents", [])
+    return sorted(out, key=lambda obj: obj["Key"])
+
+
+def _key_exists(client: Any, bucket: str, key: str) -> bool:
+    """Whether the exact key exists; one listing, so a credential error is not read as absence."""
+    # Design: an exact key sorts before every longer key that shares it as a prefix, so
+    # ``MaxKeys=1`` is enough to see it.
+    resp = client.list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
+    return any(obj["Key"] == key for obj in resp.get("Contents", []))
+
+
+def _put_new(client: Any, bucket: str, key: str, body: bytes) -> None:
+    """Write ``body`` to ``key``, refusing to replace an existing object.
+
+    Raises
+    ------
+    FileExistsError
+        If the key exists.
+    """
+    # NOTE: check-then-put is not atomic; two writers that pick the same key within the
+    # same instant can still collide. Stamps carry microseconds, which makes that remote.
+    if _key_exists(client, bucket, key):
+        raise FileExistsError(f"refusing to overwrite s3://{bucket}/{key}: the bucket is append-only")
+    client.put_object(Bucket=bucket, Key=key, Body=body)
+
+
+def check_bucket(s3_uri: str, region: str = RESULTS_S3_REGION) -> None:
+    """Fail early, with a clear message, if the results bucket cannot be reached.
+
+    Makes one listing (``MaxKeys=1``) under the URI's prefix. The notebook calls this
+    before any request that bills inference.
+
+    Parameters
+    ----------
+    s3_uri : str
+        ``s3://bucket[/prefix]``.
+    region : str
+        Region of the bucket.
+
+    Raises
+    ------
+    RuntimeError
+        If the listing fails (no credentials, no access, wrong region, no network).
+    ValueError
+        If ``s3_uri`` is malformed.
+    """
+    from botocore.exceptions import (  # pylint: disable=import-outside-toplevel
+        BotoCoreError,
+        ClientError,
+    )
+
+    bucket, base = parse_s3_uri(s3_uri)
+    try:
+        _s3(region).list_objects_v2(Bucket=bucket, Prefix=f"{base}/" if base else "", MaxKeys=1)
+    except (BotoCoreError, ClientError) as err:
+        raise RuntimeError(
+            f"cannot list {s3_uri} in {region}: {type(err).__name__}: {err}. "
+            "Refresh the AWS credentials, or set RESULTS_S3 = None to keep results local."
+        ) from err
+
+
+def push_file(path: Path, s3_uri: str, rel_key: str, region: str = RESULTS_S3_REGION) -> str:
+    """Upload one local file to ``<prefix>/<rel_key>``.
+
+    Parameters
+    ----------
+    path : Path
+        File to upload; it is read whole.
+    s3_uri : str
+        ``s3://bucket[/prefix]`` of the results store.
+    rel_key : str
+        Key below the prefix, such as ``probes/probes--<stamp>.json``.
+    region : str
+        Region of the bucket.
+
+    Returns
+    -------
+    str
+        The full key written.
+
+    Raises
+    ------
+    FileExistsError
+        If the key exists; nothing is uploaded.
+    ValueError
+        If ``rel_key`` is empty.
+    """
+    if not rel_key.strip("/"):
+        raise ValueError("rel_key must not be empty")
+    bucket, base = parse_s3_uri(s3_uri)
+    key = _join_key(base, rel_key)
+    _put_new(_s3(region), bucket, key, Path(path).read_bytes())
+    return key
+
+
 # ---------------------------------------------------------------------- induction
 
 
@@ -383,7 +526,11 @@ def load_run_study() -> ModuleType:
 
 
 def induction_harness(
-    models: Sequence[BedrockModel], seeds: Sequence[int], results_dir: Path = RESULTS_DIR
+    models: Sequence[BedrockModel],
+    seeds: Sequence[int],
+    results_dir: Path = RESULTS_DIR,
+    s3_uri: Optional[str] = None,
+    s3_region: str = RESULTS_S3_REGION,
 ):
     """A ``ReplicateHarness`` over the three ICLR arms, writing the released layout.
 
@@ -394,12 +541,22 @@ def induction_harness(
     seeds : Sequence[int]
         Replicate seeds (ICLR: 0-29); each is also the decoding seed.
     results_dir : Path
-        Results root; the YAMLs go under ``<results_dir>/induction/``.
+        Local results root; with no ``s3_uri`` the YAMLs go under
+        ``<results_dir>/induction/``.
+    s3_uri : Optional[str]
+        ``s3://bucket[/prefix]`` of the store of record. When set, replicates are written
+        (and looked up, for resume) as
+        ``<prefix>/induction/<model>/seed=<seed>/<arm>--<stamp>.yaml`` and nothing is
+        written locally; ``pull_induction`` mirrors them afterwards. ``None`` writes to
+        ``results_dir``.
+    s3_region : str
+        Region of the bucket.
 
     Returns
     -------
     ReplicateHarness
-        Harness whose store is a ``ReproLayoutStore``.
+        Harness whose store is an ``S3ResultsStore`` (``s3_uri`` given) or a
+        ``ReproLayoutStore``.
     """
     from smolbench.evals.replicates import (  # pylint: disable=import-outside-toplevel
         ReplicateHarness,
@@ -413,8 +570,71 @@ def induction_harness(
         info_types=INDUCTION_ARMS,
     )
     # ``store`` is a cached_property; set it before first use.
-    harness.__dict__["store"] = ReproLayoutStore(results_dir / "induction")
+    if s3_uri is None:
+        harness.__dict__["store"] = ReproLayoutStore(results_dir / "induction")
+    else:
+        bucket, base = parse_s3_uri(s3_uri)
+        harness.__dict__["store"] = S3ResultsStore(
+            bucket, base_prefix=base, experiment="induction", region=s3_region
+        )
     return harness
+
+
+#: A replicate file or supersession marker as ``select_runs`` reads it.
+_INDUCTION_KEY = re.compile(r"[^/]+/seed=\d+/[^/]+--[^/]+\.(?:yaml|superseded)")
+
+
+def pull_induction(s3_uri: str, results_dir: Path = RESULTS_DIR, region: str = RESULTS_S3_REGION) -> int:
+    """Mirror the bucket's induction replicates into the local released-results layout.
+
+    Copies ``<prefix>/induction/<rest>`` to ``<results_dir>/induction/induction/<rest>``,
+    the tree ``smolbench.induction.repro.load_cells(results_dir / "induction")`` reads. A
+    local file of the same size is kept, so a repeat pull downloads nothing.
+
+    Both the ``.yaml`` runs and the ``.superseded`` markers (which ``S3ResultsStore`` can
+    write beside a run) are copied: ``repro.select_runs`` skips a run that has its marker
+    and takes the earliest run left, as ``S3ResultsStore.load_marks`` does. Any other
+    object is not copied: ``select_runs`` ignores a file with another suffix but fails on
+    a ``seed=`` folder whose name is not an integer.
+
+    Parameters
+    ----------
+    s3_uri : str
+        ``s3://bucket[/prefix]`` of the results store.
+    results_dir : Path
+        Local mirror root.
+    region : str
+        Region of the bucket.
+
+    Returns
+    -------
+    int
+        Number of files written.
+
+    Notes
+    -----
+    Local files that are not in the bucket are left alone. A file of a different size under
+    the same name is replaced: the bucket is the store of record.
+    """
+    bucket, base = parse_s3_uri(s3_uri)
+    root = _join_key(base, "induction") + "/"
+    client = _s3(region)
+    written = 0
+    for obj in _list_objects(client, bucket, root):
+        rest = obj["Key"][len(root) :]
+        if not _INDUCTION_KEY.fullmatch(rest):
+            continue
+        dest = results_dir / "induction" / "induction" / rest
+        if dest.is_file() and dest.stat().st_size == obj["Size"]:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Write beside, then rename, so an interrupted pull never leaves a half file under
+        # a run's name (``select_runs`` ignores the ``.part`` suffix).
+        part = dest.with_name(dest.name + ".part")
+        part.write_bytes(client.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read())
+        part.replace(dest)
+        written += 1
+    return written
 
 
 def run_induction(
@@ -474,6 +694,100 @@ def released_queries(key: str, seed: int = 0) -> dict[str, list[str]]:
     return out
 
 
+def _expected_extens(intens: str, released: str) -> str:
+    """The ``extens`` prompt of this branch, rebuilt from an ``intens`` and a released prompt.
+
+    This branch's ``extens`` context is the intensional rules followed by the listing; the
+    released ``extens`` context is the listing only. The prompts of one question share the
+    template text:
+
+    - ``intens``   = template head + rules + template tail
+    - ``released`` = template head + listing + template tail
+    - ``extens``   = template head + rules + listing + template tail
+
+    So the rules are the text of ``intens`` from the end of the template head (where the
+    released listing starts) to the start of the template tail, and ``extens`` is those
+    rules inserted before the released listing. Both ends are located by the template's
+    own text, not by comparing the prompts' common prefix and suffix: rules and listing
+    both end in a period and a newline, so a common-suffix match can place the cut one
+    line off.
+
+    Raises
+    ------
+    ValueError
+        If the released prompt has no listing, ``intens`` has no template tail after it,
+        or the rules block is empty.
+    """
+    cut = released.find(LISTING_START)
+    if cut < 0:
+        raise ValueError(f"no listing ({LISTING_START!r}) in the released prompt")
+    end = intens.find(QUESTION_START, cut)
+    if end < 0:
+        raise ValueError(f"no {QUESTION_START!r} after the template head in the intens prompt")
+    if end == cut:
+        raise ValueError("the intens prompt has no rules block")
+    return released[:cut] + intens[cut:end] + released[cut:]
+
+
+def check_induction_prompts(
+    mine: Mapping[str, Sequence[Any]], released: Mapping[str, Sequence[str]], tokenizer: Any
+) -> None:
+    """Check this branch's induction prompts against the released ICLR prompts.
+
+    Per arm:
+
+    - ``intens``: byte-identical to the released prompts.
+    - ``extens``: this branch's context is the intensional rules and then the listing,
+      the released one the listing only. A prompt must equal the released one with the
+      rules block of the question's ``intens`` prompt inserted before the listing (that
+      is, with the rules block removed it equals the released one), byte for byte.
+    - ``noise_intens``: it is padded to the token count of the matching ``extens`` prompt of
+      this branch, so it differs from the released text; its token count under
+      ``tokenizer`` must equal that ``extens`` prompt's.
+
+    Parameters
+    ----------
+    mine : Mapping[str, Sequence[Any]]
+        Arm -> questions with a ``.prompt`` (``make_quizzes(seed, key)``), in question order.
+        Needs ``intens``, ``extens`` and ``noise_intens``.
+    released : Mapping[str, Sequence[str]]
+        Arm -> released prompt strings (``released_queries``). Needs ``intens`` and
+        ``extens``; ``noise_intens`` is not compared.
+    tokenizer : Any
+        The model's own tokenizer, with ``count(text) -> int``.
+
+    Raises
+    ------
+    AssertionError
+        On the first mismatch, naming the arm and the question index; also if an arm is
+        missing or has a different number of questions.
+    """
+    for arm in INDUCTION_ARMS:
+        if not mine.get(arm):
+            raise AssertionError(f"{arm}: no prompts of this branch to check")
+        if arm != "noise_intens":
+            if not released.get(arm):
+                raise AssertionError(f"{arm}: the released file has no prompts")
+            if len(released[arm]) != len(mine[arm]):
+                raise AssertionError(f"{arm}: {len(mine[arm])} prompts, released {len(released[arm])}")
+    for i, (intens, extens, noise) in enumerate(
+        zip(mine["intens"], mine["extens"], mine["noise_intens"], strict=True)
+    ):
+        if intens.prompt != released["intens"][i]:
+            raise AssertionError(f"intens[{i}]: differs from the released prompt")
+        try:
+            expected = _expected_extens(intens.prompt, released["extens"][i])
+        except ValueError as err:
+            raise AssertionError(f"extens[{i}]: {err}") from err
+        if extens.prompt != expected:
+            raise AssertionError(
+                f"extens[{i}]: not the released prompt with the intens prompt's rules "
+                "block inserted before the listing"
+            )
+        if tokenizer.count(noise.prompt) != tokenizer.count(extens.prompt):
+            raise AssertionError(f"noise_intens[{i}]: token count differs from the extens prompt's")
+
+
 def induction_reasoning_report(results_dir: Path = RESULTS_DIR) -> dict[tuple[str, str], dict]:
     """Per (model, arm): replicates, marks, unreasoned marks and ungradable (null) marks."""
     import yaml  # pylint: disable=import-outside-toplevel
@@ -519,21 +833,65 @@ def horn_m(key: str) -> int:
     return int(repro.model_entry(key)["m"])
 
 
-def render_horn_rung(m: int, seeds: Sequence[int], rungs_dir: Path = RUNGS_DIR) -> Path:
-    """Render rung ``m<m>`` for ``seeds`` (skipping seeds already there) and check it
-    against the ICLR digests.
+def render_horn_rung(
+    m: int, seeds: Sequence[int], rungs_dir: Path = RUNGS_DIR, arms: Sequence[str] = HORN_ARMS
+) -> Path:
+    """Render rung ``m<m>`` for ``seeds`` and ``arms`` and check it against the ICLR digests.
+
+    ``<rung>/s<seed>/<arm>/prompt.md`` exists for every requested arm afterwards. An arm
+    already rendered is kept; one that is missing (say, a review arm added to a rung that
+    holds only the paper arms) is rendered into the existing seed folder. The theory is
+    rebuilt from the protocol's parameters, so the paper arms stay byte-identical to the
+    ICLR rung. ``repro.render_rung`` renders the four paper arms only, so this calls the
+    renderer it uses (``cli.write_seed``) with the requested arms.
+
+    Parameters
+    ----------
+    m : int
+        Chain length.
+    seeds : Sequence[int]
+        Theory seeds.
+    rungs_dir : Path
+        Folder that holds ``m<m>``.
+    arms : Sequence[str]
+        Arms to render; any of ``render.ALL_ARMS``.
+
+    Returns
+    -------
+    Path
+        The rung folder.
 
     Raises
     ------
+    ValueError
+        If an arm is not one of ``render.ALL_ARMS``.
     RuntimeError
-        If a seed differs from the ICLR rung.
+        If a seed differs from the ICLR rung (checked on the paper arms; an ``m`` the
+        protocol does not pin fails here, as in ``repro.verify_rung``).
     """
+    from smolbench.deduction.horn import render as horn_render  # pylint: disable=import-outside-toplevel
     from smolbench.deduction.horn import repro  # pylint: disable=import-outside-toplevel
+    from smolbench.deduction.horn.cli import (  # pylint: disable=import-outside-toplevel
+        build_theory,
+        write_seed,
+    )
 
+    for arm in arms:
+        horn_render.check_arm(arm)
     rung = rungs_dir / f"m{m}"
-    todo = [s for s in seeds if not (rung / f"s{s:04d}" / "theory.json").exists()]
-    if todo:
-        repro.render_rung(rung, m, todo)
+    proto = repro.load_protocol()
+    tok = None
+    for seed in seeds:
+        sd = rung / f"s{seed:04d}"
+        todo = [
+            arm
+            for arm in arms
+            if not all((sd / arm / name).exists() for name in repro.ARM_FILES)
+        ]
+        if not todo:
+            continue
+        tok = tok or horn_render.Tokenizer()
+        write_seed(rung, build_theory(seed, m, proto["height"], proto["alt_per_lemma"]), todo, tok)
     problems = repro.verify_rung(rung, m, list(seeds))
     if problems:
         raise RuntimeError(f"rung m{m} differs from the ICLR rung: {problems[:5]}")
@@ -543,6 +901,161 @@ def render_horn_rung(m: int, seeds: Sequence[int], rungs_dir: Path = RUNGS_DIR) 
 def horn_rows_path(key: str, results_dir: Path = RESULTS_DIR) -> Path:
     """Rows file for one model."""
     return results_dir / "horn" / f"{key}.jsonl"
+
+
+def _row_lines(text: str) -> list[str]:
+    """Non-blank lines of a rows file, split on ``\\n`` only.
+
+    ``str.splitlines`` would also split on U+2028 and U+0085, which ``json.dumps``
+    (``ensure_ascii=False``) leaves unescaped inside a row's text.
+    """
+    return [line for line in text.split("\n") if line.strip()]
+
+
+def _dump_row(row: dict) -> str:
+    """One row as a single JSON line that ``str.splitlines`` readers cannot split.
+
+    ``json.dumps`` (``ensure_ascii=False``) leaves U+0085, U+2028 and U+2029 raw inside
+    strings. ``sweep.done_keys`` and ``stats.load_rows`` split on them, so a row holding
+    one would never count as done and would be billed again on every run.
+    """
+    line = json.dumps(row, ensure_ascii=False)
+    for ch in ("\x85", "\u2028", "\u2029"):
+        line = line.replace(ch, f"\\u{ord(ch):04x}")
+    return line
+
+
+def _horn_parts(client: Any, bucket: str, prefix: str) -> list[str]:
+    """Keys of the row parts under ``prefix``, in key (that is, stamp) order."""
+    return [
+        obj["Key"]
+        for obj in _list_objects(client, bucket, prefix)
+        if "/" not in obj["Key"][len(prefix) :]
+        and obj["Key"][len(prefix) :].startswith("rows--")
+        and obj["Key"].endswith(".jsonl")
+    ]
+
+
+def _part_lines(client: Any, bucket: str, key: str) -> list[str]:
+    """The rows of one part."""
+    return _row_lines(client.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8"))
+
+
+def _local_text(out: Path) -> str:
+    """A local rows file as text, ``""`` when it does not exist (bytes, so no newline translation)."""
+    return out.read_bytes().decode("utf-8") if out.exists() else ""
+
+
+def pull_horn_rows(
+    key: str,
+    s3_uri: str,
+    results_dir: Path = RESULTS_DIR,
+    region: str = RESULTS_S3_REGION,
+    out: Optional[Path] = None,
+) -> int:
+    """Append the bucket's rows of one model to the local rows file.
+
+    Reads every part under ``<prefix>/deduction/horn/<key>/`` in key order and appends
+    each line that the local file does not already contain (exact match, so a line that
+    two parts share is appended once).
+
+    Parameters
+    ----------
+    key : str
+        Roster key of the model.
+    s3_uri : str
+        ``s3://bucket[/prefix]`` of the results store.
+    results_dir : Path
+        Local mirror root; sets the default ``out``.
+    region : str
+        Region of the bucket.
+    out : Optional[Path]
+        Rows file; default ``horn_rows_path(key, results_dir)``.
+
+    Returns
+    -------
+    int
+        Number of lines appended.
+
+    Notes
+    -----
+    Every part is downloaded on every call, so the cost grows with the bucket. The file is
+    only ever appended to. If its last line is unterminated (a crash mid-write), a newline
+    is written first so the first new row is not glued to the fragment.
+    """
+    bucket, base = parse_s3_uri(s3_uri)
+    out = out or horn_rows_path(key, results_dir)
+    client = _s3(region)
+    text = _local_text(out)
+    have = set(_row_lines(text))
+    new: list[str] = []
+    for part in _horn_parts(client, bucket, _join_key(base, "deduction", "horn", key) + "/"):
+        for line in _part_lines(client, bucket, part):
+            if line not in have:
+                have.add(line)
+                new.append(line)
+    if new:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("ab") as fh:
+            fh.write((("\n" if text and not text.endswith("\n") else "") + "".join(f"{x}\n" for x in new)).encode())
+    return len(new)
+
+
+def push_horn_rows(
+    key: str,
+    s3_uri: str,
+    results_dir: Path = RESULTS_DIR,
+    region: str = RESULTS_S3_REGION,
+    out: Optional[Path] = None,
+) -> Optional[str]:
+    """Upload the local rows of one model that the bucket does not have, as one new part.
+
+    The part is ``<prefix>/deduction/horn/<key>/rows--<stamp>.jsonl`` with the stamp from
+    ``format_run_ts(utcnow())``. If that key exists (another machine pushed in the same
+    instant), the stamp moves on one second at a time to the first free one; nothing in the
+    bucket is overwritten.
+
+    Parameters
+    ----------
+    key : str
+        Roster key of the model.
+    s3_uri : str
+        ``s3://bucket[/prefix]`` of the results store.
+    results_dir : Path
+        Local mirror root; sets the default ``out``.
+    region : str
+        Region of the bucket.
+    out : Optional[Path]
+        Rows file; default ``horn_rows_path(key, results_dir)``.
+
+    Returns
+    -------
+    Optional[str]
+        The key written, or ``None`` (and no upload) when every local line is already in
+        some part, or the file is missing or empty.
+
+    Notes
+    -----
+    Every part is downloaded to find which lines it holds. An unterminated last line (a
+    crash mid-write) is left out: the bucket is append-only, so a fragment would stay.
+    """
+    bucket, base = parse_s3_uri(s3_uri)
+    out = out or horn_rows_path(key, results_dir)
+    client = _s3(region)
+    prefix = _join_key(base, "deduction", "horn", key) + "/"
+    remote = {line for part in _horn_parts(client, bucket, prefix) for line in _part_lines(client, bucket, part)}
+    # dict.fromkeys: each missing line once, in file order.
+    text = _local_text(out)
+    whole = text if text.endswith("\n") else text[: text.rfind("\n") + 1]
+    new = [line for line in dict.fromkeys(_row_lines(whole)) if line not in remote]
+    if not new:
+        return None
+    when = utcnow()
+    while _key_exists(client, bucket, f"{prefix}rows--{format_run_ts(when)}.jsonl"):
+        when += timedelta(seconds=1)
+    part = f"{prefix}rows--{format_run_ts(when)}.jsonl"
+    _put_new(client, bucket, part, "".join(f"{line}\n" for line in new).encode("utf-8"))
+    return part
 
 
 def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
@@ -555,23 +1068,75 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     concurrency: int = 8,
     out: Optional[Path] = None,
     stream: bool = True,
+    arms: Sequence[str] = HORN_ARMS,
+    s3_uri: Optional[str] = None,
+    s3_region: str = RESULTS_S3_REGION,
+    push_every: int = 200,
 ) -> list[dict]:
     """Run and score every outstanding Horn cell of one model with ``sweep.run_cell``.
 
     The decoding seed is the replicate index and the temperature is 0.7, as in the ICLR
     protocol. Rows already in ``out`` (other than ``exception`` rows) are skipped.
 
+    With ``s3_uri``, the bucket is the store of record. Once the rows lock is held, the
+    bucket's rows are pulled into ``out`` so that resume sees rows collected on any
+    machine. New rows are pushed as one part after every ``push_every`` of them, and
+    again in a ``finally``, so an interrupted run keeps what it collected.
+
+    Parameters
+    ----------
+    model : BedrockModel
+        Model to run; ``bedrock_id`` must be resolved.
+    region : str
+        Bedrock region.
+    reasoning_args : dict
+        Reasoning fields to send.
+    rung : Path
+        Rendered rung (``render_horn_rung``) holding a prompt for every arm in ``arms``.
+    seeds : Sequence[int]
+        Theory seeds.
+    reps : int
+        Replicates per (arm, seed).
+    concurrency : int
+        Parallel requests.
+    out : Optional[Path]
+        Local rows file; default ``horn_rows_path(model.key)``.
+    stream : bool
+        Stream responses.
+    arms : Sequence[str]
+        Arms to run; cells of an arm with no rendered prompt are not run.
+    s3_uri : Optional[str]
+        ``s3://bucket[/prefix]`` of the store of record; ``None`` keeps rows local only.
+    s3_region : str
+        Region of the bucket.
+    push_every : int
+        New rows per push; at least 1.
+
     Returns
     -------
     list[dict]
         The rows written by this call.
+
+    Raises
+    ------
+    ValueError
+        If the Bedrock id is unresolved or ``push_every`` is below 1.
+    RuntimeError
+        If another sweep holds the rows lock.
     """
+    from botocore.exceptions import (  # pylint: disable=import-outside-toplevel
+        BotoCoreError,
+        ClientError,
+    )
+
     from smolbench.evals.openai_compat import (  # pylint: disable=import-outside-toplevel
         ChatClient,
     )
 
     if model.bedrock_id is None:
         raise ValueError(f"{model.key}: resolve the Bedrock id first (resolve_ids)")
+    if push_every < 1:
+        raise ValueError(f"push_every must be >= 1, got {push_every}")
     sweep = load_sweep()
     out = out or horn_rows_path(model.key)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -597,17 +1162,53 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     fh = sweep.lock_rows(out)
     if fh is None:
         raise RuntimeError(f"{out} is locked by another sweep")
-    done = sweep.done_keys(out)
-    cells = sweep.cells_in(rung, list(HORN_ARMS), list(seeds), reps)
-    todo = [c for c in cells if (st.model,) + c.key not in done]
     rows: list[dict] = []
-    with fh, _env(HORN_STREAM_COMPLETIONS="1" if stream else "0"), ThreadPoolExecutor(concurrency) as pool:
-        futs = [pool.submit(sweep.run_cell, client, c, st) for c in todo]
-        for fut in as_completed(futs):
-            row = fut.result() | {"provider": f"bedrock-mantle:{region}"}
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-            fh.flush()
-            rows.append(row)
+    with fh:
+        # Pull under the lock and before ``done_keys``: another process cannot append
+        # meanwhile, and the cells another machine finished are not run again.
+        if s3_uri is not None:
+            pull_horn_rows(model.key, s3_uri, region=s3_region, out=out)
+        done = sweep.done_keys(out)
+        cells = sweep.cells_in(rung, list(arms), list(seeds), reps)
+        todo = [c for c in cells if (st.model,) + c.key not in done]
+        with _env(HORN_STREAM_COMPLETIONS="1" if stream else "0"), ThreadPoolExecutor(concurrency) as pool:
+            futs = [pool.submit(sweep.run_cell, client, c, st) for c in todo]
+            kept: set = set()
+            unpushed = 0
+
+            def keep(fut) -> None:
+                row = fut.result() | {"provider": f"bedrock-mantle:{region}"}
+                fh.write(_dump_row(row) + "\n")
+                fh.flush()
+                rows.append(row)
+                kept.add(fut)
+
+            try:
+                for fut in as_completed(futs):
+                    keep(fut)
+                    unpushed += 1
+                    if s3_uri is not None and unpushed >= push_every:
+                        # The rows are safe on disk; the push after the loop retries.
+                        try:
+                            push_horn_rows(model.key, s3_uri, region=s3_region, out=out)
+                            unpushed = 0
+                        except (BotoCoreError, ClientError) as err:
+                            print(f"{model.key}: periodic push failed, continuing: {err}")
+            finally:
+                # Cells that have not started are dropped, so an interrupt does not bill
+                # the rest of the queue. Cells already running are billed either way, so
+                # their rows are kept before the final push.
+                for fut in futs:
+                    fut.cancel()
+                for fut in futs:
+                    if fut in kept or fut.cancelled():
+                        continue
+                    try:
+                        keep(fut)
+                    except Exception as err:  # pylint: disable=broad-exception-caught
+                        print(f"{model.key}: a running cell left no row: {err!r}")
+                if s3_uri is not None:
+                    push_horn_rows(model.key, s3_uri, region=s3_region, out=out)
     return rows
 
 
@@ -615,10 +1216,11 @@ def horn_breakdown(paths: Sequence[Path]) -> dict[tuple[str, str], dict]:
     """Per (model, arm): rows, verdicts, finish reasons and unreasoned rows (exceptions apart)."""
     out: dict[tuple[str, str], dict] = collections.defaultdict(collections.Counter)
     for path in paths:
-        for line in Path(path).read_text(encoding="utf-8").splitlines():
-            if not line.strip():
+        for line in _row_lines(Path(path).read_text(encoding="utf-8")):
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
                 continue
-            r = json.loads(line)
             c = out[(r.get("spec_key") or r["model"], r["arm"])]
             c["rows"] += 1
             c[f"verdict:{r['verdict']}"] += 1

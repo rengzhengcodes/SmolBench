@@ -1,2 +1,4 @@
 # Rendered Horn rungs: deterministic and checked against the ICLR digests.
 /rungs/
+# Local mirror of the results bucket.
+/results/
