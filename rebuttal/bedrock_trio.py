@@ -71,6 +71,8 @@ HORN_TEMPERATURE = 0.7
 # Induction: ``induction_budget``.
 HORN_MAX_TOKENS = 131072
 HORN_CONTEXT_LENGTH = 131072
+# Answer-extraction rule of the paper table (``scoring`` in ``horn/iclr.json``).
+HORN_SCORING = "iclr"
 # Output cap of the one-question reasoning probe.
 PROBE_MAX_TOKENS = 4096
 #: Store of record for both studies (private, append-only); ``None`` keeps results local.
@@ -823,6 +825,10 @@ def induction_reasoning_report(results_dir: Path = RESULTS_DIR) -> dict[tuple[st
         c["marks"] += len(marks)
         c["unreasoned"] += sum(not reasoned(m.get("reasoning")) for m in marks)
         c["null_score"] += sum(m.get("score") is None for m in marks)
+        # An answer left in the reasoning channel: reasoning came back, the response is empty.
+        c["empty_response"] += sum(
+            reasoned(m.get("reasoning")) and not (m.get("response") or "").strip() for m in marks
+        )
         for m in marks:
             c[f"compliance:{m.get('compliance')}"] += 1
     return {k: dict(v) for k, v in out.items()}
@@ -1169,6 +1175,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
         spec_key=model.key,
         extra_args={"max_tokens": max_tokens, "temperature": HORN_TEMPERATURE} | reasoning_args,
         context_length=HORN_CONTEXT_LENGTH,
+        scoring=HORN_SCORING,
         timeout=max(900, max_tokens // 10),
         max_retries=8,
         system_prompt=None,

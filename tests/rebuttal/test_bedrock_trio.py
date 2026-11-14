@@ -126,9 +126,21 @@ def test_induction_writes_released_layout_and_resumes(mantle, tmp_path, monkeypa
     assert data["server_config"]["extra_args"] == {"max_completion_tokens": budget, "reasoning_effort": "high"}
     report = bt.induction_reasoning_report(tmp_path)
     assert all(v["unreasoned"] == 0 and v["marks"] == 9 for v in report.values())
+    assert all(v["empty_response"] == 0 for v in report.values())
 
     bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"})
     assert len(mantle.requests) == 27, "a finished replicate must not be re-billed"
+
+
+def test_an_answer_left_in_the_reasoning_channel_is_counted(mantle, tmp_path, monkeypatch):
+    rs = bt.load_run_study()
+    monkeypatch.setattr(rs, "for_model", lambda _model: StubTokenizer())
+    # What Bedrock sometimes returns: the bare answer as reasoning and no content.
+    mantle.default_response = _final("", reasoning="280")
+    harness = bt.induction_harness([DSV31], seeds=[0], results_dir=tmp_path)
+    bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"}, max_parallel=4)
+    report = bt.induction_reasoning_report(tmp_path)
+    assert all(v["empty_response"] == 9 == v["null_score"] and v["unreasoned"] == 0 for v in report.values())
 
 
 def test_horn_rows_score_and_load_through_stats(mantle, tmp_path):
@@ -149,6 +161,8 @@ def test_horn_rows_score_and_load_through_stats(mantle, tmp_path):
     assert (bt.HORN_MAX_TOKENS, bt.HORN_CONTEXT_LENGTH) == (131072, 131072)
     sampling = json.loads((REPO_ROOT / "smolbench/deduction/horn/iclr.json").read_text())["sampling"]
     assert (sampling["max_tokens"], sampling["context_length"]) == (bt.HORN_MAX_TOKENS, bt.HORN_CONTEXT_LENGTH)
+    iclr = json.loads((REPO_ROOT / "smolbench/deduction/horn/iclr.json").read_text())
+    assert {r["scoring"] for r in rows} == {iclr["scoring"]} == {bt.HORN_SCORING}
     capped = bt.run_horn(NEMO, "us-east-1", {}, rung, [100], reps=1, out=tmp_path / "capped.jsonl",
                          arms=("lem",), max_tokens=4096)
     assert [r["max_tokens_sent"] for r in capped] == [4096]

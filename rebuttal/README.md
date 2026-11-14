@@ -72,6 +72,11 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
   `probes/cap-probe--<label>--<stamp>.jsonl`. The first smoke sent the model-card caps, so
   most of its Horn answers were truncated; that is one more reason `bedrock-trio/smoke/`
   is not read.
+- **Answers in the reasoning channel.** Bedrock sometimes returns an induction answer as
+  the whole reasoning text with an empty response (seen for Nemotron Super on `extens`: 3 of
+  18 marks in the smoke, each 4 completion tokens long and each the correct number). Such a
+  mark is graded as wrong, as an empty answer was at ICLR, and the notebook counts it as
+  `empty_response`. It passes the reasoning check, which only tests for reasoning text.
 - **Horn reference.** The published DeepSeek and Nemotron Horn rows ran through the Bedrock
   Converse API in `us-east-2` without a seed. The notebook prints their pass rates and
   answer lengths (`bedrock_trio.horn_reference`, from
