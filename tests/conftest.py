@@ -226,6 +226,38 @@ class MergeEverythingTokenizer(Tokenizer):
         )
 
 
+@pytest.fixture(autouse=True)
+def no_real_aws_in_rebuttal_tests(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail a test under ``tests/rebuttal`` that would build a real AWS client.
+
+    The rebuttal code writes to an append-only bucket, and a test run can happen while the
+    operator's credentials are valid. A test that needs S3 replaces ``_aws.fresh_client``
+    or passes its own client factory; fixtures requested by the test run after this one.
+    A client built under the fake key ``AKIDEXAMPLE`` is allowed: it can only sign.
+    """
+    if "rebuttal" not in request.node.path.parts:
+        return
+    import boto3
+    import botocore.session
+
+    from smolbench.evals import _aws
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"a rebuttal test tried to build a real AWS client: {args} {kwargs}")
+
+    real_create = botocore.session.Session.create_client
+
+    def create_client(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # A test that sets the documentation's fake key signs offline and can reach nothing.
+        if os.environ.get("AWS_ACCESS_KEY_ID") == "AKIDEXAMPLE":
+            return real_create(self, *args, **kwargs)
+        return refuse(self, *args, **kwargs)
+
+    monkeypatch.setattr(_aws, "fresh_client", refuse)
+    monkeypatch.setattr(boto3, "client", refuse)
+    monkeypatch.setattr(botocore.session.Session, "create_client", create_client)
+
+
 @pytest.fixture
 def stub_server() -> Iterator[StubServer]:
     """Start and stop the shared stub server."""

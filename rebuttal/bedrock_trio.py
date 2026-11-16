@@ -28,6 +28,7 @@ import os
 import re
 import string
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -1303,7 +1304,16 @@ def push_horn_rows(
     return part
 
 
-def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
+class HornRunStopped(RuntimeError):
+    """``run_horn`` stopped early because consecutive cells failed.
+
+    Raised after the cells not yet started were dropped, the running ones finished and
+    the final push was made, so every row collected is on disk and in the bucket. The
+    message carries the failure count and the error text of the last failed row.
+    """
+
+
+def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-statements,too-many-branches
     model: BedrockModel,
     region: str,
     reasoning_args: dict,
@@ -1318,6 +1328,8 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     s3_region: str = RESULTS_S3_REGION,
     push_every: int = 200,
     max_tokens: int = HORN_MAX_TOKENS,
+    deadline: Optional[datetime] = None,
+    max_consecutive_failures: int = 8,
 ) -> list[dict]:
     """Run and score every outstanding Horn cell of one model with ``sweep.run_cell``.
 
@@ -1328,6 +1340,13 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     bucket's rows are pulled into ``out`` so that resume sees rows collected on any
     machine. New rows are pushed as one part after every ``push_every`` of them, and
     again in a ``finally``, so an interrupted run keeps what it collected.
+
+    Two limits end a run early without losing rows. After ``deadline`` no new cell is
+    started (the run returns normally; a rerun sends the rest). After
+    ``max_consecutive_failures`` rows in a row with verdict ``exception`` (an expired
+    token, an unknown model, a persistent 4xx) the run stops and raises
+    ``HornRunStopped``. In both cases the cells running at that moment finish and keep
+    their rows, and the final push is made.
 
     Parameters
     ----------
@@ -1360,6 +1379,13 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     max_tokens : int
         Output cap requested; ``sweep.run_cell`` cuts it per cell so that prompt and
         output fit ``HORN_CONTEXT_LENGTH``.
+    deadline : Optional[datetime]
+        Timezone-aware instant. A cell that has not started by then sends no request and
+        writes no row; ``None`` means no deadline.
+    max_consecutive_failures : int
+        Rows with verdict ``exception`` in a row (in the order they were written) that
+        stop the run; a row with any other verdict resets the count. ``0`` disables the
+        check.
 
     Returns
     -------
@@ -1369,9 +1395,17 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
     Raises
     ------
     ValueError
-        If the Bedrock id is unresolved or ``push_every`` is below 1.
+        If the Bedrock id is unresolved, ``push_every`` is below 1,
+        ``max_consecutive_failures`` is negative, or ``deadline`` is naive.
     RuntimeError
         If another sweep holds the rows lock.
+    HornRunStopped
+        If ``max_consecutive_failures`` rows in a row were ``exception`` rows. Raised
+        after the final push.
+
+    Notes
+    -----
+    A line saying how many cells were left unstarted is printed when there are any.
     """
     from botocore.exceptions import (  # pylint: disable=import-outside-toplevel
         BotoCoreError,
@@ -1386,6 +1420,11 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
         raise ValueError(f"{model.key}: resolve the Bedrock id first (resolve_ids)")
     if push_every < 1:
         raise ValueError(f"push_every must be >= 1, got {push_every}")
+    if max_consecutive_failures < 0:
+        raise ValueError(f"max_consecutive_failures must be >= 0, got {max_consecutive_failures}")
+    if deadline is not None and deadline.utcoffset() is None:
+        # A naive deadline would raise a TypeError in a worker thread at the first compare.
+        raise ValueError(f"deadline must be timezone-aware, got {deadline!r}")
     sweep = load_sweep()
     out = out or horn_rows_path(model.key)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1420,22 +1459,53 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
         done = sweep.done_keys(out)
         cells = sweep.cells_in(rung, list(arms), list(seeds), reps)
         todo = [c for c in cells if (st.model,) + c.key not in done]
+        # Design: the deadline and the stop flag are checked in the worker, at the moment a
+        # cell is about to start. Pool threads take queued cells on their own, so a check
+        # in the result loop alone would let them start cells after the deadline.
+        stop = threading.Event()
+
+        def start_cell(cell):
+            if stop.is_set() or (deadline is not None and utcnow() >= deadline):
+                return None  # not started: no request, no row
+            return sweep.run_cell(client, cell, st)
+
+        stopped: Optional[str] = None
         with _env(HORN_STREAM_COMPLETIONS="1" if stream else "0"), ThreadPoolExecutor(concurrency) as pool:
-            futs = [pool.submit(sweep.run_cell, client, c, st) for c in todo]
+            futs = [pool.submit(start_cell, c) for c in todo]
             kept: set = set()
             unpushed = 0
+            failures = 0
 
-            def keep(fut) -> None:
-                row = fut.result() | {"provider": f"bedrock-mantle:{region}"}
+            def keep(fut) -> Optional[dict]:
+                result = fut.result()
+                if result is None:  # the cell was not started
+                    kept.add(fut)
+                    return None
+                row = result | {"provider": f"bedrock-mantle:{region}"}
                 fh.write(_dump_row(row) + "\n")
                 fh.flush()
                 rows.append(row)
                 kept.add(fut)
+                return row
 
             try:
                 for fut in as_completed(futs):
-                    keep(fut)
+                    row = keep(fut)
+                    if row is None:
+                        continue
                     unpushed += 1
+                    if row["verdict"] == "exception":
+                        failures += 1
+                    else:
+                        failures = 0
+                    if max_consecutive_failures and failures >= max_consecutive_failures:
+                        # Workers may pick a cell before the cancel below; the flag stops them.
+                        stop.set()
+                        stopped = (
+                            f"{model.key}: {failures} consecutive cells failed; "
+                            f"last error: {row.get('reason')}"
+                        )
+                        break
                     if s3_uri is not None and unpushed >= push_every:
                         # The rows are safe on disk; the push after the loop retries.
                         try:
@@ -1458,6 +1528,14 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals
                         print(f"{model.key}: a running cell left no row: {err!r}")
                 if s3_uri is not None:
                     push_horn_rows(model.key, s3_uri, region=s3_region, out=out)
+        # Every future is done here (the pool has shut down); a cell that returned
+        # ``None`` or was cancelled never started.
+        unstarted = sum(1 for f in futs if f.cancelled() or (not f.exception() and f.result() is None))
+        if unstarted:
+            why = "stopped after consecutive failures" if stopped else "deadline passed"
+            print(f"{model.key}: {unstarted} of {len(todo)} cells left unstarted ({why})")
+        if stopped:
+            raise HornRunStopped(stopped)
     return rows
 
 

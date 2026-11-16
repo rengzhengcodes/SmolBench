@@ -5,7 +5,7 @@ import os
 import re
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -578,6 +578,108 @@ def test_horn_interrupt_keeps_every_started_cell_and_bills_no_queued_one(mantle,
     monkeypatch.setattr(bt, "_dump_row", dump_row)
     assert len(_horn_run(NEMO, rung, out, s3_uri=URI)) == 8 - started
     assert len(mantle.requests) == 8, "the rerun sends only the cells the interrupt dropped"
+
+
+def _reject_with_400(mantle, monkeypatch, rejects=lambda n: True):
+    """Answer request number ``n`` (from 0) with an HTTP 400 when ``rejects(n)``, as the stub otherwise would.
+
+    A 400 is a permanent error to the client, so the cell becomes an ``exception`` row at once
+    (the stub alone always answers 200, and a retryable error would wait out the client's backoff).
+    """
+    handler = mantle.RequestHandlerClass
+    do_post = handler.do_POST
+
+    def post(self):
+        n = len(mantle.requests)
+        if not rejects(n):
+            return do_post(self)
+        payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0") or "0")) or b"{}")
+        mantle.requests.append({"path": self.path, "body": payload, "headers": dict(self.headers)})
+        return self._reply({"error": {"message": "ExpiredTokenException"}}, 400)
+
+    monkeypatch.setattr(handler, "do_POST", post)
+
+
+def _local_and_bucket(fake_s3, out):
+    local = out.read_text().splitlines() if out.exists() else []
+    return local, [l for p in _parts(fake_s3) for l in fake_s3.objects[p].decode().splitlines()]
+
+
+def test_horn_deadline_in_the_past_starts_no_cell_and_writes_no_row(mantle, fake_s3, tmp_path, capsys):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    out = tmp_path / "rows.jsonl"
+    assert _horn_run(NEMO, rung, out, s3_uri=URI, deadline=FIXED_NOW) == []
+    assert mantle.requests == [] and _local_and_bucket(fake_s3, out) == ([], [])
+    assert "8 of 8 cells left unstarted" in capsys.readouterr().out
+
+
+def test_horn_deadline_passing_mid_run_keeps_started_cells_and_a_rerun_sends_the_rest(
+    mantle, fake_s3, tmp_path, monkeypatch, capsys
+):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    sweep, out = bt.load_sweep(), tmp_path / "rows.jsonl"
+    run_cell = sweep.run_cell
+
+    def slow_cell(*args):
+        time.sleep(1.0)  # the deadline passes while the first cells run; the queue is not started
+        return run_cell(*args)
+
+    monkeypatch.setattr(sweep, "run_cell", slow_cell)
+    deadline = bt.utcnow() + timedelta(seconds=0.5)
+    rows = _horn_run(NEMO, rung, out, s3_uri=URI, concurrency=2, deadline=deadline)
+    started = len(mantle.requests)
+    assert 0 < started < 8 and len(rows) == started, "a cell started before the deadline finishes and keeps its row"
+    local, bucket = _local_and_bucket(fake_s3, out)
+    assert len(local) == started and sorted(bucket) == sorted(local)
+    assert f"{8 - started} of 8 cells left unstarted" in capsys.readouterr().out
+
+    monkeypatch.setattr(sweep, "run_cell", run_cell)
+    assert len(_horn_run(NEMO, rung, out, s3_uri=URI)) == 8 - started
+    assert len(mantle.requests) == 8, "the rerun sends exactly the cells the deadline left"
+
+
+def test_horn_stops_after_consecutive_failures_pushes_and_a_later_run_completes(
+    mantle, fake_s3, tmp_path, monkeypatch
+):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    rejecting = [True]
+    _reject_with_400(mantle, monkeypatch, lambda _n: rejecting[0])
+    out = tmp_path / "rows.jsonl"
+    with pytest.raises(bt.HornRunStopped, match=r"2 consecutive.*last error: HTTPError: 400") as stopped:
+        _horn_run(NEMO, rung, out, s3_uri=URI, concurrency=1, max_consecutive_failures=2)
+    assert isinstance(stopped.value, RuntimeError)
+    sent = len(mantle.requests)
+    assert 2 <= sent < 8, "the cells behind the failures are not started"
+    local, bucket = _local_and_bucket(fake_s3, out)
+    assert len(local) == sent and sorted(bucket) == sorted(local), "the final push still happened"
+    assert {json.loads(l)["verdict"] for l in local} == {"exception"}
+
+    # Exception rows are not done: the rerun repeats those cells and sends the never-started ones.
+    rejecting[0] = False
+    rows = _horn_run(NEMO, rung, out, s3_uri=URI)
+    assert len(rows) == 8 and {r["verdict"] for r in rows} == {"success"}
+    assert len(mantle.requests) == sent + 8
+
+
+def test_horn_failure_count_resets_on_a_success_and_zero_disables_the_limit(mantle, tmp_path, monkeypatch):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    # With one worker the rows come back in request order: two failures, a success, and so on.
+    _reject_with_400(mantle, monkeypatch, lambda n: n % 3 != 2)
+    rows = _horn_run(NEMO, rung, tmp_path / "a.jsonl", concurrency=1, max_consecutive_failures=3)
+    assert [r["verdict"] == "exception" for r in rows] == [True, True, False, True, True, False, True, True]
+
+    _reject_with_400(mantle, monkeypatch)
+    rows = _horn_run(NEMO, rung, tmp_path / "b.jsonl", concurrency=1, max_consecutive_failures=0)
+    assert len(rows) == 8 and {r["verdict"] for r in rows} == {"exception"}
+
+
+def test_horn_refuses_a_naive_deadline_and_a_negative_failure_limit(mantle, tmp_path):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _horn_run(NEMO, rung, tmp_path / "a.jsonl", deadline=datetime(2026, 11, 16, 10, 30))
+    with pytest.raises(ValueError, match="max_consecutive_failures"):
+        _horn_run(NEMO, rung, tmp_path / "a.jsonl", max_consecutive_failures=-1)
+    assert mantle.requests == []
 
 
 def test_horn_periodic_push_failure_is_survived_and_the_final_one_is_raised(mantle, fake_s3, tmp_path, monkeypatch):
