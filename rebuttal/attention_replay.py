@@ -165,6 +165,7 @@ __all__ = [
     "DEFAULT_RESULTS_ROOT",
     "DEFAULT_S3_URI",
     "EC2_TAG",
+    "run_tag",
     "INSTANCE_TYPES",
     "PlannedJob",
     "REASONING_FORMATS",
@@ -257,7 +258,9 @@ DEFAULT_RESULTS_ROOT: Path = bt.RESULTS_DIR / "induction"
 #: Directory of the EC2 state file this driver uses. The state holds secrets, and
 #: generated files stay inside the repository tree, anchored on this file.
 STATE_DIR: Path = _HERE / "attention_state"
-#: EC2 experiment tag of the rebuttal capture box (reattach, recovery, termination).
+#: Prefix of the EC2 experiment tag of a capture box (reattach, recovery, termination).
+#: The provider reattaches to a live instance with its tag, so each run gets its own tag
+#: and state file (``run_tag``); two runs that shared them would share one box.
 EC2_TAG: str = "smolbench-rebuttal-attention"
 
 #: Spot instance types hunted per model, in preference order.
@@ -2399,6 +2402,37 @@ class ReplayReport:
     plan: Optional[ReplayPlan] = None
 
 
+def run_tag(model_key: str, run_label: Optional[str] = None) -> str:
+    """Return the EC2 experiment tag of one replay run.
+
+    The tag names the model and, when given, a label, so that runs of different models (or
+    two runs of one model over different seeds) each provision and terminate their own
+    box. The state file is named after the tag.
+
+    Parameters
+    ----------
+    model_key : str
+        Roster key.
+    run_label : Optional[str]
+        Distinguishes concurrent runs of one model, for example ``"s0-14"``.
+
+    Returns
+    -------
+    str
+        ``EC2_TAG-<model>[-<label>]`` with every character outside ``A-Za-z0-9._-``
+        replaced by ``-``.
+
+    Examples
+    --------
+    >>> run_tag("gemma-4-31b")
+    'smolbench-rebuttal-attention-gemma-4-31b'
+    >>> run_tag("deepseek-v3.1", "s0-14")
+    'smolbench-rebuttal-attention-deepseek-v3.1-s0-14'
+    """
+    parts = [EC2_TAG, model_key] + ([run_label] if run_label else [])
+    return re.sub(r"[^A-Za-z0-9._-]", "-", "-".join(parts))
+
+
 @contextlib.contextmanager
 def _scoped_env(**env: str) -> Iterator[None]:
     """Set environment variables for the body and restore the previous values after."""
@@ -2446,6 +2480,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
     seeds: Optional[Sequence[int]] = None,
+    run_label: Optional[str] = None,
     ec2: Any = None,
     s3_client_factory: Optional[Callable[[], Any]] = None,
 ) -> ReplayReport:
@@ -2498,6 +2533,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         sessions. The plan, the jobs sent and the manifests cover only them; skipped
         and over-context counts too. ``None`` (default) means every seed; an empty
         sequence selects no run, so nothing is sent and no box is provisioned.
+    run_label : str, optional
+        Distinguishes concurrent runs of one model; part of the instance tag and of the
+        state file name (see ``run_tag``).
     ec2 : Any, optional
         Provider module or fake; defaults to ``smolbench.evals.providers.ec2``.
     s3_client_factory : Callable[[], Any], optional
@@ -2672,8 +2710,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     shutdown_exc: Optional[Exception] = None
     result: Optional[attention.CaptureResult] = None
     tp: Optional[int] = None
+    tag = run_tag(model_key, run_label)
     with _scoped_env(
-        EC2_EXPERIMENT_TAG=EC2_TAG, EC2_STATE_FILE=str(STATE_DIR / ".ec2_state.json")
+        EC2_EXPERIMENT_TAG=tag, EC2_STATE_FILE=str(STATE_DIR / f".ec2_state--{tag}.json")
     ):
         try:
             state = ec2.provision_spot_instance(instance_types=types)

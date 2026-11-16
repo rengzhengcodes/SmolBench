@@ -2294,3 +2294,28 @@ def test_pull_captures_refuses_a_bad_uri_or_model_name(tmp_path: Path) -> None:
     for model in ("", "..", "a/b"):
         with pytest.raises(ValueError, match="model name"):
             ar.pull_captures(PULL_URI, tmp_path, [model], s3_client_factory=FakeS3)
+
+
+def test_each_run_gets_its_own_instance_tag_and_state_file(tmp_path, monkeypatch) -> None:
+    """Two live runs that shared a tag would reattach to one box and terminate it twice."""
+    import os
+
+    _write_results(tmp_path, GEMMA)
+    seen = []
+
+    class TagBox(AuditedBox):
+        def provision_spot_instance(self, instance_types=None, **kw):
+            seen.append((os.environ["EC2_EXPERIMENT_TAG"], os.environ["EC2_STATE_FILE"]))
+            return super().provision_spot_instance(instance_types=instance_types, **kw)
+
+    monkeypatch.setattr(ar, "STATE_DIR", tmp_path / "state")
+    s3 = FakeS3()
+    _replay(tmp_path, TagBox(s3), s3)
+    s3b = FakeS3()
+    _replay(tmp_path, TagBox(s3b), s3b, run_label="s0-14")
+    (tag_a, state_a), (tag_b, state_b) = seen
+    assert tag_a == ar.run_tag(GEMMA) == f"{ar.EC2_TAG}-{GEMMA}"
+    assert tag_b == ar.run_tag(GEMMA, "s0-14") and tag_a != tag_b and state_a != state_b
+    assert ar.run_tag(GEMMA) != ar.run_tag(DSV31)
+    assert ar.run_tag("a b/c", "x:y") == f"{ar.EC2_TAG}-a-b-c-x-y"
+    assert "EC2_EXPERIMENT_TAG" not in os.environ

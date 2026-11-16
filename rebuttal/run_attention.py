@@ -154,6 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="use the smoke mirror folder and the smoke S3 prefix for the defaults")
     parser.add_argument("--seeds", type=parse_seeds, default=None,
                         help="only these seeds, e.g. 0-9 or 0,2,5-7 (default: every seed)")
+    parser.add_argument("--run-label", default=None,
+                        help="label of this run in the instance tag; needed when two runs of one "
+                             "model are live at once (for example s0-14)")
     parser.add_argument("--approved", action="store_true",
                         help="launch the billed spot box; without it only the plan is printed")
     parser.add_argument("--allow-unverified-serve", action="store_true",
@@ -260,6 +263,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 url_ttl_s=args.url_ttl_s,
                 audit_arrays=args.audit_arrays,
                 seeds=args.seeds,
+                run_label=args.run_label,
             )
         except ar.ShutdownFailed as exc:
             # The capture and audit are done and the results ride on the exception:
