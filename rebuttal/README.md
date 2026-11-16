@@ -1,7 +1,7 @@
 # Rebuttal: SmolBench on Amazon Bedrock
 
 `bedrock_trio.ipynb` runs both studies on Amazon Bedrock with reasoning switched on: periodic
-induction (arms `intens`, `noise_intens`, `extens`) and Horn-rule deduction (eight arms: the
+induction (arms `intens`, `noise_intens`, `extens` and the review arm `related_intens`) and Horn-rule deduction (eight arms: the
 paper arms `lem`, `pad`, `disc`, `both` and the review arms `fwd`, `tjunk`, `rep`,
 `marked-lemma`). It runs them for three ladder models from three labs:
 
@@ -81,6 +81,13 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
   Converse API in `us-east-2` without a seed. The notebook prints their pass rates and
   answer lengths (`bedrock_trio.horn_reference`, from
   `notebooks/deduction/review/bedrock_cells.csv`) next to its own seeded mantle runs.
+- **`related_intens`.** The review arm for induction: the rules, then irrelevant rules of the
+  same form (one of the replicate's periods with a fresh label that no question asks about),
+  filled to the token count of `extens` under the model's tokenizer, with a few whitespace
+  tokens to make the count exact (about 3,500 to 4,700 added lines). The added lines are
+  one stream per seed, the same for every model. The four paper conditions are unchanged.
+  It is the induction counterpart of the Horn arm `tjunk`: padding that is irrelevant but
+  has the structure of the relevant information.
 - **`extens`.** On this branch the `extens` context is the intensional rules followed by the
   listing. The published `extens` and `noise_intens` values come from the earlier arm, which
   carried the listing only, so only `intens` is like-for-like with the published values. The
