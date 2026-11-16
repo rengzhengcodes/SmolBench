@@ -572,3 +572,17 @@ def test_the_horn_reader_refuses_an_ambiguous_rung(tmp_path) -> None:
         (tmp_path / "deduction" / "horn" / GEMMA / rung / "lem").mkdir(parents=True)
     with pytest.raises(ValueError, match="rung"):
         ar.read_captures(GEMMA, tmp_path, study="horn", config=CONFIG)
+
+
+def test_every_planned_deduction_job_carries_its_cells_system_turn(tmp_path: Path) -> None:
+    """The planned token ids are the rendered system turn, then the user turn, then the response."""
+    rungs, rows_path = _basic(tmp_path)
+    tok = CharTokenizer()
+    planned, errors = _build(rungs, rows_path, tok=tok)
+    assert not errors and len(planned) == 4
+    for item in planned:
+        prompt = "".join(tok.decode_tokens(item.job.prompt_token_ids))
+        query = PROMPTS[item.run.arm] + f"Seed {item.seed}.\n"
+        assert prompt.index(SYSTEM) < prompt.index(query.strip()), item.job.job_id
+        completion = "".join(tok.decode_tokens(item.job.completion_token_ids))
+        assert completion == "<|channel>thought\nI see a(x).<channel|>derive b(x) from a(x)<turn|>"
