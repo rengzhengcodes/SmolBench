@@ -442,3 +442,127 @@ def test_the_capture_path_passes_the_audit_worker_count(
     assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved", *extra]) == 0
     assert seen["audit_workers"] == expected
     capsys.readouterr()
+
+
+# ------------------------------------------------------------------ the deduction (Horn) study
+
+HORN_SYSTEM = "You are a careful prover."
+HORN_PROMPTS = {"lem": "Facts: a(x).\nGoal: b(x).\n", "pad": "Facts: a(x).\nLorem ipsum.\nGoal: b(x).\n"}
+
+
+def _horn_fixture(tmp_path: Path, model: str = GEMMA):
+    """A rung under ``<tmp>/rungs`` and the model's rows at the default ``<results>/horn/<model>.jsonl``."""
+    import hashlib
+
+    rungs = tmp_path / "rungs"
+    rows = []
+    for seed in (100, 101):
+        for arm, text in HORN_PROMPTS.items():
+            d = rungs / "m20" / f"s{seed:04d}" / arm
+            d.mkdir(parents=True)
+            (d / "prompt.md").write_text(text, encoding="utf-8")
+            (d / "system.md").write_text(HORN_SYSTEM, encoding="utf-8")
+            for rep in (0, 1):
+                rows.append({"spec_key": model, "rung": "m20", "arm": arm, "seed": seed, "rep": rep,
+                             "prompt_sha256": hashlib.sha256(text.encode()).hexdigest()[:16],
+                             "provider_system_prompt": False, "ts": "2026-11-16T07:00:00Z",
+                             "verdict": "success", "finish_reason": "stop", "content": "derive b(x)",
+                             "reasoning": "a(x) holds.", "completion_tokens": 5, "prompt_tokens": 20})
+    results = tmp_path / "results"
+    (results / "horn").mkdir(parents=True)
+    (results / "horn" / f"{model}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return results / "induction", rungs, results / "horn" / f"{model}.jsonl"
+
+
+def _record(monkeypatch, cli, name, result):
+    """Replace ``cli.ar.<name>`` by a recorder returning `result`; return the recorded kwargs."""
+    seen: dict = {}
+
+    def recorder(*args, **kw):
+        seen.update(kw, args=args)
+        return result
+
+    monkeypatch.setattr(cli.ar, name, recorder)
+    return seen
+
+
+def test_the_horn_plan_is_printed_with_every_filter_passed_through(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, rows = _horn_fixture(tmp_path)
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    monkeypatch.setattr(cli.ar, "replay_model", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    code = cli.main(["--model", GEMMA, "--study", "horn", "--results-root", str(root), "--rungs-dir", str(rungs),
+                     "--arms", "lem", "pad", "--seeds", "100", "--reps", "0", "--capture-max-model-len", "5000"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    kw = seen["plan_kwargs"]
+    assert kw["study"] == "horn" and kw["horn_rows"] == rows and kw["rungs_dir"] == rungs
+    assert kw["arms"] == ["lem", "pad"] and kw["seeds"] == [100] and kw["reps"] == [0]
+    assert kw["capture_max_model_len"] == 5000 and kw.get("mode") is None
+    assert "arm lem: 1 jobs" in out and "arm pad: 1 jobs" in out and "plan only" in out
+    assert "summary" in out
+
+
+def test_the_rows_flag_names_the_rows_file(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, rows = _horn_fixture(tmp_path)
+    other = tmp_path / "elsewhere.jsonl"
+    other.write_text(rows.read_text())
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    assert cli.main(["--model", GEMMA, "--study", "horn", "--results-root", str(root), "--rungs-dir", str(rungs),
+                     "--rows", str(other), "--mode", "mass"]) == 0
+    assert seen["plan_kwargs"]["horn_rows"] == other and seen["plan_kwargs"]["mode"] == "mass"
+    assert "arm lem: 4 jobs" in capsys.readouterr().out
+
+
+def test_an_approved_horn_run_passes_the_study_and_names_the_report(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, rows = _horn_fixture(tmp_path)
+    seen = _record(monkeypatch, cli, "replay_model", ar.ReplayReport(GEMMA))
+    code = cli.main(["--model", GEMMA, "--study", "horn", "--results-root", str(root), "--rungs-dir", str(rungs),
+                     "--approved", "--arms", "lem", "--reps", "0-1", "--mode", "summary",
+                     "--capture-max-model-len", "65536", "--run-label", "lem"])
+    assert code == 0
+    assert seen["approved"] is True and seen["study"] == "horn" and seen["horn_rows"] == rows
+    assert seen["rungs_dir"] == rungs and seen["arms"] == ["lem"] and seen["reps"] == [0, 1]
+    assert seen["mode"] == "summary" and seen["capture_max_model_len"] == 65536 and seen["run_label"] == "lem"
+    (path,) = sorted((tmp_path / "results").glob("attention_report--*.json"))
+    assert path.name.startswith(f"attention_report--horn--{GEMMA}--")
+    capsys.readouterr()
+
+
+def test_audit_only_works_for_the_horn_study(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, rows = _horn_fixture(tmp_path)
+    seen = _record(monkeypatch, cli, "audit_existing", ar.ReplayReport(GEMMA))
+    monkeypatch.setattr(cli.ar, "replay_model", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    assert cli.main(["--model", GEMMA, "--study", "horn", "--results-root", str(root), "--rungs-dir", str(rungs),
+                     "--audit-only", "--arms", "pad", "--seeds", "101", "--reps", "1"]) == 0
+    assert seen["study"] == "horn" and seen["horn_rows"] == rows and seen["rungs_dir"] == rungs
+    assert seen["arms"] == ["pad"] and seen["seeds"] == [101] and seen["reps"] == [1]
+    (path,) = sorted((tmp_path / "results").glob("attention_audit--*.json"))
+    assert path.name.startswith(f"attention_audit--horn--{GEMMA}--")
+    capsys.readouterr()
+
+
+def test_the_induction_run_takes_the_mode_and_the_context_override(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    seen = _record(monkeypatch, cli, "replay_model", ar.ReplayReport(GEMMA))
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved", "--mode", "summary",
+                     "--capture-max-model-len", "60000"]) == 0
+    assert seen["mode"] == "summary" and seen["capture_max_model_len"] == 60000
+    assert seen.get("study", "induction") == "induction"
+    (path,) = _reports(tmp_path / "results")
+    assert path.name.startswith(f"attention_report--{GEMMA}--")       # unchanged for induction
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize("argv, word", [
+    (["--rows", "x.jsonl"], "--rows"),
+    (["--rungs-dir", "r"], "--rungs-dir"),
+    (["--arms", "intens"], "--arms"),
+    (["--reps", "0"], "--reps"),
+    (["--study", "horn", "--mode", "rows"], "--mode"),
+    (["--study", "horn", "--capture-max-model-len", "0"], "--capture-max-model-len"),
+    (["--study", "proof"], "--study"),
+])
+def test_bad_or_misplaced_flags_exit_with_the_argparse_code(cli, capsys, argv, word) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--model", GEMMA, *argv])
+    assert caught.value.code == 2 and word in capsys.readouterr().err

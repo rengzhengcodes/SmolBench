@@ -3,6 +3,9 @@
     python rebuttal/run_attention.py --model gemma-4-31b --smoke            # plan only
     python rebuttal/run_attention.py --model gemma-4-31b --seeds 0-9 --approved
     python rebuttal/run_attention.py --model gemma-4-31b --audit-only       # audit stored captures
+    python rebuttal/run_attention.py --model gemma-4-31b --study horn --arms lem pad --reps 0-1
+    python rebuttal/run_attention.py --model gemma-4-31b --study horn --reps 0-1 --approved
+    python rebuttal/run_attention.py --model gemma-4-31b --study horn --audit-only
 
 Without ``--approved`` it prints the plan of ``attention_replay.plan_replay`` (sizes,
 errors, storage estimate) and exits 0; it builds no AWS client. With ``--approved`` it
@@ -20,6 +23,16 @@ given together with ``--approved`` it still launches nothing. A rerun resumes: t
 folders already recorded are skipped. ``--audit-workers`` sets how many jobs are audited at
 once, in both modes (each worker holds one multi-GB array in memory).
 
+``--study horn`` replays the deduction (Horn) study instead of the induction one. Its
+transcripts come from the model's rows file (``--rows``, default
+``<results folder>/horn/<model>.jsonl``) and the stored rung prompts (``--rungs-dir``,
+default ``bedrock_trio.RUNGS_DIR``); ``--arms`` and ``--reps`` (same syntax as ``--seeds``)
+narrow the jobs and ``--seeds`` selects the instance seeds. Those four flags are an error
+with ``--study induction``. ``--mode {mass,summary}`` picks the capture mode (default: the
+driver's choice, mass for induction and summary for horn) and ``--capture-max-model-len N``
+overrides the capture context length, in both studies. All of them work with ``--audit-only``
+(``--mode`` is not needed there: the stored objects say which mode they hold).
+
 Defaults follow the notebook's attention cells: the results root is the induction mirror
 (``bedrock_trio.RESULTS_DIR / "induction"``, or the same under the smoke folder with
 ``--smoke``) and the destination is ``<RESULTS_S3>[/<smoke prefix>]/attention-v2``.
@@ -29,7 +42,9 @@ Exit codes: 0 every job that was sent passed the capture and the audit; 1 an exc
 the capture or the content audit; 4 the box could not be shut down (it may still be
 billing; the report is written first). With ``--audit-only``: 0 every audited job was
 verified (also when there was nothing to audit), 3 some job failed the audit, 1 an
-exception; the report file is ``attention_audit--<model>--<stamp>.json``.
+exception; the report file is ``attention_audit--<model>--<stamp>.json``. For ``--study horn`` the
+report files are ``attention_report--horn--<model>--<stamp>.json`` and
+``attention_audit--horn--<model>--<stamp>.json``.
 
 The module imports without touching AWS or the network.
 """
@@ -82,6 +97,9 @@ EXIT_OK: int = 0
 EXIT_EXCEPTION: int = 1
 EXIT_JOBS_FAILED: int = 3
 EXIT_SHUTDOWN_FAILED: int = 4
+
+#: Values of ``--study``.
+STUDIES: Tuple[str, ...] = ("induction", "horn")
 
 #: How many plan errors / failed jobs the console lists; the full set is in the report file.
 _LIST_LIMIT: int = 10
@@ -200,12 +218,31 @@ def build_parser() -> argparse.ArgumentParser:
                              "and needs no --approved")
     parser.add_argument("--report-dir", type=Path, default=None,
                         help="where the JSON report goes (default: the results folder next to the mirror)")
+    parser.add_argument("--study", choices=STUDIES, default="induction",
+                        help="which study to replay (default: %(default)s)")
+    parser.add_argument("--mode", choices=("mass", "summary"), default=None,
+                        help="capture mode (default: the driver's choice, mass for induction and "
+                             "summary for horn)")
+    parser.add_argument("--capture-max-model-len", type=_positive_int, default=None, metavar="N",
+                        help="capture context length in tokens, overriding the driver's default")
+    parser.add_argument("--arms", nargs="+", default=None, metavar="ARM",
+                        help="horn only: only these arms (default: every arm)")
+    parser.add_argument("--reps", type=parse_seeds, default=None,
+                        help="horn only: only these replicates, e.g. 0-1 or 0,2 (default: every replicate)")
+    parser.add_argument("--rows", type=Path, default=None,
+                        help="horn only: the model's rows file (default: <results folder>/horn/<model>.jsonl)")
+    parser.add_argument("--rungs-dir", type=Path, default=None,
+                        help="horn only: folder of the stored rung prompts (default: bedrock_trio.RUNGS_DIR)")
     return parser
 
 
-def _print_plan(model: str, results_root: Path, s3_uri: str, seeds: Optional[Sequence[int]]) -> int:
-    """Print the offline plan and its errors; builds no AWS client. Returns the exit code."""
-    plan = ar.plan_replay(results_root, [model], s3_uri=s3_uri, seeds=seeds)[model]
+def _print_plan(model: str, results_root: Path, s3_uri: str, **kwargs: object) -> int:
+    """Print the offline plan and its errors; builds no AWS client. Returns the exit code.
+
+    `kwargs` are the planning keywords of ``attention_replay.plan_replay`` (seeds, mode,
+    capture length and, for the horn study, the study keywords).
+    """
+    plan = ar.plan_replay(results_root, [model], s3_uri=s3_uri, **kwargs)[model]
     print(plan.summary())
     for err in plan.errors[:_LIST_LIMIT]:
         print("  error:", err)
@@ -235,10 +272,12 @@ def _print_report(model: str, report: "ar.ReplayReport") -> None:
         print("  manifest error:", report.manifest_error)
 
 
-def _write_report(report: "ar.ReplayReport", report_dir: Path, kind: str = "report") -> Path:
-    """Write `report` as JSON to ``<report_dir>/attention_<kind>--<model>--<stamp>.json``.
+def _write_report(report: "ar.ReplayReport", report_dir: Path, kind: str = "report",
+                  study: str = "induction") -> Path:
+    """Write `report` as JSON to ``<report_dir>/attention_<kind>[--horn]--<model>--<stamp>.json``.
 
-    `kind` is ``"report"`` for a capture run and ``"audit"`` for ``--audit-only``.
+    `kind` is ``"report"`` for a capture run and ``"audit"`` for ``--audit-only``. The
+    horn study adds ``--horn`` after the kind; the induction names are unchanged.
 
     The file is created exclusively (mode ``"x"``): a report is a record of a billed
     run and is never overwritten. The stamp has microsecond precision.
@@ -249,7 +288,8 @@ def _write_report(report: "ar.ReplayReport", report_dir: Path, kind: str = "repo
         When the file already exists.
     """
     report_dir.mkdir(parents=True, exist_ok=True)
-    path = report_dir / f"attention_{kind}--{report.model}--{format_run_ts(utcnow())}.json"
+    infix = "--horn" if study == "horn" else ""
+    path = report_dir / f"attention_{kind}{infix}--{report.model}--{format_run_ts(utcnow())}.json"
     with open(path, "x", encoding="utf-8") as handle:
         json.dump(dataclasses.asdict(report), handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -276,12 +316,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     reaches ``replay_model``. An interrupt is not caught: the driver has already shut the
     box down by then (and ``--audit-only`` has no box).
     """
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    study = args.study
+    if study == "induction":
+        # These flags only mean something for the horn study; a silent ignore would let a
+        # typo launch the wrong (billed) replay, so name the flag and exit 2.
+        for flag, value in (("--arms", args.arms), ("--reps", args.reps),
+                            ("--rows", args.rows), ("--rungs-dir", args.rungs_dir)):
+            if value is not None:
+                parser.error(f"{flag} is only valid with --study horn")
     default_root, default_s3 = default_locations(args.smoke)
     results_root = args.results_root if args.results_root is not None else default_root
     s3_uri = args.s3_uri if args.s3_uri is not None else default_s3
     # The mirror's parent is the results folder (it also holds horn/ and attention-v2/).
     report_dir = args.report_dir if args.report_dir is not None else results_root.parent
+    # Keywords shared by plan, replay and audit; the horn keywords are added only for horn so
+    # that the induction calls keep their earlier shape.
+    study_kwargs: Dict[str, object] = {}
+    if study == "horn":
+        study_kwargs = {
+            "study": "horn",
+            "horn_rows": args.rows if args.rows is not None
+            else results_root.parent / "horn" / f"{args.model}.jsonl",
+            "rungs_dir": args.rungs_dir if args.rungs_dir is not None else ar.bt.RUNGS_DIR,
+            "arms": args.arms,
+            "reps": args.reps,
+        }
     try:
         if args.audit_only:
             # Design: checked before --approved so that the two flags together can never
@@ -289,16 +350,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report = ar.audit_existing(
                 args.model, results_root, s3_uri,
                 seeds=args.seeds, arrays=args.audit_arrays, workers=args.audit_workers,
+                capture_max_model_len=args.capture_max_model_len, **study_kwargs,
             )
             _print_report(args.model, report)
             print(f"  {report.not_captured} planned job(s) have no capture in the bucket")
-            print(f"report: {_write_report(report, report_dir, 'audit')}")
+            print(f"report: {_write_report(report, report_dir, 'audit', study)}")
             # NOTE: as for a capture run, a manifest error or a partial job still exits 0 (both
             # are printed above and held in the report file); only a failed audit exits 3. After
             # a manifest error the audited jobs are not recorded: run --audit-only again.
             return EXIT_JOBS_FAILED if report.audit_failures else EXIT_OK
         if not args.approved:
-            return _print_plan(args.model, results_root, s3_uri, args.seeds)
+            return _print_plan(
+                args.model, results_root, s3_uri, seeds=args.seeds, mode=args.mode,
+                capture_max_model_len=args.capture_max_model_len, **study_kwargs,
+            )
         try:
             report = ar.replay_model(
                 args.model, results_root, s3_uri,
@@ -311,6 +376,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 audit_workers=args.audit_workers,
                 seeds=args.seeds,
                 run_label=args.run_label,
+                mode=args.mode,
+                capture_max_model_len=args.capture_max_model_len,
+                **study_kwargs,
             )
         except ar.ShutdownFailed as exc:
             # The capture and audit are done and the results ride on the exception:
@@ -319,12 +387,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             _print_report(args.model, exc.report)
             try:
-                print(f"report: {_write_report(exc.report, report_dir)}")
+                print(f"report: {_write_report(exc.report, report_dir, study=study)}")
             except OSError as write_exc:
                 print(f"error: the report could not be written: {write_exc!r}", file=sys.stderr)
             return EXIT_SHUTDOWN_FAILED
         _print_report(args.model, report)
-        print(f"report: {_write_report(report, report_dir)}")
+        print(f"report: {_write_report(report, report_dir, study=study)}")
         # NOTE: the exit rule counts failed and audit-failed jobs only. A manifest error or
         # a partial job (a stored job missing a rank object) still exits 0; both are printed
         # above and held in the report file.
