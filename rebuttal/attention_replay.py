@@ -27,6 +27,27 @@ What it does, in order
    S3 only, no box.
 4. ``read_captures``: offline, over a local mirror of the S3 tree.
 
+Capture modes and versions
+--------------------------
+The plugin stores a job in one of two kinds, chosen per run with the ``mode``
+keyword of ``plan_replay``, ``replay_model`` and ``build_jobs`` (default
+``"mass"``; ``MODES`` lists both):
+
+* ``"mass"``: per-row arrays ``[L, P, H_local, ...]`` (``mass``, ``entropy``,
+  ``sink``, and from version 2 ``prompt_entropy``). Size grows with the number
+  of response rows ``P``.
+* ``"summary"``: the sums of those per-row statistics over the rows, per layer
+  and local head (``attention.SUMMARY_ARRAYS``). Size does not depend on ``P``,
+  which is what makes long responses storable.
+
+The ``capture_version`` field of a rank's meta json tells the three kinds of
+object apart: 1 is mass without ``prompt_entropy`` (the meta has no field), 2
+is mass with it (``CAPTURE_VERSION``, what a mass run requires), 3 is summary
+(``SUMMARY_CAPTURE_VERSION``). The audit refuses a meta whose mode and version
+disagree, so a summary capture never passes as a mass capture or the reverse.
+The reader accepts both kinds, also mixed within one arm, and computes the same
+statistics from either.
+
 Where the rebuilt sequence is an approximation
 ----------------------------------------------
 The stored marks hold text, not token ids, and the capture runs a different
@@ -165,6 +186,8 @@ __all__ = [
     "CAPTURE_UNSUPPORTED",
     "CAPTURE_VERSION",
     "CaptureUnsupported",
+    "MODES",
+    "SUMMARY_CAPTURE_VERSION",
     "ChatTemplate",
     "DEFAULT_RESULTS_ROOT",
     "DEFAULT_S3_URI",
@@ -392,9 +415,52 @@ _PE_CHAIN_ABS_TOL: float = 0.05
 #: Relative part of the slack: ``tol = _PE_CHAIN_ABS_TOL + _PE_CHAIN_REL_TOL * (1 + H)``,
 #: since the float16 spacing of ``H`` and ``Hp`` grows with their size.
 _PE_CHAIN_REL_TOL: float = 2e-3
-#: Capture format the shipped plugin writes; version 2 added ``prompt_entropy``. New
-#: captures come from the plugin in this repository, so the audit requires it.
+#: Mass capture format the shipped plugin writes; version 2 added ``prompt_entropy``. New
+#: mass captures come from the plugin in this repository, so the audit requires it.
+#: Version 1 (mass without ``prompt_entropy``, no field in the meta) is still readable.
 CAPTURE_VERSION: int = 2
+#: Capture format of summary mode. The three versions tell the kinds of object apart:
+#: 1 and 2 are mass captures (see ``CAPTURE_VERSION``), 3 is a summary capture, so a
+#: version-2 audit can never certify a summary npz or the reverse.
+SUMMARY_CAPTURE_VERSION: int = 3
+#: Capture modes of the induction replay, ``mass`` first (the default). A subset of
+#: ``attention.CAPTURE_MODES``: ``rows`` has no key classes, so this replay never uses it.
+MODES: Tuple[str, ...] = ("mass", "summary")
+#: Number of eight-byte values a summary npz holds per (layer, head): ``sum_entropy``,
+#: ``sum_prompt_entropy``, ``n_prompt_entropy``, ``sum_mass`` (4 classes), ``sum_sink``,
+#: ``sum_pad_ratio``, ``n_pad_ratio``, ``sum_m_hp``, ``sum_chain_hi``, ``sum_chain_lo``.
+#: All are float64 or int64.
+_SUMMARY_VALUES_PER_HEAD: int = 13
+
+
+def _resolve_mode(mode: Optional[str]) -> str:
+    """Return the capture mode to use: `mode`, or ``"mass"`` for ``None``.
+
+    Design: ``None`` (not ``"mass"``) is the signature default so that a caller who
+    passes nothing keeps the behaviour from before summary mode existed, while the
+    resolution and the refusal of an unknown value live in this one place.
+
+    Parameters
+    ----------
+    mode : Optional[str]
+        ``None`` or one of ``MODES``.
+
+    Returns
+    -------
+    str
+        An element of ``MODES``.
+
+    Raises
+    ------
+    ValueError
+        When `mode` is neither ``None`` nor in ``MODES`` (``"rows"`` included: this
+        replay needs key classes).
+    """
+    if mode is None:
+        return "mass"
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
+    return mode
 
 # --------------------------------------------------------------------------- errors
 
@@ -1408,6 +1474,7 @@ def _build(
     get_template: Callable[[], Any],
     fmt: Optional[ReasoningFormat],
     seeds: Optional[FrozenSet[int]] = None,
+    mode: str = "mass",
 ) -> _Built:
     """Read the runs of `model` and rebuild every mark (shared by ``build_jobs`` and the plan).
 
@@ -1415,7 +1482,9 @@ def _build(
     with no result files never touches the hub. When `seeds` is given only the runs
     of those seeds are read; the filter is applied before ``run_of`` is built, and
     a ``related_intens`` run looks up its ``intens`` run of the SAME seed, so the
-    pairing survives the filter.
+    pairing survives the filter. `mode` (an element of ``MODES``, already resolved by
+    the caller) is recorded on every job: the sequence is the same in both modes, only
+    what the box stores differs.
     """
     import jinja2.exceptions
 
@@ -1494,7 +1563,7 @@ def _build(
                     checked = True
                 job = attention.mass_job(
                     job_id_for(run, idx), rebuilt.prompt_ids, rebuilt.completion_ids,
-                    rebuilt.classes, prefix + f"q{idx}.npz",
+                    rebuilt.classes, prefix + f"q{idx}.npz", mode=mode,
                 )
             except (ValueError, jinja2.exceptions.TemplateError) as exc:
                 if isinstance(exc, ReasoningFormatError):
@@ -1513,6 +1582,7 @@ def build_jobs(
     tokenizer: Any = None,
     template: Any = None,
     fmt: Optional[ReasoningFormat] = None,
+    mode: Optional[str] = None,
 ) -> Tuple[List[PlannedJob], List[str]]:
     """Rebuild every stored mark of `model` into a capture job, offline.
 
@@ -1533,6 +1603,10 @@ def build_jobs(
         Defaults to ``load_chat_template(model)``.
     fmt : ReasoningFormat, optional
         Defaults to ``REASONING_FORMATS[model]``.
+    mode : Optional[str], optional
+        Capture mode recorded on every job, ``"mass"`` or ``"summary"``; ``None``
+        (default) means ``"mass"``. Keyword-only. The token sequences and classes
+        are identical in both modes.
 
     Returns
     -------
@@ -1540,20 +1614,23 @@ def build_jobs(
         The jobs, in run order then mark order, and one ``"<path>#q<idx>: <error>"``
         line per mark that could not be rebuilt. No mark is dropped silently. The
         ``bedrock_token_counts`` of every job is ``None`` because the stored marks
-        carry no token counts.
+        carry no token counts. Every job's ``mode`` is the resolved `mode`.
 
     Raises
     ------
+    ValueError
+        When `mode` is not ``None`` or one of ``MODES`` (before any file is read).
     TemplateUnavailable
         When the template or tokenizer cannot be loaded (only when there are runs).
     ReasoningFormatError
         When the delimiters fail validation: every mark would be wrong the same way.
     """
+    resolved = _resolve_mode(mode)
     built = _build(
         model, Path(results_root), s3_prefix,
         (lambda: tokenizer) if tokenizer is not None else (lambda: _default_tokenizer(model)),
         (lambda: template) if template is not None else (lambda: load_chat_template(model)),
-        fmt,
+        fmt, mode=resolved,
     )
     return built.planned, built.errors
 
@@ -1610,6 +1687,8 @@ class ReplayPlan:
     est_basis: str
     bedrock_token_counts: str = _BEDROCK_COUNTS_NOTE
     approximations: List[str] = field(default_factory=lambda: list(APPROXIMATIONS))
+    #: Capture mode the plan sizes (an element of ``MODES``); it sets the storage estimate.
+    mode: str = "mass"
 
     def summary(self) -> str:
         """Return a short multi-line description of the plan.
@@ -1617,12 +1696,13 @@ class ReplayPlan:
         Returns
         -------
         str
-            Counts, token sizes, capture support, instance types and the labelled
-            storage estimate.
+            Counts, token sizes, the capture mode, capture support, instance types and
+            the labelled storage estimate.
         """
         lines = [
             f"{self.model}: {self.runs} runs, {self.marks} marks -> {self.jobs} jobs "
             f"({self.unreasoned_marks} marks without stored reasoning), {len(self.errors)} errors",
+            f"  capture mode: {self.mode}",
             f"  tokens: total {self.total_tokens}, longest {self.max_tokens}; "
             f"{self.over_context} job(s) over the {self.capture_max_model_len}-token capture "
             "context (excluded)",
@@ -1652,14 +1732,36 @@ class ReplayPlan:
 
 
 def _estimate_bytes(
-    planned: Sequence[PlannedJob], config: Optional[Mapping[str, Any]], tp: Optional[int], source: str
+    planned: Sequence[PlannedJob],
+    config: Optional[Mapping[str, Any]],
+    tp: Optional[int],
+    source: str,
+    mode: str = "mass",
 ) -> Tuple[Optional[int], str]:
-    """Return ``(estimated capture bytes, est_basis)`` for the capturable `planned` jobs."""
-    formula = (
-        "ESTIMATE: per job, summed over ranks, n_attn_layers x P x n_heads x (4 mass + 1 entropy "
-        "+ 1 prompt_entropy + 1 sink) x 2 bytes (float16) + tp x n_tokens (uint8 classes per rank), with "
-        "P = n_tokens - query_start; uncompressed npz, without the meta json and S3 overhead"
-    )
+    """Return ``(estimated capture bytes, est_basis)`` for the capturable `planned` jobs.
+
+    Mass mode: per job, summed over ranks, ``layers x P x heads x 7 x 2`` bytes plus
+    ``tp x n_tokens`` (``P = n_tokens - query_start``). Summary mode: ``layers x heads x
+    13 x 8`` bytes plus ``tp x n_tokens``; it has no ``P`` term, which is the point of
+    the mode. The ``7 = 4 + 1 + 1 + 1`` and ``13`` count the stored values per
+    (layer, head) (see ``_SUMMARY_VALUES_PER_HEAD``). The estimate ignores the small
+    geometry arrays, the meta json and S3 overhead.
+    """
+    if mode == "summary":
+        formula = (
+            "ESTIMATE: summary mode, per job, summed over ranks, n_attn_layers x n_heads x 13 "
+            "eight-byte values (float64 sums and int64 counts: sum_entropy, sum_prompt_entropy, "
+            "n_prompt_entropy, sum_mass x 4, sum_sink, sum_pad_ratio, n_pad_ratio, sum_m_hp, "
+            "sum_chain_hi, sum_chain_lo) x 8 bytes + tp x n_tokens (uint8 classes per rank); "
+            "independent of the number of response rows; uncompressed npz, without the meta "
+            "json and S3 overhead"
+        )
+    else:
+        formula = (
+            "ESTIMATE: per job, summed over ranks, n_attn_layers x P x n_heads x (4 mass + 1 entropy "
+            "+ 1 prompt_entropy + 1 sink) x 2 bytes (float16) + tp x n_tokens (uint8 classes per rank), with "
+            "P = n_tokens - query_start; uncompressed npz, without the meta json and S3 overhead"
+        )
     if config is None:
         return None, f"{formula}; not computed: {source}"
     if tp is None:
@@ -1671,8 +1773,11 @@ def _estimate_bytes(
     total = 0
     for item in planned:
         job = item.job
-        queries = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
-        total += layers * queries * heads * (4 + 1 + 1 + 1) * 2 + tp * job.n_tokens
+        if mode == "summary":
+            total += layers * heads * _SUMMARY_VALUES_PER_HEAD * 8 + tp * job.n_tokens
+        else:
+            queries = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
+            total += layers * queries * heads * (4 + 1 + 1 + 1) * 2 + tp * job.n_tokens
     return total, f"{formula}; layers={layers}, heads={heads}, tp={tp}; config: {source}"
 
 
@@ -1684,12 +1789,21 @@ def _plan_one(
     template_for: Optional[Callable[[str], Any]],
     config_for: Optional[Callable[[str], Mapping[str, Any]]],
     seeds: Optional[Sequence[int]] = None,
+    mode: Optional[str] = None,
 ) -> Tuple[ReplayPlan, List[PlannedJob]]:
     """Build one model's plan and its planned jobs (no AWS access).
 
     `seeds` restricts the plan to the runs of those seeds (``None`` = every seed), so
-    every count, token total and the storage estimate cover only them.
+    every count, token total and the storage estimate cover only them. `mode` is the
+    capture mode (``None`` means ``"mass"``): it is set on every job, recorded on the
+    plan and selects the storage formula.
+
+    Raises
+    ------
+    ValueError
+        When `mode` is not ``None`` or one of ``MODES``, or `seeds` holds a non-integer.
     """
+    resolved = _resolve_mode(mode)
     from smolbench.evals.providers import ec2
 
     wanted = _seed_set(seeds)
@@ -1698,7 +1812,9 @@ def _plan_one(
     get_template = (lambda: template_for(model)) if template_for else (lambda: load_chat_template(model))
     runs = [r for r in find_runs(results_root, model) if wanted is None or r.seed in wanted]
     try:
-        built = _build(model, results_root, s3_prefix, get_tokenizer, get_template, None, wanted)
+        built = _build(
+            model, results_root, s3_prefix, get_tokenizer, get_template, None, wanted, resolved
+        )
     except (TemplateUnavailable, ReasoningFormatError) as exc:
         # One model's missing template must not stop the other models' plans.
         built = _Built(runs=runs, errors=[f"{model}: {exc} (marks not counted)"])
@@ -1723,7 +1839,7 @@ def _plan_one(
             config, source = _load_model_config_with_source(model)
     except (TemplateUnavailable, OSError, ValueError) as exc:
         config, source = None, f"config unavailable: {exc}"
-    est_bytes, est_basis = _estimate_bytes(capturable, config, tp, source)
+    est_bytes, est_basis = _estimate_bytes(capturable, config, tp, source, resolved)
 
     sizes_all = [p.job.n_tokens for p in built.planned]
     plan = ReplayPlan(
@@ -1746,6 +1862,7 @@ def _plan_one(
         capture_max_model_len=max_len,
         est_capture_bytes=est_bytes,
         est_basis=est_basis,
+        mode=resolved,
     )
     return plan, built.planned
 
@@ -1759,6 +1876,7 @@ def plan_replay(
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
     seeds: Optional[Sequence[int]] = None,
+    mode: Optional[str] = None,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
@@ -1777,6 +1895,10 @@ def plan_replay(
         Plan only the runs of these seeds; every count, token total, per-arm number
         and the storage estimate then cover only them. ``None`` (default) plans every
         seed. An empty sequence selects no run, so every plan has zero marks.
+    mode : Optional[str], optional
+        Capture mode to plan, ``"mass"`` or ``"summary"``; ``None`` (default) means
+        ``"mass"``. Keyword-only. It sets every job's mode, ``ReplayPlan.mode`` and the
+        storage estimate (summary storage does not grow with the response length).
 
     Returns
     -------
@@ -1789,14 +1911,18 @@ def plan_replay(
     Raises
     ------
     ValueError
-        When `s3_uri` is malformed or `seeds` holds a non-integer.
+        When `s3_uri` is malformed, `seeds` holds a non-integer, or `mode` is not
+        ``None`` or one of ``MODES``.
     KeyError
         When a model has no deploy spec.
     """
     _bucket, prefix = parse_s3_uri(s3_uri)
     root = Path(results_root)
+    resolved = _resolve_mode(mode)
     return {
-        model: _plan_one(model, root, prefix, tokenizer_for, template_for, config_for, seeds)[0]
+        model: _plan_one(
+            model, root, prefix, tokenizer_for, template_for, config_for, seeds, resolved
+        )[0]
         for model in (list(models) if models is not None else list(bt.TRIO))
     }
 
@@ -2063,6 +2189,247 @@ def _audit_arrays(
     return None, tuple(mass.shape[:2])
 
 
+#: Names of the ``[L, H_local]`` arrays of a summary npz (everything in
+#: ``attention.SUMMARY_ARRAYS`` except the scalar ``rows`` and the class-axis ``sum_mass``),
+#: in the order the audit checks them.
+_SUMMARY_HEAD_ARRAYS: Tuple[str, ...] = tuple(
+    name for name in attention.SUMMARY_ARRAYS if name not in ("rows", "sum_mass")
+)
+
+
+def _first_cell(mask: np.ndarray) -> Tuple[int, ...]:
+    """Return the index (lowest first, in C order) of the first True entry of a non-empty `mask`."""
+    return tuple(int(i) for i in np.argwhere(mask)[0])
+
+
+def _audit_summary_arrays(
+    arrays: Any, job: attention.Job, n_layers: int, heads_local: int
+) -> Optional[str]:
+    """Content-check one rank's summary npz against the job and the config; return a failure or ``None``.
+
+    The summary holds sums over the ``P = n_tokens - query_start`` response rows, so
+    every check here compares a sum or a count with what the geometry of the job
+    allows: the audit of the per-row mass arrays, summed over rows. ``audit_captures``
+    lists the rules. The checks run in a fixed order and the first failure is
+    returned; each failure names the offending npz array and, where it applies, the
+    first offending ``(layer, head)`` (lowest layer, then head).
+
+    Parameters
+    ----------
+    arrays : Any
+        The rank's loaded npz (``np.load`` result or a dict of arrays).
+    job : attention.Job
+        The job the rank captured; its ``classes`` and ``query_start`` are the reference.
+    n_layers : int
+        Attention layer count of the config.
+    heads_local : int
+        Heads per tensor-parallel rank (``n_heads // tp``).
+
+    Returns
+    -------
+    Optional[str]
+        The failure reason, or ``None`` when every check passes.
+
+    Notes
+    -----
+    Pure; memory is a few float64 copies of ``[L, H_local]`` arrays (no row axis).
+    """
+    query_start = int(job.query_start)  # type: ignore[arg-type]
+    p = job.n_tokens - query_start
+
+    # Phase 1: identity and presence. Classes first: a rank that captured another
+    # sequence fails here, before any number is compared with this job's geometry.
+    if "classes" not in arrays:
+        return "summary npz has no classes"
+    classes = np.asarray(arrays["classes"])
+    if not np.array_equal(classes, np.asarray(job.classes)):
+        return "classes differ from the job's"
+    for name in (*attention.SUMMARY_ARRAYS, "sliding_window", "has_sink"):
+        if name not in arrays:
+            return f"summary npz has no {name}"
+    stored = {name: np.asarray(arrays[name]) for name in (*attention.SUMMARY_ARRAYS, "sliding_window", "has_sink")}
+    rows = stored["rows"]
+    if rows.shape != () or int(rows) != p:
+        return f"rows {rows.tolist()!r} != P = {p} (n_tokens {job.n_tokens} - query_start {query_start})"
+
+    # Phase 2: shapes, then finiteness. Later phases index these arrays together, so a
+    # wrong shape or a NaN must stop the audit here with its own name.
+    head_shape = (n_layers, heads_local)
+    expected_shapes: Dict[str, Tuple[int, ...]] = {name: head_shape for name in _SUMMARY_HEAD_ARRAYS}
+    expected_shapes["sum_mass"] = head_shape + (attention.N_TOKEN_CLASSES,)
+    expected_shapes["sliding_window"] = (n_layers,)
+    expected_shapes["has_sink"] = (n_layers,)
+    for name, shape in expected_shapes.items():
+        if stored[name].shape != shape:
+            return f"{name} shape {stored[name].shape} is not {shape}"
+    if "layers" in arrays:
+        layers_ids = np.asarray(arrays["layers"])
+        if layers_ids.ndim != 1 or len(layers_ids) != n_layers:
+            return f"layers has shape {layers_ids.shape}, expected ({n_layers},)"
+    for name in (*_SUMMARY_HEAD_ARRAYS, "sum_mass"):
+        finite = np.isfinite(stored[name].astype(np.float64))
+        if not finite.all():
+            cell = _first_cell(~finite)
+            return f"{name} holds a non-finite value at {_cell_text(cell)}"
+
+    values = {name: stored[name].astype(np.float64) for name in (*_SUMMARY_HEAD_ARRAYS, "sum_mass")}
+    window = stored["sliding_window"].astype(np.int64)
+    has_sink = stored["has_sink"].astype(bool)
+    n_pe = stored["n_prompt_entropy"]
+    n_pad = stored["n_pad_ratio"]
+
+    # Phase 3: exact counts. They are integers fixed by the geometry, so equality is
+    # the right test and no tolerance enters. Row i is at absolute position
+    # query_start + i; a window w admits keys j >= pos - (w - 1), so a row sees a prompt
+    # key (j < query_start) iff i < w - 1.
+    if query_start == 0:
+        expected_pe = np.zeros(n_layers, dtype=np.int64)
+    else:
+        expected_pe = np.where(window > 0, np.minimum(p, np.maximum(window - 1, 0)), p).astype(np.int64)
+    wrong = n_pe != expected_pe[:, None]
+    if wrong.any():
+        cell = _first_cell(wrong)
+        return (
+            f"n_prompt_entropy {n_pe[cell].item()} at {_cell_text(cell)} != "
+            f"{int(expected_pe[cell[0]])} given by the geometry (window {int(window[cell[0]])}, "
+            f"query_start {query_start}, P {p})"
+        )
+    # The pad ratio is defined on a row once its causal prefix holds a class-1 token, which
+    # holds for every row from the first pad token on (the prefix only grows).
+    pad_positions = np.flatnonzero(classes == 1)
+    expected_pad = 0 if pad_positions.size == 0 else p - min(max(int(pad_positions[0]) - query_start, 0), p)
+    wrong = n_pad != expected_pad
+    if wrong.any():
+        cell = _first_cell(wrong)
+        return (
+            f"n_pad_ratio {n_pad[cell].item()} at {_cell_text(cell)} != {expected_pad}, the number "
+            f"of rows whose causal prefix holds a pad token"
+        )
+
+    # Phase 4: floors. A sum of per-row quantities each at least the per-row floor is at
+    # least the floor times the row count; the per-row floors are the mass audit's.
+    n_pe_f = n_pe.astype(np.float64)
+    for name, low in (
+        ("sum_mass", _MASS_FLOOR * p),
+        ("sum_sink", _MASS_FLOOR * p),
+        ("sum_entropy", _ENTROPY_FLOOR * p),
+        ("sum_prompt_entropy", _ENTROPY_FLOOR * n_pe_f),
+    ):
+        bound_array = np.broadcast_to(low, values[name].shape)
+        below = values[name] < bound_array
+        if below.any():
+            cell = _first_cell(below)
+            bound = float(bound_array[cell])
+            return f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is below {bound:.4g}"
+
+    # Phase 5: sums that must be exactly 0 where no row has a prompt entropy.
+    undefined = n_pe == 0
+    for name in ("sum_prompt_entropy", "sum_m_hp", "sum_chain_hi", "sum_chain_lo"):
+        stray = undefined & (values[name] != 0.0)
+        if stray.any():
+            cell = _first_cell(stray)
+            return (
+                f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is not 0 although "
+                "n_prompt_entropy is 0 there"
+            )
+
+    # Phase 6: the masses of a row sum to 1 with the sink, so the sums add up to P.
+    # Tolerance: the mass audit allows _ROW_SUM_TOL per row, and the sum over P rows of a
+    # per-row deviation of at most _ROW_SUM_TOL is at most _ROW_SUM_TOL * P. The summed
+    # rows are float32 (accumulation error near 1e-6 per row), but the per-class reduction
+    # on the GPU is a matmul that may run in TF32 (relative error about 2**-11, like
+    # float16 storage), so the same per-row allowance as the mass audit is kept.
+    deviation = np.abs(values["sum_mass"].sum(-1) + values["sum_sink"] - p)
+    too_far = deviation > _ROW_SUM_TOL * p
+    if too_far.any():
+        cell = _first_cell(too_far)
+        total = float(values["sum_mass"][cell].sum() + values["sum_sink"][cell])
+        return (
+            f"sum_mass.sum(-1) + sum_sink = {total:.6g} at {_cell_text(cell)} deviates from "
+            f"P = {p} by {float(deviation[cell]):.4g} (> {_ROW_SUM_TOL} x P = {_ROW_SUM_TOL * p:.4g})"
+        )
+
+    # Phase 7: mean-entropy ceilings. The per-row ceiling of the mass audit, ln(attended
+    # keys) + slack, is averaged over the rows exactly, so a mean over rows can never
+    # exceed the mean of the row ceilings. The slack is the float16-era slack, far above
+    # the float32 accumulation error of the sums (about log2(T) * 2**-24 * H, roughly 1e-5
+    # nats).
+    # Whole-row entropy: row i attends at most query_start + i + 1 keys plus the sink column.
+    # Design: only two distinct row-ceiling vectors exist (sink column or not), so the mean is
+    # taken twice, not once per layer, which keeps memory at O(P) for responses of 100k+ rows.
+    attended = query_start + np.arange(p, dtype=np.float64) + 1.0
+    mean_ln = np.array([np.log(attended).mean(), np.log(attended + 1.0).mean()])
+    ceiling = mean_ln[has_sink.astype(np.int64)] + _ENTROPY_CEIL_TOL  # [L]
+    mean_entropy = values["sum_entropy"] / p
+    above = mean_entropy > ceiling[:, None]
+    if above.any():
+        cell = _first_cell(above)
+        return (
+            f"sum_entropy {float(values['sum_entropy'][cell]):.6g} at {_cell_text(cell)} gives a mean "
+            f"entropy {float(mean_entropy[cell]):.4g} per row above the mean ceiling "
+            f"ln(attended keys) + {_ENTROPY_CEIL_TOL} = {float(ceiling[cell[0]]):.4g}"
+        )
+    # Prompt entropy: over the n defined rows the distribution lives on count_i prompt keys,
+    # query_start on a global layer and min(query_start, w - 1 - i) on a window w layer
+    # (defined rows are i < w - 1, and there w - 1 - i >= 1).
+    for layer in range(n_layers):
+        n = int(expected_pe[layer])
+        if n == 0:
+            continue
+        if window[layer] > 0:
+            counts = np.minimum(query_start, window[layer] - 1 - np.arange(n, dtype=np.int64))
+            log_sum = float(np.log(counts.astype(np.float64)).sum())
+        else:
+            log_sum = n * float(np.log(query_start))
+        layer_ceiling = log_sum / n + _ENTROPY_CEIL_TOL
+        mean_prompt = values["sum_prompt_entropy"][layer] / n
+        over = mean_prompt > layer_ceiling
+        if over.any():
+            cell = (layer, int(np.argmax(over)))
+            return (
+                f"sum_prompt_entropy {float(values['sum_prompt_entropy'][cell]):.6g} at "
+                f"{_cell_text(cell)} gives a mean {float(mean_prompt[cell[1]]):.4g} over its {n} "
+                f"defined rows above the mean ceiling ln(attendable prompt keys) + "
+                f"{_ENTROPY_CEIL_TOL} = {layer_ceiling:.4g} (window {int(window[layer])}, "
+                f"query_start {query_start})"
+            )
+
+    # Phase 8: chain rule. The mass audit requires, per row where the prompt entropy Hp is
+    # finite, H - G - r ln(i + 1) - tol_i <= m * Hp <= H - G + tol_i with
+    # tol_i = abs + rel * (1 + H_i). Summed over the n defined rows the three middle
+    # terms are sum_chain_lo, sum_m_hp and sum_chain_hi, and the tolerances add to
+    # n * (abs + rel) + rel * (sum of H over the defined rows). The entropies are
+    # non-negative, so that sum is at most sum_entropy (over all rows), which gives the
+    # bound used here. The same TF32 argument as in phase 6 applies: the per-class
+    # reduction behind m, r and s may run in TF32, so the per-row tolerance of the mass
+    # audit is kept, not tightened to float32 accumulation error. sum_entropy is clamped
+    # at 0 so a legitimately tiny negative float rounding cannot shrink the tolerance
+    # below 0 (it would then fail the comparison on a cell where all three sums are 0).
+    tolerance = n_pe_f * (_PE_CHAIN_ABS_TOL + _PE_CHAIN_REL_TOL) + _PE_CHAIN_REL_TOL * np.maximum(
+        values["sum_entropy"], 0.0
+    )
+    m_hp, chain_hi, chain_lo = values["sum_m_hp"], values["sum_chain_hi"], values["sum_chain_lo"]
+    for side, bad, array, bound in (
+        ("above", m_hp > chain_hi + tolerance, "sum_chain_hi", chain_hi + tolerance),
+        ("below", m_hp < chain_lo - tolerance, "sum_chain_lo", chain_lo - tolerance),
+    ):
+        if bad.any():
+            cell = _first_cell(bad)
+            return (
+                f"sum_m_hp fails the chain-rule cross-check at {_cell_text(cell)}: "
+                f"sum_m_hp = {float(m_hp[cell]):.6g} is {side} the bound {float(bound[cell]):.6g} "
+                f"derived from {array} {float(values[array][cell]):.6g} with tolerance "
+                f"{float(tolerance[cell]):.4g} (n_prompt_entropy {int(n_pe[cell])})"
+            )
+    return None
+
+
+def _cell_text(cell: Sequence[int]) -> str:
+    """Return ``(layer l, head h[, class c])`` for an index into a summary array."""
+    text = f"(layer {cell[0]}, head {cell[1]}"
+    return text + (f", class {cell[2]})" if len(cell) > 2 else ")")
+
+
 def _audit_job(
     client: Any,
     bucket: str,
@@ -2073,13 +2440,17 @@ def _audit_job(
     n_layers: int,
     n_heads: int,
     capture_version: Optional[int] = None,
+    mode: Optional[str] = None,
 ) -> Optional[str]:
     """Audit every rank of one job; return the first failure reason, or ``None``.
 
     Meta checks run in a fixed order (see ``audit_captures``); the first failing
     check of the first failing rank is the reason. A missing meta key is reported
     as a mismatch against ``None``, not as a crash. A failing meta check returns at
-    once; an array failure is held until every rank's arrays have been read.
+    once; an array failure is held until every rank's arrays have been read. With
+    `mode` ``None`` each rank is audited by its own meta mode (``mass`` or
+    ``summary``); otherwise every rank's meta mode must equal `mode`. The ranks of
+    one job must agree on the mode.
     """
     if n_heads % tp != 0:
         return f"config has {n_heads} heads, not divisible by tp={tp}; local heads are undefined"
@@ -2090,6 +2461,7 @@ def _audit_job(
     # Digest of each rank's mass bytes, for the duplicate-rank check below.
     digests: Dict[bytes, int] = {}
     duplicate: Optional[str] = None
+    job_mode: Optional[str] = None
     for rank in range(tp):
         npz_key, meta_key = attention.rank_keys(job.key, rank)
         meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
@@ -2103,10 +2475,34 @@ def _audit_job(
             return f"rank {rank}: meta model {meta.get('model')!r} != {model!r}"
         if int(meta["n_tokens"]) != job.n_tokens:
             return f"rank {rank}: meta n_tokens {meta['n_tokens']} != job's {job.n_tokens}"
-        if meta.get("mode") != "mass":
-            return f"rank {rank}: meta mode {meta.get('mode')!r} is not 'mass'"
+        rank_mode = meta.get("mode")
+        if mode is not None:
+            if rank_mode != mode:
+                return f"rank {rank}: meta mode {rank_mode!r} is not {mode!r}"
+        elif rank_mode not in MODES:
+            return f"rank {rank}: meta mode {rank_mode!r} is not one of {MODES}"
+        # NOTE: a job whose ranks mix modes cannot be read back (the reader refuses it), so
+        # it is refused here instead of being certified rank by rank.
+        if job_mode is None:
+            job_mode = rank_mode
+        elif rank_mode != job_mode:
+            return f"rank {rank}: meta mode {rank_mode!r} differs from rank 0's {job_mode!r}"
         # A meta without the field is a version-1 capture (written before the field existed).
         rank_version = int(meta.get("capture_version", 1))
+        # The mode and the version must agree whatever the caller asked for: the version is
+        # what tells a summary npz from a mass npz, so a disagreement means the meta cannot
+        # be trusted to say which arrays the npz holds.
+        if rank_mode == "summary":
+            version_fits = rank_version == SUMMARY_CAPTURE_VERSION
+            needs = f"{SUMMARY_CAPTURE_VERSION}"
+        else:
+            version_fits = rank_version in (1, CAPTURE_VERSION)
+            needs = f"1 or {CAPTURE_VERSION}"
+        if not version_fits:
+            return (
+                f"rank {rank}: meta capture_version {meta.get('capture_version')!r} does not "
+                f"fit mode {rank_mode!r} (needs {needs})"
+            )
         if capture_version is not None and rank_version != capture_version:
             return f"rank {rank}: meta capture_version {meta.get('capture_version')!r} != {capture_version}"
         if int(meta["query_start"]) != job.query_start:
@@ -2133,7 +2529,13 @@ def _audit_job(
         if sampled:
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
             loaded = np.load(io.BytesIO(body))
-            failure, shape = _audit_arrays(loaded, job, n_layers, heads_local, rank_version)
+            if rank_mode == "summary":
+                failure = _audit_summary_arrays(loaded, job, n_layers, heads_local)
+                shape = (n_layers, expected_p)
+                mass_name = "sum_mass"
+            else:
+                failure, shape = _audit_arrays(loaded, job, n_layers, heads_local, rank_version)
+                mass_name = "mass"
             if failure:
                 # Deferred, not returned: every rank's arrays are examined, so a
                 # defect that sits in one rank only is not hidden behind the first
@@ -2145,13 +2547,16 @@ def _audit_job(
                 # mass means a duplicated or swapped upload. All-zero mass and zero
                 # completion positions are skipped: degenerate arrays are identical
                 # across ranks legitimately, and must not trip the check.
-                mass = np.asarray(loaded["mass"])
+                mass = np.asarray(loaded[mass_name])
                 if mass.size and mass.any():
                     digest = hashlib.sha256(
                         str(mass.shape).encode() + str(mass.dtype).encode() + mass.tobytes()
                     ).digest()
                     if digest in digests and duplicate is None:
-                        duplicate = f"rank {rank} duplicates rank {digests[digest]}: identical mass arrays"
+                        duplicate = (
+                            f"rank {rank} duplicates rank {digests[digest]}: identical "
+                            f"{mass_name} arrays"
+                        )
                     digests.setdefault(digest, rank)
     if array_failure:
         return array_failure
@@ -2194,20 +2599,32 @@ def audit_captures(
     config: Mapping[str, Any],
     sample_per_run: int = 1,
     arrays: str = "sample",
+    mode: Optional[str] = None,
     capture_version: Optional[int] = None,
     workers: int = 1,
     client_factory: Optional[Callable[[], Any]] = None,
 ) -> Dict[str, Optional[str]]:
     """Audit captured objects by content; file counts prove nothing.
 
+    Two kinds of capture are audited: ``mass`` (per-row arrays, capture version 1 or 2)
+    and ``summary`` (sums over the rows, version 3). The `mode` argument fixes the kind
+    the caller expects; with ``None`` each rank is audited by the mode its own meta
+    declares. The two kinds are never mixed up: whatever the arguments say, the meta's
+    mode and version must agree (see below). Everything below describes the mass audit
+    first, then what summary mode changes.
+
     With ``L, H = attention_shape(config)`` and ``H_local = H // tp``, for EVERY
     job and rank the meta json is read and checked, in this order (the first
     failure is the job's reason, each prefixed ``rank <r>: ``): ``job_id`` equals
     the job's; ``rank`` equals the rank read; ``model`` equals `model`;
-    ``n_tokens`` and ``query_start`` equal the job's; ``mode == "mass"``; the meta's
+    ``n_tokens`` and ``query_start`` equal the job's; the meta ``mode`` equals the
+    `mode` argument (when ``None``: is ``"mass"`` or ``"summary"``, and all ranks of a
+    job agree); the meta's mode and capture version agree (summary needs version 3,
+    mass needs 1 or 2; the failure says ``capture_version``); the meta's
     capture version (``capture_version``, 1 when the field is absent) equals the
     `capture_version` argument, when that is not ``None``; ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
-    [L, P, H_local, 4]`` with ``P = n_tokens - query_start``; ``gate_max_rel <=
+    [L, P, H_local, 4]`` with ``P = n_tokens - query_start`` (for both modes: it is the
+    shape of the per-row statistics, which a summary has summed away); ``gate_max_rel <=
     gate_tol``; and ``bytes`` equals the npz object's real size (``head_object``
     when the client has it, else the listing's ``Size``). A missing meta key is a
     failure reason, never a crash of the audit (a mismatch against ``None`` for
@@ -2232,9 +2649,11 @@ def audit_captures(
     swapped upload); the failure reads ``rank r duplicates rank s``. Ranks whose
     mass is all zeros are not compared.
 
-    A rank whose meta is version 2 or later (``capture_version >= 2``) is checked
-    further, after every check above passes. Its npz must hold ``prompt_entropy``
-    (the entropy of each response row over the prompt keys ``[0, query_start)``,
+    The array rules of the paragraph above and of the next two paragraphs (down to the
+    cross-check of ``prompt_entropy``) are the mass audit's. A summary rank is checked by the summary
+    content audit described after them instead. A mass rank whose meta is version 2 or
+    later (``capture_version >= 2``) is checked further, after every check above
+    passes. Its npz must hold ``prompt_entropy`` (the entropy of each response row over the prompt keys ``[0, query_start)``,
     renormalised, sink excluded) with the shape of ``entropy``, and a
     ``sliding_window`` array of shape ``(L,)`` (0 marks a global layer). The
     missing-array failures can fire only for the jobs whose arrays are
@@ -2275,6 +2694,31 @@ def audit_captures(
     unstored ``Hr`` leaves ``r ln(i + 1)`` nats of room. A version-1 capture is audited
     exactly as before.
 
+    The summary content audit (mode ``summary``, version 3) is the mass audit applied
+    to sums over the ``P`` response rows. Every failure names the offending npz array
+    and, where it applies, the first ``(layer, head)``. In this order: ``classes``
+    equal the job's; every name in ``attention.SUMMARY_ARRAYS``, ``sliding_window`` and
+    ``has_sink`` is present; ``rows == P``; shapes are ``[L, H_local]`` for every
+    per-head array, ``[L, H_local, 4]`` for ``sum_mass``, ``(L,)`` for
+    ``sliding_window`` and ``has_sink`` (and ``layers`` has L entries when present);
+    every value is finite; the counts are exact: ``n_prompt_entropy`` is 0 when
+    ``query_start == 0``, ``P`` on a global layer, ``min(P, w - 1)`` on a layer with
+    window ``w``, and ``n_pad_ratio`` is the number of rows whose causal prefix holds a
+    class-1 token; floors: ``sum_mass`` and ``sum_sink`` at least ``-1e-3 * P``,
+    ``sum_entropy`` at least ``-1e-3 * P``, ``sum_prompt_entropy`` at least
+    ``-1e-3 * n_prompt_entropy``; where ``n_prompt_entropy == 0`` the sums
+    ``sum_prompt_entropy``, ``sum_m_hp``, ``sum_chain_hi`` and ``sum_chain_lo`` are
+    exactly 0; ``sum_mass.sum(-1) + sum_sink`` is within ``2e-2 * P`` of ``P`` (the mass
+    audit's per-row allowance summed over the rows); the mean entropy
+    ``sum_entropy / P`` is at most the mean over rows of ``ln(query_start + i + 1 + s_l)``
+    plus ``1e-2``, and the mean ``sum_prompt_entropy / n`` is at most the mean over the
+    ``n`` defined rows of ``ln(count_i)`` plus ``1e-2`` (``count_i`` is ``query_start`` on
+    a global layer and ``min(query_start, w - 1 - i)`` on a windowed one); and the chain
+    rule ``sum_chain_lo - tol <= sum_m_hp <= sum_chain_hi + tol`` with
+    ``tol = n * (0.05 + 2e-3) + 2e-3 * max(sum_entropy, 0)``, the mass audit's per-row
+    tolerance summed over the ``n`` defined rows. As for mass, no two ranks of a job may
+    hold byte-identical ``sum_mass`` (all-zero arrays are not compared).
+
     The ceiling follows from how the box computes entropy: over the row's
     attended tokens plus the sink column. Row ``i`` sits at absolute position
     ``query_start + i`` and attends at most ``query_start + i + 1`` tokens (itself
@@ -2307,10 +2751,14 @@ def audit_captures(
         ``"sample"`` (default 1).
     arrays : str, optional
         ``"sample"`` (default) or ``"all"``: which jobs get their arrays checked.
+    mode : Optional[str], optional
+        Capture mode every rank's meta must declare, ``"mass"`` or ``"summary"``.
+        ``None`` (default) accepts either and audits each rank by its own meta mode
+        (anything else fails the job). ``replay_model`` passes the run's mode.
     capture_version : Optional[int], optional
         Capture format every rank's meta must declare (``None``, the default,
         accepts any version and audits each rank by its own). ``replay_model``
-        passes ``CAPTURE_VERSION``.
+        passes ``CAPTURE_VERSION`` (mass) or ``SUMMARY_CAPTURE_VERSION`` (summary).
     workers : int, optional
         Jobs audited at once (default 1: one after the other, on `client`). With
         ``workers > 1`` the jobs run in a thread pool of that size, and the result is
@@ -2331,7 +2779,8 @@ def audit_captures(
     Raises
     ------
     ValueError
-        When `arrays` is not ``"sample"`` or ``"all"``, when `workers` is not an
+        When `arrays` is not ``"sample"`` or ``"all"``, when `mode` is neither ``None``
+        nor in ``MODES``, when `workers` is not an
         integer of at least 1, or when ``workers > 1`` and `client_factory` is
         ``None`` (all before any read), or when `config` has no readable attention
         shape (``attention_shape``).
@@ -2352,6 +2801,8 @@ def audit_captures(
     """
     if arrays not in ("sample", "all"):
         raise ValueError(f"arrays must be 'sample' or 'all', got {arrays!r}")
+    if mode is not None:
+        _resolve_mode(mode)  # refuse an unknown mode here, not as one failure per job
     _check_workers(workers, "workers")
     if workers > 1 and client_factory is None:
         raise ValueError(f"client_factory is required when workers > 1 (workers={workers})")
@@ -2371,7 +2822,7 @@ def audit_captures(
     def audit_one(use: Any, job: attention.Job, sampled: bool) -> Optional[str]:
         try:
             return _audit_job(
-                use, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version
+                use, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version, mode
             )
         except Exception as exc:  # noqa: BLE001 -- recorded per job, none hidden
             if _is_access_failure(exc):
@@ -2591,6 +3042,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     run_label: Optional[str] = None,
     ec2: Any = None,
     s3_client_factory: Optional[Callable[[], Any]] = None,
+    mode: Optional[str] = None,
 ) -> ReplayReport:
     """Capture one model's stored induction transcripts on one spot box. BILLED.
 
@@ -2652,11 +3104,20 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         Provider module or fake; defaults to ``smolbench.evals.providers.ec2``.
     s3_client_factory : Callable[[], Any], optional
         Returns a NEW S3 client per call; defaults to a fresh boto3 client in ``REGION``.
+    mode : Optional[str], optional
+        Capture mode, ``"mass"`` or ``"summary"``; ``None`` (default) means ``"mass"``.
+        Keyword-only. It is set on every job, passed to ``attention.run_capture_batches``,
+        required of every rank's meta by the audit (with ``CAPTURE_VERSION`` for mass,
+        ``SUMMARY_CAPTURE_VERSION`` for summary), and written to every manifest. Summary
+        mode stores sums over the response rows instead of per-row arrays, so its
+        objects do not grow with the response length. The captures of the two modes of
+        one job share a key, so a job captured in one mode is never re-sent in the other.
 
     Returns
     -------
     ReplayReport
-        Verified, failed, skipped and audit-failed job ids, manifests written and the plan.
+        Verified, failed, skipped and audit-failed job ids, manifests written and the plan
+        (``plan.mode`` is the mode run).
 
     Raises
     ------
@@ -2676,8 +3137,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         is not ``True`` (also before any AWS call).
     ValueError
         When no instance type is known for the model, the batch arguments are
-        invalid, `audit_workers` is below 1, or `seeds` holds a non-integer (before
-        any AWS call).
+        invalid, `audit_workers` is below 1, `seeds` holds a non-integer, or `mode` is
+        not ``None`` or one of ``MODES`` (before any AWS call, and for `mode` before
+        even the plan is built).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
         unavailable), when its ``config.json`` cannot be loaded or has no
@@ -2709,12 +3171,17 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     box is already down; with a failed shutdown it is logged and ``ShutdownFailed``
     is raised instead.
     """
+    # Phase 0: an unknown mode is refused before anything is read or built.
+    run_mode = _resolve_mode(mode)
+    run_version = SUMMARY_CAPTURE_VERSION if run_mode == "summary" else CAPTURE_VERSION
+
     # Phase 1: offline plan and the launch summary, shown before the gate.
     from smolbench.evals.providers import ec2 as real_ec2
 
     _bucket_for_plan, plan_prefix = parse_s3_uri(s3_uri)
     plan, planned = _plan_one(
-        model_key, Path(results_root), plan_prefix, tokenizer_for, template_for, config_for, seeds
+        model_key, Path(results_root), plan_prefix, tokenizer_for, template_for, config_for, seeds,
+        run_mode,
     )
     types = tuple(instance_types or INSTANCE_TYPES.get(model_key, ()))
     regions = tuple(getattr(ec2, "EC2_REGIONS", real_ec2.EC2_REGIONS))
@@ -2839,7 +3306,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             ) as served:
                 report.served_model_name = served
                 result = attention.run_capture_batches(
-                    ec2, state, served, remaining, tp, make_s3, bucket, mode="mass",
+                    ec2, state, served, remaining, tp, make_s3, bucket, mode=run_mode,
                     batch_size=batch_size, url_ttl_s=url_ttl_s, poll_s=poll_s,
                     batch_timeout_s=batch_timeout_s,
                 )
@@ -2882,8 +3349,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         verified_set = set(result.verified)
         audit = audit_captures(
             make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
-            model=model_key, config=config, arrays=audit_arrays,
-            capture_version=CAPTURE_VERSION, workers=audit_workers, client_factory=make_s3,
+            model=model_key, config=config, arrays=audit_arrays, mode=run_mode,
+            capture_version=run_version, workers=audit_workers, client_factory=make_s3,
         )
         for job_id, reason in audit.items():
             if reason is None:
@@ -2896,7 +3363,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         # the primary error.
         try:
             _write_manifests(
-                make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp
+                make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp,
+                mode=run_mode,
             )
         except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
             report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
@@ -3032,11 +3500,14 @@ def _manifest_payload(
     instance_type: Optional[str],
     served_model_name: Optional[str],
     post_hoc_audit: bool = False,
+    mode: str = "mass",
 ) -> Dict[str, Any]:
     """Return the manifest content of one run; shared by ``_write_manifests`` and ``audit_existing``.
 
     ``post_hoc_audit`` adds the key ``"post_hoc_audit": True``; it is absent otherwise,
-    so a manifest written at capture time is unchanged.
+    so a manifest written at capture time is unchanged. `mode` is written as the
+    manifest's ``"mode"``: the capture mode of the run's jobs (``"mass"``, ``"summary"``,
+    or ``"mixed"`` from ``audit_existing`` when one run directory holds both).
     """
     payload: Dict[str, Any] = {
         "model": model,
@@ -3049,7 +3520,7 @@ def _manifest_payload(
         "hf_repo": spec["hf_model_id"],
         "hf_revision": tokenization._pinned_revision(spec),
         "capture": attention.CAPTURE_MARKER,
-        "mode": "mass",
+        "mode": mode,
         "jobs": entries,
         "approximations": list(APPROXIMATIONS),
         "bedrock_token_counts": None,
@@ -3069,8 +3540,11 @@ def _write_manifests(
     report: ReplayReport,
     result: attention.CaptureResult,
     tp: int,
+    mode: str = "mass",
 ) -> List[str]:
     """Write one manifest per run that had at least one job sent in this invocation.
+
+    `mode` is the run's capture mode, recorded in every manifest.
 
     Each key is appended to ``report.manifests`` as soon as it is written, so the
     manifests written before a later failure stay on the report. The same keys are
@@ -3100,7 +3574,7 @@ def _write_manifests(
             entries.append(_manifest_entry(item, status, result.gates.get(job_id)))
         payload = _manifest_payload(
             model, spec, run, entries, tp=tp, instance_type=report.instance_type,
-            served_model_name=report.served_model_name,
+            served_model_name=report.served_model_name, mode=mode,
         )
         key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
         keys.append(key)
@@ -3148,28 +3622,35 @@ def _audited_job_ids(client: Any, bucket: str, manifest_keys: Sequence[str]) -> 
     return audited
 
 
-def _rank0_tp_and_version(client: Any, bucket: str, job: attention.Job) -> Tuple[int, int]:
-    """Return ``(tp, capture_version)`` from the job's rank-0 meta json.
+def _rank0_tp_and_version(client: Any, bucket: str, job: attention.Job) -> Tuple[int, int, str]:
+    """Return ``(tp, capture_version, mode)`` from the job's rank-0 meta json.
 
-    A meta without ``capture_version`` is a version-1 capture.
+    A meta without ``capture_version`` is a version-1 capture; a meta without ``mode``
+    is a mass capture (every capture written before summary mode existed).
 
     Raises
     ------
     ValueError
         When the meta is not valid JSON, is not an object, or has no ``tp`` that is an
-        integer of at least 1, or its ``capture_version`` is not an integer.
+        integer of at least 1, or its ``capture_version`` is not an integer, or its
+        ``mode`` is not one of ``MODES``.
     """
     meta_key = attention.rank_keys(job.key, 0)[1]
     try:
         meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
         tp = meta["tp"]
         version = meta.get("capture_version", 1)
+        mode = meta.get("mode", "mass")
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise ValueError(f"unreadable rank-0 meta {meta_key}: {exc!r}") from exc
     for name, value, floor in (("tp", tp, 1), ("capture_version", version, 1)):
         if isinstance(value, bool) or not isinstance(value, int) or value < floor:
             raise ValueError(f"rank-0 meta {meta_key}: {name} {value!r} is not an integer >= {floor}")
-    return tp, version
+    # A mode outside MODES is refused here, as a failure of this one job: handed on to
+    # audit_captures it would raise for the whole group of jobs sharing its tp and version.
+    if mode not in MODES:
+        raise ValueError(f"rank-0 meta {meta_key}: mode {mode!r} is not one of {MODES}")
+    return tp, version, mode
 
 
 def audit_existing(
@@ -3200,7 +3681,9 @@ def audit_existing(
     json; when the plan's ``tp_estimate`` differs, the meta wins and the log says so.
     (3) A candidate that a manifest already records as audited (``verified`` or
     ``audit_failed: ...``) is skipped (``report.skipped_existing``). (4) The others are
-    audited with ``audit_captures``, per run directory, and as soon as one directory is
+    audited with ``audit_captures``, grouped by the ``tp``, capture version and mode of
+    their rank-0 meta (a meta without a mode is a mass capture; mass and summary
+    captures are each audited by their own rules), per run directory, and as soon as one directory is
     done its manifest is written (``write_manifest``, never overwriting) and its key is
     added to ``report.manifests``, so an interrupted call is resumed by calling it again.
 
@@ -3234,7 +3717,8 @@ def audit_existing(
         keys, for the candidates a manifest already records), ``partial``,
         ``not_captured``, ``manifests`` and ``manifest_error``; ``instance_type`` stays
         ``None``. A manifest written here holds only the jobs this call audited and carries
-        ``"post_hoc_audit": true``.
+        ``"post_hoc_audit": true`` and ``"mode"``: the audited jobs' mode when they share
+        one, else ``"mixed"``.
 
     Raises
     ------
@@ -3293,7 +3777,7 @@ def audit_existing(
     # Design: one listing per run prefix, not one per job. It returns the same keys
     # ``attention.job_keys_present`` would (every key under ``<stem>.``) in far fewer calls.
     client = make_s3()
-    # (run, planned jobs to audit, {job id: (tp, capture_version) or the reason it has none})
+    # (run, planned jobs to audit, {job id: (tp, capture_version, mode) or the reason it has none})
     work: List[Tuple[Run, List[PlannedJob], Dict[str, Any]]] = []
     for items in _group_by_run(planned):
         run = items[0].run
@@ -3321,9 +3805,10 @@ def audit_existing(
             # replay_model does) sets the expectation and the missing meta makes it partial.
             tp: Optional[int] = None
             version = 1
+            job_mode = "mass"
             if attention.rank_keys(job.key, 0)[1] in present:
                 try:
-                    tp, version = _rank0_tp_and_version(client, bucket, job)
+                    tp, version, job_mode = _rank0_tp_and_version(client, bucket, job)
                 except ValueError as exc:
                     # Audited as failed, not skipped: the job is stored but cannot be trusted.
                     candidates.append(item)
@@ -3348,7 +3833,7 @@ def audit_existing(
                 )
                 continue
             candidates.append(item)
-            formats[job.job_id] = (tp, version)
+            formats[job.job_id] = (tp, version, job_mode)
         for tp_meta in sorted(tps_seen):
             logging.warning(
                 f"attention_replay: {run_keys_prefix}: capture meta says tp={tp_meta}, the plan "
@@ -3363,19 +3848,21 @@ def audit_existing(
     for run, candidates, formats in work:
         run_keys_prefix = run_prefix(prefix, run)
         outcome: Dict[str, Optional[str]] = {}
-        # audit_captures takes one tp and one capture version per call, so group by them
-        # (a run is normally one group; a re-capture under another plugin would be two).
-        groups: Dict[Tuple[int, int], List[attention.Job]] = {}
+        # audit_captures takes one tp, one capture version and one mode per call, so group by
+        # them (a run is normally one group; a re-capture under another plugin or in the other
+        # mode would be two).
+        groups: Dict[Tuple[int, int, str], List[attention.Job]] = {}
         for item in candidates:
             fmt = formats[item.job.job_id]
             if isinstance(fmt, str):
                 outcome[item.job.job_id] = fmt
             else:
                 groups.setdefault(fmt, []).append(item.job)
-        for (tp, version), jobs in groups.items():
+        for (tp, version, group_mode), jobs in groups.items():
             outcome.update(audit_captures(
                 make_s3(), bucket, jobs, tp, model=model_key, config=config, arrays=arrays,
-                capture_version=version, workers=workers, client_factory=make_s3,
+                mode=group_mode, capture_version=version, workers=workers,
+                client_factory=make_s3,
             ))
         entries = []
         for item in candidates:
@@ -3390,9 +3877,14 @@ def audit_existing(
             # is within tolerance), so it is recorded as null.
             entries.append(_manifest_entry(item, status, None))
         tps = {fmt[0] for fmt in formats.values() if not isinstance(fmt, str)}
+        # The manifest's mode is the mode of the audited jobs when they share one. NOTE: a run
+        # directory with no readable meta at all has no known mode and is also written as
+        # "mixed" (the spec's "else" branch); the reader does not use this field.
+        modes = {fmt[2] for fmt in formats.values() if not isinstance(fmt, str)}
         payload = _manifest_payload(
             model_key, spec, run, entries, tp=tps.pop() if len(tps) == 1 else None,
             instance_type=None, served_model_name=None, post_hoc_audit=True,
+            mode=modes.pop() if len(modes) == 1 else "mixed",
         )
         try:
             report.manifests.append(write_manifest(make_s3(), bucket, run_keys_prefix, payload))
@@ -3620,10 +4112,13 @@ def read_captures(
 
     Files are grouped per run directory and ``q<idx>``; ``tp`` is the number of
     rank files, which must be exactly ranks ``0..tp-1``. Each job is loaded with
-    ``attention_analysis.load_mass`` (ranks joined head-wise in rank order) and
-    reduced with ``attention_analysis.whitespace_ratio`` and
-    ``attention_analysis.entropy_by_layer``. The ranks present must
-    also be the WHOLE set: the head axis of the joined job must equal the
+    ``attention_analysis.load_capture`` (ranks joined head-wise in rank order; the job
+    is a mass or a summary capture, as its ``kind`` says) and reduced with
+    ``attention_analysis.pad_ratio_sums`` and ``attention_analysis.entropy_by_layer``,
+    which give the same numbers from either kind. Mass and summary jobs can be mixed
+    within one arm. The ranks present must
+    also be the WHOLE set: the head axis of the joined job (axis 2 of ``mass``, axis 1
+    of ``sum_entropy``) must equal the
     config's head count, because ranks ``0..6`` of an 8-way job are a valid
     ``0..tp-1`` set for ``tp = 7`` and a missing top rank would otherwise pass.
 
@@ -3663,7 +4158,8 @@ def read_captures(
         (mean class-1 token count per job), ``ratio_mean`` (mean over every query,
         layer, head and job that has a defined ratio) and ``ratio_layer_head``
         (``[L, H]`` array, mean over queries and jobs). Queries are pooled, so
-        longer completions weigh more. An arm without any pad token has an
+        longer completions weigh more (a summary job contributes its summed ratios and
+        its defined-row counts, which pools exactly the same rows). An arm without any pad token has an
         undefined ratio: ``nan``, not 0. ``skipped_unverified`` counts the jobs of
         the arm left unread because no manifest records them as verified (always 0
         with ``require_verified=False``). An arm whose every job was skipped has no
@@ -3694,10 +4190,19 @@ def read_captures(
             Float. Sample standard deviation (ddof=1) over those jobs' all-layer
             means; NaN with fewer than two.
 
-        ``prompt_entropy_v1_jobs`` (int) counts the arm's jobs read from a
+        ``prompt_entropy_v1_jobs`` (int) counts the arm's MASS jobs read from a
         version-1 capture, which has no ``prompt_entropy`` array: they give NaN
         prompt-entropy values, are left out of the ``prompt_entropy_*`` means and
-        counts, and never raise. Their ``entropy`` is still read.
+        counts, and never raise. Their ``entropy`` is still read. A summary job
+        always carries its prompt-entropy sums and is never counted here.
+
+        ``summary_jobs`` (int) counts the arm's jobs read from a summary capture
+        (0 when every job is a mass capture). The statistics above are the same for a
+        capture read in either mode, up to the float16 rounding that mass mode stores
+        and summary mode does not. A summary job is first reduced to its own means
+        (sums divided by counts, then pooled over layers as above) and only then
+        averaged over jobs: rows are never pooled across jobs, so a long response does
+        not outweigh a short one in either mode.
 
     Raises
     ------
@@ -3723,6 +4228,7 @@ def read_captures(
             stat: {"all": [], "global": [], "window": [], "layer": []} for stat in _ENTROPY_STATS
         }
         n_v1 = 0
+        n_summary = 0
         # Earliest wins, per seed and arm: the directories of one seed are
         # re-collections of the same arm, and the released results count the first.
         stamp_prefix = f"{arm}--"
@@ -3762,16 +4268,24 @@ def read_captures(
                     raise ValueError(
                         f"{run_dir}/q{idx}: ranks {sorted(ranks[idx])} are not exactly 0..{tp - 1}"
                     )
-                job = attention_analysis.load_mass(store, rel, f"q{idx}", tp)
-                if job["mass"].shape[2] != expected_heads:
+                job = attention_analysis.load_capture(store, rel, f"q{idx}", tp)
+                is_summary = job["kind"] == "summary"
+                # The head axis is axis 2 of the mass arrays [L, P, H, 4] and axis 1 of
+                # the summary arrays [L, H]; sum_entropy stands for the summary arrays.
+                heads_read = (
+                    np.shape(job["sum_entropy"])[1] if is_summary else job["mass"].shape[2]
+                )
+                if heads_read != expected_heads:
                     raise ValueError(
-                        f"{run_dir}/q{idx}: the {tp} rank(s) hold {job['mass'].shape[2]} heads in "
+                        f"{run_dir}/q{idx}: the {tp} rank(s) hold {heads_read} heads in "
                         f"total, the config has {expected_heads}; a rank is missing"
                     )
-                ratio = attention_analysis.whitespace_ratio(
-                    job["mass"].astype(np.float32), job["classes"], job["query_start"]
-                )
-                layers, _p, heads = ratio.shape
+                # Design: the per-(layer, head) pad-ratio sum and defined-row count come from
+                # attention_analysis.pad_ratio_sums for both kinds. A summary job already holds
+                # them (summed on the box); a mass job reduces its rows to the same two arrays.
+                # Either way the arm pools sums and counts, so the two kinds mix freely.
+                job_sums, job_counts = attention_analysis.pad_ratio_sums(job)
+                layers, heads = job_sums.shape
                 if sums is None:
                     sums = np.zeros((layers, heads), dtype=np.float64)
                     counts = np.zeros((layers, heads), dtype=np.int64)
@@ -3780,10 +4294,11 @@ def read_captures(
                         f"{run_dir}/q{idx}: shape (L={layers}, H={heads}) differs from the arm's "
                         f"{sums.shape}"
                     )
-                defined = ~np.isnan(ratio)
-                sums += np.where(defined, ratio, 0.0).sum(axis=1, dtype=np.float64)
-                counts += defined.sum(axis=1)
+                sums += job_sums
+                counts += job_counts
                 # Entropy means of this job: its own pooled defined values per layer set.
+                # A summary job is reduced to ITS OWN means here, before the average over
+                # jobs below: rows are never pooled across jobs, whichever kind a job is.
                 by_layer = attention_analysis.entropy_by_layer(job)
                 window = job.get("sliding_window")
                 is_global = None if window is None else np.asarray(window) == 0
@@ -3798,7 +4313,9 @@ def read_captures(
                         float("nan") if is_window is None else _pool_layers(mean_l, count_l, is_window)
                     )
                     per_job[stat]["layer"].append(mean_l)
-                if job.get("prompt_entropy") is None:
+                if is_summary:
+                    n_summary += 1
+                elif job.get("prompt_entropy") is None:
                     n_v1 += 1
                 n_jobs += 1
                 pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
@@ -3816,6 +4333,7 @@ def read_captures(
             "ratio_layer_head": layer_head,
             "skipped_unverified": n_skipped,
             "prompt_entropy_v1_jobs": n_v1,
+            "summary_jobs": n_summary,
         }
         # Every job counts once: mean over a job's positions, heads and layers first,
         # then over jobs (the footnote's "mean per response"), not over pooled rows.

@@ -372,3 +372,124 @@ def test_presign_put_passes_the_condition_to_the_signer() -> None:
     s3 = FakeS3()
     url = attention.presign_put(s3, "b", "p/q0.r0.json", "application/json", 30)
     assert "if-none-match" in _signed_headers(url.replace("%3B", ";"))
+
+
+# ------------------------------------------------------------------ summary mode
+
+def summary_npz(n_tokens: int, query_start: int, classes: list[int], *, heads: int = 2,
+                layers: int = 2, rows_delta: int = 0, sum_mass_heads: int | None = None) -> bytes:
+    """One rank's summary-mode upload: ``rows`` scalar and per-(layer, head) float64 sums."""
+    p = n_tokens - query_start
+    shape = (layers, heads)
+    arrays = {name: np.zeros(shape, np.float64) for name in (
+        "sum_entropy", "sum_prompt_entropy", "sum_sink", "sum_pad_ratio", "sum_m_hp",
+        "sum_chain_hi", "sum_chain_lo")}
+    arrays["n_prompt_entropy"] = np.full(shape, p, np.int64)
+    arrays["n_pad_ratio"] = np.zeros(shape, np.int64)
+    arrays["sum_mass"] = np.zeros((layers, sum_mass_heads or heads, 4), np.float64)
+    arrays["sum_mass"][..., 3] = p
+    buf = io.BytesIO()
+    np.savez(buf, rows=np.asarray(p + rows_delta, np.int64), capture_version=np.asarray(3, np.int32),
+             classes=np.asarray(classes, np.uint8), query_start=np.asarray(query_start, np.int32),
+             layers=np.arange(layers, dtype=np.int32), positions=np.asarray([n_tokens - 1], np.int32),
+             **arrays)
+    return buf.getvalue()
+
+
+def summary_job(job_id: str, n_prompt: int, n_completion: int, prefix: str = "p/run/") -> attention.Job:
+    prompt, completion = tuple(range(n_prompt)), tuple(range(n_completion))
+    classes = [0] * n_prompt + [3] * n_completion
+    return attention.mass_job(job_id, prompt, completion, classes, f"{prefix}{job_id}.npz", mode="summary")
+
+
+def test_summary_is_a_capture_mode_and_the_job_carries_its_mode() -> None:
+    assert attention.CAPTURE_MODES == ("rows", "mass", "summary")
+    j = summary_job("s100.rep0", 10, 9)
+    assert j.mode == "summary" and j.query_start == 10 and j.positions == (13, 16, 18)
+    keys = j.mass_keys()
+    assert keys == {"mode": "summary", "query_start": 10, "classes": [0] * 10 + [3] * 9}
+    # The default stays mass, and a rows job cannot be built by the class-labelled builder.
+    assert job("q0", 3, 2).mass_keys()["mode"] == "mass"
+    with pytest.raises(ValueError, match="mode"):
+        attention.mass_job("q0", (1,), (2,), [0, 3], "p/q0.npz", mode="rows")
+    with pytest.raises(ValueError, match="mode"):
+        attention.mass_job("q0", (1,), (2,), [0, 3], "p/q0.npz", mode="sum")
+    # The summary job is validated exactly like a mass job.
+    with pytest.raises(ValueError, match="class"):
+        attention.mass_job("q0", (1,), (2,), [3, 3], "p/q0.npz", mode="summary")
+
+
+def test_summary_arrays_constant_names_every_summed_array() -> None:
+    assert set(attention.SUMMARY_ARRAYS) == {
+        "rows", "sum_entropy", "sum_prompt_entropy", "n_prompt_entropy", "sum_mass", "sum_sink",
+        "sum_pad_ratio", "n_pad_ratio", "sum_m_hp", "sum_chain_hi", "sum_chain_lo"}
+
+
+def _upload_summary(s3: FakeS3, j: attention.Job, tp: int = 2, **kw: Any) -> None:
+    for rank in range(tp):
+        npz, meta = attention.rank_keys(j.key, rank)
+        blob = summary_npz(j.n_tokens, j.query_start, list(j.classes), **kw)
+        s3.objects[npz] = blob
+        s3.objects[meta] = json.dumps({"n_tokens": j.n_tokens, "bytes": len(blob)}).encode()
+
+
+def test_verify_capture_uploads_checks_the_summary_arrays_and_never_crosses_modes() -> None:
+    s3 = FakeS3()
+    jobs = [summary_job("a", 5, 3), summary_job("b", 6, 2)]
+    for j in jobs:
+        _upload_summary(s3, j)
+    assert attention.verify_capture_uploads(s3, "b", jobs, 2, sample=2, mode="summary") == (["a", "b"], [])
+    # A summary upload is not a mass upload, and a mass upload is not a summary upload.
+    assert attention.verify_capture_uploads(s3, "b", jobs[:1], 2, mode="mass") == ([], ["a"])
+    m = job("m", 5, 3)
+    _upload(s3, m)
+    assert attention.verify_capture_uploads(s3, "b", [m], 2, mode="summary") == ([], ["m"])
+    # rows must be P, the sums must share their [L, H] shape, and classes must cover every token.
+    for kw in ({"rows_delta": 1}, {"sum_mass_heads": 3}):
+        _upload_summary(s3, jobs[0], **kw)
+        assert attention.verify_capture_uploads(s3, "b", jobs[:1], 2, mode="summary") == ([], ["a"]), kw
+    short = summary_job("c", 5, 3)
+    for rank in range(2):
+        npz, meta = attention.rank_keys(short.key, rank)
+        blob = summary_npz(short.n_tokens, short.query_start, list(short.classes)[:-1])
+        s3.objects[npz] = blob
+        s3.objects[meta] = json.dumps({"n_tokens": short.n_tokens, "bytes": len(blob)}).encode()
+    assert attention.verify_capture_uploads(s3, "b", [short], 2, mode="summary") == ([], ["c"])
+
+
+class SummaryBox(FakeBox):
+    """FakeBox that uploads summary arrays, as the plugin does for a summary job."""
+
+    def attn_start(self, state: dict, payload: dict) -> dict:
+        self.batches.append(payload)
+        results: dict[str, dict] = {}
+        for line in payload["jobs"]:
+            assert line["mode"] == "summary"
+            n = len(line["prompt_token_ids"]) + len(line["completion_token_ids"])
+            ranks = {}
+            for rank in range(payload["tp"]):
+                blob = summary_npz(n, line["query_start"], line["classes"])
+                key = line["put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                meta_key = line["meta_put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                self.s3.objects[key] = blob
+                self.s3.objects[meta_key] = json.dumps({"n_tokens": n, "bytes": len(blob)}).encode()
+                ranks[str(rank)] = {"ok": True, "error": None, "gate_max_rel": 0.001}
+            results[line["job_id"]] = ranks
+        self._status = [{"running": False, "results": results, "error": None}]
+        return {"ok": True}
+
+
+def test_run_capture_batches_sends_summary_jobs_and_verifies_their_arrays() -> None:
+    s3 = FakeS3()
+    box = SummaryBox(s3)
+    jobs = [summary_job("x", 4, 3), summary_job("y", 6, 2)]
+    result = attention.run_capture_batches(
+        box, {"public_ip": "x"}, "served", jobs, 2, lambda: s3, "bucket", mode="summary",
+        url_ttl_s=99, batch_timeout_s=10, poll_s=0)
+    assert sorted(result.verified) == ["x", "y"] and result.failed == {}
+    line = box.batches[0]["jobs"][0]
+    assert line["mode"] == "summary" and line["query_start"] == 6 and len(line["classes"]) == 8
+    # A mass job in a summary run is refused before anything is touched.
+    with pytest.raises(ValueError, match="mode"):
+        attention.run_capture_batches(box, {}, "s", [job("z", 3, 2)], 1, lambda: s3, "b",
+                                      mode="summary", url_ttl_s=99, batch_timeout_s=10)

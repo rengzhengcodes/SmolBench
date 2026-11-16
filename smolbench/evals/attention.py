@@ -36,6 +36,15 @@ rows, so the ``rows @ V`` self-consistency check is the same arithmetic in both
 modes. Rows mode is supported only as far as the data structures and the
 verification checks go; the batch runner defaults to ``"mass"``.
 
+``mode="summary"`` is the compact form of mass mode. The job carries the same
+``query_start`` and ``classes``, but the plugin does not keep the per-row
+arrays: it sums the mass-mode per-row statistics over the ``P`` response rows
+on the box and uploads only those sums, each ``[L, H_local]`` (``sum_mass`` is
+``[L, H_local, 4]``), plus the counts of rows where the prompt entropy and the
+pad ratio are defined (``SUMMARY_ARRAYS`` names them all) and the same
+geometry arrays as mass mode. The upload is small enough to keep for every
+mark, at the price that per-row values cannot be recovered afterwards.
+
 Left out on purpose: the HF-transformers replay path, building jobs from
 stored marks (``answer_positions``, ``build_jobs``), and any index or resume
 bookkeeping tied to one results layout. They depend on a results store this
@@ -66,6 +75,7 @@ __all__ = [
     "MASS_GATE_FRACTIONS",
     "MIN_PAD_RUN_CHARS",
     "N_TOKEN_CLASSES",
+    "SUMMARY_ARRAYS",
     "capture_job_failure",
     "job_keys_present",
     "mass_gate_positions",
@@ -94,7 +104,26 @@ DEFAULT_POLL_S: int = 30
 
 #: The only capture modes the plugin knows (its ``_read_job`` raises on any
 #: other value, and a mode absent from the job file means ``"rows"``).
-CAPTURE_MODES: Tuple[str, ...] = ("rows", "mass")
+CAPTURE_MODES: Tuple[str, ...] = ("rows", "mass", "summary")
+#: Every array a summary-mode ``.npz`` must hold beyond the geometry arrays it
+#: shares with mass mode (``classes``, ``query_start``, ``positions``,
+#: ``layers``, ``has_sink``, ``sliding_window``, ``kv_shared_from``). ``rows``
+#: is the 0-d response-row count ``P``; the ``sum_*`` arrays are sums of the
+#: mass-mode per-row statistics over those rows and ``n_*`` count the rows
+#: where the statistic is defined.
+SUMMARY_ARRAYS: Tuple[str, ...] = (
+    "rows",
+    "sum_entropy",
+    "sum_prompt_entropy",
+    "n_prompt_entropy",
+    "sum_mass",
+    "sum_sink",
+    "sum_pad_ratio",
+    "n_pad_ratio",
+    "sum_m_hp",
+    "sum_chain_hi",
+    "sum_chain_lo",
+)
 #: Number of key classes in mass mode; the plugin's ``N_CLASSES`` and the last
 #: axis of its ``mass`` array. Kept as a name so the verification check reads
 #: as "the contract's class count", not as a bare 4.
@@ -179,9 +208,10 @@ class Job:
         return len(self.prompt_token_ids) + len(self.completion_token_ids)
 
     def mass_keys(self) -> Dict[str, Any]:
-        """Return the mass-mode additions to a wire job, or ``{}`` in rows mode.
+        """Return the mass/summary-mode additions to a wire job, or ``{}`` in rows mode.
 
-        The single definition of the three mass keys. ``run_capture_batches``
+        The single definition of the three keys, shared by mass and summary
+        mode (the plugin validates the same three for both). ``run_capture_batches``
         splices them into each ``/attn`` line, and the plugin's ``_read_job``
         validates exactly these three against ``n_tokens``, so they must not be
         spelled out twice and drift.
@@ -189,8 +219,8 @@ class Job:
         Returns
         -------
         Dict[str, Any]
-            ``{}`` when ``mode == "rows"``; otherwise ``mode``, ``query_start``
-            (int) and ``classes`` (a JSON-serialisable list, not the tuple).
+            ``{}`` when ``mode == "rows"``; otherwise ``mode`` (this job's own,
+            ``"mass"`` or ``"summary"``), ``query_start`` (int) and ``classes`` (a JSON-serialisable list, not the tuple).
 
         Raises
         ------
@@ -200,10 +230,10 @@ class Job:
             must fail HERE, at the client, rather than ship an empty
             ``classes`` the plugin only rejects after a serve has been paid for.
         """
-        if self.mode != "mass":
+        if self.mode == "rows":
             return {}
         return {
-            "mode": "mass",
+            "mode": self.mode,
             "query_start": int(self.query_start),  # type: ignore[arg-type]
             "classes": list(self.classes),  # type: ignore[arg-type]
         }
@@ -434,8 +464,14 @@ def mass_job(
     completion_token_ids: Sequence[int],
     classes: Sequence[int],
     key: str,
+    *,
+    mode: str = "mass",
 ) -> Job:
-    """Build a validated mass-mode ``Job`` from a sequence and its key classes.
+    """Build a validated mass- or summary-mode ``Job`` from a sequence and its key classes.
+
+    Both modes take the same job: the sequence, its key classes and the gate
+    positions; they differ only in what the plugin stores. Every validation
+    below applies to both.
 
     The gate positions come from ``mass_gate_positions`` and ``query_start`` is
     ``len(prompt_token_ids)``. Every check the plugin's ``_read_job`` would make
@@ -457,17 +493,21 @@ def mass_job(
         ``token_classes``): prompt tokens in 0..2, completion tokens all 3.
     key : str
         Bucket key stem of the job's ``.npz``; must end in ``.npz``.
+    mode : str, optional
+        ``"mass"`` (default) or ``"summary"``; recorded on the job. ``"rows"``
+        is refused: a rows job has no classes.
 
     Returns
     -------
     Job
-        A frozen job with ``mode="mass"``, ``classes`` as a tuple of ints and
+        A frozen job with ``mode=mode``, ``classes`` as a tuple of ints and
         all id sequences as tuples.
 
     Raises
     ------
     ValueError
-        When `job_id` has a character outside the allowed set, `key` does not
+        When `mode` is not ``"mass"`` or ``"summary"``, `job_id` has a
+        character outside the allowed set, `key` does not
         end in ``.npz``, the completion is empty, ``len(classes)`` differs from
         the sequence length, a class lies outside ``0..N_TOKEN_CLASSES - 1``, a
         prompt token has class 3, or a completion token has a class other
@@ -479,6 +519,8 @@ def mass_job(
     >>> job.query_start, job.positions, job.n_tokens
     (2, (3, 4), 5)
     """
+    if mode not in ("mass", "summary"):
+        raise ValueError(f"mode must be 'mass' or 'summary', got {mode!r}")
     if not _JOB_ID_RE.match(job_id):
         raise ValueError(f"job_id {job_id!r} must match {_JOB_ID_RE.pattern}")
     if not key.endswith(".npz"):
@@ -507,7 +549,7 @@ def mass_job(
         completion_token_ids=completion,
         positions=mass_gate_positions(len(prompt), len(completion)),
         key=key,
-        mode="mass",
+        mode=mode,
         query_start=len(prompt),
         classes=cls,
     )
@@ -705,6 +747,55 @@ def _check_mass_arrays(arrays: Any, job: Job) -> None:
         raise ValueError(f"classes covers {len(classes)} of {job.n_tokens} tokens")
 
 
+def _check_summary_arrays(arrays: Any, job: Job) -> None:
+    """Raise unless a sampled summary-mode ``.npz`` matches `job`.
+
+    ``rows`` must equal ``n_tokens - query_start``; ``sum_entropy`` fixes the
+    ``[L, H_local]`` shape and every other per-(layer, head) entry of
+    ``SUMMARY_ARRAYS`` must share it (``sum_mass`` adds a trailing class axis
+    of ``N_TOKEN_CLASSES``); ``classes`` covers every token. As in mass mode,
+    ``positions`` is not checked.
+
+    Parameters
+    ----------
+    arrays : Any
+        The loaded ``NpzFile`` (mapping of name -> array).
+    job : Job
+        The job those arrays claim to answer; must carry ``query_start``.
+
+    Raises
+    ------
+    ValueError
+        When the job carries no ``query_start``, or a shape or ``rows`` check
+        fails.
+    KeyError
+        When any ``SUMMARY_ARRAYS`` entry or ``classes`` is absent -- e.g. a
+        mass-mode upload checked as summary.
+    """
+    if job.query_start is None:
+        raise ValueError(f"job {job.job_id} has no query_start; it is not a summary job")
+    expected_p = job.n_tokens - int(job.query_start)
+    rows = int(arrays["rows"])
+    if rows != expected_p:
+        raise ValueError(
+            f"rows {rows} != n_tokens - query_start "
+            f"({job.n_tokens} - {job.query_start} = {expected_p})"
+        )
+    shape = arrays["sum_entropy"].shape
+    if len(shape) != 2:
+        raise ValueError(f"sum_entropy.ndim {len(shape)} != 2 (expected [L, H_local])")
+    for name in SUMMARY_ARRAYS:
+        if name in ("rows", "sum_entropy"):
+            continue
+        got = arrays[name].shape
+        want = shape + (N_TOKEN_CLASSES,) if name == "sum_mass" else shape
+        if got != want:
+            raise ValueError(f"{name} shape {got} != {want}")
+    classes = arrays["classes"]
+    if len(classes) != job.n_tokens:
+        raise ValueError(f"classes covers {len(classes)} of {job.n_tokens} tokens")
+
+
 def verify_capture_uploads(
     client: Any,
     bucket: str,
@@ -725,7 +816,8 @@ def verify_capture_uploads(
 
     The HEAD/meta phase is mode-independent. What the sampled array must
     contain is not: rows mode stores ``rows`` over the answer positions, mass
-    mode stores ``mass``/``entropy``/``classes`` over the whole response, so
+    mode stores ``mass``/``entropy``/``classes`` over the whole response,
+    summary mode stores the ``SUMMARY_ARRAYS`` sums over it, so
     the checks are named per mode rather than inferred from what happens to be
     in the file.
 
@@ -745,7 +837,8 @@ def verify_capture_uploads(
         How many arrays to download and inspect (the first `sample` jobs),
         by default 1.
     mode : str, optional
-        Which array layout to expect, ``"rows"`` (default) or ``"mass"``.
+        Which array layout to expect, ``"rows"`` (default), ``"mass"`` or
+        ``"summary"``.
         Passing the wrong one fails every sampled job, which is the point: the
         two modes must never certify each other's objects.
 
@@ -758,7 +851,7 @@ def verify_capture_uploads(
     Raises
     ------
     ValueError
-        When `mode` is neither ``"rows"`` nor ``"mass"``. This one IS raised:
+        When `mode` is not one of ``CAPTURE_MODES``. This one IS raised:
         it is a programming error about all the jobs at once, not a fault of
         any one upload.
 
@@ -800,6 +893,8 @@ def verify_capture_uploads(
                 arrays = np.load(io.BytesIO(body))
                 if mode == "mass":
                     _check_mass_arrays(arrays, job)
+                elif mode == "summary":
+                    _check_summary_arrays(arrays, job)
                 else:
                     _check_rows_arrays(arrays, job)
             ok.append(job.job_id)
@@ -1027,7 +1122,8 @@ def run_capture_batches(
     bucket : str
         Destination bucket.
     mode : str, optional
-        ``"mass"`` (default) or ``"rows"``; selects the array checks.
+        ``"mass"`` (default), ``"summary"`` or ``"rows"``; selects the array
+        checks. Every job must have been built for the same mode.
     batch_size : int, optional
         Jobs per ``/attn`` call.
     url_ttl_s : int, optional

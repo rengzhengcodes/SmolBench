@@ -61,6 +61,16 @@ prompt key; NaN where no prompt key is attendable), in query chunks that
 keep the float32 logits under ~1 GB. The gate rows at ``positions`` validate
 the same arithmetic. No T x T matrix ever leaves the GPU.
 
+Mode ``summary`` (same job fields as ``mass``): the per-row statistics of mass
+mode are not stored. They are summed over the P completion rows on the box, in
+float64 and from the unrounded float32 chunk values, so the upload is
+independent of P (deduction responses run to 10k-120k tokens, where mass mode's
+``[L, P, H, ...]`` arrays grow past what a bucket should hold). The sums, the
+exact integer counts of the rows each one covers and the three chain-rule sums
+of the grouping audit are stored per layer and head. Mass and summary modes
+share one row reduction (``_row_chunks``), so a summary is the sum of the very
+rows mass mode would have stored (before its float16 rounding).
+
 Never raises into vLLM: every failure is recorded in the job's done file and
 serving continues.
 """
@@ -124,7 +134,7 @@ def _read_job():
             job["n_tokens"] = int(job["n_tokens"])
             job["seq"] = int(job["seq"])
             job["mode"] = str(job.get("mode") or "rows")
-            if job["mode"] == "mass":
+            if job["mode"] in ("mass", "summary"):
                 job["query_start"] = int(job["query_start"])
                 job["classes"] = [int(c) for c in job["classes"]]
                 if len(job["classes"]) != job["n_tokens"]:
@@ -229,6 +239,12 @@ N_CLASSES = 4
 #: Capture format version written to every meta json. Version 2 added the
 #: mass-mode `prompt_entropy` array; a meta without the field is version 1.
 CAPTURE_VERSION = 2
+#: Capture format version of summary mode. The kinds are told apart by version
+#: alone: 1 = mass without `prompt_entropy`, 2 = mass with it (and rows), 3 = summary.
+SUMMARY_CAPTURE_VERSION = 3
+#: Arrays of a summary npz that are stacked over layers (float64 sums, int64 counts).
+SUMMARY_FIELDS = ("sum_entropy", "sum_prompt_entropy", "n_prompt_entropy", "sum_mass", "sum_sink",
+                  "sum_pad_ratio", "n_pad_ratio", "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
 PUT_LANDED_EARLIER = "412-landed-earlier"  # 412 after an unclear try: it stored
 
 
@@ -256,13 +272,42 @@ def _logits_for(layer, q3, k3, pos):
     return logits.masked_fill(mask[:, None, :], float("-inf"))
 
 
-def _mass_for(layer, q3, k3, query_start, classes):
-    """Per-class attention mass and row entropies for every query >= query_start.
+def _row_chunks(layer, q3, k3, query_start, classes):
+    """Reduce every completion row to its statistics, one query chunk at a time.
 
-    Returns (mass float16 [P, H, C], entropy float16 [P, H], sink float16 [P, H] or None,
-    prompt_entropy float16 [P, H]). prompt_entropy is the entropy in nats of the
-    row restricted to the prompt keys [0, query_start) and renormalised to 1
-    (NaN where the row has no attendable prompt key).
+    The single row reduction behind mass and summary modes. For the queries
+    ``query_start .. n - 1`` it computes, in chunks that keep the float32 logits
+    under ``MASS_CHUNK_ELEMENTS`` elements, the masked logits, the prompt entropy
+    (a log-softmax over the prompt keys' logits, taken before the sink column
+    joins: the sink is not a prompt key), the softmax over tokens (+ the sink
+    column), its entropy, and the per-class mass.
+
+    Design: one generator, not two copies of the arithmetic, so the two modes can
+    never drift apart; it yields the float32 values BEFORE any float16 cast, so
+    mass mode rounds exactly as it always did and summary mode sums unrounded
+    values. Row indices are relative to ``query_start`` (row ``i`` is the query
+    at absolute position ``query_start + i``).
+
+    Parameters
+    ----------
+    layer : object
+        The layer, or its ``_MLAView`` (``num_heads``, ``num_kv_heads``,
+        ``head_size``, ``sliding_window``, ``has_sink``, ``impl``).
+    q3, k3 : torch.Tensor
+        Post-RoPE queries ``[T, H, D]`` and keys ``[T, Hkv, D]``.
+    query_start : int
+        First completion index, ``0 <= query_start < T``.
+    classes : torch.Tensor
+        ``[T]`` int64 class label (0..3) of every token.
+
+    Yields
+    ------
+    (int, int, torch.Tensor, torch.Tensor, torch.Tensor or None, torch.Tensor)
+        ``(lo, hi, mass, entropy, sink, prompt_entropy)`` for rows ``lo <= i < hi``,
+        all float32: ``mass [p, H, 4]``, ``entropy [p, H]`` (nats), ``sink [p, H]``
+        (None when the layer has no sink), ``prompt_entropy [p, H]`` (nats; NaN
+        where the row has no attendable prompt key). The chunks cover every row
+        once, in order.
     """
     import torch
 
@@ -273,11 +318,6 @@ def _mass_for(layer, q3, k3, query_start, classes):
     sinks = getattr(layer.impl, "sinks", None) if getattr(layer, "has_sink", False) else None
     s = sinks.detach().float().view(1, heads, 1) if sinks is not None else None
     chunk = max(1, MASS_CHUNK_ELEMENTS // (heads * n))
-    total = n - query_start
-    mass = torch.empty(total, heads, N_CLASSES, dtype=torch.float16, device=q3.device)
-    entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
-    prompt_entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
-    sink = torch.empty(total, heads, dtype=torch.float16, device=q3.device) if s is not None else None
     for start in range(query_start, n, chunk):
         pos = torch.arange(start, min(start + chunk, n), device=q3.device)
         logits = _logits_for(layer, q3, k3, pos)                       # [p, H, T]
@@ -304,14 +344,133 @@ def _mass_for(layer, q3, k3, query_start, classes):
         ent = -(probs * torch.log(probs.clamp_min(1e-30))).sum(-1)      # [p, H]
         tok = probs[..., :n]
         m = torch.einsum("phn,nc->phc", tok, onehot)
-        sl = slice(start - query_start, start - query_start + len(pos))
-        mass[sl] = m.to(torch.float16)
-        entropy[sl] = ent.to(torch.float16)
-        prompt_entropy[sl] = pe.to(torch.float16)
+        # clone: a slice of probs would keep the chunk's whole probability block
+        # alive while the consumer works on the yielded values.
+        sink = probs[..., n].clone() if s is not None else None
+        del logits, probs, tok
+        yield start - query_start, start - query_start + len(pos), m, ent, sink, pe
+        del m, ent, sink, pe
+
+
+def _mass_for(layer, q3, k3, query_start, classes):
+    """Per-class attention mass and row entropies for every query >= query_start.
+
+    Consumes ``_row_chunks`` and stores each chunk's float32 statistics as
+    float16 (the mass-mode storage format).
+
+    Returns (mass float16 [P, H, C], entropy float16 [P, H], sink float16 [P, H] or None,
+    prompt_entropy float16 [P, H]). prompt_entropy is the entropy in nats of the
+    row restricted to the prompt keys [0, query_start) and renormalised to 1
+    (NaN where the row has no attendable prompt key).
+    """
+    import torch
+
+    n = q3.shape[0]
+    heads = layer.num_heads
+    has_sink = getattr(layer.impl, "sinks", None) is not None and getattr(layer, "has_sink", False)
+    total = n - query_start
+    mass = torch.empty(total, heads, N_CLASSES, dtype=torch.float16, device=q3.device)
+    entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
+    prompt_entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
+    sink = torch.empty(total, heads, dtype=torch.float16, device=q3.device) if has_sink else None
+    for lo, hi, m, ent, sk, pe in _row_chunks(layer, q3, k3, query_start, classes):
+        mass[lo:hi] = m.to(torch.float16)
+        entropy[lo:hi] = ent.to(torch.float16)
+        prompt_entropy[lo:hi] = pe.to(torch.float16)
         if sink is not None:
-            sink[sl] = probs[..., n].to(torch.float16)
-        del logits, probs, tok, m, pe
+            sink[lo:hi] = sk.to(torch.float16)
     return mass, entropy, sink, prompt_entropy
+
+
+def _plogp(x):
+    """``x ln x`` elementwise with ``0 ln 0 = 0`` (a zero must not give ``0 * -inf = nan``)."""
+    import torch
+
+    return torch.where(x > 0, x * torch.log(x.clamp_min(1e-300)), torch.zeros_like(x))
+
+
+def _summary_for(layer, q3, k3, query_start, classes):
+    """Sums over the completion rows of the mass-mode statistics, per local head.
+
+    Consumes the same ``_row_chunks`` generator as ``_mass_for`` and accumulates
+    float64 sums from the float32 chunk values (cast to float64 first, never
+    through float16). Row ``i`` (``0 <= i < P``, ``P = T - query_start``) is the
+    query at absolute position ``p = query_start + i``. With ``m`` = mass of
+    classes 0+1+2, ``r`` = mass of class 3, ``s`` = sink mass (0 without a sink),
+    ``H`` the whole-row entropy, ``Hp`` the prompt entropy and
+    ``G = -(m ln m + r ln r + s ln s)`` (``0 ln 0 = 0``):
+
+    * ``sum_entropy``: sum of ``H`` over all rows.
+    * ``sum_prompt_entropy`` / ``n_prompt_entropy``: sum and count of ``Hp`` over
+      the rows where it is finite; an undefined row adds 0 to both.
+    * ``sum_mass`` ``[H, 4]``, ``sum_sink``: sums of the per-class and sink mass.
+    * ``sum_pad_ratio`` / ``n_pad_ratio``: class-1 mass over the uniform baseline
+      ``(class-1 count in classes[:p+1]) / (p + 1)``, summed and counted over the
+      rows whose baseline is positive (the count is the same for every head).
+    * Over the rows where ``Hp`` is finite: ``sum_m_hp`` = sum of ``m * Hp``,
+      ``sum_chain_hi`` = sum of ``H - G``, ``sum_chain_lo`` = sum of
+      ``H - G - r ln(i + 1)``; an audit checks
+      ``sum_chain_lo <= sum_m_hp <= sum_chain_hi`` without the rows.
+
+    Design: float64 sums so that ~1e5 rows of float32 values accumulate without
+    visible rounding error; int64 counts because they are compared exactly with
+    the window geometry offline. The accumulators stay on the device and are
+    copied once at the end.
+
+    Parameters
+    ----------
+    layer, q3, k3, query_start, classes
+        As for ``_row_chunks``.
+
+    Returns
+    -------
+    dict of str to numpy.ndarray
+        Keys ``sum_entropy, sum_prompt_entropy, sum_sink, sum_pad_ratio,
+        sum_m_hp, sum_chain_hi, sum_chain_lo`` float64 ``[H]``; ``sum_mass``
+        float64 ``[H, 4]``; ``n_prompt_entropy, n_pad_ratio`` int64 ``[H]``.
+    """
+    import torch
+
+    n = q3.shape[0]
+    heads = layer.num_heads
+    dev = q3.device
+    f64 = torch.float64
+    names = ("sum_entropy", "sum_prompt_entropy", "sum_sink", "sum_pad_ratio",
+             "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
+    acc = {nm: torch.zeros(heads, dtype=f64, device=dev) for nm in names}
+    acc["sum_mass"] = torch.zeros(heads, N_CLASSES, dtype=f64, device=dev)
+    acc["n_prompt_entropy"] = torch.zeros(heads, dtype=torch.int64, device=dev)
+    acc["n_pad_ratio"] = torch.zeros(heads, dtype=torch.int64, device=dev)
+    # Class-1 count of every causal prefix; exact in float64 (integers below 2**53).
+    pad_prefix = torch.cumsum((classes == 1).to(f64), dim=0)
+    for lo, hi, m32, ent32, sink32, pe32 in _row_chunks(layer, q3, k3, query_start, classes):
+        m, ent, pe = m32.to(f64), ent32.to(f64), pe32.to(f64)
+        s = sink32.to(f64) if sink32 is not None else torch.zeros_like(ent)
+        defined = torch.isfinite(pe)                                  # [p, H]
+        zero = torch.zeros_like(ent)
+        pe0 = torch.where(defined, pe, zero)
+        acc["sum_entropy"] += ent.sum(0)
+        acc["sum_prompt_entropy"] += pe0.sum(0)
+        acc["n_prompt_entropy"] += defined.sum(0)
+        acc["sum_mass"] += m.sum(0)
+        acc["sum_sink"] += s.sum(0)
+        # Pad ratio: baseline of row i is n_pad(p) / (p + 1) with p = query_start + i.
+        absolute = torch.arange(query_start + lo, query_start + hi, device=dev)
+        baseline = pad_prefix[absolute] / (absolute.to(f64) + 1.0)    # [p]
+        has_pad = baseline > 0
+        ratio = m[..., 1] / torch.where(has_pad, baseline, torch.ones_like(baseline))[:, None]
+        acc["sum_pad_ratio"] += torch.where(has_pad[:, None], ratio, zero).sum(0)
+        acc["n_pad_ratio"] += int(has_pad.sum())
+        # Chain-rule sums, over the rows where the prompt entropy is defined.
+        mp = m[..., 0] + m[..., 1] + m[..., 2]
+        r = m[..., 3]
+        hi_term = ent + (_plogp(mp) + _plogp(r) + _plogp(s))          # H - G
+        ln_resp = torch.log(torch.arange(lo + 1, hi + 1, device=dev, dtype=f64))[:, None]
+        acc["sum_m_hp"] += torch.where(defined, mp * pe0, zero).sum(0)
+        acc["sum_chain_hi"] += torch.where(defined, hi_term, zero).sum(0)
+        acc["sum_chain_lo"] += torch.where(defined, hi_term - r * ln_resp, zero).sum(0)
+        del m32, ent32, sink32, pe32, m, ent, pe, s
+    return {nm: v.cpu().numpy() for nm, v in acc.items()}
 
 
 def _gate(layer, rows, v3, out_p):
@@ -599,7 +758,7 @@ def _mla_adapter(layer, job, session, n, q, kv_c_normed, k_pe, output):
 
 
 def _capture_tail(layer, job, session, n, view, q3, k3, v3, out2d, shared_from):
-    """Rows or mass of the job's positions for one layer, the gate, and finalization.
+    """Rows, mass or summary of the job's positions for one layer, the gate, and finalization.
 
     Everything past the layer-class adapters is shared: the view stands in for
     the layer in the row, mass and gate helpers.
@@ -631,6 +790,11 @@ def _capture_tail(layer, job, session, n, view, q3, k3, v3, out2d, shared_from):
             entry["prompt_entropy"] = pentropy.cpu().numpy()
             entry["sink"] = msink.cpu().numpy() if msink is not None else None
             del mass, entropy, msink, pentropy
+        elif job["mode"] == "summary":
+            # Same gate and same row reduction as mass mode; only the per-layer
+            # sums are kept, so the entry does not grow with P.
+            classes = torch.tensor(job["classes"], device=q3.device, dtype=torch.long)
+            entry["summary"] = _summary_for(view, q3, k3, job["query_start"], classes)
         else:
             entry["rows"] = rows.to(torch.float16).cpu().numpy()
             entry["sink"] = sink.to(torch.float16).cpu().numpy() if sink is not None else None
@@ -698,7 +862,20 @@ def _finalize(view, session):
     order = sorted(session["captured"].values(), key=lambda e: e["index"])
     mode = job["mode"]
     arrays = {}
-    if mode == "mass":
+    if mode == "summary":
+        # [L, H] sums and counts; sum_mass is [L, H, 4]. No per-row array exists.
+        for name in SUMMARY_FIELDS:
+            arrays[name] = np.stack([e["summary"][name] for e in order])
+        heads_local = arrays["sum_entropy"].shape[1]
+        rows = job["n_tokens"] - job["query_start"]
+        arrays["rows"] = np.asarray(rows, dtype=np.int64)
+        arrays["capture_version"] = np.asarray(SUMMARY_CAPTURE_VERSION, dtype=np.int32)
+        arrays["classes"] = np.asarray(job["classes"], dtype=np.uint8)
+        arrays["query_start"] = np.asarray(job["query_start"], dtype=np.int32)
+        # The shape of the per-row statistics that were summed (what mass mode
+        # would have stored); kept so the offline shape check reads the same field.
+        main_shape = [len(order), rows, heads_local, N_CLASSES]
+    elif mode == "mass":
         arrays["mass"] = np.stack([e["mass"] for e in order])         # [L, P, H, C]
         arrays["entropy"] = np.stack([e["entropy"] for e in order])   # [L, P, H]
         arrays["prompt_entropy"] = np.stack([e["prompt_entropy"] for e in order])   # [L, P, H]
@@ -710,8 +887,10 @@ def _finalize(view, session):
         arrays["rows"] = np.stack([e["rows"] for e in order])         # [L, P, H, T]
         lead = arrays["rows"].shape[1:3]
         main_shape = list(arrays["rows"].shape)
-    sink = np.stack([e["sink"] if e["sink"] is not None
-                     else np.zeros(lead, dtype=np.float16) for e in order])
+    if mode != "summary":
+        sink = np.stack([e["sink"] if e["sink"] is not None
+                         else np.zeros(lead, dtype=np.float16) for e in order])
+        arrays["sink"] = sink
     layers = np.asarray([e["index"] for e in order], dtype=np.int32)
     kinds = {e["attention"] for e in order}
     kind = kinds.pop() if len(kinds) == 1 else "mixed"
@@ -721,9 +900,11 @@ def _finalize(view, session):
         "n_tokens": job["n_tokens"], "positions": list(job["positions"]),
         "layers": layers.tolist(), "num_heads_local": int(view.num_heads),
         "num_kv_heads_local": int(view.num_kv_heads), "head_size": int(view.head_size),
-        "capture_version": CAPTURE_VERSION, "attention": kind,
-        "dtype": "float16", "rows_shape": main_shape, "mode": mode,
-        "query_start": job.get("query_start"), "n_classes": N_CLASSES if mode == "mass" else None,
+        "capture_version": SUMMARY_CAPTURE_VERSION if mode == "summary" else CAPTURE_VERSION,
+        "attention": kind,
+        "dtype": "float64" if mode == "summary" else "float16", "rows_shape": main_shape, "mode": mode,
+        "query_start": job.get("query_start"),
+        "n_classes": N_CLASSES if mode in ("mass", "summary") else None,
         "gate": {nm: session["gate"][nm] for nm in session["gate"]},
         "gate_tol": _gate_tol(),
         "gate_max_rel": max(g["max_rel"] for g in session["gate"].values()),
@@ -741,7 +922,7 @@ def _finalize(view, session):
                               "concatenate the ranks' arrays in rank order along the head axis")
     buf = io.BytesIO()
     np.savez(
-        buf, sink=sink, layers=layers, **arrays,
+        buf, layers=layers, **arrays,
         positions=np.asarray(job["positions"], dtype=np.int32),
         has_sink=np.asarray([e["has_sink"] for e in order], dtype=bool),
         sliding_window=np.asarray([e["window"] for e in order], dtype=np.int32),

@@ -1059,3 +1059,158 @@ def test_register_wraps_mla_forward_once(monkeypatch, tmp_path: Path) -> None:
     assert first is not _STUB_MLA_FORWARD
     plugin.register()
     assert StubMLAAttention.forward is first
+
+
+# --------------------------------------------------------------------------- summary mode
+from tests.evals.test_attention_analysis import summarize_rows  # noqa: E402
+
+#: Per-(layer, head) arrays of a summary npz (float64 sums and int64 counts).
+_SUMMARY_SUMS = ("sum_entropy", "sum_prompt_entropy", "sum_mass", "sum_sink", "sum_pad_ratio",
+                 "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
+_SUMMARY_COUNTS = ("n_prompt_entropy", "n_pad_ratio")
+
+
+def _reduced_job(tmp_path, job_id, seq, t, query_start, classes, gate_positions, mode):
+    job = _arm(tmp_path, job_id, seq, t, gate_positions)
+    job.update({"mode": mode, "query_start": query_start, "classes": classes})
+    (tmp_path / "current.json").write_text(json.dumps(job))
+    return job
+
+
+def _capture_both_ways(tmp_path, uploads, run, t, query_start, classes, gate_positions):
+    """Run the same forward as a mass job, then as a summary job; return both npz and the meta."""
+    _reduced_job(tmp_path, "mass1", 1, t, query_start, classes, gate_positions, "mass")
+    run()
+    _reduced_job(tmp_path, "sum1", 2, t, query_start, classes, gate_positions, "summary")
+    run()
+    for job_id in ("mass1", "sum1"):
+        done = json.loads((tmp_path / "done" / f"{job_id}.r0.json").read_text())
+        assert done["ok"] is True, done
+    mass = np.load(io.BytesIO(uploads["put://mass1/r0.npz"]))
+    summary = np.load(io.BytesIO(uploads["put://sum1/r0.npz"]))
+    return mass, summary, json.loads(uploads["put://sum1/r0.json"])
+
+
+def _assert_summary_matches_mass(mass, summary, classes, query_start):
+    """The summary equals the float64 sums of the same sequence's float16 mass-mode rows.
+
+    Tolerance: the summary is summed from the unrounded float32 rows, the reference from the
+    rows rounded to float16 (relative error up to 2**-11 ~ 4.9e-4 each). For the direct sums
+    that is rtol 1e-3 on sums of non-negative terms; the derived chain-rule terms (G = -sum p
+    ln p over three groups, m * Hp) carry a few such errors scaled by values of order 1-10
+    nats, so they get 5e-3 nats per row. Counts are exact.
+    """
+    p = mass["mass"].shape[1]
+    ref = summarize_rows(mass["mass"], mass["entropy"], mass["sink"], mass["prompt_entropy"],
+                         classes, query_start)
+    assert int(summary["rows"]) == p
+    for name in _SUMMARY_COUNTS:
+        np.testing.assert_array_equal(summary[name], ref[name], err_msg=name)
+    for name in ("sum_entropy", "sum_prompt_entropy", "sum_mass", "sum_sink", "sum_pad_ratio"):
+        np.testing.assert_allclose(summary[name], ref[name], rtol=1e-3, atol=1e-4 * p, err_msg=name)
+    for name in ("sum_m_hp", "sum_chain_hi", "sum_chain_lo"):
+        np.testing.assert_allclose(summary[name], ref[name], rtol=1e-3, atol=5e-3 * p, err_msg=name)
+
+
+def test_summary_mode_equals_the_float64_sums_of_the_mass_mode_rows(monkeypatch, tmp_path: Path) -> None:
+    """Window, sink, soft cap, GQA and KV sharing; several query chunks with an uneven last one."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, query_start = 40, 16, 24
+    # 8 heads x 40 keys x 5 rows per chunk: P = 16 rows run as chunks of 5, 5, 5 and 1.
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 8 * 40 * 5)
+    sinks = torch.full((8,), 3.0)   # a large sink share keeps H far from the prompt entropy
+    layers = [
+        StubAttention("model.layers.0.self_attn.attn", 8, 4, d, window=9),
+        StubAttention("model.layers.1.self_attn.attn", 8, 8, d, sinks=sinks),
+        StubAttention("model.layers.2.self_attn.attn", 8, 4, d, soft_cap=4.0,
+                      kv_target="model.layers.0.self_attn.attn", window=9),
+        StubAttention("model.layers.3.self_attn.attn", 8, 4, d),
+    ]
+    classes = [0] * 10 + [1] * 12 + [2] * 2 + [3] * 16
+    mass, summary, meta = _capture_both_ways(
+        tmp_path, uploads, lambda: _run_forward(layers, t, d, seed=3), t, query_start, classes, [t - 1, 30])
+    _assert_summary_matches_mass(mass, summary, classes, query_start)
+    # Window 9: rows i < 8 see a prompt key, the global layers all 16 rows.
+    assert summary["n_prompt_entropy"][:, 0].tolist() == [8, 16, 8, 16]
+    assert (summary["n_pad_ratio"] == 16).all()
+    # The prompt entropy is not the whole-row entropy (the sink takes a real share).
+    assert float(np.abs(summary["sum_entropy"] - summary["sum_prompt_entropy"]).max()) > 1.0
+
+
+def test_summary_mode_equals_the_sums_for_latent_attention_layers(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, query_start = 30, 18
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 2 * 30 * 5)   # chunks of 5, 5 and 2 rows
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", heads=2, seed=i) for i in range(2)]
+    classes = [0] * 8 + [1] * 8 + [2] * 2 + [3] * 12
+    mass, summary, meta = _capture_both_ways(
+        tmp_path, uploads, lambda: _run_mla_forward(layers, t, seed=8), t, query_start, classes, [t - 1, 20])
+    _assert_summary_matches_mass(mass, summary, classes, query_start)
+    assert meta["attention"] == "mla" and (summary["n_prompt_entropy"] == 12).all()
+
+
+def test_summary_npz_holds_sums_not_rows_and_the_meta_names_the_mode(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, query_start = 20, 8, 12
+    layers = [StubAttention("model.layers.0.self_attn.attn", 4, 2, d),
+              StubAttention("model.layers.1.self_attn.attn", 4, 2, d, window=5)]
+    classes = [0] * 12 + [3] * 8
+    _reduced_job(tmp_path, "s", 1, t, query_start, classes, [t - 1], "summary")
+    _run_forward(layers, t, d, seed=1)
+    done = json.loads((tmp_path / "done" / "s.r0.json").read_text())
+    assert done["ok"] is True and done["gate_max_rel"] < 3e-2, done
+    npz = np.load(io.BytesIO(uploads["put://s/r0.npz"]))
+    meta = json.loads(uploads["put://s/r0.json"])
+    assert meta["mode"] == "summary" and meta["capture_version"] == 3
+    assert meta["rows_shape"] == [2, t - query_start, 4, 4] and meta["query_start"] == query_start
+    assert meta["n_classes"] == 4 and meta["bytes"] == len(uploads["put://s/r0.npz"])
+    assert not {"mass", "entropy", "prompt_entropy", "sink"} & set(npz.files)
+    assert int(npz["rows"]) == t - query_start and npz["rows"].shape == ()
+    assert int(npz["capture_version"]) == 3
+    for name in _SUMMARY_SUMS:
+        assert npz[name].dtype == np.float64, name
+        assert npz[name].shape == ((2, 4, 4) if name == "sum_mass" else (2, 4)), name
+    for name in _SUMMARY_COUNTS:
+        assert np.issubdtype(npz[name].dtype, np.integer) and npz[name].shape == (2, 4), name
+    for name in ("classes", "query_start", "layers", "positions", "has_sink", "sliding_window",
+                 "kv_shared_from"):
+        assert name in npz.files, name
+    assert list(npz["sliding_window"]) == [0, 5] and list(npz["classes"]) == classes
+    # Every array the client's verification and the audit expect is present.
+    from smolbench.evals import attention as client
+    assert set(client.SUMMARY_ARRAYS) <= set(npz.files)
+
+
+def test_summary_without_a_prompt_has_zero_counts_and_zero_sums(monkeypatch, tmp_path: Path) -> None:
+    """query_start == 0: prompt entropy is undefined on every row, so it adds 0, never NaN."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d = 12, 8
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, d)
+    _reduced_job(tmp_path, "z", 1, t, 0, [3] * t, [t - 1], "summary")
+    _run_forward([layer], t, d, seed=2)
+    npz = np.load(io.BytesIO(uploads["put://z/r0.npz"]))
+    assert int(npz["rows"]) == t
+    for name in ("n_prompt_entropy", "n_pad_ratio", "sum_prompt_entropy", "sum_pad_ratio", "sum_m_hp",
+                 "sum_chain_hi", "sum_chain_lo"):
+        assert (npz[name] == 0).all(), name
+    assert np.isfinite(npz["sum_entropy"]).all() and (npz["sum_entropy"] > 0).all()
+
+
+def test_summary_mode_still_runs_the_gate(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d = 24, 16
+    good = StubAttention("model.layers.0.self_attn.attn", 4, 4, d)
+    liar = StubAttention("model.layers.1.self_attn.attn", 4, 4, d)
+    liar.ref_scale, liar.impl.scale = 4.0, 0.01
+    _reduced_job(tmp_path, "badsum", 3, t, 10, [0] * 10 + [3] * 14, [t - 1], "summary")
+    _run_forward([good, liar], t, d)
+    done = json.loads((tmp_path / "done" / "badsum.r0.json").read_text())
+    assert done["ok"] is False and "gate failed" in done["error"] and not uploads
+
+
+def test_summary_mode_rejects_malformed_class_vectors(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    _reduced_job(tmp_path, "bad", 2, 10, 5, [0] * 9, [9], "summary")   # one class short
+    _run_forward([layer], 10, 8)
+    assert not uploads and not (tmp_path / "done").exists()

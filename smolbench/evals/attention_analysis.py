@@ -1,4 +1,4 @@
-"""Offline reader for mass-mode attention captures: rank concatenation and the pad-mass ratio.
+"""Offline reader for mass- and summary-mode attention captures: rank concatenation and the pad-mass ratio.
 
 What mass mode is
 -----------------
@@ -44,6 +44,19 @@ renormalized to 1 (NaN where a row has no attendable prompt key).
 :func:`entropy_by_layer` reduces it, and the whole-row entropy, to one mean per
 layer together with the counts of defined values.
 
+Summary captures
+----------------
+In ``mode: "summary"`` the plugin keeps no per-row arrays. Per rank it stores
+the SUMS over the ``P`` response rows of the mass-mode statistics, each
+``[L, H_local]`` (``sum_mass`` is ``[L, H_local, 4]``), plus ``rows`` (``P``)
+and the counts ``n_prompt_entropy`` / ``n_pad_ratio`` of rows where the prompt
+entropy and the pad ratio are defined. :func:`load_capture` reads either kind
+(``"kind"`` says which) and joins ranks on the head axis exactly as
+:func:`load_mass` does. :func:`entropy_by_layer` and :func:`pad_ratio_sums`
+accept both kinds and give the same per-layer means, sums and counts for a
+summary as for the same sequence captured in mass mode. Per-row questions
+(:func:`whitespace_ratio`) need a mass capture.
+
 Scope
 -----
 This is a small OFFLINE helper: it reads finished uploads out of the results
@@ -66,14 +79,16 @@ The documented pipeline is load-then-ratio::
 from __future__ import annotations
 
 import io
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
 
 __all__ = [
     "PAD_CLASS",
     "entropy_by_layer",
+    "load_capture",
     "load_mass",
+    "pad_ratio_sums",
     "whitespace_ratio",
 ]
 
@@ -85,6 +100,185 @@ PAD_CLASS: int = 1
 #: Axis of ``mass`` / ``entropy`` / ``sink`` holding heads. Rank-local in each
 #: stored npz, global after :func:`load_mass` concatenates the ranks.
 _HEAD_AXIS: int = 2
+
+#: Per-(layer, head) arrays of a summary capture (everything in the plugin's
+#: summary layout except the 0-d ``rows``), each ``[L, H_local]`` except
+#: ``sum_mass`` (``[L, H_local, 4]``). The head axis is axis 1 in all of them.
+#: Spelled out here for the same reason ``load_mass`` spells out the key
+#: layout: this reader stays independent of the capture client module.
+_SUMMARY_HEAD_ARRAYS: Tuple[str, ...] = (
+    "sum_entropy",
+    "sum_prompt_entropy",
+    "n_prompt_entropy",
+    "sum_mass",
+    "sum_sink",
+    "sum_pad_ratio",
+    "n_pad_ratio",
+    "sum_m_hp",
+    "sum_chain_hi",
+    "sum_chain_lo",
+)
+_SUMMARY_HEAD_AXIS: int = 1
+
+
+def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
+    """Read and join one job's ``tp`` rank npz files, mass or summary; shared implementation.
+
+    Design: one implementation behind :func:`load_mass` and
+    :func:`load_capture`, so the rank-agreement checks and the one-GET-per-rank
+    contract cannot drift between the two. The kind is decided per rank by the
+    presence of ``sum_entropy``; the returned dict carries ``"kind"``.
+
+    Raises
+    ------
+    ValueError
+        When ``tp < 1``; when ranks differ in kind (message names both kinds),
+        ``rows`` (summary), ``classes``, ``query_start``, ``layers``,
+        ``prompt_entropy`` presence or ``sliding_window``; the message names
+        the field and the rank.
+    """
+    # Guard first: ``range(0)`` would read nothing and leave rank 0 -- the
+    # reference every agreement check is made against -- undefined.
+    if tp < 1:
+        raise ValueError(f"tp must be >= 1, got {tp}")
+
+    # One client for all ranks: the store's ``_client()`` is deliberately
+    # UNCACHED (it builds a fresh boto3 client so rotated credentials apply),
+    # and the ``tp`` reads here are one logical read of one job -- short
+    # enough that a credential cannot rotate underneath them.
+    client = store._client()
+
+    mass_parts: List[np.ndarray] = []
+    entropy_parts: List[np.ndarray] = []
+    sink_parts: List[np.ndarray] = []
+    prompt_entropy_parts: List[np.ndarray] = []
+    summary_parts: Dict[str, List[np.ndarray]] = {n: [] for n in _SUMMARY_HEAD_ARRAYS}
+    sliding_window: np.ndarray | None = None
+    classes: np.ndarray | None = None
+    layers: np.ndarray | None = None
+    query_start: int = 0
+    rows: int = 0
+    kind: str = ""
+
+    for rank in range(tp):
+        # Key layout mirrors ``attention.rank_keys`` (``<stem>.r<rank>.npz``).
+        # Spelled out rather than imported: this offline, numpy-only reader
+        # stays independent of the capture client module.
+        key = f"{prefix}{job_id}.r{rank}.npz"
+        # No try/except: a missing rank propagates the store's own error.
+        body = client.get_object(Bucket=store.bucket, Key=key)["Body"].read()
+        # ``np.load`` over a BytesIO is lazy, so every array wanted is pulled
+        # out inside this block -- the object itself is fetched exactly once.
+        arrays = np.load(io.BytesIO(body))
+        rank_classes = arrays["classes"]
+        rank_layers = arrays["layers"]
+        rank_query_start = int(arrays["query_start"])
+        # Version-1 captures (and old fixtures) lack these two arrays.
+        rank_prompt_entropy = arrays["prompt_entropy"] if "prompt_entropy" in arrays else None
+        rank_sliding_window = arrays["sliding_window"] if "sliding_window" in arrays else None
+        # A rank is a summary rank iff it holds ``sum_entropy``; mass ranks
+        # never do, so the one array decides the layout.
+        rank_kind = "summary" if "sum_entropy" in arrays else "mass"
+        rank_rows = int(arrays["rows"]) if rank_kind == "summary" else 0
+
+        if rank == 0:
+            classes, layers, query_start = rank_classes, rank_layers, rank_query_start
+            sliding_window = rank_sliding_window
+            kind, rows = rank_kind, rank_rows
+        else:
+            # Kind first: a mass rank beside a summary rank has none of the
+            # other's arrays, so every later check would be meaningless.
+            if rank_kind != kind:
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} is a {rank_kind} capture but rank 0 "
+                    f"is a {kind} capture: the ranks come from different captures, "
+                    "refusing to concatenate their heads"
+                )
+            if rank_rows != rows:
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about rows "
+                    f"({rank_rows} != {rows}): the ranks captured different jobs, "
+                    "refusing to concatenate their heads"
+                )
+            # Check BEFORE appending, so a disagreeing rank can never reach
+            # the concatenation. ``array_equal`` is length-aware: a rank whose
+            # sequence is a different length is unequal, not a broadcast error.
+            if not np.array_equal(rank_classes, classes):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about classes: the ranks "
+                    "captured different jobs, refusing to concatenate their heads"
+                )
+            if rank_query_start != query_start:
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about query_start "
+                    f"({rank_query_start} != {query_start}): the ranks captured "
+                    "different jobs, refusing to concatenate their heads"
+                )
+            if not np.array_equal(rank_layers, layers):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about layers: the ranks "
+                    "captured different jobs, refusing to concatenate their heads"
+                )
+            # A version-1 rank beside a version-2 rank is a different capture:
+            # joining them would silently drop or misalign prompt_entropy.
+            if (rank_prompt_entropy is None) != (not prompt_entropy_parts):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about prompt_entropy "
+                    "presence: the ranks come from different captures, refusing "
+                    "to concatenate their heads"
+                )
+            if (rank_sliding_window is None) != (sliding_window is None) or (
+                sliding_window is not None
+                and not np.array_equal(rank_sliding_window, sliding_window)
+            ):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about sliding_window: "
+                    "the ranks captured different jobs, refusing to concatenate "
+                    "their heads"
+                )
+
+        if kind == "summary":
+            for name in _SUMMARY_HEAD_ARRAYS:
+                summary_parts[name].append(arrays[name])
+            continue
+        mass_parts.append(arrays["mass"])
+        entropy_parts.append(arrays["entropy"])
+        sink_parts.append(arrays["sink"])
+        if rank_prompt_entropy is not None:
+            prompt_entropy_parts.append(rank_prompt_entropy)
+
+    if kind == "summary":
+        return {
+            "kind": "summary",
+            "rows": rows,
+            **{
+                n: np.concatenate(p, axis=_SUMMARY_HEAD_AXIS)
+                for n, p in summary_parts.items()
+            },
+            "classes": classes,
+            "query_start": query_start,
+            "layers": layers,
+            "sliding_window": sliding_window,
+        }
+    # Rank order is list order, so a plain concatenate reproduces the model's
+    # own head numbering. Dtypes are preserved (no ``astype``) by design.
+    return {
+        "kind": "mass",
+        "mass": np.concatenate(mass_parts, axis=_HEAD_AXIS),
+        "entropy": np.concatenate(entropy_parts, axis=_HEAD_AXIS),
+        "sink": np.concatenate(sink_parts, axis=_HEAD_AXIS),
+        "classes": classes,
+        "query_start": query_start,
+        "layers": layers,
+        "prompt_entropy": (
+            np.concatenate(prompt_entropy_parts, axis=_HEAD_AXIS)
+            if prompt_entropy_parts
+            else None
+        ),
+        "sliding_window": sliding_window,
+    }
+
+
 
 
 def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
@@ -155,7 +349,8 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
     Raises
     ------
     ValueError
-        When ``tp < 1``, or when a rank's ``classes``, ``query_start`` or
+        When the capture is a summary capture (use :func:`load_capture`; the
+        message says "summary"), when ``tp < 1``, or when a rank's ``classes``, ``query_start`` or
         ``layers`` differ from rank 0's. Also when ``prompt_entropy`` is
         present on some ranks and absent on others, or ``sliding_window``
         presence or values differ from rank 0's. The message names the
@@ -179,106 +374,64 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
     >>> job["mass"].shape  # 36 layers, 1200 queries, 8 x 8 heads  # doctest: +SKIP
     (36, 1200, 64, 4)
     """
-    # Guard first: ``range(0)`` would read nothing and leave rank 0 -- the
-    # reference every agreement check is made against -- undefined.
-    if tp < 1:
-        raise ValueError(f"tp must be >= 1, got {tp}")
+    out = _load_ranks(store, prefix, job_id, tp)
+    if out["kind"] == "summary":
+        raise ValueError(
+            f"job {job_id!r} is a summary capture, which holds no per-row arrays; "
+            "read it with load_capture"
+        )
+    # Documented key set of load_mass has no ``kind``.
+    del out["kind"]
+    return out
 
-    # One client for all ranks: the store's ``_client()`` is deliberately
-    # UNCACHED (it builds a fresh boto3 client so rotated credentials apply),
-    # and the ``tp`` reads here are one logical read of one job -- short
-    # enough that a credential cannot rotate underneath them.
-    client = store._client()
 
-    mass_parts: List[np.ndarray] = []
-    entropy_parts: List[np.ndarray] = []
-    sink_parts: List[np.ndarray] = []
-    prompt_entropy_parts: List[np.ndarray] = []
-    sliding_window: np.ndarray | None = None
-    classes: np.ndarray | None = None
-    layers: np.ndarray | None = None
-    query_start: int = 0
+def load_capture(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
+    """Download one job's ``tp`` rank captures, mass or summary, and join them head-wise.
 
-    for rank in range(tp):
-        # Key layout mirrors ``attention.rank_keys`` (``<stem>.r<rank>.npz``).
-        # Spelled out rather than imported: this offline, numpy-only reader
-        # stays independent of the capture client module.
-        key = f"{prefix}{job_id}.r{rank}.npz"
-        # No try/except: a missing rank propagates the store's own error.
-        body = client.get_object(Bucket=store.bucket, Key=key)["Body"].read()
-        # ``np.load`` over a BytesIO is lazy, so every array wanted is pulled
-        # out inside this block -- the object itself is fetched exactly once.
-        arrays = np.load(io.BytesIO(body))
-        rank_classes = arrays["classes"]
-        rank_layers = arrays["layers"]
-        rank_query_start = int(arrays["query_start"])
-        # Version-1 captures (and old fixtures) lack these two arrays.
-        rank_prompt_entropy = arrays["prompt_entropy"] if "prompt_entropy" in arrays else None
-        rank_sliding_window = arrays["sliding_window"] if "sliding_window" in arrays else None
+    Reads ``<prefix><job_id>.r<rank>.npz`` for ``rank = 0 .. tp - 1`` exactly
+    once each, in rank order, through the same store surface as
+    :func:`load_mass`. A rank is a summary rank iff its npz holds
+    ``sum_entropy``, otherwise a mass rank; all ranks must be the same kind.
 
-        if rank == 0:
-            classes, layers, query_start = rank_classes, rank_layers, rank_query_start
-            sliding_window = rank_sliding_window
-        else:
-            # Check BEFORE appending, so a disagreeing rank can never reach
-            # the concatenation. ``array_equal`` is length-aware: a rank whose
-            # sequence is a different length is unequal, not a broadcast error.
-            if not np.array_equal(rank_classes, classes):
-                raise ValueError(
-                    f"rank {rank} of job {job_id!r} disagrees about classes: the ranks "
-                    "captured different jobs, refusing to concatenate their heads"
-                )
-            if rank_query_start != query_start:
-                raise ValueError(
-                    f"rank {rank} of job {job_id!r} disagrees about query_start "
-                    f"({rank_query_start} != {query_start}): the ranks captured "
-                    "different jobs, refusing to concatenate their heads"
-                )
-            if not np.array_equal(rank_layers, layers):
-                raise ValueError(
-                    f"rank {rank} of job {job_id!r} disagrees about layers: the ranks "
-                    "captured different jobs, refusing to concatenate their heads"
-                )
-            # A version-1 rank beside a version-2 rank is a different capture:
-            # joining them would silently drop or misalign prompt_entropy.
-            if (rank_prompt_entropy is None) != (not prompt_entropy_parts):
-                raise ValueError(
-                    f"rank {rank} of job {job_id!r} disagrees about prompt_entropy "
-                    "presence: the ranks come from different captures, refusing "
-                    "to concatenate their heads"
-                )
-            if (rank_sliding_window is None) != (sliding_window is None) or (
-                sliding_window is not None
-                and not np.array_equal(rank_sliding_window, sliding_window)
-            ):
-                raise ValueError(
-                    f"rank {rank} of job {job_id!r} disagrees about sliding_window: "
-                    "the ranks captured different jobs, refusing to concatenate "
-                    "their heads"
-                )
+    Parameters
+    ----------
+    store, prefix, job_id, tp
+        As for :func:`load_mass`.
 
-        mass_parts.append(arrays["mass"])
-        entropy_parts.append(arrays["entropy"])
-        sink_parts.append(arrays["sink"])
-        if rank_prompt_entropy is not None:
-            prompt_entropy_parts.append(rank_prompt_entropy)
+    Returns
+    -------
+    Dict[str, Any]
+        For a mass capture, exactly :func:`load_mass`'s dict plus
+        ``"kind": "mass"``. For a summary capture:
 
-    # Rank order is list order, so a plain concatenate reproduces the model's
-    # own head numbering. Dtypes are preserved (no ``astype``) by design.
-    return {
-        "mass": np.concatenate(mass_parts, axis=_HEAD_AXIS),
-        "entropy": np.concatenate(entropy_parts, axis=_HEAD_AXIS),
-        "sink": np.concatenate(sink_parts, axis=_HEAD_AXIS),
-        "classes": classes,
-        "query_start": query_start,
-        "layers": layers,
-        "prompt_entropy": (
-            np.concatenate(prompt_entropy_parts, axis=_HEAD_AXIS)
-            if prompt_entropy_parts
-            else None
-        ),
-        "sliding_window": sliding_window,
-    }
+        ``kind``
+            ``"summary"``.
+        ``rows``
+            ``int``, the number of response rows ``P`` summed.
+        ``sum_entropy``, ``sum_prompt_entropy``, ``n_prompt_entropy``, ``sum_sink``, ``sum_pad_ratio``, ``n_pad_ratio``, ``sum_m_hp``, ``sum_chain_hi``, ``sum_chain_lo``
+            ``[L, H_total]``, ranks joined on axis 1, dtype as stored.
+        ``sum_mass``
+            ``[L, H_total, 4]``, ranks joined on axis 1, dtype as stored.
+        ``classes``, ``query_start``, ``layers``
+            As in the mass dict (rank 0's, ranks agree).
+        ``sliding_window``
+            ``[L]`` int32 or ``None`` when the capture stores none.
+
+    Raises
+    ------
+    ValueError
+        When ``tp < 1``, when the ranks are of different kinds (the message
+        names both), or when they disagree on ``classes``, ``query_start``,
+        ``layers``, ``sliding_window`` or (summary) ``rows``; the message names
+        the field and the rank.
+    Exception
+        Whatever the store raises for a missing object, unchanged.
+
+    Notes
+    -----
+    Network: exactly ``tp`` GETs, in rank order; nothing is written.
+    """
+    return _load_ranks(store, prefix, job_id, tp)
 
 
 def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
@@ -293,9 +446,16 @@ def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
     Parameters
     ----------
     job : Mapping[str, Any]
-        A joined job as returned by :func:`load_mass`. Only ``"entropy"``
-        (``[L, P, H]``) and ``"prompt_entropy"`` (``[L, P, H]`` or ``None``;
-        a missing key counts as ``None``) are read. Not mutated.
+        A joined job as returned by :func:`load_mass` or :func:`load_capture`.
+        For a mass job only ``"entropy"`` (``[L, P, H]``) and
+        ``"prompt_entropy"`` (``[L, P, H]`` or ``None``; a missing key counts
+        as ``None``) are read. For a summary job (``job["kind"] == "summary"``)
+        ``"rows"``, ``"sum_entropy"``, ``"sum_prompt_entropy"`` and
+        ``"n_prompt_entropy"`` are read: the entropy mean is
+        ``sum_entropy[l].sum() / (rows * H)`` with count ``rows * H``, and the
+        prompt-entropy mean divides ``sum_prompt_entropy[l].sum()`` by
+        ``n_prompt_entropy[l].sum()``. Both equal the mass path's numbers for
+        the same sequence. Not mutated.
 
     Returns
     -------
@@ -334,6 +494,8 @@ def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
     >>> out["entropy"].tolist(), out["prompt_entropy_count"].tolist()
     ([2.0, 2.0], [0, 0])
     """
+    if job.get("kind") == "summary":
+        return _summary_entropy_by_layer(job)
     entropy = np.asarray(job["entropy"])
     if entropy.ndim != 3:
         raise ValueError(f"entropy must be 3-d [L, P, H], got ndim {entropy.ndim}")
@@ -369,6 +531,70 @@ def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
         "entropy": e_mean,
         "entropy_count": e_count,
     }
+
+
+def _summary_entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
+    """:func:`entropy_by_layer` for a summary job: divide stored sums by stored counts."""
+    sum_entropy = np.asarray(job["sum_entropy"], dtype=np.float64)
+    if sum_entropy.ndim != 2:
+        raise ValueError(f"sum_entropy must be 2-d [L, H], got ndim {sum_entropy.ndim}")
+    n_layers, n_heads = sum_entropy.shape
+    # Whole-row entropy is defined for every (row, head), so its count is
+    # exactly rows * H per layer.
+    e_count = np.full(n_layers, int(job["rows"]) * n_heads, dtype=np.int64)
+    e_mean = np.full(n_layers, np.nan, dtype=np.float64)
+    np.divide(sum_entropy.sum(axis=1), e_count, out=e_mean, where=e_count > 0)
+    pe_count = np.asarray(job["n_prompt_entropy"]).sum(axis=1).astype(np.int64)
+    pe_total = np.asarray(job["sum_prompt_entropy"], dtype=np.float64).sum(axis=1)
+    # where= keeps count 0 out of the divide: NaN, no RuntimeWarning.
+    pe_mean = np.full(n_layers, np.nan, dtype=np.float64)
+    np.divide(pe_total, pe_count, out=pe_mean, where=pe_count > 0)
+    return {
+        "prompt_entropy": pe_mean,
+        "prompt_entropy_count": pe_count,
+        "entropy": e_mean,
+        "entropy_count": e_count,
+    }
+
+
+def pad_ratio_sums(job: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+    """Sum the pad ratio over the response rows where it is defined, per (layer, head).
+
+    The pad ratio is undefined (NaN in :func:`whitespace_ratio`) for a row
+    whose causal prefix holds no pad token. Returning the sum and the count of
+    defined rows, rather than a mean, lets callers pool heads, layers or
+    several jobs exactly.
+
+    Parameters
+    ----------
+    job : Mapping[str, Any]
+        A joined job from :func:`load_capture`. A mass job is reduced through
+        :func:`whitespace_ratio` on ``mass`` cast to float32; a summary job
+        (``job["kind"] == "summary"``) already holds ``sum_pad_ratio`` and
+        ``n_pad_ratio``. Not mutated.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        ``sums`` ``[L, H]`` float64 and ``counts`` ``[L, H]`` int64.
+
+    Raises
+    ------
+    ValueError
+        As :func:`whitespace_ratio`, for a mass job whose arrays are malformed.
+    """
+    if job.get("kind") == "summary":
+        return (
+            np.asarray(job["sum_pad_ratio"], dtype=np.float64),
+            np.asarray(job["n_pad_ratio"]).astype(np.int64),
+        )
+    ratio = whitespace_ratio(
+        np.asarray(job["mass"]).astype(np.float32), job["classes"], int(job["query_start"])
+    )
+    defined = ~np.isnan(ratio)
+    # float64 accumulation: the float32 ratios are summed over thousands of rows.
+    sums = np.where(~defined, 0.0, ratio).sum(axis=1, dtype=np.float64)
+    return sums, defined.sum(axis=1).astype(np.int64)
 
 
 def whitespace_ratio(mass: np.ndarray, classes: np.ndarray, query_start: int) -> np.ndarray:

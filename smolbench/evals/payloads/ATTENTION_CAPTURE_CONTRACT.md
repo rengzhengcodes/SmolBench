@@ -95,7 +95,7 @@ Upload (per rank, via the presigned URLs in the job file):
   `sliding_window` int32 `[L]` (0 = full), `kv_shared_from` int32 `[L]`
   (-1 = own KV).
 * `.json` meta: `job_id, rank, tp, n_tokens, positions, layers, num_heads_local,
-  num_kv_heads_local, head_size, capture_version (2; absent = 1), attention ("mha" | "mla" | "mixed"; see
+  num_kv_heads_local, head_size, capture_version (2; 3 for summary mode; absent = 1), attention ("mha" | "mla" | "mixed"; see
   the last section), dtype ("float16"), gate: {layer: {max_abs,
   max_rel}}, gate_tol, vllm_commit, model, bytes, wall_s`.
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
@@ -208,13 +208,87 @@ the row has no attendable prompt key: sliding-window rows with `i >= w - 1`,
 and every row when `query_start == 0`. On such rows the stored prompt mass
 (classes 0+1+2) is exactly 0.
 
-The meta json carries `capture_version`: 2 now; a meta without the field is
-version 1. Version 2 added `prompt_entropy` (mass mode) and the field itself.
-Rows mode has no `prompt_entropy`.
+The meta json carries `capture_version`: 2 for rows and mass captures (3 for
+summary captures, see the next section); a meta without the field is version 1.
+Version 2 added `prompt_entropy` (mass mode) and the field itself. Rows mode has
+no `prompt_entropy`.
 
 A new masking rule (a layer type that masks prompt keys other than causally or
 by the sliding window) must encode its geometry in the npz: the audit derives
 which rows must be NaN from `sliding_window` and `query_start` alone.
+
+## Mode `summary` (added 2026-11-16): the mass statistics summed on the box
+
+Mass mode stores `[L, P, H_local, ...]` arrays, so its size grows with P, the
+number of completion rows. Deduction responses run to 10k-120k tokens, which
+makes those arrays too large to store per mark. Summary mode keeps what an
+analysis needs from them: sums over the rows, per layer and local head.
+
+Job fields: the same as mass mode (`mode: "summary"`, `query_start`, `classes`,
+`positions`); the agent forwards them unchanged, so no agent change is needed.
+`classes` must have `n_tokens` entries and `0 <= query_start < n_tokens`, as in
+mass mode; a job that violates this is ignored. The gate runs exactly as in
+mass mode, at `positions`.
+
+npz layout (stacked over layers in layer order; `P = n_tokens - query_start`):
+* float64 `[L, H_local]`: `sum_entropy`, `sum_prompt_entropy`, `sum_sink`,
+  `sum_pad_ratio`, `sum_m_hp`, `sum_chain_hi`, `sum_chain_lo`.
+* float64 `[L, H_local, 4]`: `sum_mass`.
+* int64 `[L, H_local]`: `n_prompt_entropy`, `n_pad_ratio`.
+* `rows` int64, a 0-d scalar holding `P`; `capture_version` int32, a 0-d scalar
+  holding 3.
+* `classes` uint8 `[T]`, `query_start` int32, `positions` int32, `layers`,
+  `has_sink`, `sliding_window`, `kv_shared_from` as in mass mode.
+* It holds no `mass`, `entropy`, `prompt_entropy` or `sink` array.
+
+Definitions. Row `i` (`i = 0 .. P-1`) is the query at absolute position
+`p = query_start + i`. Let `m` = the row's mass of classes 0+1+2, `r` = its
+class-3 mass, `s` = its sink mass (0 on a layer without a sink), `H` = the
+whole-row entropy, `Hp` = the prompt entropy (as defined above; NaN where
+undefined) and `plogp(x) = x ln x` with `plogp(0) = 0`, so that no row gives
+`0 * -inf = NaN`. Let `G = -(plogp(m) + plogp(r) + plogp(s))`.
+* `sum_entropy`: sum of `H` over all `P` rows.
+* `sum_prompt_entropy`, `n_prompt_entropy`: sum and count of `Hp` over the rows
+  where `Hp` is finite. A row where it is NaN adds exactly 0 to both.
+* `sum_mass` `[H_local, 4]`: sum over rows of the per-class mass. `sum_sink`:
+  sum over rows of the sink mass (all zeros without a sink).
+* `sum_pad_ratio`, `n_pad_ratio`: the per-row quantity that `whitespace_ratio`
+  averages. `baseline(p)` = (number of class-1 entries in `classes[:p+1]`) /
+  `(p + 1)`. For rows with `baseline > 0` the ratio is the row's class-1 mass
+  divided by `baseline`; the sum is over those rows and the count is their
+  number (the same for every head).
+* Over the rows where `Hp` is finite: `sum_m_hp` = sum of `m * Hp`;
+  `sum_chain_hi` = sum of `H - G`; `sum_chain_lo` = sum of
+  `H - G - r * ln(i + 1)`. An offline audit can check the grouping rule
+  `sum_chain_lo <= sum_m_hp <= sum_chain_hi` from these three sums without the
+  rows.
+* Every chunk of rows contributes; none is skipped.
+
+Precision: the sums are float64 and are accumulated from the float32 chunk
+values (cast to float64, never through float16), so they carry no float16
+rounding. Counts are exact int64 integers, so an audit can compare them with
+the window geometry: `n_prompt_entropy` is `P` on a global layer with
+`query_start > 0`, `min(P, w - 1)` on a layer with window `w`, and 0 when
+`query_start == 0`.
+
+One reduction: summary and mass mode both consume the same row reduction in the
+plugin (`_row_chunks`). A summary is the sum of the rows that mass mode would
+have stored, taken before mass mode's float16 rounding.
+
+Meta json: as for mass mode except `mode: "summary"`, `capture_version: 3`,
+`dtype: "float64"` and `rows_shape: [L, P, H_local, 4]`. `rows_shape` is the
+shape of the per-row statistics that were summed (what mass mode would have
+stored), not the shape of any stored array; it keeps the shape check of the
+offline audit reading the same field. `n_classes` is 4 and `query_start` is the
+job's.
+
+`capture_version` by kind:
+
+| `capture_version` | Kind |
+|---|---|
+| 1 (field absent) | mass without `prompt_entropy` |
+| 2 | mass with `prompt_entropy` (and rows mode) |
+| 3 | summary |
 
 ## Multi-head latent attention (DeepSeek-V3.1)
 
@@ -294,7 +368,7 @@ other-length forward), in this order, first failure wins:
   `head_size = 576`).
 * In a `"mixed"` job the head counts and `head_size` describe the last
   captured layer (the plugin reads them from that layer's view).
-* `capture_version` stays 2: the new fields are additive.
+* `capture_version` is not changed by MLA: the new fields are additive (2 for rows and mass, 3 for summary).
 
 ### Limits
 
