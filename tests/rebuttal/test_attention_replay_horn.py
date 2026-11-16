@@ -193,7 +193,9 @@ def test_the_real_templates_render_the_system_turn(model, monkeypatch) -> None:
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"{model} chat template not cached: {type(exc).__name__}")
     fmt = ar.REASONING_FORMATS[model]
-    query = PROMPTS["pad"]
+    # The real rungs write conjunctions as U+2227; some byte-level tokenizers split it into
+    # tokens whose character offsets overlap, which must not stop the deduction rebuild.
+    query = PROMPTS["pad"] + "Rule: c(x) from a(x) \u2227 b(x).\n"
     r = ar.rebuild_sequence(query, "Step by step.", "derive b(x) from a(x)", tokenizer=tok, template=real,
                             fmt=fmt, system=HORN_SYSTEM, pad_query_span=(0, 0))
     ar.check_reasoning_format(model, tok, r.prompt_text)

@@ -1199,8 +1199,9 @@ def rebuild_sequence(
     ``token_classes`` as ``pad_span``. A token that straddles an edge of the span
     is not class 1. The notes then say how many tokens are class 1 and how many
     straddle an edge. An EMPTY span (``start == end``, the deduction rebuild passes
-    ``(0, 0)``) marks no token: no token is class 1, and the note says "no pad class
-    (deduction)" instead of the by-construction wording.
+    ``(0, 0)``) marks no token: no token is class 1, the note says "no pad class
+    (deduction)" instead of the by-construction wording, and the span is not mapped to
+    piece coordinates (so byte-split characters with overlapping offsets cannot fail it).
 
     With `system` the conversation is ``[system, user]``. The template may trim the
     system text (Gemma-4 does) or move it (Gemma-4 puts it after the thinking marker
@@ -1326,7 +1327,14 @@ def rebuild_sequence(
         for start, end in offsets
     ]
     pad_span: Optional[Tuple[int, int]] = None
-    if pad_query_span is not None:
+    n_straddle = 0
+    if pad_query_span is not None and pad_query_span[0] == pad_query_span[1]:
+        # An empty span labels nothing, so the piece-coordinate mapping is not needed, and it
+        # must be skipped: a tokenizer that splits one character into byte tokens (U+2227 in
+        # Nemotron) gives overlapping offsets such as (538, 540) then (539, 540), and the
+        # mapping's tiling check would refuse the whole cell. (0, 0) is valid for any text.
+        pad_span = (0, 0)
+    elif pad_query_span is not None:
         pad_span, n_straddle = _pad_span_in_pieces(
             offsets, pieces, pad_query_span, query, located, q_start
         )
