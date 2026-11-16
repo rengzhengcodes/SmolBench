@@ -19,8 +19,9 @@ What it does, in order
 2. ``replay_model``: print the launch summary, refuse unless the caller passed
    ``approved=True``, skip every job that already has an object in the bucket,
    provision ONE spot box, serve the checkpoint in capture mode, run the jobs in
-   batches, audit what landed, write a manifest per run and ALWAYS terminate the
-   box.
+   batches, ALWAYS terminate the box as soon as the batches return, and only then
+   audit what landed and write a manifest per run (the audit downloads every array
+   to this machine, and the box must not bill while that runs).
 3. ``read_captures``: offline, over a local mirror of the S3 tree.
 
 Where the rebuilt sequence is an approximation
@@ -131,6 +132,7 @@ import importlib.util
 import io
 import json
 import logging
+import numbers
 import os
 import re
 import signal
@@ -142,7 +144,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -176,6 +178,7 @@ __all__ = [
     "SERVE_UNVERIFIED",
     "STATE_DIR",
     "ServeUnverified",
+    "ShutdownFailed",
     "TemplateMismatch",
     "TemplateUnavailable",
     "attention_shape",
@@ -398,6 +401,21 @@ class CaptureUnsupported(RuntimeError):
 
 class ServeUnverified(RuntimeError):
     """A model whose serving on the pinned image is not verified, and the caller did not override it."""
+
+
+class ShutdownFailed(RuntimeError):
+    """The box could not be terminated after a capture that itself returned.
+
+    ``replay_model`` raises it only after the content audit and the manifests are
+    done, so the capture results are not lost: they are on ``report``. A box may
+    still be billing, so the caller must treat this as an incident. The original
+    error is the ``__cause__``.
+    """
+
+    def __init__(self, message: str, report: "ReplayReport") -> None:
+        super().__init__(message)
+        #: The finished report: verified, failed and audit-failed jobs and the manifests.
+        self.report = report
 
 
 class TemplateUnavailable(RuntimeError):
@@ -1188,6 +1206,28 @@ def find_runs(results_root: Path, model: str) -> List[Run]:
     return runs
 
 
+def _seed_set(seeds: Optional[Sequence[int]]) -> Optional[FrozenSet[int]]:
+    """Return `seeds` as a frozen set, or ``None`` (every seed) when `seeds` is ``None``.
+
+    An empty sequence stays an empty set: it selects no run, which is not the same
+    as ``None``. A string or a bool is refused so that ``seeds="01"`` or
+    ``seeds=[True]`` cannot silently select nothing or seed 1.
+
+    Raises
+    ------
+    ValueError
+        When an entry is not an integer.
+    """
+    if seeds is None:
+        return None
+    chosen = set()
+    for seed in seeds:
+        if isinstance(seed, bool) or not isinstance(seed, numbers.Integral):
+            raise ValueError(f"seeds must be integers, got {seed!r}")
+        chosen.add(int(seed))
+    return frozenset(chosen)
+
+
 def run_prefix(s3_prefix: str, run: Run) -> str:
     """Return the key prefix (trailing ``/``) holding one run's captures.
 
@@ -1359,15 +1399,19 @@ def _build(
     get_tokenizer: Callable[[], Any],
     get_template: Callable[[], Any],
     fmt: Optional[ReasoningFormat],
+    seeds: Optional[FrozenSet[int]] = None,
 ) -> _Built:
     """Read the runs of `model` and rebuild every mark (shared by ``build_jobs`` and the plan).
 
     Tokenizer and template are fetched through callables on first need, so a model
-    with no result files never touches the hub.
+    with no result files never touches the hub. When `seeds` is given only the runs
+    of those seeds are read; the filter is applied before ``run_of`` is built, and
+    a ``related_intens`` run looks up its ``intens`` run of the SAME seed, so the
+    pairing survives the filter.
     """
     import jinja2.exceptions
 
-    built = _Built(runs=find_runs(results_root, model))
+    built = _Built(runs=[r for r in find_runs(results_root, model) if seeds is None or r.seed in seeds])
     if not built.runs:
         return built
     tokenizer = get_tokenizer()
@@ -1631,16 +1675,22 @@ def _plan_one(
     tokenizer_for: Optional[Callable[[str], Any]],
     template_for: Optional[Callable[[str], Any]],
     config_for: Optional[Callable[[str], Mapping[str, Any]]],
+    seeds: Optional[Sequence[int]] = None,
 ) -> Tuple[ReplayPlan, List[PlannedJob]]:
-    """Build one model's plan and its planned jobs (no AWS access)."""
+    """Build one model's plan and its planned jobs (no AWS access).
+
+    `seeds` restricts the plan to the runs of those seeds (``None`` = every seed), so
+    every count, token total and the storage estimate cover only them.
+    """
     from smolbench.evals.providers import ec2
 
+    wanted = _seed_set(seeds)
     spec = ec2.EC2_DEPLOY_SPECS[model]
     get_tokenizer = (lambda: tokenizer_for(model)) if tokenizer_for else (lambda: _default_tokenizer(model))
     get_template = (lambda: template_for(model)) if template_for else (lambda: load_chat_template(model))
-    runs = find_runs(results_root, model)
+    runs = [r for r in find_runs(results_root, model) if wanted is None or r.seed in wanted]
     try:
-        built = _build(model, results_root, s3_prefix, get_tokenizer, get_template, None)
+        built = _build(model, results_root, s3_prefix, get_tokenizer, get_template, None, wanted)
     except (TemplateUnavailable, ReasoningFormatError) as exc:
         # One model's missing template must not stop the other models' plans.
         built = _Built(runs=runs, errors=[f"{model}: {exc} (marks not counted)"])
@@ -1700,6 +1750,7 @@ def plan_replay(
     tokenizer_for: Optional[Callable[[str], Any]] = None,
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    seeds: Optional[Sequence[int]] = None,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
@@ -1714,6 +1765,10 @@ def plan_replay(
     tokenizer_for, template_for, config_for : Callable, optional
         ``model -> object`` overrides of the pinned tokenizer, chat template and
         ``config.json`` (tests and offline use).
+    seeds : Sequence[int], optional
+        Plan only the runs of these seeds; every count, token total, per-arm number
+        and the storage estimate then cover only them. ``None`` (default) plans every
+        seed. An empty sequence selects no run, so every plan has zero marks.
 
     Returns
     -------
@@ -1726,14 +1781,14 @@ def plan_replay(
     Raises
     ------
     ValueError
-        When `s3_uri` is malformed.
+        When `s3_uri` is malformed or `seeds` holds a non-integer.
     KeyError
         When a model has no deploy spec.
     """
     _bucket, prefix = parse_s3_uri(s3_uri)
     root = Path(results_root)
     return {
-        model: _plan_one(model, root, prefix, tokenizer_for, template_for, config_for)[0]
+        model: _plan_one(model, root, prefix, tokenizer_for, template_for, config_for, seeds)[0]
         for model in (list(models) if models is not None else list(bt.TRIO))
     }
 
@@ -2390,6 +2445,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     tokenizer_for: Optional[Callable[[str], Any]] = None,
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    seeds: Optional[Sequence[int]] = None,
     ec2: Any = None,
     s3_client_factory: Optional[Callable[[], Any]] = None,
 ) -> ReplayReport:
@@ -2401,8 +2457,13 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     unless overridden. (4) Skip every job that already has
     a key in the bucket (never re-sent, never overwritten); when nothing remains,
     return without provisioning. (5) Provision one box, serve the checkpoint in
-    capture mode, run the batches, audit the uploads by content and write one
-    manifest per run that had jobs sent. (6) Terminate the box.
+    capture mode and run the batches. (6) Terminate the box, however the batches
+    ended. (7) Only after the shutdown call, and only when the batches returned,
+    audit the uploads by content and write one manifest per run that had jobs
+    sent: both need only S3, and the audit downloads every array to this machine
+    (about 3.5 minutes per GB in a pilot), so running it before the shutdown
+    would leave the box idle and billed. (8) When the shutdown call failed on the
+    success path, raise ``ShutdownFailed`` carrying the finished report.
 
     Parameters
     ----------
@@ -2432,6 +2493,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         ``audit_captures``).
     tokenizer_for, template_for, config_for : Callable, optional
         Overrides of the pinned tokenizer, chat template and config (see ``plan_replay``).
+    seeds : Sequence[int], optional
+        Replay only the runs of these seeds, to split a model across several
+        sessions. The plan, the jobs sent and the manifests cover only them; skipped
+        and over-context counts too. ``None`` (default) means every seed; an empty
+        sequence selects no run, so nothing is sent and no box is provisioned.
     ec2 : Any, optional
         Provider module or fake; defaults to ``smolbench.evals.providers.ec2``.
     s3_client_factory : Callable[[], Any], optional
@@ -2444,6 +2510,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
 
     Raises
     ------
+    ShutdownFailed
+        When the batches returned but ``shutdown_instance`` raised an ``Exception``.
+        Raised after the audit and the manifests; its ``report`` attribute holds the
+        finished report and its ``__cause__`` the shutdown error. A box may still be
+        billing.
     ApprovalRequired
         When ``approved is not True``. Raised before any EC2 or S3 client or
         factory is touched.
@@ -2454,8 +2525,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         When the model is in ``SERVE_UNVERIFIED`` and ``allow_unverified_serve``
         is not ``True`` (also before any AWS call).
     ValueError
-        When no instance type is known for the model, or the batch arguments are
-        invalid (before any AWS call).
+        When no instance type is known for the model, the batch arguments are
+        invalid, or `seeds` holds a non-integer (before any AWS call).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
         unavailable), when its ``config.json`` cannot be loaded or has no
@@ -2464,26 +2535,35 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
 
     Notes
     -----
-    The box is terminated in a ``finally`` block however the capture ends. If that
-    termination itself fails while another error propagates, the failure is logged
-    at ERROR level (a box may still be billing) and the original error propagates;
-    on the success path the termination error is raised. An interrupt
-    (``KeyboardInterrupt`` or another ``BaseException``) that escapes
-    ``shutdown_instance`` before it terminated the box triggers one retry with
-    ``wait=False`` and SIGINT ignored; a failed retry is logged at ERROR and the
-    interrupt is re-raised either way.
+    The box is terminated in a ``finally`` block however the capture ends, before
+    the audit and the manifests. If that termination itself fails while another
+    error propagates, the failure is logged at ERROR level (a box may still be
+    billing) and the original error propagates. If it fails on the success path
+    (the batches returned), the failure is logged at once, the audit and the
+    manifests still run, and then ``ShutdownFailed`` is raised with the report. An
+    audit or manifest failure in that case is logged and does not replace the
+    shutdown failure. An interrupt (``KeyboardInterrupt`` or another
+    ``BaseException``) that escapes ``shutdown_instance`` before it terminated the
+    box triggers one retry with ``wait=False`` and SIGINT ignored; a failed retry
+    is logged at ERROR and the interrupt is re-raised either way, without an audit
+    (the operator asked to stop).
+
+    A capture that raised is never audited and writes no manifest: its jobs have no
+    result to check.
 
     A failure while writing the manifests does not lose the report: it is recorded
     in ``ReplayReport.manifest_error``, logged at ERROR, the manifests written so
-    far stay in ``ReplayReport.manifests``, the box is still terminated and the
-    report is returned.
+    far stay in ``ReplayReport.manifests`` and the report is returned. An
+    exception raised by the audit itself (not a failed job) propagates, as the
+    box is already down; with a failed shutdown it is logged and ``ShutdownFailed``
+    is raised instead.
     """
     # Phase 1: offline plan and the launch summary, shown before the gate.
     from smolbench.evals.providers import ec2 as real_ec2
 
     _bucket_for_plan, plan_prefix = parse_s3_uri(s3_uri)
     plan, planned = _plan_one(
-        model_key, Path(results_root), plan_prefix, tokenizer_for, template_for, config_for
+        model_key, Path(results_root), plan_prefix, tokenizer_for, template_for, config_for, seeds
     )
     types = tuple(instance_types or INSTANCE_TYPES.get(model_key, ()))
     regions = tuple(getattr(ec2, "EC2_REGIONS", real_ec2.EC2_REGIONS))
@@ -2583,9 +2663,15 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     if not remaining:
         return report
 
-    # Phase 5: capture, scoped to this driver's tag and state file.
+    # Phase 5: capture, scoped to this driver's tag and state file. The box is shut
+    # down in the ``finally`` right after the batches return, BEFORE the audit: the
+    # audit downloads every array to this machine and would otherwise keep the box
+    # idle and billed for as long as that takes.
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     primary: Optional[BaseException] = None
+    shutdown_exc: Optional[Exception] = None
+    result: Optional[attention.CaptureResult] = None
+    tp: Optional[int] = None
     with _scoped_env(
         EC2_EXPERIMENT_TAG=EC2_TAG, EC2_STATE_FILE=str(STATE_DIR / ".ec2_state.json")
     ):
@@ -2603,58 +2689,94 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                     batch_size=batch_size, url_ttl_s=url_ttl_s, poll_s=poll_s,
                     batch_timeout_s=batch_timeout_s,
                 )
-            report.failed.update(result.failed)
-            for job_id, keys in result.skipped_existing.items():
-                report.skipped_existing[job_id] = keys
-            verified_set = set(result.verified)
-            audit = audit_captures(
-                make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
-                model=model_key, config=config, arrays=audit_arrays,
-                capture_version=CAPTURE_VERSION,
-            )
-            for job_id, reason in audit.items():
-                if reason is None:
-                    report.verified.append(job_id)
-                else:
-                    report.audit_failures[job_id] = reason
-            # A manifest failure must not discard the capture results: they are
-            # the only record of what the box just did. It is recorded on the
-            # report (the manifests written so far are already on it) and is not
-            # the primary error.
-            try:
-                _write_manifests(
-                    make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp
-                )
-            except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
-                report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
-                logging.error(
-                    f"attention_replay: writing the manifests failed after {len(report.manifests)} "
-                    f"were written; the capture results are kept on the report: "
-                    f"{report.manifest_error}"
-                )
         except BaseException as exc:
             primary = exc
             raise
         finally:
-            # Spend safety: the box is terminated however the work ended
-            # (provisioning, serving, a batch, the audit or a manifest may raise).
-            # Cleanup must not replace the error that matters, but a failed
-            # termination may leave a billed box, so it is logged loudly.
+            # Spend safety: the box is terminated however the capture ended
+            # (provisioning, serving or a batch may raise). Cleanup must not
+            # replace the error that matters, but a failed termination may leave a
+            # billed box, so it is logged loudly.
             try:
                 ec2.shutdown_instance()
-            except Exception as shutdown_exc:  # noqa: BLE001
-                if primary is None:
-                    raise
+            except Exception as exc:  # noqa: BLE001
                 logging.error(
-                    "attention_replay: shutdown_instance FAILED while another error was "
-                    f"propagating; a billed instance may still be running: {shutdown_exc!r}"
+                    "attention_replay: shutdown_instance FAILED"
+                    + (" while another error was propagating" if primary is not None else "")
+                    + f"; a billed instance may still be running: {exc!r}"
                 )
+                # On the success path the failure is kept and raised after the audit,
+                # which needs only S3 and must not be lost to a failed termination.
+                # With a primary error in flight, that error propagates instead.
+                if primary is None:
+                    shutdown_exc = exc
             except BaseException:
                 # An interrupt inside shutdown_instance (its graceful /shutdown POST
                 # only guards against Exception) escapes before TerminateInstances.
                 # Terminate anyway, then let the interrupt continue.
                 _retry_shutdown_after_interrupt(ec2)
                 raise
+
+    # Phase 6: audit and manifests, after the box is gone. Reached only when the
+    # batches returned: any exception above has already propagated, and the audit
+    # of a capture that raised would have no result to check.
+    assert result is not None and tp is not None  # set whenever the batches returned
+    try:
+        report.failed.update(result.failed)
+        for job_id, keys in result.skipped_existing.items():
+            report.skipped_existing[job_id] = keys
+        verified_set = set(result.verified)
+        audit = audit_captures(
+            make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
+            model=model_key, config=config, arrays=audit_arrays,
+            capture_version=CAPTURE_VERSION,
+        )
+        for job_id, reason in audit.items():
+            if reason is None:
+                report.verified.append(job_id)
+            else:
+                report.audit_failures[job_id] = reason
+        # A manifest failure must not discard the capture results: they are
+        # the only record of what the box just did. It is recorded on the
+        # report (the manifests written so far are already on it) and is not
+        # the primary error.
+        try:
+            _write_manifests(
+                make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp
+            )
+        except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
+            report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
+            logging.error(
+                f"attention_replay: writing the manifests failed after {len(report.manifests)} "
+                f"were written; the capture results are kept on the report: "
+                f"{report.manifest_error}"
+            )
+    except Exception as late_exc:  # noqa: BLE001
+        # With the box down this error propagates as it always did. With a failed
+        # shutdown it must not hide that failure (a box may still be billing), so
+        # both are logged and the shutdown failure is the one raised below.
+        if shutdown_exc is None:
+            raise
+        logging.error(
+            "attention_replay: the audit raised after the shutdown had failed; the "
+            f"shutdown failure is raised instead: {late_exc!r}"
+        )
+    except BaseException:
+        # An interrupt during the audit wins, but the failed shutdown is logged again
+        # so it is the last thing on the screen.
+        if shutdown_exc is not None:
+            logging.error(
+                "attention_replay: interrupted during the audit; shutdown_instance had "
+                f"FAILED and a billed instance may still be running: {shutdown_exc!r}"
+            )
+        raise
+    if shutdown_exc is not None:
+        raise ShutdownFailed(
+            f"{model_key}: the capture returned but shutdown_instance FAILED; a billed "
+            f"instance may still be running: {shutdown_exc!r}. The capture results are "
+            "on this exception's report.",
+            report,
+        ) from shutdown_exc
     return report
 
 

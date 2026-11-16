@@ -1695,11 +1695,19 @@ def test_a_failed_provision_still_attempts_shutdown(tmp_path) -> None:
 
 
 def test_a_shutdown_failure_on_the_success_path_surfaces(tmp_path) -> None:
+    """The failure is raised, but only after the audit and manifests; the report rides on it."""
     _write_results(tmp_path, GEMMA)
     s3 = FakeS3()
     box = ShutdownBox(s3, shutdown_script=[RuntimeError("TerminateInstances denied")])
-    with pytest.raises(RuntimeError, match="TerminateInstances denied"):
+    with pytest.raises(ar.ShutdownFailed, match="TerminateInstances denied") as caught:
         _replay(tmp_path, box, s3)
+    report = caught.value.report
+    # The capture results are complete: all three jobs passed the audit and the manifest is stored.
+    assert len(report.verified) == 3 and not report.failed and not report.audit_failures
+    assert report.manifests and all(k in s3.objects for k in report.manifests)
+    assert report.manifest_error is None and report.instance_type == "p5.48xlarge"
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert box.calls.count("shutdown") == 1
 
 
 def test_an_interrupt_inside_shutdown_still_terminates_the_box(tmp_path) -> None:
@@ -1715,6 +1723,7 @@ def test_an_interrupt_inside_shutdown_still_terminates_the_box(tmp_path) -> None
     with pytest.raises(KeyboardInterrupt):
         _replay(tmp_path, box, s3)
     assert len(box.shutdowns) == 2, box.shutdowns
+    assert not any("manifest--" in k for k in s3.objects)  # an interrupt skips the audit
     assert box.shutdowns[1]["wait"] is False
     assert box.shutdowns[1]["sigint"] == signal.SIG_IGN
     assert signal.getsignal(signal.SIGINT) == before  # restored
@@ -1749,6 +1758,223 @@ def test_a_manifest_failure_keeps_the_report(tmp_path, monkeypatch) -> None:
     assert report.manifests == written  # the manifest written before the failure is kept
     assert report.manifest_error and "manifest PUT denied" in report.manifest_error
     assert box.calls[-1] == "shutdown"
+
+
+class OrderLog(FakeS3):
+    """FakeS3 that appends every get and put to ``events``, the list the fake box logs into."""
+
+    def __init__(self, events: list) -> None:
+        super().__init__()
+        self.events = events
+
+    def get_object(self, Bucket: str, Key: str) -> dict:
+        self.events.append(f"get:{Key}")
+        return super().get_object(Bucket, Key)
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes, **kw) -> None:
+        self.events.append(f"put:{Key}")
+        super().put_object(Bucket, Key, Body, **kw)
+
+
+def _ordered(monkeypatch, box_cls=ShutdownBox, **box_kw):
+    """Return ``(s3, box, events)`` with the box, the S3 fake and the audit sharing one event log.
+
+    ``run_capture_batches`` also reads S3 before the shutdown (its upload check), so the
+    audit is marked by wrapping ``audit_captures``: everything after ``"audit"`` is the audit.
+    """
+    events: list = []
+    s3 = OrderLog(events)
+    box = box_cls(s3, **box_kw)
+    box.calls = events
+    real_audit = ar.audit_captures
+
+    def audit(*args, **kwargs):
+        events.append("audit")
+        return real_audit(*args, **kwargs)
+
+    monkeypatch.setattr(ar, "audit_captures", audit)
+    return s3, box, events
+
+
+def test_the_box_is_shut_down_before_the_audit_reads_s3_and_before_the_manifests(
+        tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3, box, events = _ordered(monkeypatch)
+    report = _replay(tmp_path, box, s3)
+    assert events.count("shutdown") == 1 and events.count("audit") == 1
+    shut, audit = events.index("shutdown"), events.index("audit")
+    assert shut < audit
+    # The audit really reads every array (3 jobs x 2 ranks) and only after the shutdown.
+    assert sum(e.startswith("get:") and e.endswith(".npz") for e in events[audit:]) == 6
+    assert not any(e.startswith("get:") and e.endswith(".json") for e in events[shut:audit])
+    # Manifests are written after the audit, so after the shutdown.
+    manifest_puts = [i for i, e in enumerate(events) if e.startswith("put:") and "manifest--" in e]
+    assert manifest_puts and min(manifest_puts) > audit
+    assert len(report.verified) == 3 and report.manifests
+
+
+def test_a_failed_capture_shuts_the_box_down_and_runs_no_audit(tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3, box, events = _ordered(monkeypatch, attn_exc=RuntimeError("box unreachable"))
+    with pytest.raises(RuntimeError, match="box unreachable"):
+        _replay(tmp_path, box, s3)
+    assert events.count("shutdown") == 1 and events[-1] == "shutdown"
+    assert "audit" not in events and not any("manifest--" in e for e in events)
+
+
+def test_an_audit_exception_with_a_clean_shutdown_propagates_after_the_shutdown(
+        tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3, box, events = _ordered(monkeypatch)
+
+    def broken_audit(*args, **kwargs):
+        events.append("audit")
+        raise OSError("audit read failed")
+
+    monkeypatch.setattr(ar, "audit_captures", broken_audit)
+    with pytest.raises(OSError, match="audit read failed"):
+        _replay(tmp_path, box, s3)
+    assert events.index("shutdown") < events.index("audit")
+
+
+def test_an_audit_failure_does_not_hide_a_failed_shutdown(tmp_path, monkeypatch, caplog) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3, box, events = _ordered(monkeypatch, shutdown_script=[RuntimeError("TerminateInstances denied")])
+
+    def broken_audit(*args, **kwargs):
+        events.append("audit")
+        raise OSError("audit read failed")
+
+    monkeypatch.setattr(ar, "audit_captures", broken_audit)
+    with caplog.at_level(logging.ERROR), pytest.raises(ar.ShutdownFailed) as caught:
+        _replay(tmp_path, box, s3)
+    assert "TerminateInstances denied" in str(caught.value) and caught.value.report.model == GEMMA
+    # Both failures are logged: the shutdown at once, the audit when it raised.
+    assert "TerminateInstances denied" in caplog.text and "audit read failed" in caplog.text
+    assert events.index("shutdown") < events.index("audit")
+
+
+def test_a_manifest_failure_does_not_hide_a_failed_shutdown(tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    monkeypatch.setattr(ar, "write_manifest", lambda *a, **k: (_ for _ in ()).throw(OSError("PUT denied")))
+    box = ShutdownBox(s3, shutdown_script=[RuntimeError("TerminateInstances denied")])
+    with pytest.raises(ar.ShutdownFailed) as caught:
+        _replay(tmp_path, box, s3)
+    report = caught.value.report
+    assert "PUT denied" in report.manifest_error and len(report.verified) == 3
+
+
+def test_a_capture_error_stays_the_raised_error_when_the_shutdown_also_fails(tmp_path, caplog) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    box = ShutdownBox(s3, attn_exc=RuntimeError("box unreachable"),
+                      shutdown_script=[RuntimeError("TerminateInstances denied")])
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="box unreachable"):
+        _replay(tmp_path, box, s3)
+    assert "TerminateInstances denied" in caplog.text
+
+
+# ------------------------------------------------------------------ the seeds filter
+
+def _write_seed_runs(root: Path, model: str, seed: int, intens, noise=("ab" + PAD + "c",)) -> None:
+    """Write one seed's ``intens`` and ``noise_intens`` runs (reasoning stored on every mark)."""
+    def marks(queries):
+        return Marks(model=model, marks=tuple(
+            Mark(query=q, answer=1, response="1", score=1, compliance=COMPLIANT, reasoning="r")
+            for q in queries))
+
+    seed_dir = root / "induction" / model / f"seed={seed}"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / f"intens--{STAMP_A}.yaml").write_text(marks(intens).dumps())
+    (seed_dir / f"noise_intens--{STAMP_A}.yaml").write_text(marks(noise).dumps())
+
+
+def _two_seeds(root: Path, model: str = GEMMA) -> None:
+    _write_seed_runs(root, model, 0, ["ab", "abcd"])
+    _write_seed_runs(root, model, 1, ["abc"], noise=("xy" + PAD + "z", "q" + PAD))
+
+
+def _gemma_plan_kwargs():
+    return dict(tokenizer_for=lambda m: CharTokenizer(GEMMA_SPECIALS),
+                template_for=lambda m: gemma_template(),
+                config_for=lambda m: {"num_hidden_layers": 2, "num_attention_heads": 4})
+
+
+def test_plan_replay_with_seeds_counts_only_those_seeds(tmp_path: Path) -> None:
+    both, only_one = tmp_path / "both", tmp_path / "one"
+    _two_seeds(both)
+    _write_seed_runs(only_one, GEMMA, 1, ["abc"], noise=("xy" + PAD + "z", "q" + PAD))
+    kw = _gemma_plan_kwargs()
+    filtered = ar.plan_replay(both, [GEMMA], seeds=[1], **kw)[GEMMA]
+    # Every number, the per-arm table and the storage estimate equal the plan of a folder
+    # that holds seed 1 alone.
+    assert filtered == ar.plan_replay(only_one, [GEMMA], **kw)[GEMMA]
+    assert filtered.runs == 2 and filtered.marks == 3 and filtered.errors == []
+    everything = ar.plan_replay(both, [GEMMA], **kw)[GEMMA]
+    assert everything.runs == 4 and everything.marks == 6 and everything.total_tokens > filtered.total_tokens
+    assert everything.est_capture_bytes > filtered.est_capture_bytes
+    # None means every seed, and listing every seed selects the same runs.
+    assert ar.plan_replay(both, [GEMMA], seeds=[0, 1], **kw)[GEMMA] == everything
+
+
+def test_replay_with_seeds_sends_and_records_only_those_seeds(tmp_path: Path) -> None:
+    _two_seeds(tmp_path)
+    s3 = FakeS3()
+    box = AuditedBox(s3)
+    report = _replay(tmp_path, box, s3, seeds=[1])
+    sent = [line["job_id"] for b in box.batches for line in b["jobs"]]
+    assert len(sent) == 3 and all(j.startswith("s1.") for j in sent)
+    assert sorted(report.verified) == sorted(sent) and report.plan.jobs == 3
+    assert all("seed=1/" in key for key in s3.objects), "a seed-0 object was written"
+    assert report.manifests and all("seed=1/" in k for k in report.manifests)
+    # Seed 0 is still unsent, so a second call for it provisions a box and sends its jobs only.
+    box2 = AuditedBox(s3)
+    again = _replay(tmp_path, box2, s3, seeds=[0])
+    assert len(again.verified) == 3 and all(
+        line["job_id"].startswith("s0.") for b in box2.batches for line in b["jobs"])
+
+
+@pytest.mark.parametrize("seeds", [[], [7]])
+def test_an_empty_seed_selection_plans_nothing_and_launches_nothing(tmp_path: Path, seeds) -> None:
+    _two_seeds(tmp_path)
+    plan = ar.plan_replay(tmp_path, [GEMMA], seeds=seeds, **_gemma_plan_kwargs())[GEMMA]
+    assert plan.runs == plan.marks == plan.jobs == plan.total_tokens == 0 and plan.errors == []
+    s3 = FakeS3()
+    box = AuditedBox(s3)
+    report = _replay(tmp_path, box, s3, seeds=seeds)
+    assert box.calls == [] and not s3.puts and not report.verified and not report.manifests
+
+
+def test_seeds_must_be_integers(tmp_path: Path) -> None:
+    _two_seeds(tmp_path)
+    for bad in (["1"], [True], [1.5]):
+        with pytest.raises(ValueError, match="seeds must be integers"):
+            ar.plan_replay(tmp_path, [GEMMA], seeds=bad, **_gemma_plan_kwargs())
+
+
+def test_a_related_intens_run_still_pairs_with_the_intens_run_of_its_own_seed(tmp_path: Path) -> None:
+    """Each seed's related_intens query is built on that seed's own rules; pairing across seeds fails."""
+    def marks(queries):
+        return Marks(model=DSV31, marks=tuple(
+            Mark(query=q, answer=1, response="1", score=1, compliance=COMPLIANT, reasoning="r")
+            for q in queries))
+
+    other_rules = "Every 9 positions write zz.\n"
+    for seed, rules in ((0, REAL_RULES), (1, other_rules)):
+        seed_dir = tmp_path / "induction" / DSV31 / f"seed={seed}"
+        seed_dir.mkdir(parents=True)
+        (seed_dir / f"intens--{STAMP_A}.yaml").write_text(marks([rules + QUESTION]).dumps())
+        (seed_dir / f"related_intens--{RELATED_STAMP}.yaml").write_text(
+            marks([rules + ADDED_RULES + TAIL_WS + QUESTION]).dumps())
+    kw = _plan_kwargs(CharTokenizer(DS_SPECIALS))
+    plan = ar.plan_replay(tmp_path, [DSV31], seeds=[1], **kw)[DSV31]
+    assert plan.errors == [] and plan.runs == 2 and plan.per_arm["related_intens"]["marks"] == 1
+    # Without seed 1's intens run the same selection reports the missing pairing, not seed 0's.
+    (tmp_path / "induction" / DSV31 / "seed=1" / f"intens--{STAMP_A}.yaml").unlink()
+    broken = ar.plan_replay(tmp_path, [DSV31], seeds=[1], **kw)[DSV31]
+    assert broken.per_arm["related_intens"]["marks"] == 0
+    assert len(broken.errors) == 1 and "no intens run for seed 1" in broken.errors[0]
 
 
 # ------------------------------------------------------------ presigning client
