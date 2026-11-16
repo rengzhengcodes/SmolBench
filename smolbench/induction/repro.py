@@ -15,7 +15,9 @@ and prints it next to the published values.
 
 A replicate's accuracy is the fraction of its marks with a truthy ``score``; a ``null``
 score (an answer that could not be graded) counts as wrong. A replicate collected more
-than once keeps its earliest surviving run, as ``S3ResultsStore.load_marks`` does. The
+than once keeps its earliest surviving run, as ``S3ResultsStore.load_marks`` does.
+``report`` also scores the review-round arms in ``REVIEW_ARMS`` when a folder holds them,
+without published values; ``check-data`` covers the protocol arms only. The
 files are read as plain YAML because the released ones predate the ``server_config`` and
 ``regraded_from`` fields ``Marks.loads`` requires.
 """
@@ -36,6 +38,14 @@ PROTOCOL_PATH = Path(__file__).with_name("iclr.json")
 SUPERSEDED_SUFFIX = ".superseded"
 #: (a, b) -> delta "a-b", both relative to the low-density arm.
 DELTAS = (("intens", "extens"), ("noise_intens", "extens"))
+#: Review-arm deltas: no published value, so kept out of ``DELTAS``, which the
+#: published-table script and the protocol record read.
+REVIEW_DELTAS: tuple[tuple[str, str], ...] = (("related_intens", "extens"),)
+#: Review-round arms collected after the ICLR run. They are not in ``iclr.json``, so
+#: they have no published values and no digests; they are scored and reported when a
+#: folder holds them. Must equal ``periodic.REVIEW_CONDITIONS`` (not imported, to keep
+#: this module light; a test pins the equality).
+REVIEW_ARMS: tuple[str, ...] = ("related_intens",)
 #: Parallel S3 requests in ``fetch``.
 FETCH_WORKERS = 32
 
@@ -183,23 +193,26 @@ def replicate_accuracy(path: Path) -> float:
     return sum(bool(mark["score"]) for mark in marks) / len(marks)
 
 
-def load_cells(data: Path) -> Cells:
+def load_cells(data: Path, arms: Optional[tuple[str, ...]] = None) -> Cells:
     """Score every selected replicate in a results folder.
 
     Parameters
     ----------
     data : Path
         Results folder to score.
+    arms : Optional[tuple[str, ...]]
+        Arms to score. ``None`` means the protocol arms followed by ``REVIEW_ARMS``;
+        a tuple restricts the selection to exactly those arms.
 
     Returns
     -------
     Cells
         ``(model, arm)`` -> ``{seed: accuracy}``.
     """
+    if arms is None:
+        arms = (*load_protocol()["arms"], *REVIEW_ARMS)
     cells: Cells = {}
-    for (model, seed, arm), path in sorted(
-        select_runs(data, tuple(load_protocol()["arms"])).items()
-    ):
+    for (model, seed, arm), path in sorted(select_runs(data, arms).items()):
         cells.setdefault((model, arm), {})[seed] = replicate_accuracy(path)
     return cells
 
@@ -263,7 +276,7 @@ def report(data: Path) -> str:
         ref = proto["models"].get(model, {}).get("results", {})
         stats = {
             arm: cell_stats(cells[model, arm])
-            for arm in proto["arms"]
+            for arm in (*proto["arms"], *REVIEW_ARMS)
             if (model, arm) in cells
         }
         seeds = sorted({s for (m, _), v in cells.items() if m == model for s in v})
@@ -277,7 +290,7 @@ def report(data: Path) -> str:
             if arm in ref:
                 row += f" {ref[arm]['mean']:9.3f} {ref[arm]['sd']:6.3f}"
             lines.append(row)
-        for a, b in DELTAS:
+        for a, b in DELTAS + REVIEW_DELTAS:
             if a in stats and b in stats:
                 name = f"{a}-{b}"
                 row = f"   {name:20s} {delta(stats[a][0], stats[b][0]):+6.1f}"

@@ -112,7 +112,7 @@ def test_induction_writes_released_layout_and_resumes(mantle, tmp_path, monkeypa
     mantle.default_response = _final("280", reasoning="2520 / 9")
     harness = bt.induction_harness([DSV31], seeds=[0], results_dir=tmp_path)
     bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"}, max_parallel=4)
-    assert len(mantle.requests) == 27
+    assert len(mantle.requests) == 36, "four arms x 9 questions"
     assert {r["body"]["model"] for r in mantle.requests} == {"deepseek.v3-v1:0"}
     assert all("temperature" not in r["body"] for r in mantle.requests)
 
@@ -127,9 +127,12 @@ def test_induction_writes_released_layout_and_resumes(mantle, tmp_path, monkeypa
     report = bt.induction_reasoning_report(tmp_path)
     assert all(v["unreasoned"] == 0 and v["marks"] == 9 for v in report.values())
     assert all(v["empty_response"] == 0 for v in report.values())
+    assert set(report) == {("deepseek-v3.1", arm) for arm in bt.INDUCTION_ARMS}
+    seed_dir = tmp_path / "induction" / "induction" / "deepseek-v3.1" / "seed=0"
+    assert sorted(p.name.split("--")[0] for p in seed_dir.glob("*.yaml")) == sorted(bt.INDUCTION_ARMS)
 
     bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"})
-    assert len(mantle.requests) == 27, "a finished replicate must not be re-billed"
+    assert len(mantle.requests) == 36, "a finished replicate must not be re-billed"
 
 
 def test_an_answer_left_in_the_reasoning_channel_is_counted(mantle, tmp_path, monkeypatch):
@@ -217,21 +220,21 @@ def test_induction_s3_writes_expected_keys_resumes_and_pulls_a_readable_tree(
     harness = bt.induction_harness([DSV31], seeds=[0], results_dir=tmp_path / "a", s3_uri=URI)
     assert isinstance(harness.store, S3ResultsStore) and harness.store.describe() == URI + "/induction"
     bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"}, max_parallel=4)
-    assert len(mantle.requests) == 27
+    assert len(mantle.requests) == 36
     pattern = re.compile(rf"{PREFIX}/induction/deepseek-v3\.1/seed=0/(\w+)--\d{{8}}T\d{{6}}\.\d{{6}}Z\.yaml")
     assert sorted(m.group(1) for m in map(pattern.fullmatch, fake_s3.objects) if m) == sorted(bt.INDUCTION_ARMS)
-    assert len(fake_s3.objects) == 3 and not (tmp_path / "a").exists(), "S3 is the only copy written"
+    assert len(fake_s3.objects) == 4 and not (tmp_path / "a").exists(), "S3 is the only copy written"
     assert set(fake_s3.requested) == {("s3", "us-west-2")}
 
     bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"})
-    assert len(mantle.requests) == 27, "a finished replicate must not be re-billed"
-    assert len(fake_s3.objects) == 3
+    assert len(mantle.requests) == 36, "a finished replicate must not be re-billed"
+    assert len(fake_s3.objects) == 4
 
     # Objects the reader cannot handle are not mirrored; a supersession marker is.
     fake_s3.objects[f"{PREFIX}/induction/README.txt"] = b"x"
     fake_s3.objects[f"{PREFIX}/induction/deepseek-v3.1/seed=abc/extens--1.yaml"] = b"x"
     mirror = tmp_path / "mirror"
-    assert bt.pull_induction(URI, mirror) == 3
+    assert bt.pull_induction(URI, mirror) == 4
     assert bt.pull_induction(URI, mirror) == 0, "same-size files are kept"
     cells = induction_repro.load_cells(mirror / "induction")
     assert set(cells) == {("deepseek-v3.1", arm) for arm in bt.INDUCTION_ARMS}
@@ -246,8 +249,79 @@ def test_induction_s3_writes_expected_keys_resumes_and_pulls_a_readable_tree(
     harness.store.supersede(_addr("noise_intens"), stamp, "test")
     assert bt.pull_induction(URI, mirror) == 1
     assert set(induction_repro.load_cells(mirror / "induction")) == {
-        ("deepseek-v3.1", arm) for arm in ("intens", "extens")
+        ("deepseek-v3.1", arm) for arm in ("intens", "extens", "related_intens")
     }
+
+
+def test_arm_names_and_quiz_factory():
+    from smolbench.induction.periodic import REVIEW_CONDITIONS
+
+    assert bt.INDUCTION_PAPER_ARMS == ("intens", "noise_intens", "extens")
+    assert bt.INDUCTION_ARMS == bt.INDUCTION_PAPER_ARMS + tuple(REVIEW_CONDITIONS)
+    assert bt.INDUCTION_ARMS[-1] == "related_intens"
+
+
+def test_a_bucket_holding_the_three_paper_arms_gets_only_the_review_arm(
+    mantle, fake_s3, tmp_path, monkeypatch
+):
+    rs = bt.load_run_study()
+    monkeypatch.setattr(rs, "for_model", lambda _model: StubTokenizer())
+    mantle.default_response = _final("280", reasoning="2520 / 9")
+    # The bucket as the earlier runner left it: the three paper arms of seed 0.
+    with monkeypatch.context() as m:
+        m.setattr(bt, "INDUCTION_ARMS", bt.INDUCTION_PAPER_ARMS)
+        old = bt.induction_harness([DSV31], seeds=[0], results_dir=tmp_path, s3_uri=URI)
+        bt.run_induction(old, DSV31, "us-east-1", {"reasoning_effort": "high"}, max_parallel=4)
+    assert len(mantle.requests) == 27
+    before = dict(fake_s3.objects)
+    assert len(before) == 3
+
+    # A tree without the review arm: the mirror and both reports work.
+    mirror = tmp_path / "mirror"
+    assert bt.pull_induction(URI, mirror) == 3
+    assert set(induction_repro.load_cells(mirror / "induction")) == {
+        ("deepseek-v3.1", a) for a in bt.INDUCTION_PAPER_ARMS
+    }
+    assert set(bt.induction_reasoning_report(mirror)) == {("deepseek-v3.1", a) for a in bt.INDUCTION_PAPER_ARMS}
+    text = induction_repro.report(mirror / "induction")
+    assert "noise_intens-extens" in text and "related_intens" not in text
+
+    harness = bt.induction_harness([DSV31], seeds=[0], results_dir=tmp_path, s3_uri=URI)
+    bt.run_induction(harness, DSV31, "us-east-1", {"reasoning_effort": "high"}, max_parallel=4)
+    assert len(mantle.requests) == 36, "only the review arm's 9 questions are sent"
+    sent = [r["body"]["messages"][-1]["content"] for r in mantle.requests[27:]]
+    assert all(re.search(r"write [a-z]+\.\n\s*\nQuestion:", p) for p in sent)
+    new = sorted(set(fake_s3.objects) - set(before))
+    assert len(new) == 1 and re.fullmatch(
+        rf"{PREFIX}/induction/deepseek-v3\.1/seed=0/related_intens--\d{{8}}T\d{{6}}\.\d{{6}}Z\.yaml", new[0]
+    ), new
+    assert all(fake_s3.objects[k] == v for k, v in before.items()), "paper-arm objects untouched"
+
+    # A tree with the review arm.
+    assert bt.pull_induction(URI, mirror) == 1
+    cells = induction_repro.load_cells(mirror / "induction")
+    assert set(cells) == {("deepseek-v3.1", a) for a in bt.INDUCTION_ARMS}
+    ind = bt.induction_reasoning_report(mirror)
+    assert ind[("deepseek-v3.1", "related_intens")]["marks"] == 9
+    assert ind[("deepseek-v3.1", "related_intens")]["unreasoned"] == 0
+    text = induction_repro.report(mirror / "induction")
+    assert any(l.split()[:1] == ["related_intens"] for l in text.splitlines())
+    assert any(l.split()[:1] == ["related_intens-extens"] for l in text.splitlines())
+
+
+def test_a_local_tree_holding_the_paper_arms_gets_only_the_review_arm(mantle, tmp_path, monkeypatch):
+    rs = bt.load_run_study()
+    monkeypatch.setattr(rs, "for_model", lambda _model: StubTokenizer())
+    mantle.default_response = _final("280", reasoning="2520 / 9")
+    with monkeypatch.context() as m:
+        m.setattr(bt, "INDUCTION_ARMS", bt.INDUCTION_PAPER_ARMS)
+        bt.run_induction(bt.induction_harness([DSV31], [0], results_dir=tmp_path), DSV31, "us-east-1", {})
+    assert len(mantle.requests) == 27
+    bt.run_induction(bt.induction_harness([DSV31], [0], results_dir=tmp_path), DSV31, "us-east-1", {})
+    assert len(mantle.requests) == 36
+    seed_dir = tmp_path / "induction" / "induction" / "deepseek-v3.1" / "seed=0"
+    names = sorted(p.name.split("--")[0] for p in seed_dir.glob("*.yaml"))
+    assert names == sorted(bt.INDUCTION_ARMS)
 
 
 def _addr(info):
@@ -362,13 +436,16 @@ def prompts(monkeypatch):
     rs = bt.load_run_study()
     monkeypatch.setattr(rs, "for_model", lambda _model: StubTokenizer())
 
-    def arms(quizzes):
-        return {a: [SimpleNamespace(prompt=q.prompt) for q in quizzes[a]] for a in bt.INDUCTION_ARMS}
+    def arms(quizzes, names):
+        return {a: [SimpleNamespace(prompt=q.prompt) for q in quizzes[a]] for a in names}
 
-    mine = arms(rs.make_quizzes(0, "deepseek-v3.1"))
+    mine = arms(bt.induction_quizzes(0, "deepseek-v3.1"), bt.INDUCTION_ARMS)
     listing_only = replace(rs.CONDITIONS["extens"], context=lambda c: c.extensional)
     monkeypatch.setattr(rs, "CONDITIONS", MappingProxyType(dict(rs.CONDITIONS) | {"extens": listing_only}))
-    released = {a: [q.prompt for q in qs] for a, qs in arms(rs.make_quizzes(0, "deepseek-v3.1")).items()}
+    released = {
+        a: [q.prompt for q in qs]
+        for a, qs in arms(rs.make_quizzes(0, "deepseek-v3.1"), bt.INDUCTION_PAPER_ARMS).items()
+    }
     return mine, released
 
 
@@ -377,7 +454,13 @@ def test_check_induction_prompts_accepts_the_consistent_case(prompts):
     assert mine["extens"][0].prompt != released["extens"][0], "the two definitions must differ"
     assert mine["intens"][0].prompt == released["intens"][0]
     assert mine["noise_intens"][0].prompt != released["noise_intens"][0], "noise is padded to the new extens"
-    bt.check_induction_prompts(mine, released, StubTokenizer())
+    assert "related_intens" not in released, "the review arm has no released counterpart"
+    report = bt.check_induction_prompts(mine, released, StubTokenizer())
+    assert report == bt.check_related_prompts(mine["intens"], mine["extens"], mine["related_intens"], StubTokenizer())
+    assert len(report) == 9
+    for row, q in zip(report, mine["related_intens"]):
+        assert row["added_lines"] == len(re.findall(r"Every \d+ positions write [a-z]+\.\n", q.prompt)) - 9
+        assert row["added_lines"] > 100 and row["pad_tokens"] >= 0
 
 
 def _edited(mine, arm, i, fn):
@@ -408,6 +491,55 @@ def test_check_induction_prompts_names_the_arm_and_index_of_a_mismatch(prompts):
         bt.check_induction_prompts(_edited(mine, "noise_intens", 4, lambda p: p + "\n\nextra words"), released, tok)
     with pytest.raises(AssertionError, match="extens: the released file has no prompts"):
         bt.check_induction_prompts(mine, {"intens": released["intens"]}, tok)
+
+
+_RULE = re.compile(r"Every (\d+) positions write ([a-z]+)\.\n")
+
+
+def _added(mine, i):
+    """The added rule lines of related_intens[i] (the real rules are its first 9)."""
+    return _RULE.findall(mine["related_intens"][i].prompt)[9:]
+
+
+def _check(mine, released):
+    return bt.check_induction_prompts(mine, released, StubTokenizer())
+
+
+def test_related_self_check_names_the_problem(prompts):
+    mine, released = prompts
+    k0, lab0 = _added(mine, 3)[0]
+    first = f"Every {k0} positions write {lab0}.\n"
+    k1, lab1 = _added(mine, 3)[1]
+    second = f"Every {k1} positions write {lab1}.\n"
+    real_label = _RULE.findall(mine["intens"][0].prompt)[0][1]
+
+    def tampered(fn, i=3):
+        return _edited(mine, "related_intens", i, fn)
+
+    with pytest.raises(AssertionError, match=r"related_intens: no prompts"):
+        _check({a: v for a, v in mine.items() if a != "related_intens"}, released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*question"):
+        _check(tampered(lambda p: p.replace("How many", "How  many")), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*period"):
+        _check(tampered(lambda p: p.replace(first, f"Every 97 positions write {lab0}.\n", 1)), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*label"):
+        _check(tampered(lambda p: p.replace(first, f"Every {k0} positions write {real_label}.\n", 1)), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*label"):
+        _check(tampered(lambda p: p.replace(first, f"Every {k0} positions write {real_label}q.\n", 1)), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*repeat"):
+        _check(tampered(lambda p: p.replace(first + second, first + first, 1)), released)
+    # The stream reference is the first question with the most added lines; 3 is not it.
+    counts = [len(_added(mine, i)) for i in range(9)]
+    assert counts.index(max(counts)) != 3
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*prefix"):
+        _check(tampered(lambda p: p.replace(first + second, second + first, 1)), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*token count"):
+        _check(tampered(lambda p: p.replace("\nQuestion:", "\x0b\x0b\x0b\nQuestion:")), released)
+    # The whitespace-only control (noise_intens) has the right count but no related text.
+    with pytest.raises(AssertionError, match=r"related_intens\[3\].*leftover"):
+        _check(tampered(lambda _p: mine["noise_intens"][3].prompt), released)
+    with pytest.raises(AssertionError, match=r"related_intens\[0\].*rules"):
+        _check(tampered(lambda p: p.replace("write ", "write z", 1), i=0), released)
 
 
 # ------------------------------------------------------------ interrupted and failing runs

@@ -233,3 +233,72 @@ def test_results_script_formats_spreads_and_negative_deltas():
     assert mod.spread_of(0.1, 30, "2sd") == pytest.approx(0.2)
     assert mod.spread_of(0.1, 4, "ci") == pytest.approx(3.182 * 0.1 / 2)
     assert mod.fmt_delta(-0.4) == "$-0.4$" and mod.fmt_delta(3.0) == "3.0"
+
+
+# ------------------------------------------------- the related_intens review arm
+
+
+def _review_tree(root, with_review: bool):
+    correct = {"intens": 9, "noise_intens": 6, "extens": 3, "related_intens": 5}
+    for seed in range(3):
+        for arm, k in correct.items():
+            if arm == "related_intens" and not with_review:
+                continue
+            _write(root, "glm-4.7", seed, arm, k - seed)
+    return root
+
+
+#: ``repro.report`` at HEAD c2ce6a6c (before the review arm) on ``_review_tree(.., False)``.
+HEAD_REPORT_WITHOUT_REVIEW = (
+    "== glm-4.7: 3 seeds\n"
+    "                          mean     sd        published\n"
+    "   intens                0.889  0.111     0.959  0.062\n"
+    "   noise_intens          0.556  0.111     0.789  0.236\n"
+    "   extens                0.222  0.111     0.889  0.065\n"
+    "   intens-extens         +66.7             +7.0\n"
+    "   noise_intens-extens   +33.4            -10.0"
+)
+
+
+def test_review_arm_is_known_but_not_part_of_the_published_protocol():
+    from smolbench.induction.periodic import REVIEW_CONDITIONS
+
+    assert repro.REVIEW_ARMS == tuple(REVIEW_CONDITIONS) == ("related_intens",)
+    assert "related_intens" not in repro.load_protocol()["arms"]
+
+
+def test_report_without_the_review_arm_is_unchanged(tmp_path):
+    data = _review_tree(tmp_path, with_review=False)
+    assert repro.report(data) == HEAD_REPORT_WITHOUT_REVIEW
+    assert {arm for _, arm in repro.load_cells(data)} == set(ARMS)
+
+
+def test_report_and_cells_include_the_review_arm_when_present(tmp_path):
+    data = _review_tree(tmp_path, with_review=True)
+    cells = repro.load_cells(data)
+    assert cells["glm-4.7", "related_intens"] == pytest.approx({0: 5 / 9, 1: 4 / 9, 2: 3 / 9})
+    # An explicit arm list still restricts the selection.
+    assert set(repro.load_cells(data, arms=ARMS)) == {("glm-4.7", a) for a in ARMS}
+    lines = repro.report(data).splitlines()
+    # The published rows are untouched; the review arm adds a row and a delta.
+    for line in HEAD_REPORT_WITHOUT_REVIEW.splitlines():
+        assert line in lines
+    row = next(l for l in lines if l.split()[0] == "related_intens")
+    assert row.split() == ["related_intens", "0.444", "0.111"], "no published value exists"
+    delta_row = next(l for l in lines if l.split()[0] == "related_intens-extens")
+    assert delta_row.split() == ["related_intens-extens", "+22.2"]
+    assert lines.index(row) > lines.index(next(l for l in lines if l.split()[0] == "extens"))
+
+
+def test_check_data_ignores_the_review_arm(data, monkeypatch):
+    runs = repro.select_runs(data, ARMS)
+    digests = {
+        "glm-4.7": {
+            str(s): repro.seed_digest({a: runs["glm-4.7", s, a] for a in ARMS}) for s in range(3)
+        }
+    }
+    proto = dict(repro.load_protocol(), seed_digests=digests)
+    monkeypatch.setattr(repro, "load_protocol", lambda: proto)
+    for seed in range(3):
+        _write(data, "glm-4.7", seed, "related_intens", 4)
+    assert not repro.check_data(data), "a review-arm run must not disturb the published digests"

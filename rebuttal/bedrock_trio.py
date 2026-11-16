@@ -6,7 +6,8 @@ requests, ``ReplicateHarness`` and ``notebooks/induction/run_study.make_quizzes`
 the induction study, and ``scripts/deduction/horn/sweep.py`` runs and scores the Horn
 cells. This module adds only what Bedrock needs on top: the model roster, a per-model
 endpoint switch, a results store with the released-results layout, and a check that
-every response was reasoned.
+every response was reasoned. The induction study also has one opt-in review arm,
+``related_intens``, next to the three arms of the ICLR table.
 
 The private S3 bucket (``RESULTS_S3``) is the store of record for both studies and
 ``RESULTS_DIR`` is a local mirror of it that the report cells read. Objects in the bucket
@@ -20,10 +21,12 @@ import collections
 import contextlib
 import csv
 import importlib.util
+import itertools
 import json
 import logging
 import os
 import re
+import string
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
@@ -44,6 +47,7 @@ from smolbench.evals.results_store import (
     parse_s3_uri,
     utcnow,
 )
+from smolbench.evals.tokenization import WHITESPACE_UNITS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REBUTTAL_DIR = REPO_ROOT / "rebuttal"
@@ -58,7 +62,10 @@ REVIEW_CELLS = REPO_ROOT / "notebooks" / "deduction" / "review" / "bedrock_cells
 MANTLE_URL = "https://bedrock-mantle.{region}.api.aws{path}"
 DEFAULT_REGION = "us-east-1"
 #: The three induction arms of the ICLR table (``zero`` is left out, as there).
-INDUCTION_ARMS = ("intens", "noise_intens", "extens")
+INDUCTION_PAPER_ARMS = ("intens", "noise_intens", "extens")
+#: The paper arms, then the review arm ``related_intens`` (``periodic.REVIEW_CONDITIONS``).
+#: A literal, so that importing this module does not import ``periodic``.
+INDUCTION_ARMS = INDUCTION_PAPER_ARMS + ("related_intens",)
 #: The arms the paper reports; ``horn_repro.report`` contrasts cover these only.
 HORN_PAPER_ARMS = ("lem", "pad", "disc", "both")
 #: The paper arms, then the four review arms (``render.ALL_ARMS``).
@@ -88,6 +95,18 @@ LISTING_START = "Position 1: "
 #: Opening of the template text after the context (``run_study.template``); rules and
 #: listing lines never contain it, as labels are lowercase letters.
 QUESTION_START = "\nQuestion:"
+#: One rule line of a prompt (real or added), without its newline.
+_RULE_LINE = re.compile(r"^Every (\d+) positions write ([a-z]+)\.$", re.MULTILINE)
+#: Between the real rules and the question of a ``related_intens`` prompt: added rule
+#: lines, then the whitespace pad. The pad's characters are those of the generator's
+#: pad units, so the pattern follows them if a unit is added.
+_RELATED_MIDDLE = re.compile(
+    r"((?:Every \d+ positions write [a-z]+\.\n)*)"
+    r"([" + re.escape("".join(sorted(set("".join(WHITESPACE_UNITS))))) + r"]*)"
+)
+#: The generator drops back at most 3 added lines when the pad cannot hit the token target,
+#: so a pad of more than 4 lines' worth of tokens is whitespace standing in for rules.
+_MAX_PAD_LINES = 4
 
 
 @dataclass(frozen=True)
@@ -534,6 +553,32 @@ def load_run_study() -> ModuleType:
     return module
 
 
+def induction_quizzes(seed: int, model: str) -> dict[str, tuple]:
+    """One replicate's quizzes for every arm in ``INDUCTION_ARMS``.
+
+    ``run_study.make_quizzes`` for the arms of ``run_study.CONDITIONS`` plus the review arm
+    of ``periodic.REVIEW_CONDITIONS``. ``CONDITIONS`` is read at call time.
+
+    Parameters
+    ----------
+    seed : int
+        Replicate seed.
+    model : str
+        Model whose tokenizer pads ``noise_intens`` and ``related_intens``.
+
+    Returns
+    -------
+    dict[str, tuple]
+        Arm name -> that arm's quiz, one per arm of ``CONDITIONS`` and the review arm.
+    """
+    from smolbench.induction.periodic import (  # pylint: disable=import-outside-toplevel
+        REVIEW_CONDITIONS,
+    )
+
+    rs = load_run_study()
+    return rs.make_quizzes(seed, model, conditions={**rs.CONDITIONS, **REVIEW_CONDITIONS})
+
+
 def induction_harness(
     models: Sequence[BedrockModel],
     seeds: Sequence[int],
@@ -541,7 +586,10 @@ def induction_harness(
     s3_uri: Optional[str] = None,
     s3_region: str = RESULTS_S3_REGION,
 ):
-    """A ``ReplicateHarness`` over the three ICLR arms, writing the released layout.
+    """A ``ReplicateHarness`` over the three ICLR arms and the review arm ``related_intens``.
+
+    Writes the released layout. Resume is per arm: a replicate whose three paper arms are
+    already stored gets only the review arm's requests.
 
     Parameters
     ----------
@@ -574,7 +622,7 @@ def induction_harness(
     harness = ReplicateHarness(
         results_dir=results_dir / "induction",
         archetype_tags={m.key: m.tag for m in models},
-        make_quizzes=load_run_study().make_quizzes,
+        make_quizzes=induction_quizzes,
         seeds=tuple(seeds),
         info_types=INDUCTION_ARMS,
     )
@@ -706,7 +754,8 @@ def released_queries(key: str, seed: int = 0) -> dict[str, list[str]]:
     prefix = f"{proto['prefix']}/{key}/seed={seed}/"
     keys = [o["Key"] for o in s3.list_objects_v2(Bucket=proto["bucket"], Prefix=prefix).get("Contents", [])]
     out: dict[str, list[str]] = {}
-    for arm in INDUCTION_ARMS:
+    # The review arm has no released counterpart.
+    for arm in INDUCTION_PAPER_ARMS:
         runs = sorted(k for k in keys if k.rsplit("/", 1)[1].startswith(f"{arm}--") and k.endswith(".yaml"))
         if not runs:
             continue
@@ -753,7 +802,7 @@ def _expected_extens(intens: str, released: str) -> str:
 
 def check_induction_prompts(
     mine: Mapping[str, Sequence[Any]], released: Mapping[str, Sequence[str]], tokenizer: Any
-) -> None:
+) -> list[dict]:
     """Check this branch's induction prompts against the released ICLR prompts.
 
     Per arm:
@@ -766,17 +815,25 @@ def check_induction_prompts(
     - ``noise_intens``: it is padded to the token count of the matching ``extens`` prompt of
       this branch, so it differs from the released text; its token count under
       ``tokenizer`` must equal that ``extens`` prompt's.
+    - ``related_intens``: the review arm has no released prompt; ``check_related_prompts``
+      checks it against this branch's ``intens`` and ``extens`` prompts.
 
     Parameters
     ----------
     mine : Mapping[str, Sequence[Any]]
-        Arm -> questions with a ``.prompt`` (``make_quizzes(seed, key)``), in question order.
-        Needs ``intens``, ``extens`` and ``noise_intens``.
+        Arm -> questions with a ``.prompt`` (``induction_quizzes(seed, key)``), in question
+        order. Needs ``intens``, ``extens``, ``noise_intens`` and ``related_intens``.
     released : Mapping[str, Sequence[str]]
         Arm -> released prompt strings (``released_queries``). Needs ``intens`` and
         ``extens``; ``noise_intens`` is not compared.
     tokenizer : Any
         The model's own tokenizer, with ``count(text) -> int``.
+
+    Returns
+    -------
+    list[dict]
+        ``check_related_prompts``' per-question report of the review arm (one dict with
+        ``added_lines`` and ``pad_tokens`` per question, in question order).
 
     Raises
     ------
@@ -784,7 +841,7 @@ def check_induction_prompts(
         On the first mismatch, naming the arm and the question index; also if an arm is
         missing or has a different number of questions.
     """
-    for arm in INDUCTION_ARMS:
+    for arm in INDUCTION_PAPER_ARMS:
         if not mine.get(arm):
             raise AssertionError(f"{arm}: no prompts of this branch to check")
         if arm != "noise_intens":
@@ -808,6 +865,168 @@ def check_induction_prompts(
             )
         if tokenizer.count(noise.prompt) != tokenizer.count(extens.prompt):
             raise AssertionError(f"noise_intens[{i}]: token count differs from the extens prompt's")
+    if not mine.get("related_intens"):
+        raise AssertionError("related_intens: no prompts of this branch to check")
+    return check_related_prompts(mine["intens"], mine["extens"], mine["related_intens"], tokenizer)
+
+
+def _permitted_labels(length: int, real_labels: Sequence[str]) -> int:
+    """Count the lowercase labels of ``length`` that may be added next to ``real_labels``.
+
+    A label is permitted when it is not a real label and neither contains nor is contained
+    in one. Enumerated, not derived: it is the check's own statement of the generator's rule.
+    """
+    count = 0
+    for chars in itertools.product(string.ascii_lowercase, repeat=length):
+        label = "".join(chars)
+        if not any(r in label or label in r for r in real_labels):
+            count += 1
+    return count
+
+
+def check_related_prompts(
+    intens: Sequence[Any], extens: Sequence[Any], related: Sequence[Any], tokenizer: Any
+) -> list[dict]:
+    """Check the ``related_intens`` prompts of one replicate from their text alone.
+
+    The prompts are parsed here and the generator is not called, so this is independent of
+    it. A ``related_intens`` prompt is the ``intens`` prompt with irrelevant rule lines
+    (``Every {k} positions write {label}.``) and a whitespace pad inserted before the
+    question. Per question, in this order:
+
+    - the three sequences have the same length;
+    - the real rules (the rule lines of the ``intens`` prompt before the question) exist and
+      share one label length ``L0``;
+    - the prompt starts with that text, and ends with the ``intens`` prompt's question text;
+    - between the two there are only added rule lines, then whitespace;
+    - each added line has a real period and a label of lowercase letters, at least ``L0``
+      long, that is not a real label and neither contains nor is contained in one;
+    - no (period, label) pair repeats;
+    - label lengths do not decrease, and a longer label appears only after every permitted
+      pair of each shorter length is used.
+
+    After those checks have run for all questions, every question's added lines must be a
+    prefix of the longest one's (the stream is shared). Then per question: the token count
+    equals that of the ``extens`` prompt, and the whitespace left after the added lines is
+    at most ``_MAX_PAD_LINES`` lines' worth of tokens (the generator drops back at most 3
+    lines when the pad cannot hit the target; more means the arm pads with whitespace
+    instead of rules).
+
+    Parameters
+    ----------
+    intens, extens, related : Sequence[Any]
+        Questions with a ``.prompt``, in question order, of the same replicate.
+    tokenizer : Any
+        The model's own tokenizer, with ``count(text) -> int``.
+
+    Returns
+    -------
+    list[dict]
+        Per question, in order: ``{"added_lines": number of added rule lines,
+        "pad_tokens": tokens of the whitespace pad}``.
+
+    Raises
+    ------
+    AssertionError
+        On the first failed check, with a message starting ``related_intens[i]: `` (or
+        ``related_intens: `` for the length check) that names the problem.
+
+    Notes
+    -----
+    The permitted-pair count at a length below the longest label is enumerated
+    (``26**length`` strings), and only when a longer label appears.
+    """
+    if not len(intens) == len(extens) == len(related):
+        raise AssertionError(
+            f"related_intens: {len(intens)} intens, {len(extens)} extens and "
+            f"{len(related)} related_intens prompts; expected the same number"
+        )
+    # Phase 1: per-question structure, before any cross-question or token check.
+    parsed = []
+    for i, (base, rel) in enumerate(zip(intens, related)):
+        tag = f"related_intens[{i}]: "
+        base_text, rel_text = base.prompt, rel.prompt
+        q = base_text.find(QUESTION_START)
+        if q < 0:
+            raise AssertionError(f"{tag}the intens prompt has no question text ({QUESTION_START!r})")
+        head = base_text[:q]
+        real = _RULE_LINE.findall(head)
+        if not real:
+            raise AssertionError(f"{tag}no rules in the intens prompt's head")
+        real_labels = [label for _k, label in real]
+        real_periods = {int(k) for k, _label in real}
+        base_len = len(real_labels[0])
+        if any(len(label) != base_len for label in real_labels):
+            raise AssertionError(f"{tag}the real rules' labels differ in length")
+        if not rel_text.startswith(head):
+            raise AssertionError(f"{tag}does not start with the intens prompt's rules")
+        t = rel_text.rfind(QUESTION_START)
+        if t < 0 or rel_text[t:] != base_text[q:]:
+            raise AssertionError(f"{tag}question text differs from the intens prompt's")
+        middle = _RELATED_MIDDLE.fullmatch(rel_text, len(head), t)
+        if middle is None:
+            raise AssertionError(f"{tag}between the rules and the question is neither rule lines nor whitespace")
+        added = middle.group(1)
+        pairs = [(int(k), label) for k, label in _RULE_LINE.findall(added)]
+        for k, label in pairs:
+            if k not in real_periods:
+                raise AssertionError(f"{tag}period {k} is not a real period {sorted(real_periods)}")
+            if (
+                len(label) < base_len
+                or any(r in label or label in r for r in real_labels)
+            ):
+                raise AssertionError(
+                    f"{tag}label {label!r} is shorter than the real labels, or is a real "
+                    "label, or contains or is contained in one"
+                )
+        if len(set(pairs)) != len(pairs):
+            dup = next(p for p in pairs if pairs.count(p) > 1)
+            raise AssertionError(f"{tag}pair {dup} repeats")
+        lengths = [len(label) for _k, label in pairs]
+        for before, after in zip(lengths, lengths[1:]):
+            if after < before:
+                raise AssertionError(
+                    f"{tag}a length-{before} label comes before the length-{after} pool "
+                    "is used up (label lengths must not decrease)"
+                )
+        if lengths and max(lengths) > base_len:
+            # A longer label is allowed only once every shorter pair is used.
+            for short in range(base_len, max(lengths)):
+                used = len({p for p in pairs if len(p[1]) == short})
+                pool = _permitted_labels(short, real_labels) * len(real_periods)
+                if used != pool:
+                    raise AssertionError(
+                        f"{tag}a length-{max(lengths)} label appears before the length-{short} "
+                        f"pool is used up ({used} of {pool} pairs)"
+                    )
+        parsed.append((head, t, added, real))
+    # Phase 2: one stream, so every added block is a prefix of the longest (first on ties).
+    reference = max((p[2] for p in parsed), key=len)
+    for i, (_head, _t, added, _real) in enumerate(parsed):
+        if not reference.startswith(added):
+            raise AssertionError(
+                f"related_intens[{i}]: added lines are not a prefix of the stream the other "
+                "questions share"
+            )
+    # Phase 3: token count of the extens prompt, and a pad that is under a few lines.
+    report = []
+    for i, (ext, rel, (head, t, added, real)) in enumerate(zip(extens, related, parsed)):
+        tag = f"related_intens[{i}]: "
+        rel_text = rel.prompt
+        total, target = tokenizer.count(rel_text), tokenizer.count(ext.prompt)
+        if total != target:
+            raise AssertionError(f"{tag}token count {total} differs from the extens prompt's {target}")
+        pad_tokens = total - tokenizer.count(rel_text[: len(head)] + added + rel_text[t:])
+        lines = [f"Every {k} positions write {label}.\n" for k, label in real]
+        lines += added.splitlines(keepends=True)
+        line_tokens = max(tokenizer.count(line) for line in lines)
+        if pad_tokens > _MAX_PAD_LINES * line_tokens:
+            raise AssertionError(
+                f"{tag}leftover whitespace of {pad_tokens} tokens exceeds {_MAX_PAD_LINES} "
+                f"lines of {line_tokens} tokens"
+            )
+        report.append({"added_lines": len(added.splitlines()), "pad_tokens": pad_tokens})
+    return report
 
 
 def induction_reasoning_report(results_dir: Path = RESULTS_DIR) -> dict[tuple[str, str], dict]:

@@ -23,7 +23,7 @@ import os
 import string
 from math import ceil
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from dotenv import load_dotenv
 
@@ -137,6 +137,7 @@ from smolbench.induction._common import (
 from smolbench.induction.experiment import InductionExperiment
 from smolbench.induction.periodic import (
     CONDITIONS,
+    Condition,
     PeriodicConfig,
     get_periodic_prompts,
     numeric_count_query_gen,
@@ -326,8 +327,10 @@ COT_ARGS: dict[str, dict] = {
 }
 
 
-def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
-    """Render one replicate's queries, all four ``CONDITIONS`` arms of each.
+def rendered_queries(
+    seed: int, model: str, conditions: Optional[Mapping[str, Condition]] = None
+) -> list[RenderedQuery]:
+    """Render one replicate's queries, every arm of ``conditions`` for each question.
 
     The quiz is fixed so the model is the independent variable.
 
@@ -336,13 +339,19 @@ def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
     seed : int
         Replicate seed.
     model : str
-        Needed because ``noise_intens`` is padded under this model's tokenizer.
+        Needed because ``noise_intens`` (and the review arm) are padded under this
+        model's tokenizer.
+    conditions : Optional[Mapping[str, Condition]]
+        Arms to render. ``None`` (default) means the module-level ``CONDITIONS``, read
+        at call time; pass ``{**CONDITIONS, **REVIEW_CONDITIONS}`` to add the review arm.
 
     Returns
     -------
     list[RenderedQuery]
-        Queries for all four ``CONDITIONS`` arms of the replicate.
+        Queries for every arm of ``conditions`` (the four ``CONDITIONS`` arms by default).
     """
+    # Resolved here, not as a default argument, so a patched ``CONDITIONS`` is honoured.
+    conditions = CONDITIONS if conditions is None else conditions
     # ``labels`` must equal ``n`` when given as a count (one label per harmonic).
     cfg = PeriodicConfig(n=N_HARMONICS, labels=N_HARMONICS, seed=seed)
     prompter = Prompter(
@@ -350,13 +359,15 @@ def rendered_queries(seed: int, model: str) -> list[RenderedQuery]:
     )
     return list(
         get_periodic_prompts(
-            cfg, prompter, tokenizer=for_model(model), conditions=CONDITIONS
+            cfg, prompter, tokenizer=for_model(model), conditions=conditions
         )
     )
 
 
-def make_quizzes(seed: int, model: str) -> dict[str, tuple]:
-    """Generate one replicate's four quizzes, keyed by ``INFO_TYPES`` in that order.
+def make_quizzes(
+    seed: int, model: str, conditions: Optional[Mapping[str, Condition]] = None
+) -> dict[str, tuple]:
+    """Generate one replicate's quizzes, one per arm of ``conditions``.
 
     Parameters
     ----------
@@ -364,13 +375,20 @@ def make_quizzes(seed: int, model: str) -> dict[str, tuple]:
         Replicate seed.
     model : str
         Model for query rendering.
+    conditions : Optional[Mapping[str, Condition]]
+        Arms to build. ``None`` (default) means the module-level ``CONDITIONS``, read at
+        call time; the same mapping goes to rendering and to quiz assembly.
 
     Returns
     -------
     dict[str, tuple]
-        Four quizzes keyed by ``INFO_TYPES`` in that order.
+        Quizzes keyed by arm name: the four ``INFO_TYPES`` in that order by default.
     """
-    return quizzes_from_prompts(rendered_queries(seed, model), Numeric, CONDITIONS)
+    # Resolved here, not as a default argument, so a patched ``CONDITIONS`` is honoured.
+    conditions = CONDITIONS if conditions is None else conditions
+    return quizzes_from_prompts(
+        rendered_queries(seed, model, conditions), Numeric, conditions
+    )
 
 
 def probe_seeds(seeds: range) -> list[int]:
@@ -417,6 +435,8 @@ def completion_budget(model: str, seeds: range) -> int:
     """
     worst = 0
     for seed in probe_seeds(seeds):
+        # ``CONDITIONS`` only: the review arm has ``extens``'s token count, so it can
+        # never be the worst prompt.
         for query in rendered_queries(seed, model):
             worst = max(worst, *query.token_counts.values())
     budget = CONTEXT_LIMIT - worst - TEMPLATE_RESERVE

@@ -1,8 +1,12 @@
 """Generate periodic-pattern induction quizzes.
 
 Generators use a fresh seeded RNG; prompt and RNG bytes are golden-pinned.
+``CONDITIONS`` is the published arm set; ``REVIEW_CONDITIONS`` holds opt-in
+control arms that callers merge in explicitly.
 """
 
+import itertools
+import random
 import string
 from dataclasses import dataclass
 from math import gcd, lcm
@@ -11,6 +15,7 @@ from typing import (
     Callable,
     Collection,
     Iterable,
+    Iterator,
     Mapping,
     Optional,
     TypeAlias,
@@ -38,12 +43,14 @@ __all__ = [
     "Contexts",
     "Condition",
     "CONDITIONS",
+    "REVIEW_CONDITIONS",
     "RANGE_KEYS",
     "get_periodic_prompts",
     "get_periodic_quiz",
     "get_periodic_numeric_quiz",
     "tof_membership_query_gen",
     "numeric_count_query_gen",
+    "related_rule_lines",
 ]
 
 
@@ -214,11 +221,126 @@ class Contexts:
 
 @dataclass(frozen=True)
 class Condition:
-    """Specify an arm's context, padding target, and range handling."""
+    """Specify an arm's context, padding target, and range handling.
+
+    Parameters
+    ----------
+    context : Callable[[Contexts], str]
+        Picks the context body the arm shows.
+    match_tokens_to : str | None
+        Name of the condition whose prompt token count this arm must equal
+        exactly, using whitespace padding. ``None`` means no padding.
+    omit_range : bool
+        Render from the range-free template and check that it leaks nothing.
+    filler : Callable[[PeriodToLabel, int], Iterator[str]] | None
+        Called once per replicate with the real ``period_to_label`` and the
+        replicate's seed. Yields rule lines that are appended in order after
+        the arm's context and before any whitespace pad, as many as fit under
+        the token target. Only meaningful with ``match_tokens_to``.
+
+    Raises
+    ------
+    ValueError
+        If ``filler`` is set while ``match_tokens_to`` is ``None``.
+    """
 
     context: Callable[[Contexts], str]
     match_tokens_to: Optional[str] = None
     omit_range: bool = False
+    filler: Optional[Callable[[PeriodToLabel, int], Iterator[str]]] = None
+
+    def __post_init__(self) -> None:
+        if self.filler is not None and self.match_tokens_to is None:
+            # Without a token target there is nothing to say how many filler
+            # lines to render.
+            raise ValueError(
+                "filler needs match_tokens_to: it fills up to a token target."
+            )
+
+
+def related_rule_lines(period_to_label: PeriodToLabel, seed: int) -> Iterator[str]:
+    """Yield endless irrelevant rule lines in the form of the real rules.
+
+    Each line is ``Every {k} positions write {label}.\\n`` for a real period
+    ``k`` and a label that is unrelated to every real label: it is not a real
+    label, and it neither contains nor sits inside one. The substring test
+    matters because a question asks whether a position includes a label, so a
+    filler label that contained a real label would change the answer.
+
+    Labels are drawn at the real labels' length first. Only when every
+    permitted (period, label) pair of that length has been yielded does the
+    stream move to the next length. Each pair is yielded at most once. The
+    stream depends only on `seed` and the real rules, never on a tokenizer.
+
+    Parameters
+    ----------
+    period_to_label : PeriodToLabel
+        The replicate's real rules. Must be non-empty, with real labels of one
+        length drawn from the lowercase label alphabet.
+    seed : int
+        Seeds the order of the pairs.
+
+    Yields
+    ------
+    str
+        One rule line, rendered by the same renderer as the real rules.
+
+    Raises
+    ------
+    ValueError
+        On the first ``next()``, if the real rules are empty, if the real
+        labels differ in length, or if a real label has a character outside
+        the label alphabet.
+
+    Notes
+    -----
+    Cost: the pool for one length is materialised, 26**L labels. At the
+    study's n=9 the real labels have 2 characters (667 permitted labels x 9
+    periods = 6003 pairs), and a census over 30 seeds never needed length 3.
+
+    Examples
+    --------
+    >>> lines = related_rule_lines({1: "ab", 2: "cd"}, seed=0)
+    >>> first = next(lines)
+    >>> first.startswith("Every ") and first.endswith(".\\n")
+    True
+    >>> list(itertools.islice(related_rule_lines({1: "ab"}, 0), 3)) == list(
+    ...     itertools.islice(related_rule_lines({1: "ab"}, 0), 3)
+    ... )
+    True
+    """
+    periods = sorted(period_to_label)
+    real = tuple(period_to_label.values())
+    if not real:
+        raise ValueError("period_to_label is empty: there are no real labels to avoid.")
+    if len({len(r) for r in real}) != 1:
+        raise ValueError(
+            f"real labels must all have one length, got {sorted({len(r) for r in real})}."
+        )
+    for r in real:
+        if any(ch not in _LABEL_CHARSET for ch in r):
+            raise ValueError(
+                f"real label {r!r} has a character outside the label alphabet "
+                f"{_LABEL_CHARSET!r}."
+            )
+
+    # Design: a string seed is deterministic across processes (unlike hash()
+    # of a str) and leaves every numpy generator the quiz uses untouched.
+    rng = random.Random(f"related_intens:{seed}")
+    length = len(real[0])
+    while True:
+        permitted = [
+            x
+            for x in map("".join, itertools.product(_LABEL_CHARSET, repeat=length))
+            if x not in real and all(r not in x and x not in r for r in real)
+        ]
+        # Label-major, periods ascending, then one shuffle of the same
+        # continuing rng: the order is fixed by the seed alone.
+        pairs = [(k, x) for x in permitted for k in periods]
+        rng.shuffle(pairs)
+        for k, x in pairs:
+            yield _render_intensional({k: x})
+        length += 1
 
 
 # Immutable shared conditions prevent cross-caller mutation.
@@ -235,6 +357,22 @@ CONDITIONS: Mapping[str, Condition] = MappingProxyType(
         # placeholders are ``RANGE_KEYS`` below; the range-free wording lives
         # in ``Prompter.range_free_template``.
         "zero": Condition(context=lambda c: "", omit_range=True),
+    }
+)
+
+# Review conditions are opt-in: callers merge them with ``CONDITIONS``, e.g.
+# ``{**CONDITIONS, **REVIEW_CONDITIONS}``, so code that reads ``CONDITIONS``
+# alone (the published reproduction) renders exactly what it always did.
+REVIEW_CONDITIONS: Mapping[str, Condition] = MappingProxyType(
+    {
+        # The rules, then irrelevant rules of the same form, then (if needed)
+        # whitespace, to the token count of extens: length matched with
+        # rule-shaped text instead of whitespace alone.
+        "related_intens": Condition(
+            context=lambda c: c.intensional,
+            match_tokens_to="extens",
+            filler=related_rule_lines,
+        ),
     }
 )
 
@@ -333,6 +471,217 @@ def _verify_no_range_leak(
             )
 
 
+# Starting guess for the first query's filler line count; later queries start
+# from the previous query's measured count.
+_FILLER_INITIAL_GUESS: int = 64
+# How many whole filler lines may be dropped to make the pad reachable.
+_FILLER_MAX_DROPBACKS: int = 3
+
+
+class _FillerState:
+    """Hold one replicate's filler stream for one condition.
+
+    The stream is created once and pulled lazily into a cache shared by all
+    of the replicate's queries, so every query renders a prefix of the same
+    line sequence. ``last_fit`` carries the previous query's line count as
+    the next search's starting point.
+    """
+
+    def __init__(self, stream: Iterator[str]) -> None:
+        self._stream = stream
+        self.lines: list[str] = []
+        self.exhausted = False
+        self.last_fit: Optional[int] = None
+
+    def ensure(self, n: int) -> int:
+        """Pull lines until `n` are cached; return how many exist, at most `n`."""
+        while len(self.lines) < n and not self.exhausted:
+            try:
+                self.lines.append(next(self._stream))
+            except StopIteration:
+                self.exhausted = True
+        return min(n, len(self.lines))
+
+
+def _largest_fitting_count(
+    name: str,
+    f: Callable[[int], int],
+    target: int,
+    state: _FillerState,
+) -> int:
+    """Return the largest line count N with ``f(N) <= target``.
+
+    Galloping search to bracket N, then bisection. It starts from the previous
+    query's N when there is one (the replicate's queries differ by a few
+    tokens), otherwise from a small guess; each ``f`` call tokenizes a whole
+    prompt, so a linear scan is out. If the stream ends before the target is
+    exceeded, N is the number of lines there are.
+
+    Parameters
+    ----------
+    name : str
+        Condition name, for messages.
+    f : Callable[[int], int]
+        Token count of the prompt with the first n filler lines. Must satisfy
+        ``f(0) <= target``.
+    target : int
+        Token budget.
+    state : _FillerState
+        Source of lines (``ensure``) and of the starting point.
+
+    Returns
+    -------
+    int
+        N, with ``f(N) <= target < f(N + 1)`` unless the stream ended at N.
+
+    Raises
+    ------
+    ValueError
+        If the bracketed N does not satisfy ``f(N) <= target < f(N + 1)``,
+        which means the count is not monotone in the number of lines.
+    """
+    prev = state.last_fit
+    guess = prev if prev is not None else _FILLER_INITIAL_GUESS
+    step = 1 if prev is not None else max(guess, 1)
+
+    # Phase 1: bracket. Invariant: f(lo) <= target; f(hi) > target once set.
+    lo, hi = 0, None
+    n = state.ensure(guess)
+    if n < guess and f(n) <= target:
+        return n  # the stream ended below the guess and everything fits
+    if n < guess or f(n) > target:
+        hi = n
+        # Gallop downward from the over-target guess.
+        while True:
+            m = max(hi - step, 0)
+            if f(m) <= target:
+                lo = m
+                break
+            hi = m
+            step *= 2
+    else:
+        lo = n
+        # Gallop upward from the fitting guess.
+        while hi is None:
+            m = state.ensure(lo + step)
+            if m < lo + step and f(m) <= target:
+                return m  # the stream ended and every line fits
+            if m < lo + step or f(m) > target:
+                hi = m
+            else:
+                lo = m
+                step *= 2
+
+    # Phase 2: bisect to the largest fitting count.
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if f(mid) <= target:
+            lo = mid
+        else:
+            hi = mid
+    if not (f(lo) <= target < f(lo + 1)):
+        raise ValueError(
+            f"condition {name!r}: token count is not monotone in the number of "
+            f"filler lines (f({lo})={f(lo)}, f({lo + 1})={f(lo + 1)}, "
+            f"target {target})."
+        )
+    return lo
+
+
+def _render_with_filler(
+    name: str,
+    condition: Condition,
+    render: Callable[[str], str],
+    base_context: str,
+    target: int,
+    tokenizer: Tokenizer,
+    unit: Optional[str],
+    state: _FillerState,
+) -> str:
+    """Render one query's prompt: context, filler lines, then whitespace.
+
+    Finds by measurement the largest line count N whose prompt fits within
+    `target` tokens (never by an assumed tokens-per-line figure), then pads
+    the remainder with whitespace to land exactly on `target`.
+
+    Parameters
+    ----------
+    name : str
+        Condition name, for messages.
+    condition : Condition
+        The filler condition.
+    render : Callable[[str], str]
+        Maps a context to the query's prompt.
+    base_context : str
+        The condition's own context, before any filler.
+    target : int
+        Exact token count the prompt must have.
+    tokenizer : Tokenizer
+        Must be the model under test's.
+    unit : str | None
+        Whitespace pad unit, as ``noise_intens`` uses.
+    state : _FillerState
+        The replicate's shared filler lines; ``last_fit`` is updated.
+
+    Returns
+    -------
+    str
+        A prompt of exactly `target` tokens.
+
+    Raises
+    ------
+    ValueError
+        If the context alone exceeds `target`, if the token count is not
+        monotone in the line count, or if no prompt of N, N-1, N-2 or N-3
+        lines can be padded to `target`.
+    """
+    counts: dict[int, int] = {}
+
+    def text(n: int) -> str:
+        return base_context + "".join(state.lines[:n])
+
+    def f(n: int) -> int:
+        if n not in counts:
+            counts[n] = tokenizer.count(render(text(n)))
+        return counts[n]
+
+    if f(0) > target:
+        raise ValueError(
+            f"condition {name!r}: the rules alone are {f(0)} tokens, over the "
+            f"{condition.match_tokens_to!r} target of {target}."
+        )
+    fit = _largest_fitting_count(name, f, target, state)
+    state.last_fit = fit
+
+    last_error: Optional[ValueError] = None
+    for n in range(fit, max(fit - _FILLER_MAX_DROPBACKS, 0) - 1, -1):
+        if f(n) == target:
+            # token_matched_noise_prompt raises when the unpadded prompt is
+            # already at the target, so it must not be called here.
+            return render(text(n))
+        try:
+            return token_matched_noise_prompt(
+                render, text(n), target, tokenizer, unit=unit
+            )
+        except ValueError as err:
+            # Why drop back: the token count is a step function of the pad
+            # length. After a line ending ".\n" and the template's
+            # "\nQuestion:", the first pad unit costs 2 tokens under every
+            # measured tokenizer, so a remainder of 1 is unreachable; under
+            # some tokenizers the second unit also costs 2 (the count steps
+            # 0, 2, 4, 5, 6, ...), so a remainder of 3 is unreachable too.
+            # One whole line fewer leaves a larger remainder the pad can hit.
+            # Do not "simplify" this away: it is needed on 13-30% of the
+            # 30-seed protocol's questions, measured under the three trio
+            # tokenizers.
+            last_error = err
+    raise ValueError(
+        f"condition {name!r}: no prompt of {fit} filler lines or up to "
+        f"{_FILLER_MAX_DROPBACKS} fewer could be padded to the target of "
+        f"{target} tokens."
+    ) from last_error
+
+
 def get_periodic_prompts(
     config: PeriodicConfig,
     prompter: Prompter,
@@ -391,6 +740,14 @@ def get_periodic_prompts(
     padded = [(n, c) for n, c in conditions.items() if c.match_tokens_to is not None]
     unit: Optional[str] = choose_whitespace_unit(tokenizer) if padded else None
 
+    # One filler stream per condition per replicate, shared by all queries:
+    # every query renders a prefix of the same line sequence.
+    fillers = {
+        n: _FillerState(c.filler(period_to_label, config.seed))
+        for n, c in padded
+        if c.filler is not None
+    }
+
     for query, answer in prompter.query_gen(
         period_to_label, pos_to_compound, config.seed
     ):
@@ -410,17 +767,29 @@ def get_periodic_prompts(
         for name, condition in padded:
             template = _resolve_arm_template(name, condition, prompter)
             target_count = token_counts[condition.match_tokens_to]
-            rendered = token_matched_noise_prompt(
-                context_renderer(template, query),
-                condition.context(contexts),
-                target_count,
-                tokenizer,
-                unit=unit,
-            )
+            if condition.filler is None:
+                rendered = token_matched_noise_prompt(
+                    context_renderer(template, query),
+                    condition.context(contexts),
+                    target_count,
+                    tokenizer,
+                    unit=unit,
+                )
+            else:
+                rendered = _render_with_filler(
+                    name,
+                    condition,
+                    context_renderer(template, query),
+                    condition.context(contexts),
+                    target_count,
+                    tokenizer,
+                    unit,
+                    fillers[name],
+                )
             if condition.omit_range:
                 _verify_no_range_leak(name, query, template, rendered)
             prompts[name] = rendered
-            # Padding already verified this count.
+            # Padding (or an exact filler fit) already verified this count.
             token_counts[name] = target_count
 
         yield RenderedQuery(
