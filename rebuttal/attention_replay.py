@@ -149,6 +149,7 @@ __all__ = [
     "ApprovalRequired",
     "BUCKET",
     "CAPTURE_UNSUPPORTED",
+    "CAPTURE_VERSION",
     "CaptureUnsupported",
     "ChatTemplate",
     "DEFAULT_RESULTS_ROOT",
@@ -310,6 +311,9 @@ _MASS_FLOOR: float = -1e-3
 #: Slack added to the entropy ceiling ``ln(attended keys)``: the box stores entropy
 #: as float16, whose spacing near the largest values (~12 nats) is about 8e-3.
 _ENTROPY_CEIL_TOL: float = 1e-2
+#: Capture format the shipped plugin writes; version 2 added ``prompt_entropy``. New
+#: captures come from the plugin in this repository, so the audit requires it.
+CAPTURE_VERSION: int = 2
 
 # --------------------------------------------------------------------------- errors
 
@@ -1328,7 +1332,7 @@ def _estimate_bytes(
     """Return ``(estimated capture bytes, est_basis)`` for the capturable `planned` jobs."""
     formula = (
         "ESTIMATE: per job, summed over ranks, n_attn_layers x P x n_heads x (4 mass + 1 entropy "
-        "+ 1 sink) x 2 bytes (float16) + tp x n_tokens (uint8 classes per rank), with "
+        "+ 1 prompt_entropy + 1 sink) x 2 bytes (float16) + tp x n_tokens (uint8 classes per rank), with "
         "P = n_tokens - query_start; uncompressed npz, without the meta json and S3 overhead"
     )
     if config is None:
@@ -1343,7 +1347,7 @@ def _estimate_bytes(
     for item in planned:
         job = item.job
         queries = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
-        total += layers * queries * heads * (4 + 1 + 1) * 2 + tp * job.n_tokens
+        total += layers * queries * heads * (4 + 1 + 1 + 1) * 2 + tp * job.n_tokens
     return total, f"{formula}; layers={layers}, heads={heads}, tp={tp}; config: {source}"
 
 
@@ -1472,14 +1476,113 @@ def _object_size(client: Any, bucket: str, key: str) -> int:
     raise FileNotFoundError(f"s3://{bucket}/{key} is not listed")
 
 
+def _first_index(mask: np.ndarray) -> Tuple[int, int, int]:
+    """Return the ``(layer, row, head)`` of the first True entry of a 3-d boolean `mask`."""
+    layer, row, head = (int(i) for i in np.argwhere(mask)[0])
+    return layer, row, head
+
+
+def _audit_prompt_entropy(
+    arrays: Any, job: attention.Job, entropy: np.ndarray, mass: np.ndarray, n_layers: int
+) -> Optional[str]:
+    """Content-check the ``prompt_entropy`` array of a version-2 rank; return a failure or ``None``.
+
+    Runs only after every version-1 check passed, so `entropy` and `mass` have the
+    shapes ``_audit_arrays`` verified. See ``audit_captures`` for the rules.
+    """
+    if "prompt_entropy" not in arrays:
+        return "capture_version 2 npz has no prompt_entropy"
+    pe16 = np.asarray(arrays["prompt_entropy"])
+    if pe16.shape != entropy.shape:
+        return f"prompt_entropy shape {pe16.shape} differs from entropy {entropy.shape}"
+    if "sliding_window" not in arrays:
+        return "capture_version 2 npz has no sliding_window (needed to place the NaNs of prompt_entropy)"
+    window = np.asarray(arrays["sliding_window"])
+    if window.shape != (n_layers,):
+        return f"sliding_window shape {window.shape} is not ({n_layers},)"
+
+    # Compare in float64 on the stored float16 values, as the other entropy checks do.
+    pe = pe16.astype(np.float64)
+    finite = np.isfinite(pe)
+    query_start = int(job.query_start)  # type: ignore[arg-type]
+
+    # Phase 1: range of the values. NaN is legitimate here, so it is judged in phase 2.
+    # Comparisons with NaN are False, so a NaN never trips these masks.
+    infinite = np.isinf(pe)
+    if infinite.any():
+        l, i, h = _first_index(infinite)
+        return f"prompt_entropy holds inf at (layer {l}, row {i}, head {h})"
+    below = pe < _ENTROPY_FLOOR
+    if below.any():
+        l, i, h = _first_index(below)
+        return (
+            f"prompt_entropy {float(pe[l, i, h]):.4g} at (layer {l}, row {i}, head {h}) "
+            f"is below {_ENTROPY_FLOOR}"
+        )
+    # The renormalised distribution lives on at most query_start prompt keys (fewer on
+    # windowed layers) with the sink excluded, so ln(query_start) bounds it; the slack is
+    # the float16 spacing, as for the whole-row entropy. With query_start == 0 there is no
+    # prompt key and no ceiling: every finite value is then rejected by phase 2.
+    if query_start > 0:
+        ceiling = float(np.log(float(query_start))) + _ENTROPY_CEIL_TOL
+        above = pe > ceiling
+        if above.any():
+            l, i, h = _first_index(above)
+            return (
+                f"prompt_entropy {float(pe[l, i, h]):.4g} at (layer {l}, row {i}, head {h}) "
+                f"is above the ceiling ln(query_start) + {_ENTROPY_CEIL_TOL} = {ceiling:.4g}"
+            )
+
+    # Phase 2: NaN placement. A row can see a prompt key unless the layer is windowed
+    # and the row has moved past the window (row i is at absolute position
+    # query_start + i, and a window w admits keys j >= pos - (w - 1), i.e. a prompt key
+    # iff i < w - 1), or there is no prompt at all.
+    rows = np.arange(mass.shape[1], dtype=np.int64)[None, :]
+    win = window.astype(np.int64)[:, None]
+    no_prompt = ((win > 0) & (rows >= win - 1)) | (query_start == 0)  # [L, P]
+    no_prompt3 = np.broadcast_to(no_prompt[:, :, None], pe.shape)
+    # Masked keys get -inf logits, so softmax gives them EXACTLY 0 and the one-hot class
+    # reduction sums exact zeros: where no prompt key is attendable the stored prompt
+    # mass is exactly 0, and that is what makes a NaN there trustworthy. The converse is
+    # NOT required: a finite value with stored prompt mass 0 is accepted, because a peaked
+    # row's tiny prompt mass underflows float16 (below about 6e-8) while the entropy
+    # renormalised on the prompt keys is still defined. This rule encodes the plugin's
+    # masks (causal plus sliding window); a layer type that masks prompt keys some other
+    # way needs its geometry stored in the npz, or its NaNs are rejected here.
+    stray = finite & no_prompt3
+    if stray.any():
+        l, i, h = _first_index(stray)
+        return (
+            f"prompt_entropy {float(pe[l, i, h]):.4g} at (layer {l}, row {i}, head {h}) is "
+            f"finite, but no prompt key is attendable there (window {int(window[l])}, "
+            f"query_start {query_start})"
+        )
+    prompt_mass = np.asarray(mass)[..., :3].astype(np.float64).sum(-1)  # [L, P, H]
+    bad_nan = np.isnan(pe) & ~(no_prompt3 & (prompt_mass == 0.0))
+    if bad_nan.any():
+        l, i, h = _first_index(bad_nan)
+        return (
+            f"prompt_entropy is NaN at (layer {l}, row {i}, head {h}) with prompt mass "
+            f"{float(prompt_mass[l, i, h]):.3g}; NaN is valid only where no prompt key is "
+            "attendable and the stored prompt mass is 0"
+        )
+    return None
+
+
 def _audit_arrays(
-    arrays: Any, job: attention.Job, n_layers: int, heads_local: int
+    arrays: Any,
+    job: attention.Job,
+    n_layers: int,
+    heads_local: int,
+    capture_version: int = 1,
 ) -> Tuple[Optional[str], Optional[Tuple[int, ...]]]:
     """Content-check one rank's arrays; return ``(failure or None, mass.shape[:2])``.
 
     `n_layers` and `heads_local` are the config's attention layer count and its
     heads per tensor-parallel rank; the entropy ceiling is derived in
-    ``audit_captures``.
+    ``audit_captures``. `capture_version` is the rank's meta version: for 2 or
+    more, the ``prompt_entropy`` checks run after all the version-1 checks pass;
+    version 1 is audited exactly as before.
     """
     classes = np.asarray(arrays["classes"])
     if not np.array_equal(classes, np.asarray(job.classes)):
@@ -1543,6 +1646,10 @@ def _audit_arrays(
             f"{float(ceiling[layer, row, 0]):.4g}",
             None,
         )
+    if capture_version >= 2:
+        failure = _audit_prompt_entropy(arrays, job, entropy, mass, n_layers)
+        if failure:
+            return failure, None
     return None, tuple(mass.shape[:2])
 
 
@@ -1555,6 +1662,7 @@ def _audit_job(
     model: str,
     n_layers: int,
     n_heads: int,
+    capture_version: Optional[int] = None,
 ) -> Optional[str]:
     """Audit every rank of one job; return the first failure reason, or ``None``.
 
@@ -1587,6 +1695,10 @@ def _audit_job(
             return f"rank {rank}: meta n_tokens {meta['n_tokens']} != job's {job.n_tokens}"
         if meta.get("mode") != "mass":
             return f"rank {rank}: meta mode {meta.get('mode')!r} is not 'mass'"
+        # A meta without the field is a version-1 capture (written before the field existed).
+        rank_version = int(meta.get("capture_version", 1))
+        if capture_version is not None and rank_version != capture_version:
+            return f"rank {rank}: meta capture_version {meta.get('capture_version')!r} != {capture_version}"
         if int(meta["query_start"]) != job.query_start:
             return f"rank {rank}: meta query_start {meta['query_start']} != job's {job.query_start}"
         layers_meta = meta.get("layers")
@@ -1611,7 +1723,7 @@ def _audit_job(
         if sampled:
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
             loaded = np.load(io.BytesIO(body))
-            failure, shape = _audit_arrays(loaded, job, n_layers, heads_local)
+            failure, shape = _audit_arrays(loaded, job, n_layers, heads_local, rank_version)
             if failure:
                 # Deferred, not returned: every rank's arrays are examined, so a
                 # defect that sits in one rank only is not hidden behind the first
@@ -1650,6 +1762,7 @@ def audit_captures(
     config: Mapping[str, Any],
     sample_per_run: int = 1,
     arrays: str = "sample",
+    capture_version: Optional[int] = None,
 ) -> Dict[str, Optional[str]]:
     """Audit captured objects by content; file counts prove nothing.
 
@@ -1657,15 +1770,17 @@ def audit_captures(
     job and rank the meta json is read and checked, in this order (the first
     failure is the job's reason, each prefixed ``rank <r>: ``): ``job_id`` equals
     the job's; ``rank`` equals the rank read; ``model`` equals `model`;
-    ``n_tokens`` and ``query_start`` equal the job's; ``mode == "mass"``;
-    ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
+    ``n_tokens`` and ``query_start`` equal the job's; ``mode == "mass"``; the meta's
+    capture version (``capture_version``, 1 when the field is absent) equals the
+    `capture_version` argument, when that is not ``None``; ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
     [L, P, H_local, 4]`` with ``P = n_tokens - query_start``; ``gate_max_rel <=
     gate_tol``; and ``bytes`` equals the npz object's real size (``head_object``
     when the client has it, else the listing's ``Size``). A missing meta key is a
     failure reason, never a crash of the audit (a mismatch against ``None`` for
     the identity, layer and shape keys, ``audit raised KeyError`` for the others).
     When ``H`` is
-    not divisible by `tp`, every job fails with a reason saying so.
+    not divisible by `tp`, every job fails with a reason saying so. The version
+    check runs for every job, whether or not its arrays are downloaded.
 
     The arrays are downloaded for the jobs `arrays` selects: ``"sample"`` takes
     the first `sample_per_run` jobs of each run prefix, ``"all"`` takes every
@@ -1682,6 +1797,31 @@ def audit_captures(
     (each rank holds different heads, so identical arrays mean a duplicated or
     swapped upload); the failure reads ``rank r duplicates rank s``. Ranks whose
     mass is all zeros are not compared.
+
+    A rank whose meta is version 2 or later (``capture_version >= 2``) is checked
+    further, after every check above passes. Its npz must hold ``prompt_entropy``
+    (the entropy of each response row over the prompt keys ``[0, query_start)``,
+    renormalised, sink excluded) with the shape of ``entropy``, and a
+    ``sliding_window`` array of shape ``(L,)`` (0 marks a global layer). The
+    missing-array failures can fire only for the jobs whose arrays are
+    downloaded (`arrays`); the version check above runs for every job. Then, in
+    this order: no ``+-inf``; every finite value at least ``-1e-3``; every finite
+    value at most ``ln(query_start) + 1e-2`` (the distribution lives on at most
+    ``query_start`` prompt keys, so this bounds it; the slack covers float16
+    storage; with ``query_start == 0`` there is no ceiling and every finite value
+    fails the next rule). NaN is legitimate in ``prompt_entropy`` and is placed
+    by rule. A row ``i`` (absolute position ``query_start + i``) can attend a
+    prompt key unless ``query_start == 0`` or the layer's window ``w > 0`` has
+    ``i >= w - 1``. A finite value where no prompt key is attendable fails. A NaN
+    passes only where no prompt key is attendable AND the stored prompt mass
+    (``mass[..., 0] + mass[..., 1] + mass[..., 2]``) is exactly 0: masked keys
+    get probability exactly 0, so the stored mass there is exactly 0. A finite
+    value where a prompt key is attendable passes whatever the stored prompt
+    mass, because a peaked row's tiny prompt mass can underflow float16. The
+    rule encodes the plugin's masks (causal plus sliding window); a layer type
+    that masks prompt keys another way needs its geometry stored in the npz, or
+    its NaNs fail this check. The failure names the first offending
+    ``(layer, row, head)``. A version-1 capture is audited exactly as before.
 
     The ceiling follows from how the box computes entropy: over the row's
     attended tokens plus the sink column. Row ``i`` sits at absolute position
@@ -1713,6 +1853,10 @@ def audit_captures(
         ``"sample"`` (default 1).
     arrays : str, optional
         ``"sample"`` (default) or ``"all"``: which jobs get their arrays checked.
+    capture_version : Optional[int], optional
+        Capture format every rank's meta must declare (``None``, the default,
+        accepts any version and audits each rank by its own). ``replay_model``
+        passes ``CAPTURE_VERSION``.
 
     Returns
     -------
@@ -1742,7 +1886,9 @@ def audit_captures(
         sampled = arrays == "all" or seen.get(prefix, 0) < sample_per_run
         seen[prefix] = seen.get(prefix, 0) + 1
         try:
-            reason = _audit_job(client, bucket, job, tp, sampled, model, n_layers, n_heads)
+            reason = _audit_job(
+                client, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version
+            )
         except Exception as exc:  # noqa: BLE001 -- recorded per job, none hidden
             reason = f"audit raised {type(exc).__name__}: {exc}"
         if reason:
@@ -2089,6 +2235,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             audit = audit_captures(
                 make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
                 model=model_key, config=config, arrays=audit_arrays,
+                capture_version=CAPTURE_VERSION,
             )
             for job_id, reason in audit.items():
                 if reason is None:
@@ -2325,6 +2472,38 @@ def _verified_marks(run_dir: Path) -> set:
     return verified
 
 
+#: The two entropy statistics ``read_captures`` summarises, in output order.
+_ENTROPY_STATS: Tuple[str, ...] = ("prompt_entropy", "entropy")
+
+
+def _pool_layers(mean: np.ndarray, count: np.ndarray, select: Optional[np.ndarray]) -> float:
+    """Pool per-layer means into one mean exactly: ``sum(mean * count) / sum(count)``.
+
+    Only layers in `select` (all layers when ``None``) with ``count > 0`` take part.
+    NaN when no layer does. Weighting by the defined-value counts makes the result
+    equal to the plain mean of every defined value of those layers.
+    """
+    keep = count > 0
+    if select is not None:
+        keep = keep & select
+    if not keep.any():
+        return float("nan")
+    return float((mean[keep] * count[keep]).sum() / count[keep].sum())
+
+
+def _mean_sd_over_jobs(values: Sequence[float]) -> Tuple[float, int, float]:
+    """Return ``(mean, number of defined jobs, sample sd)`` of per-job values, skipping NaN.
+
+    The mean is NaN with no defined job; the sd (ddof=1) is NaN with fewer than two.
+    NaN values are filtered first, so no all-NaN reduction (and no RuntimeWarning) occurs.
+    """
+    defined = np.asarray([v for v in values if not np.isnan(v)], dtype=np.float64)
+    if defined.size == 0:
+        return float("nan"), 0, float("nan")
+    sd = float(defined.std(ddof=1)) if defined.size >= 2 else float("nan")
+    return float(defined.mean()), int(defined.size), sd
+
+
 def read_captures(
     model_key: str,
     mirror_root: Path,
@@ -2333,7 +2512,7 @@ def read_captures(
     config: Optional[Mapping[str, Any]] = None,
     require_verified: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
-    """Compute the pad-mass ratio per arm from a local mirror of the S3 captures.
+    """Compute the pad-mass ratio and the attention entropies per arm from a local mirror.
 
     Offline, no AWS. ``mirror_root`` holds a copy of the S3 tree under the prefix::
 
@@ -2342,7 +2521,8 @@ def read_captures(
     Files are grouped per run directory and ``q<idx>``; ``tp`` is the number of
     rank files, which must be exactly ranks ``0..tp-1``. Each job is loaded with
     ``attention_analysis.load_mass`` (ranks joined head-wise in rank order) and
-    reduced with ``attention_analysis.whitespace_ratio``. The ranks present must
+    reduced with ``attention_analysis.whitespace_ratio`` and
+    ``attention_analysis.entropy_by_layer``. The ranks present must
     also be the WHOLE set: the head axis of the joined job must equal the
     config's head count, because ranks ``0..6`` of an 8-way job are a valid
     ``0..tp-1`` set for ``tp = 7`` and a missing top rank would otherwise pass.
@@ -2389,6 +2569,36 @@ def read_captures(
         with ``require_verified=False``). An arm whose every job was skipped has no
         entry, as an arm without captures has none; its skips are in the WARNINGs.
 
+        For each statistic ``s`` in ``prompt_entropy`` (entropy in nats of a
+        response row's attention over the prompt keys only, renormalised, sink
+        excluded; defined only where a prompt key is attendable) and ``entropy``
+        (the whole-row entropy), every job is first reduced to its own means by
+        pooling the job's defined values exactly (``sum(mean_l * count_l) /
+        sum(count_l)`` over the chosen layers with ``count_l > 0``), so every job
+        weighs the same whatever its length ("mean per response"):
+
+        ``<s>_mean``
+            Float. Mean over jobs of the job's all-layer mean; NaN jobs skipped, NaN
+            when no job is defined.
+        ``<s>_global_mean``, ``<s>_window_mean``
+            Float. The same over the job's global layers (``sliding_window == 0``)
+            and over its sliding-window layers (``sliding_window > 0``). A job
+            without a ``sliding_window`` array contributes NaN to both. NaN when no
+            job is defined.
+        ``<s>_layer``
+            ``[L]`` float64. Per layer, the mean over jobs of the job's per-layer
+            mean; NaN jobs skipped, NaN for a layer no job defines.
+        ``<s>_jobs``
+            Int. Jobs with a defined all-layer mean.
+        ``<s>_sd``
+            Float. Sample standard deviation (ddof=1) over those jobs' all-layer
+            means; NaN with fewer than two.
+
+        ``prompt_entropy_v1_jobs`` (int) counts the arm's jobs read from a
+        version-1 capture, which has no ``prompt_entropy`` array: they give NaN
+        prompt-entropy values, are left out of the ``prompt_entropy_*`` means and
+        counts, and never raise. Their ``entropy`` is still read.
+
     Raises
     ------
     ValueError
@@ -2407,6 +2617,12 @@ def read_captures(
         sums: Optional[np.ndarray] = None
         counts: Optional[np.ndarray] = None
         n_jobs, pad_total, n_skipped = 0, 0, 0
+        # Per statistic, one entry per job: the job's all-layer, global-layer and
+        # window-layer means, and its [L] per-layer means (see _pool_layers).
+        per_job: Dict[str, Dict[str, List[Any]]] = {
+            stat: {"all": [], "global": [], "window": [], "layer": []} for stat in _ENTROPY_STATS
+        }
+        n_v1 = 0
         # Earliest wins, per seed and arm: the directories of one seed are
         # re-collections of the same arm, and the released results count the first.
         stamp_prefix = f"{arm}--"
@@ -2467,6 +2683,23 @@ def read_captures(
                 defined = ~np.isnan(ratio)
                 sums += np.where(defined, ratio, 0.0).sum(axis=1, dtype=np.float64)
                 counts += defined.sum(axis=1)
+                # Entropy means of this job: its own pooled defined values per layer set.
+                by_layer = attention_analysis.entropy_by_layer(job)
+                window = job.get("sliding_window")
+                is_global = None if window is None else np.asarray(window) == 0
+                is_window = None if window is None else np.asarray(window) > 0
+                for stat in _ENTROPY_STATS:
+                    mean_l, count_l = by_layer[stat], by_layer[f"{stat}_count"]
+                    per_job[stat]["all"].append(_pool_layers(mean_l, count_l, None))
+                    per_job[stat]["global"].append(
+                        float("nan") if is_global is None else _pool_layers(mean_l, count_l, is_global)
+                    )
+                    per_job[stat]["window"].append(
+                        float("nan") if is_window is None else _pool_layers(mean_l, count_l, is_window)
+                    )
+                    per_job[stat]["layer"].append(mean_l)
+                if job.get("prompt_entropy") is None:
+                    n_v1 += 1
                 n_jobs += 1
                 pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
         if n_jobs == 0 or sums is None or counts is None:
@@ -2482,5 +2715,24 @@ def read_captures(
             "ratio_mean": float(sums.sum() / total) if total else float("nan"),
             "ratio_layer_head": layer_head,
             "skipped_unverified": n_skipped,
+            "prompt_entropy_v1_jobs": n_v1,
         }
+        # Every job counts once: mean over a job's positions, heads and layers first,
+        # then over jobs (the footnote's "mean per response"), not over pooled rows.
+        for stat in _ENTROPY_STATS:
+            jobs_stat = per_job[stat]
+            mean, n_defined, sd = _mean_sd_over_jobs(jobs_stat["all"])
+            out[arm][f"{stat}_mean"] = mean
+            out[arm][f"{stat}_global_mean"] = _mean_sd_over_jobs(jobs_stat["global"])[0]
+            out[arm][f"{stat}_window_mean"] = _mean_sd_over_jobs(jobs_stat["window"])[0]
+            stacked = np.vstack(jobs_stat["layer"])  # [jobs, L]
+            defined = ~np.isnan(stacked)
+            layer_mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
+            np.divide(
+                np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
+                out=layer_mean, where=defined.any(axis=0),
+            )
+            out[arm][f"{stat}_layer"] = layer_mean
+            out[arm][f"{stat}_jobs"] = n_defined
+            out[arm][f"{stat}_sd"] = sd
     return out

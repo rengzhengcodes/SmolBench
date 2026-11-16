@@ -72,7 +72,10 @@ def test_load_mass_concatenates_the_ranks_along_the_head_axis_in_rank_order() ->
     _two_ranks(store)
     out = attention_analysis.load_mass(store, "p/attn/i--ts/", "q0", 2)
 
-    assert sorted(out) == ["classes", "entropy", "layers", "mass", "query_start", "sink"]
+    assert sorted(out) == ["classes", "entropy", "layers", "mass", "prompt_entropy", "query_start",
+                           "sink", "sliding_window"]
+    # A version-1 capture (no prompt_entropy, no sliding_window array) loads with None there.
+    assert out["prompt_entropy"] is None and out["sliding_window"] is None
     # 1 layer, 2 queries, 1 + 2 heads, 4 classes.
     assert out["mass"].shape == (1, 2, 3, 4)
     assert out["entropy"].shape == (1, 2, 3) and out["sink"].shape == (1, 2, 3)
@@ -149,3 +152,75 @@ def test_the_loader_and_the_ratio_compose_over_a_stored_job() -> None:
     assert ratio[0, 0, 0] == pytest.approx(0.25 / 0.4)
     assert ratio[0, 0, 1] == pytest.approx(0.5 / 0.4)
     assert json.dumps({"finite": bool(np.isfinite(ratio).all())}) == '{"finite": true}'
+
+
+# --------------------------------------------------------------------------- prompt entropy
+def rank_npz_v2(*, heads: int, prompt_entropy: np.ndarray, entropy_fill: float = 1.0,
+                classes: list[int] = CLASSES, query_start: int = 4,
+                sliding_window: list[int] | None = None) -> bytes:
+    """A version-2 rank: ``rank_npz`` plus ``prompt_entropy`` and ``sliding_window``."""
+    n_layers = prompt_entropy.shape[0]
+    base = np.load(io.BytesIO(rank_npz(heads=heads, mass_fill=0.25, entropy_fill=entropy_fill,
+                                       sink_fill=0.0, classes=classes, query_start=query_start,
+                                       n_layers=n_layers)))
+    arrays = {k: base[k] for k in base.files}
+    arrays["prompt_entropy"] = prompt_entropy.astype(np.float16)
+    arrays["sliding_window"] = np.asarray(sliding_window or [0] * n_layers, np.int32)
+    buf = io.BytesIO()
+    np.savez(buf, **arrays)
+    return buf.getvalue()
+
+
+def test_load_mass_joins_prompt_entropy_head_wise_and_carries_the_windows() -> None:
+    store = TinyStore()
+    pe0 = np.asarray([[[1.0], [np.nan]], [[0.5], [0.25]]])            # [L=2, P=2, H=1]
+    pe1 = np.asarray([[[2.0, 3.0], [np.nan, np.nan]], [[1.5, 1.0], [0.75, 0.5]]])
+    store.objects["p/q0.r0.npz"] = rank_npz_v2(heads=1, prompt_entropy=pe0, sliding_window=[4, 0])
+    store.objects["p/q0.r1.npz"] = rank_npz_v2(heads=2, prompt_entropy=pe1, sliding_window=[4, 0])
+    out = attention_analysis.load_mass(store, "p/", "q0", 2)
+    assert out["prompt_entropy"].shape == (2, 2, 3) and out["prompt_entropy"].dtype == np.float16
+    np.testing.assert_array_equal(out["prompt_entropy"][0, 0], np.asarray([1.0, 2.0, 3.0], np.float16))
+    assert np.isnan(out["prompt_entropy"][0, 1]).all()
+    assert list(out["sliding_window"]) == [4, 0]
+
+
+def test_load_mass_refuses_ranks_that_disagree_about_prompt_entropy() -> None:
+    """A version-1 rank beside a version-2 rank is two different captures: never join them."""
+    store = TinyStore()
+    store.objects["p/q0.r0.npz"] = rank_npz_v2(heads=1, prompt_entropy=np.ones((1, 2, 1)))
+    store.objects["p/q0.r1.npz"] = rank_npz(heads=1, mass_fill=0.25, entropy_fill=1.0, sink_fill=0.0,
+                                            classes=CLASSES)
+    with pytest.raises(ValueError, match="prompt_entropy"):
+        attention_analysis.load_mass(store, "p/", "q0", 2)
+
+
+def test_entropy_by_layer_averages_over_positions_and_heads_skipping_nan() -> None:
+    nan = np.nan
+    # [L=3, P=2, H=2]. Layer 0: all defined. Layer 1: half NaN (a window past the prompt).
+    # Layer 2: no defined value at all.
+    pe = np.asarray([
+        [[1.0, 2.0], [3.0, 4.0]],
+        [[0.5, nan], [nan, 1.5]],
+        [[nan, nan], [nan, nan]],
+    ])
+    ent = np.asarray([
+        [[2.0, 2.0], [2.0, 6.0]],
+        [[1.0, 1.0], [1.0, 1.0]],
+        [[0.0, 4.0], [2.0, 2.0]],
+    ])
+    job = {"prompt_entropy": pe.astype(np.float16), "entropy": ent.astype(np.float16)}
+    out = attention_analysis.entropy_by_layer(job)
+    np.testing.assert_allclose(out["prompt_entropy"][:2], [2.5, 1.0])
+    assert np.isnan(out["prompt_entropy"][2])
+    assert list(out["prompt_entropy_count"]) == [4, 2, 0]
+    np.testing.assert_allclose(out["entropy"], [3.0, 1.0, 2.0])
+    assert list(out["entropy_count"]) == [4, 4, 4]
+    assert out["prompt_entropy"].dtype == np.float64 and out["entropy"].dtype == np.float64
+
+
+def test_entropy_by_layer_of_a_version_1_job_has_no_prompt_entropy() -> None:
+    ent = np.full((2, 3, 1), 1.25, np.float16)
+    out = attention_analysis.entropy_by_layer({"prompt_entropy": None, "entropy": ent})
+    assert out["prompt_entropy"].shape == (2,) and np.isnan(out["prompt_entropy"]).all()
+    assert list(out["prompt_entropy_count"]) == [0, 0]
+    np.testing.assert_allclose(out["entropy"], [1.25, 1.25])

@@ -94,7 +94,7 @@ Upload (per rank, via the presigned URLs in the job file):
   `sliding_window` int32 `[L]` (0 = full), `kv_shared_from` int32 `[L]`
   (-1 = own KV).
 * `.json` meta: `job_id, rank, tp, n_tokens, positions, layers, num_heads_local,
-  num_kv_heads_local, head_size, dtype ("float16"), gate: {layer: {max_abs,
+  num_kv_heads_local, head_size, capture_version (2; absent = 1), dtype ("float16"), gate: {layer: {max_abs,
   max_rel}}, gate_tol, vllm_commit, model, bytes, wall_s`.
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
   `{"ok": bool, "error": str|null, "gate_max_rel": float, "bytes": int,
@@ -177,9 +177,39 @@ one-hot class matrix, storing:
 * `entropy` float16 `[L, P, H_local]` -- row entropy in nats over tokens
   (+ the sink column when present), the dispersion statistic itself,
 * `sink` float16 `[L, P, H_local]` (zeros without sinks),
+* `prompt_entropy` float16 `[L, P, H_local]` -- entropy in nats of the row's
+  attention restricted to the prompt keys `[0, query_start)` and renormalized
+  to 1 (computed as a softmax over those keys' logits; see the 2026-11-16
+  note below),
 * `classes` uint8 `[T]`, `query_start` int32, `positions` int32 (the gate
   positions), `layers`, `has_sink`, `sliding_window`, `kv_shared_from` as in
   rows mode. `P = T - query_start`.
-Meta json gains `mode`, `query_start`, `n_classes`. Rows mode (`mode` absent
+Meta json gains `mode`, `query_start`, `n_classes`, and (both modes)
+`capture_version`. Rows mode (`mode` absent
 or `"rows"`) is unchanged. `verify` checks `mass.shape[1] == n_tokens -
 query_start` and `mass.shape[-1] == 4`.
+
+## Prompt entropy and `capture_version` (added 2026-11-16)
+
+Mass mode also stores `prompt_entropy`, the statistic a paper defines as: for
+each response token, renormalize the attention weights on the input prompt to
+1 and take the Shannon entropy. Per row and head it is the entropy in nats of
+the attention restricted to prompt keys `[0, query_start)` and renormalized to
+1, computed as a softmax over those keys' logits (never by dividing stored
+low-precision probabilities). The sink column is excluded: the sink is not a
+prompt key. Masked keys contribute exactly 0.
+
+On sliding-window layers it renormalizes over the in-window prompt keys only.
+The window admits keys `j >= p - (w - 1)`, so completion row
+`i = p - query_start` sees a prompt key iff `i < w - 1`. The value is NaN where
+the row has no attendable prompt key: sliding-window rows with `i >= w - 1`,
+and every row when `query_start == 0`. On such rows the stored prompt mass
+(classes 0+1+2) is exactly 0.
+
+The meta json carries `capture_version`: 2 now; a meta without the field is
+version 1. Version 2 added `prompt_entropy` (mass mode) and the field itself.
+Rows mode has no `prompt_entropy`.
+
+A new masking rule (a layer type that masks prompt keys other than causally or
+by the sliding window) must encode its geometry in the npz: the audit derives
+which rows must be NaN from `sliding_window` and `query_start` alone.

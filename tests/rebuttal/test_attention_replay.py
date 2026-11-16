@@ -236,11 +236,12 @@ def test_plan_replay_counts_marks_tokens_and_labels_its_estimate(tmp_path: Path)
     assert plan.total_tokens == sum(lengths.values()) and plan.max_tokens == lengths["noise"]
     assert plan.instance_types == ar.INSTANCE_TYPES[DSV31]
     assert not plan.capture_supported and plan.unsupported_reason
-    assert plan.est_basis.startswith("ESTIMATE:")
+    assert plan.est_basis.startswith("ESTIMATE:") and "prompt_entropy" in plan.est_basis
     expected = 0
     tp = plan.tp_estimate
     for n_tokens, n_completion in ((10, 4), (12, 4), (90, 3)):
-        expected += 61 * n_completion * 128 * 6 * 2 + tp * n_tokens
+        # 4 mass + entropy + prompt_entropy + sink, float16
+        expected += 61 * n_completion * 128 * 7 * 2 + tp * n_tokens
     assert plan.est_capture_bytes == expected
     assert "not stored" in plan.bedrock_token_counts
     assert plan.approximations
@@ -266,8 +267,10 @@ class AuditedBox:
 
     EC2_REGIONS = ("us-east-1",)
 
-    def __init__(self, s3: FakeS3, tp: int = 2, fail_attn: bool = False) -> None:
+    def __init__(self, s3: FakeS3, tp: int = 2, fail_attn: bool = False, capture_version: int = 2) -> None:
         self.s3, self.tp, self.fail_attn = s3, tp, fail_attn
+        # 2 = the current plugin; 1 = an old plugin (no prompt_entropy, no meta field).
+        self.capture_version = capture_version
         self.calls: list[str] = []
         self.batches: list[dict] = []
         self._status: dict = {}
@@ -308,8 +311,12 @@ class AuditedBox:
                 # as ranks holding different heads do (the audit refuses identical ranks).
                 mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
                 buf = io.BytesIO()
-                np.savez(buf, mass=mass, entropy=np.ones((2, p, 2), np.float16),
-                         sink=np.zeros((2, p, 2), np.float16),
+                arrays = dict(mass=mass, entropy=np.ones((2, p, 2), np.float16),
+                              sink=np.zeros((2, p, 2), np.float16),
+                              has_sink=np.zeros(2, bool), sliding_window=np.zeros(2, np.int32))
+                if self.capture_version >= 2:
+                    arrays["prompt_entropy"] = np.full((2, p, 2), 0.5, np.float16)
+                np.savez(buf, **arrays,
                          classes=np.asarray(line["classes"], np.uint8),
                          query_start=np.asarray(qs, np.int32), layers=np.arange(2, dtype=np.int32),
                          positions=np.asarray(line["positions"], np.int32))
@@ -322,7 +329,9 @@ class AuditedBox:
                     {"job_id": line["job_id"], "rank": rank, "tp": payload["tp"],
                      "model": payload["served_model_name"], "n_tokens": n, "bytes": len(blob),
                      "mode": "mass", "query_start": qs, "layers": [0, 1], "num_heads_local": 2,
-                     "rows_shape": [2, p, 2, 4], "gate_max_rel": 0.001, "gate_tol": 0.03}).encode())
+                     "rows_shape": [2, p, 2, 4], "gate_max_rel": 0.001, "gate_tol": 0.03,
+                     **({"capture_version": self.capture_version} if self.capture_version >= 2 else {}),
+                     }).encode())
                 ranks[str(rank)] = {"ok": True, "gate_max_rel": 0.001}
             results[line["job_id"]] = ranks
         self._status = {"running": False, "results": results, "error": None}
@@ -378,12 +387,12 @@ def test_replay_audits_every_jobs_arrays_unless_told_to_sample(tmp_path, monkeyp
     s3, seen, real = FakeS3(), [], ar.audit_captures
 
     def audit(*args, **kwargs):
-        seen.append(kwargs["arrays"])
+        seen.append((kwargs["arrays"], kwargs.get("capture_version")))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(ar, "audit_captures", audit)
     report = _replay(tmp_path, AuditedBox(s3), s3, **kw)
-    assert seen == [expected]
+    assert seen == [(expected, 2)]  # new captures are audited as version 2
     assert report.verified and not report.audit_failures
 
 
@@ -497,6 +506,12 @@ def test_read_captures_returns_the_per_arm_pad_ratio(tmp_path) -> None:
     assert summary["jobs"] == 1
     assert summary["ratio_layer_head"].shape == (3, 4)
     assert summary["ratio_mean"] == pytest.approx(1.0, abs=2e-3)
+    # A version-1 capture (no prompt_entropy array): NaN prompt-entropy fields and a count,
+    # never an exception; the whole-row entropy is still read.
+    assert summary["prompt_entropy_v1_jobs"] == 1 and summary["prompt_entropy_jobs"] == 0
+    assert math.isnan(summary["prompt_entropy_mean"]) and math.isnan(summary["prompt_entropy_sd"])
+    assert np.isnan(summary["prompt_entropy_layer"]).all()
+    assert summary["entropy_mean"] == 0.0 and summary["entropy_jobs"] == 1
 
 
 # ------------------------------------------------------------ mis-decoded transcripts
@@ -679,11 +694,14 @@ class CountingS3(FakeS3):
 
 
 def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=None, entropy=None,
-                   mass_row=None):
+                   mass_row=None, prompt_entropy=None, windows=None, version=2, mass_over=None):
     """Store one job's per-rank objects as the plugin writes them; ``meta_over[rank]`` edits a meta.
 
     Ranks differ by a small rank-dependent term (they hold different heads); ``mass_row``
-    replaces every row's four class masses.
+    replaces every row's four class masses, ``mass_over(rank)`` (``[L, P, H_local, 4]``) the whole array.
+    ``version`` 2 writes ``prompt_entropy`` (default 0.5 everywhere, or the given
+    ``[L, P, H_local]`` array; the string ``"omit"`` leaves it out) and ``capture_version``
+    in the meta; ``version`` 1 writes neither. ``windows`` is the ``sliding_window`` array.
     """
     p = job.n_tokens - int(job.query_start)
     local = heads // tp
@@ -692,17 +710,26 @@ def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=N
         mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
         if mass_row is not None:
             mass[...] = np.asarray(mass_row, np.float16)
+        if mass_over is not None:
+            mass[...] = np.asarray(mass_over(rank), np.float16)
         ent = np.full((layers, p, local), 0.5, np.float16) if entropy is None else entropy
+        extra = {}
+        if version >= 2 and not (isinstance(prompt_entropy, str) and prompt_entropy == "omit"):
+            pe = np.full((layers, p, local), 0.5) if prompt_entropy is None else prompt_entropy
+            extra["prompt_entropy"] = np.asarray(pe).astype(np.float16)
         buf = io.BytesIO()
         np.savez(buf, mass=mass, entropy=ent.astype(np.float16), sink=np.zeros((layers, p, local), np.float16),
                  classes=np.asarray(job.classes, np.uint8), query_start=np.asarray(job.query_start, np.int32),
                  layers=np.arange(layers, dtype=np.int32), has_sink=np.zeros(layers, bool),
-                 sliding_window=np.zeros(layers, np.int32), positions=np.asarray([job.n_tokens - 1], np.int32))
+                 sliding_window=np.asarray(windows if windows is not None else [0] * layers, np.int32),
+                 positions=np.asarray([job.n_tokens - 1], np.int32), **extra)
         blob = buf.getvalue()
         meta = {"job_id": job.job_id, "rank": rank, "tp": tp, "model": model, "n_tokens": job.n_tokens,
                 "query_start": job.query_start, "mode": "mass", "layers": list(range(layers)),
                 "num_heads_local": local, "rows_shape": [layers, p, local, 4],
                 "gate_max_rel": 0.001, "gate_tol": 0.03, "bytes": len(blob)}
+        if version >= 2:
+            meta["capture_version"] = version
         meta.update((meta_over or {}).get(rank, {}))
         npz_key, meta_key = attention.rank_keys(job.key, rank)
         s3.objects[npz_key] = blob
@@ -829,11 +856,170 @@ def test_the_audit_refuses_an_unknown_arrays_mode(tmp_path) -> None:
         _audit(FakeS3(), [], arrays="some")
 
 
+# ------------------------------------------------------------ content audit: prompt entropy
+
+def _pe_job(tmp_path):
+    """The first Gemma job and its completion length P (at least 2 rows for the window tests)."""
+    _write_results(tmp_path, GEMMA)
+    job = _gemma_jobs(tmp_path)[0]
+    p = job.n_tokens - int(job.query_start)
+    assert p >= 2 and int(job.query_start) >= 3
+    return job, p
+
+
+def _windowed(p, *, row1_prompt_mass=0.0):
+    """Layer 0 has a window of 2, layer 1 is global.
+
+    A window w admits keys j >= pos - (w - 1), so completion row i (pos = query_start + i)
+    sees a prompt key iff i < w - 1: on layer 0 only row 0 does (exactly one key,
+    query_start - 1). Returns ``(mass_over, prompt_entropy)`` for a clean capture: rows
+    without a prompt key carry zero prompt mass and NaN.
+    """
+    def mass_over(rank):
+        mass = np.zeros((2, p, 2, 4), np.float32)
+        mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
+        mass[0, 1:, :, 0] = row1_prompt_mass
+        mass[0, 1:, :, 3] = 1.0 - row1_prompt_mass
+        return mass
+
+    pe = np.full((2, p, 2), 0.5)
+    pe[0, 0, :] = 0.0  # one attendable prompt key: a point mass
+    pe[0, 1:, :] = np.nan
+    return mass_over, pe
+
+
+def test_the_audit_passes_a_windowed_capture_with_nan_exactly_past_the_prompt(tmp_path) -> None:
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    mass_over, pe = _windowed(p)
+    _store_capture(s3, job, windows=[2, 0], mass_over=mass_over, prompt_entropy=pe)
+    assert _audit(s3, [job], arrays="all")[job.job_id] is None
+
+
+def test_the_audit_rejects_a_finite_value_where_no_prompt_key_is_attendable(tmp_path) -> None:
+    """Boundary row i = w - 1 of a window w = 2 sees no prompt key, so it must be NaN."""
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    mass_over, pe = _windowed(p)
+    pe[0, 1, 1] = 0.25
+    _store_capture(s3, job, windows=[2, 0], mass_over=mass_over, prompt_entropy=pe)
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason and "row 1" in reason, reason
+
+
+def test_the_audit_rejects_nan_on_the_last_row_that_still_sees_a_prompt_key(tmp_path) -> None:
+    """Row i = w - 2 still sees key query_start - 1: NaN there is wrong even if the window is 2."""
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    mass_over, pe = _windowed(p)
+    pe[0, 0, 0] = np.nan
+    _store_capture(s3, job, windows=[2, 0], mass_over=mass_over, prompt_entropy=pe)
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason and "row 0" in reason, reason
+
+
+def test_the_audit_rejects_nan_where_the_prompt_mass_is_clearly_positive(tmp_path) -> None:
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    pe = np.full((2, p, 2), 0.5)
+    pe[1, p - 1, 0] = np.nan  # a global layer, prompt mass 0.45..0.5
+    _store_capture(s3, job, prompt_entropy=pe)
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason and "nan" in reason.lower(), reason
+
+
+def test_the_audit_rejects_nan_where_the_stored_prompt_mass_is_not_exactly_zero(tmp_path) -> None:
+    """A NaN is accepted only with zero stored prompt mass, even where the window says no key."""
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    mass_over, pe = _windowed(p, row1_prompt_mass=1e-4)
+    _store_capture(s3, job, windows=[2, 0], mass_over=mass_over, prompt_entropy=pe)
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason, reason
+
+
+def test_the_audit_accepts_a_finite_value_whose_tiny_prompt_mass_rounded_away(tmp_path) -> None:
+    """On a global layer a peaked row's prompt mass can underflow float16 to 0 (or sit just
+    above it) while its prompt entropy is well defined: accepted."""
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+
+    def mass_over(rank):
+        mass = np.zeros((2, p, 2, 4), np.float32)
+        mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
+        mass[1, 0, :, 0], mass[1, 0, :, 3] = 0.0, 1.0        # exactly zero prompt mass
+        mass[1, 1, :, 0], mass[1, 1, :, 3] = 5e-4, 1.0 - 5e-4  # below 1e-3
+        return mass
+
+    _store_capture(s3, job, mass_over=mass_over)
+    assert _audit(s3, [job], arrays="all")[job.job_id] is None
+
+
+@pytest.mark.parametrize("value, word", [
+    (None, "above"),          # ln(query_start) + 0.2, filled in below
+    (-0.05, "below"),
+    (np.inf, "inf"),
+])
+def test_the_audit_rejects_prompt_entropy_out_of_range(tmp_path, value, word) -> None:
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    pe = np.full((2, p, 2), 0.5)
+    pe[1, 0, 1] = math.log(int(job.query_start)) + 0.2 if value is None else value
+    _store_capture(s3, job, prompt_entropy=pe)
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason and word in reason.lower(), reason
+
+
+def test_the_audit_accepts_prompt_entropy_at_its_ceiling(tmp_path) -> None:
+    """Over at most query_start prompt keys the entropy is at most ln(query_start)."""
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    pe = np.full((2, p, 2), math.log(int(job.query_start)))
+    _store_capture(s3, job, prompt_entropy=pe)
+    assert _audit(s3, [job], arrays="all")[job.job_id] is None
+
+
+def test_the_audit_rejects_a_prompt_entropy_of_the_wrong_shape(tmp_path) -> None:
+    job, p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, job, prompt_entropy=np.full((2, p, 1), 0.5))
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason and "shape" in reason.lower(), reason
+
+
+def test_the_audit_fails_a_version_2_capture_without_prompt_entropy(tmp_path) -> None:
+    job, _p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, job, prompt_entropy="omit")
+    reason = _audit(s3, [job], arrays="all")[job.job_id]
+    assert reason and "prompt_entropy" in reason, reason
+
+
+def test_the_audit_reads_a_version_1_capture_unless_version_2_is_required(tmp_path) -> None:
+    job, _p = _pe_job(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, job, version=1)
+    assert _audit(s3, [job], arrays="all")[job.job_id] is None
+    reason = _audit(s3, [job], arrays="all", capture_version=2)[job.job_id]
+    assert reason and "capture_version" in reason, reason
+
+
+def test_replay_fails_the_audit_of_captures_from_an_old_plugin(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    s3 = FakeS3()
+    report = _replay(tmp_path, AuditedBox(s3, capture_version=1), s3)
+    assert not report.verified and report.audit_failures
+    assert all("capture_version" in r for r in report.audit_failures.values()), report.audit_failures
+
+
 # ------------------------------------------------------------ offline reader: rank sets, runs
 
 def _mirror_job(run_dir: Path, idx: int, ranks, *, local_heads=2, pad_scale=1.0,
-                status: str | None = "verified") -> None:
-    """Write one job's rank files; ``status`` goes into a manifest entry, ``None`` writes none."""
+                status: str | None = "verified", version: int = 2) -> None:
+    """Write one job's rank files; ``status`` goes into a manifest entry, ``None`` writes none.
+
+    ``version`` 2 adds ``prompt_entropy`` (0.5) and ``sliding_window`` (all global).
+    """
     run_dir.mkdir(parents=True, exist_ok=True)
     if status is not None:
         _write_manifest_file(run_dir, idx, status)
@@ -842,11 +1028,15 @@ def _mirror_job(run_dir: Path, idx: int, ranks, *, local_heads=2, pad_scale=1.0,
         mass = np.zeros((3, 2, local_heads, 4), np.float32)
         mass[..., 1] = np.asarray([[4 / 8], [4 / 9]]) * pad_scale
         mass[..., 0] = 1 - mass[..., 1]
+        extra = {}
+        if version >= 2:
+            extra = {"prompt_entropy": np.full((3, 2, local_heads), 0.5, np.float16),
+                     "sliding_window": np.zeros(3, np.int32)}
         np.savez(run_dir / f"q{idx}.r{rank}.npz", mass=mass.astype(np.float16),
                  entropy=np.zeros((3, 2, local_heads), np.float16),
                  sink=np.zeros((3, 2, local_heads), np.float16), classes=classes,
                  query_start=np.asarray(7, np.int32), layers=np.arange(3, dtype=np.int32),
-                 positions=np.asarray([8], np.int32))
+                 positions=np.asarray([8], np.int32), **extra)
 
 
 def test_read_captures_refuses_a_job_missing_its_top_rank(tmp_path) -> None:
@@ -898,6 +1088,89 @@ def test_read_captures_require_verified_false_reads_every_capture(tmp_path) -> N
     _mirror_job(run, 2, range(2), status=None)
     out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG, require_verified=False)
     assert out["intens"]["jobs"] == 3 and out["intens"]["skipped_unverified"] == 0
+
+
+# ------------------------------------------------------------ offline reader: entropy
+
+def _mirror_entropy_job(run_dir: Path, idx: int, *, p: int, pe_layers, ent_layers, windows=(0, 0, 0),
+                        version: int = 2, local_heads: int = 2) -> None:
+    """Write a verified 2-rank job with a per-layer constant prompt and whole-row entropy.
+
+    ``prompt_entropy`` is NaN where the layer's window has slid past the prompt
+    (row ``i >= w - 1``), as the plugin stores it.
+    """
+    _write_manifest_file(run_dir, idx, "verified")
+    query_start = 7
+    classes = np.asarray([0] * query_start + [3] * p, np.uint8)
+    n_layers = len(ent_layers)
+    pe = np.empty((n_layers, p, local_heads))
+    ent = np.empty((n_layers, p, local_heads))
+    for layer in range(n_layers):
+        pe[layer], ent[layer] = pe_layers[layer], ent_layers[layer]
+        if windows[layer]:
+            pe[layer, windows[layer] - 1:] = np.nan
+    for rank in range(2):
+        mass = np.zeros((n_layers, p, local_heads, 4), np.float16)
+        mass[..., 0] = 1.0
+        extra = {"sliding_window": np.asarray(windows, np.int32)}
+        if version >= 2:
+            extra["prompt_entropy"] = pe.astype(np.float16)
+        np.savez(run_dir / f"q{idx}.r{rank}.npz", mass=mass, entropy=ent.astype(np.float16),
+                 sink=np.zeros((n_layers, p, local_heads), np.float16), classes=classes,
+                 query_start=np.asarray(query_start, np.int32),
+                 layers=np.arange(n_layers, dtype=np.int32),
+                 positions=np.asarray([query_start + p - 1], np.int32), **extra)
+
+
+def test_read_captures_weights_every_job_equally_in_the_entropy_means(tmp_path) -> None:
+    """A long job and a short one: the mean of the two job means, not the pooled row mean."""
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_entropy_job(run, 0, p=8, pe_layers=[1.0] * 3, ent_layers=[2.0] * 3)
+    _mirror_entropy_job(run, 1, p=2, pe_layers=[3.0] * 3, ent_layers=[4.0] * 3)
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)["intens"]
+    # Pooled over rows these would be 1.4 and 2.4.
+    assert out["prompt_entropy_mean"] == pytest.approx(2.0)
+    assert out["entropy_mean"] == pytest.approx(3.0)
+    assert out["prompt_entropy_jobs"] == 2 and out["entropy_jobs"] == 2
+    assert out["prompt_entropy_sd"] == pytest.approx(math.sqrt(2.0))  # ddof=1 over the job means
+    assert out["entropy_sd"] == pytest.approx(math.sqrt(2.0))
+    np.testing.assert_allclose(out["prompt_entropy_layer"], [2.0, 2.0, 2.0])
+    np.testing.assert_allclose(out["entropy_layer"], [3.0, 3.0, 3.0])
+    assert out["prompt_entropy_global_mean"] == pytest.approx(2.0)
+    assert math.isnan(out["prompt_entropy_window_mean"])  # no sliding-window layer
+    assert math.isnan(out["entropy_window_mean"])
+    assert out["prompt_entropy_v1_jobs"] == 0
+
+
+def test_read_captures_splits_global_and_sliding_window_layers(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    # Layer 1 has a window of 4: rows 3 and 4 of 5 see no prompt key (NaN).
+    _mirror_entropy_job(run, 0, p=5, pe_layers=[1.0, 4.0, 2.0], ent_layers=[2.0, 5.0, 3.0],
+                        windows=(0, 4, 0))
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)["intens"]
+    # The job's own mean pools its defined values: 20 x 1.0 + 12 x 4.0 + 20 x 2.0 over 52.
+    assert out["prompt_entropy_mean"] == pytest.approx(108 / 52)
+    assert out["prompt_entropy_global_mean"] == pytest.approx(1.5)
+    assert out["prompt_entropy_window_mean"] == pytest.approx(4.0)
+    np.testing.assert_allclose(out["prompt_entropy_layer"], [1.0, 4.0, 2.0])
+    assert out["entropy_mean"] == pytest.approx(10 / 3)
+    assert out["entropy_global_mean"] == pytest.approx(2.5)
+    assert out["entropy_window_mean"] == pytest.approx(5.0)
+    assert out["prompt_entropy_jobs"] == 1 and math.isnan(out["prompt_entropy_sd"])  # one job
+
+
+def test_read_captures_counts_version_1_jobs_and_leaves_them_out_of_prompt_entropy(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_entropy_job(run, 0, p=3, pe_layers=[1.0] * 3, ent_layers=[2.0] * 3)
+    _mirror_entropy_job(run, 1, p=3, pe_layers=[9.0] * 3, ent_layers=[4.0] * 3, version=1)
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)["intens"]
+    assert out["jobs"] == 2
+    assert out["prompt_entropy_v1_jobs"] == 1 and out["prompt_entropy_jobs"] == 1
+    assert out["prompt_entropy_mean"] == pytest.approx(1.0)
+    assert out["entropy_jobs"] == 2 and out["entropy_mean"] == pytest.approx(3.0)
 
 
 # ------------------------------------------------------------ shutdown and manifests

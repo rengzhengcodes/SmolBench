@@ -489,3 +489,112 @@ def test_meta_put_is_attempted_after_a_successful_npz_put(monkeypatch, tmp_path:
     done, sent = _one_layer_job(monkeypatch, plugin, tmp_path, [200, 200], "fine")
     assert len(sent) == 2
     assert done["ok"] is True and done["http_status"] == [200, 200], done
+
+
+# --------------------------------------------------------------------------- prompt entropy
+def _prompt_entropy_reference(ref_rows, query_start):
+    """Renormalize each full attention row over the prompt keys, then take its entropy (nats).
+
+    Computed from the stored-equivalent rows (the kernel's probabilities over tokens),
+    deliberately not from logits, so it is an independent route to the same number.
+    Rows with no prompt mass get NaN.
+    """
+    prompt = ref_rows[..., :query_start].double()
+    total = prompt.sum(-1, keepdim=True)
+    renorm = prompt / total
+    ent = -(torch.where(renorm > 0, renorm * torch.log(renorm), torch.zeros_like(renorm))).sum(-1)
+    return torch.where(total[..., 0] > 0, ent, torch.full_like(ent, float("nan")))
+
+
+def _mass_job(tmp_path, job_id, t, query_start, classes, gate_positions):
+    job = _arm(tmp_path, job_id, 1, t, gate_positions)
+    job.update({"mode": "mass", "query_start": query_start, "classes": classes})
+    (tmp_path / "current.json").write_text(json.dumps(job))
+    return job
+
+
+def test_prompt_entropy_is_the_entropy_of_the_row_renormalized_over_prompt_keys(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Every response row, layer and head: the stored value equals the direct computation."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 8 * 40 * 5)  # several query chunks
+    t, d, query_start = 40, 16, 24
+    # Large sink logits take a real share of each row, so including the sink column in the
+    # renormalization would move the entropy far beyond float16 rounding.
+    sinks = torch.full((8,), 3.0)
+    layers = [
+        StubAttention("model.layers.0.self_attn.attn", 8, 4, d),                       # global GQA
+        StubAttention("model.layers.1.self_attn.attn", 8, 8, d, sinks=sinks),          # sink
+        StubAttention("model.layers.2.self_attn.attn", 8, 4, d, soft_cap=4.0),         # softcap
+        StubAttention("model.layers.3.self_attn.attn", 8, 4, d, window=9),             # sliding
+    ]
+    classes = [0] * 10 + [1] * 12 + [2] * 2 + [3] * 16
+    _mass_job(tmp_path, "pe1", t, query_start, classes, [t - 1, 30])
+    tensors = _run_forward(layers, t, d, seed=5)
+
+    done = json.loads((tmp_path / "done" / "pe1.r0.json").read_text())
+    assert done["ok"] is True, done
+    npz = np.load(io.BytesIO(uploads["put://pe1/r0.npz"]))
+    meta = json.loads(uploads["put://pe1/r0.json"])
+    assert meta["capture_version"] == 2
+    pe = npz["prompt_entropy"]
+    assert pe.dtype == np.float16 and pe.shape == npz["entropy"].shape == (4, t - query_start, 8)
+    positions = list(range(query_start, t))
+    for li, layer in enumerate(layers):
+        _, q, k, _ = tensors[layer.layer_name]
+        k3 = k.view(t, layer.num_kv_heads, d)
+        ref_rows, _ref_sink = _reference_rows(layer, q, k3, positions)
+        ref = _prompt_entropy_reference(ref_rows, query_start).float()
+        got = torch.from_numpy(pe[li].astype(np.float32))
+        assert torch.equal(torch.isnan(got), torch.isnan(ref)), layer.layer_name
+        finite = ~torch.isnan(ref)
+        assert torch.allclose(got[finite], ref[finite], atol=1e-2, rtol=2e-3), layer.layer_name
+        # The prompt-only entropy is not the whole-row entropy (that would be mutation a).
+        whole = torch.from_numpy(npz["entropy"][li].astype(np.float32))
+        assert float((whole[finite] - got[finite]).abs().max()) > 0.1, layer.layer_name
+
+
+def test_prompt_entropy_is_nan_once_the_window_has_slid_past_the_prompt(monkeypatch, tmp_path: Path) -> None:
+    """window w admits keys j >= p - (w - 1): row i = p - query_start sees a prompt key iff i < w - 1."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, query_start, w = 40, 16, 24, 9
+    layers = [StubAttention("model.layers.0.self_attn.attn", 4, 4, d, window=w),
+              StubAttention("model.layers.1.self_attn.attn", 4, 4, d)]
+    classes = [0] * query_start + [3] * (t - query_start)
+    _mass_job(tmp_path, "pe2", t, query_start, classes, [t - 1])
+    _run_forward(layers, t, d, seed=7)
+    npz = np.load(io.BytesIO(uploads["put://pe2/r0.npz"]))
+    windowed = npz["prompt_entropy"][0].astype(np.float32)   # [P, H]
+    glob = npz["prompt_entropy"][1].astype(np.float32)
+    assert np.isfinite(windowed[: w - 1]).all()
+    assert np.isnan(windowed[w - 1:]).all()
+    # Boundary: row w - 2 sits at p = query_start + w - 2 and admits exactly one prompt key
+    # (j = query_start - 1), so its renormalized distribution is a point mass: entropy 0.
+    assert (windowed[w - 2] == 0.0).all()
+    assert (windowed[: w - 2] > 0.0).all()
+    # A global layer always sees the whole prompt.
+    assert np.isfinite(glob).all() and (glob > 0).all()
+    # The window's rows with no prompt key also carry exactly zero prompt mass.
+    prompt_mass = npz["mass"][0, :, :, :3].astype(np.float32).sum(-1)
+    assert (prompt_mass[w - 1:] == 0.0).all()
+
+
+def test_prompt_entropy_is_nan_everywhere_without_a_prompt(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d = 12, 8
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, d)
+    _mass_job(tmp_path, "pe3", t, 0, [3] * t, [t - 1])
+    _run_forward([layer], t, d, seed=2)
+    npz = np.load(io.BytesIO(uploads["put://pe3/r0.npz"]))
+    assert npz["prompt_entropy"].shape == (1, t, 4) and np.isnan(npz["prompt_entropy"]).all()
+
+
+def test_rows_mode_meta_carries_the_capture_version(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    _arm(tmp_path, "rv", 1, 10, [9])
+    _run_forward([layer], 10, 8)
+    npz = np.load(io.BytesIO(uploads["put://rv/r0.npz"]))
+    assert json.loads(uploads["put://rv/r0.json"])["capture_version"] == 2
+    assert "prompt_entropy" not in npz.files  # mass mode only

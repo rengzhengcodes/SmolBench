@@ -38,7 +38,9 @@ Mode ``mass`` (the study's actual question -- do response tokens attend to
 the whitespace padding less than uniform dispersion predicts?): the job also
 carries a key CLASS per token and ``query_start``; for EVERY completion query
 the row is reduced on the box to its mass per class (4 classes), its entropy
-(over tokens plus the sink column) and the sink mass, in query chunks that
+(over tokens plus the sink column), the sink mass and its prompt entropy (the
+attention restricted to the prompt keys, renormalised to 1; the sink is not a
+prompt key; NaN where no prompt key is attendable), in query chunks that
 keep the float32 logits under ~1 GB. The gate rows at ``positions`` validate
 the same arithmetic. No T x T matrix ever leaves the GPU.
 
@@ -192,6 +194,9 @@ def _rows_for(layer, q3, k3, positions):
 #: Float32 logits elements per query chunk (~1 GB); chunks keep P x T off the GPU.
 MASS_CHUNK_ELEMENTS = 1 << 28
 N_CLASSES = 4
+#: Capture format version written to every meta json. Version 2 added the
+#: mass-mode `prompt_entropy` array; a meta without the field is version 1.
+CAPTURE_VERSION = 2
 PUT_LANDED_EARLIER = "412-landed-earlier"  # 412 after an unclear try: it stored
 
 
@@ -220,9 +225,12 @@ def _logits_for(layer, q3, k3, pos):
 
 
 def _mass_for(layer, q3, k3, query_start, classes):
-    """Per-class attention mass and row entropy for every query >= query_start.
+    """Per-class attention mass and row entropies for every query >= query_start.
 
-    Returns (mass float16 [P, H, C], entropy float16 [P, H], sink float16 [P, H] or None).
+    Returns (mass float16 [P, H, C], entropy float16 [P, H], sink float16 [P, H] or None,
+    prompt_entropy float16 [P, H]). prompt_entropy is the entropy in nats of the
+    row restricted to the prompt keys [0, query_start) and renormalised to 1
+    (NaN where the row has no attendable prompt key).
     """
     import torch
 
@@ -236,10 +244,28 @@ def _mass_for(layer, q3, k3, query_start, classes):
     total = n - query_start
     mass = torch.empty(total, heads, N_CLASSES, dtype=torch.float16, device=q3.device)
     entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
+    prompt_entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
     sink = torch.empty(total, heads, dtype=torch.float16, device=q3.device) if s is not None else None
     for start in range(query_start, n, chunk):
         pos = torch.arange(start, min(start + chunk, n), device=q3.device)
         logits = _logits_for(layer, q3, k3, pos)                       # [p, H, T]
+        # Prompt entropy: a softmax over a key subset is the renormalised subset
+        # of the full softmax, so use the subset's logits (log-softmax), taken
+        # before the sink column joins: the sink is not a prompt key. Masked
+        # keys are -inf and must add exactly 0 (0 * -inf would be nan). A row
+        # whose subset logsumexp is not finite (empty subset, or every prompt
+        # key masked by the window) has no defined value: NaN.
+        pl = logits[..., :query_start]
+        if query_start > 0:
+            lse = torch.logsumexp(pl, dim=-1, keepdim=True)             # [p, H, 1]
+            ok = torch.isfinite(lse)
+            logp = pl - torch.where(ok, lse, torch.zeros_like(lse))
+            pp = torch.exp(logp)
+            pe = -torch.where(pp > 0, pp * logp, torch.zeros_like(pp)).sum(-1)
+            pe = torch.where(ok[..., 0], pe, torch.full_like(pe, float("nan")))
+        else:
+            pe = torch.full(logits.shape[:2], float("nan"), device=q3.device)
+        del pl
         if s is not None:
             logits = torch.cat([logits, s.expand(len(pos), heads, 1)], dim=-1)
         probs = torch.softmax(logits, dim=-1)
@@ -249,10 +275,11 @@ def _mass_for(layer, q3, k3, query_start, classes):
         sl = slice(start - query_start, start - query_start + len(pos))
         mass[sl] = m.to(torch.float16)
         entropy[sl] = ent.to(torch.float16)
+        prompt_entropy[sl] = pe.to(torch.float16)
         if sink is not None:
             sink[sl] = probs[..., n].to(torch.float16)
-        del logits, probs, tok, m
-    return mass, entropy, sink
+        del logits, probs, tok, m, pe
+    return mass, entropy, sink, prompt_entropy
 
 
 def _gate(layer, rows, v3, out_p):
@@ -339,11 +366,12 @@ def _maybe_capture(attention_cls, layer, query, key, value, output):
             # The gate rows above validate the same q/k/mask/sink arithmetic
             # the mass reduction uses; only the reduced statistics are kept.
             classes = torch.tensor(job["classes"], device=q3.device, dtype=torch.long)
-            mass, entropy, msink = _mass_for(layer, q3, k3, job["query_start"], classes)
+            mass, entropy, msink, pentropy = _mass_for(layer, q3, k3, job["query_start"], classes)
             entry["mass"] = mass.cpu().numpy()
             entry["entropy"] = entropy.cpu().numpy()
+            entry["prompt_entropy"] = pentropy.cpu().numpy()
             entry["sink"] = msink.cpu().numpy() if msink is not None else None
-            del mass, entropy, msink
+            del mass, entropy, msink, pentropy
         else:
             entry["rows"] = rows.to(torch.float16).cpu().numpy()
             entry["sink"] = sink.to(torch.float16).cpu().numpy() if sink is not None else None
@@ -369,6 +397,7 @@ def _finalize(layer, session):
     if mode == "mass":
         arrays["mass"] = np.stack([e["mass"] for e in order])         # [L, P, H, C]
         arrays["entropy"] = np.stack([e["entropy"] for e in order])   # [L, P, H]
+        arrays["prompt_entropy"] = np.stack([e["prompt_entropy"] for e in order])   # [L, P, H]
         lead = arrays["entropy"].shape[1:]
         arrays["classes"] = np.asarray(job["classes"], dtype=np.uint8)
         arrays["query_start"] = np.asarray(job["query_start"], dtype=np.int32)
@@ -386,6 +415,7 @@ def _finalize(layer, session):
         "n_tokens": job["n_tokens"], "positions": list(job["positions"]),
         "layers": layers.tolist(), "num_heads_local": int(layer.num_heads),
         "num_kv_heads_local": int(layer.num_kv_heads), "head_size": int(layer.head_size),
+        "capture_version": CAPTURE_VERSION,
         "dtype": "float16", "rows_shape": main_shape, "mode": mode,
         "query_start": job.get("query_start"), "n_classes": N_CLASSES if mode == "mass" else None,
         "gate": {nm: session["gate"][nm] for nm in session["gate"]},

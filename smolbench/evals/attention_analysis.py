@@ -36,6 +36,14 @@ ratio divides the observed class-1 mass by that prediction, so
   predict, i.e. pad avoidance, which is the effect the noise arm looks for;
 * ``> 1.0`` -- the response over-attends to the padding.
 
+Prompt entropy
+--------------
+From capture version 2 the plugin also stores ``prompt_entropy``: the entropy
+of each response row's attention restricted to the prompt keys and
+renormalized to 1 (NaN where a row has no attendable prompt key).
+:func:`entropy_by_layer` reduces it, and the whole-row entropy, to one mean per
+layer together with the counts of defined values.
+
 Scope
 -----
 This is a small OFFLINE helper: it reads finished uploads out of the results
@@ -58,12 +66,13 @@ The documented pipeline is load-then-ratio::
 from __future__ import annotations
 
 import io
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 import numpy as np
 
 __all__ = [
     "PAD_CLASS",
+    "entropy_by_layer",
     "load_mass",
     "whitespace_ratio",
 ]
@@ -133,13 +142,24 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
         ``layers``
             ``[L]`` int32, the captured layer indices (rank 0's), in the same
             order as axis 0 of the arrays.
+        ``prompt_entropy``
+            ``[L, P, H_total]`` float16 (as stored), ranks joined on the head
+            axis: entropy in nats of each response row's attention restricted
+            to the prompt keys and renormalized to 1; NaN where the row has no
+            attendable prompt key. ``None`` for a version-1 capture, which
+            stores no such array.
+        ``sliding_window``
+            ``[L]`` int32, rank 0's per-layer window size (0 = global
+            attention). ``None`` when the capture stores none.
 
     Raises
     ------
     ValueError
         When ``tp < 1``, or when a rank's ``classes``, ``query_start`` or
-        ``layers`` differ from rank 0's. The message names the offending
-        field and the rank.
+        ``layers`` differ from rank 0's. Also when ``prompt_entropy`` is
+        present on some ranks and absent on others, or ``sliding_window``
+        presence or values differ from rank 0's. The message names the
+        offending field and the rank.
     Exception
         Whatever the store raises for a missing or unreadable object is
         propagated unchanged. A missing rank must be an error: swallowing it
@@ -173,6 +193,8 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
     mass_parts: List[np.ndarray] = []
     entropy_parts: List[np.ndarray] = []
     sink_parts: List[np.ndarray] = []
+    prompt_entropy_parts: List[np.ndarray] = []
+    sliding_window: np.ndarray | None = None
     classes: np.ndarray | None = None
     layers: np.ndarray | None = None
     query_start: int = 0
@@ -190,9 +212,13 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
         rank_classes = arrays["classes"]
         rank_layers = arrays["layers"]
         rank_query_start = int(arrays["query_start"])
+        # Version-1 captures (and old fixtures) lack these two arrays.
+        rank_prompt_entropy = arrays["prompt_entropy"] if "prompt_entropy" in arrays else None
+        rank_sliding_window = arrays["sliding_window"] if "sliding_window" in arrays else None
 
         if rank == 0:
             classes, layers, query_start = rank_classes, rank_layers, rank_query_start
+            sliding_window = rank_sliding_window
         else:
             # Check BEFORE appending, so a disagreeing rank can never reach
             # the concatenation. ``array_equal`` is length-aware: a rank whose
@@ -213,10 +239,29 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
                     f"rank {rank} of job {job_id!r} disagrees about layers: the ranks "
                     "captured different jobs, refusing to concatenate their heads"
                 )
+            # A version-1 rank beside a version-2 rank is a different capture:
+            # joining them would silently drop or misalign prompt_entropy.
+            if (rank_prompt_entropy is None) != (not prompt_entropy_parts):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about prompt_entropy "
+                    "presence: the ranks come from different captures, refusing "
+                    "to concatenate their heads"
+                )
+            if (rank_sliding_window is None) != (sliding_window is None) or (
+                sliding_window is not None
+                and not np.array_equal(rank_sliding_window, sliding_window)
+            ):
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about sliding_window: "
+                    "the ranks captured different jobs, refusing to concatenate "
+                    "their heads"
+                )
 
         mass_parts.append(arrays["mass"])
         entropy_parts.append(arrays["entropy"])
         sink_parts.append(arrays["sink"])
+        if rank_prompt_entropy is not None:
+            prompt_entropy_parts.append(rank_prompt_entropy)
 
     # Rank order is list order, so a plain concatenate reproduces the model's
     # own head numbering. Dtypes are preserved (no ``astype``) by design.
@@ -227,6 +272,102 @@ def load_mass(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
         "classes": classes,
         "query_start": query_start,
         "layers": layers,
+        "prompt_entropy": (
+            np.concatenate(prompt_entropy_parts, axis=_HEAD_AXIS)
+            if prompt_entropy_parts
+            else None
+        ),
+        "sliding_window": sliding_window,
+    }
+
+
+def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
+    """Reduce the row entropies of a joined job to one NaN-aware mean per layer.
+
+    Averages ``job["entropy"]`` and ``job.get("prompt_entropy")`` over the
+    response positions and heads of each layer, skipping NaN. The number of
+    defined values per layer is returned beside each mean so a caller can pool
+    several layers exactly: sum ``mean * count`` over the chosen layers and
+    divide by the summed count.
+
+    Parameters
+    ----------
+    job : Mapping[str, Any]
+        A joined job as returned by :func:`load_mass`. Only ``"entropy"``
+        (``[L, P, H]``) and ``"prompt_entropy"`` (``[L, P, H]`` or ``None``;
+        a missing key counts as ``None``) are read. Not mutated.
+
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        Exactly these keys:
+
+        ``prompt_entropy``
+            ``[L]`` float64, per-layer mean of the prompt entropy over
+            positions and heads; NaN for a layer with no defined value, and
+            all NaN (L taken from ``entropy``) when the job has none.
+        ``prompt_entropy_count``
+            ``[L]`` int64, defined (non-NaN) values per layer; all zeros when
+            the job has none.
+        ``entropy``
+            ``[L]`` float64, the same mean of the whole-row entropy.
+        ``entropy_count``
+            ``[L]`` int64, defined values per layer.
+
+    Raises
+    ------
+    ValueError
+        When ``entropy`` is not 3-d, or ``prompt_entropy`` is given with a
+        shape different from ``entropy``'s.
+
+    Notes
+    -----
+    Values are cast to float64 before summing, since float16 accumulates
+    badly. Sums and counts are divided with ``np.divide(..., where=count > 0)``
+    into a NaN-filled array rather than ``np.nanmean``, so an all-NaN layer
+    gives NaN without a RuntimeWarning.
+
+    Examples
+    --------
+    >>> e = np.asarray([[[1.0, 3.0]], [[2.0, 2.0]]], np.float16)  # [L=2, P=1, H=2]
+    >>> out = entropy_by_layer({"entropy": e, "prompt_entropy": None})
+    >>> out["entropy"].tolist(), out["prompt_entropy_count"].tolist()
+    ([2.0, 2.0], [0, 0])
+    """
+    entropy = np.asarray(job["entropy"])
+    if entropy.ndim != 3:
+        raise ValueError(f"entropy must be 3-d [L, P, H], got ndim {entropy.ndim}")
+    prompt_entropy = job.get("prompt_entropy")
+    if prompt_entropy is not None:
+        prompt_entropy = np.asarray(prompt_entropy)
+        if prompt_entropy.shape != entropy.shape:
+            raise ValueError(
+                f"prompt_entropy shape {prompt_entropy.shape} differs from "
+                f"entropy shape {entropy.shape}"
+            )
+
+    def _mean_and_count(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Per-layer NaN-skipping mean and defined-value count of ``[L, P, H]``."""
+        values = values.astype(np.float64)
+        defined = ~np.isnan(values)
+        count = defined.sum(axis=(1, 2)).astype(np.int64)
+        total = np.where(defined, values, 0.0).sum(axis=(1, 2))
+        mean = np.full(total.shape, np.nan, dtype=np.float64)
+        np.divide(total, count, out=mean, where=count > 0)
+        return mean, count
+
+    n_layers = entropy.shape[0]
+    if prompt_entropy is None:
+        pe_mean = np.full(n_layers, np.nan, dtype=np.float64)
+        pe_count = np.zeros(n_layers, dtype=np.int64)
+    else:
+        pe_mean, pe_count = _mean_and_count(prompt_entropy)
+    e_mean, e_count = _mean_and_count(entropy)
+    return {
+        "prompt_entropy": pe_mean,
+        "prompt_entropy_count": pe_count,
+        "entropy": e_mean,
+        "entropy_count": e_count,
     }
 
 
