@@ -346,7 +346,7 @@ other-length forward), in this order, first failure wins:
 
 | guard | fails when | why it exists |
 |---|---|---|
-| `prefill-only` | no attention metadata for the layer, `num_decode_tokens != 0`, or no prefill part | sequences of 512 tokens or fewer take the decode path (`reorder_batch_threshold = 512` for FLASH_ATTN_MLA on SM90); such a job fails loudly instead of being captured from the wrong path |
+| `prefill-only` | no attention metadata for the layer, `num_decode_tokens != 0`, or no prefill part | a sequence that vLLM classifies as decode is served from latents, not from the keys rebuilt here; such a job fails loudly instead of being captured from the wrong path. vLLM's FLASH_ATTN_MLA builder classifies sequences of up to `reorder_batch_threshold = 512` tokens as decode, so `register()` sets that class attribute to 1 (the value of vLLM's other MLA builders) before any builder exists; short sequences then take the prefill path |
 | `chunked-context` | `prefill.chunked_context` is not None | the prefill reads context in chunks, not the one pass reconstructed here |
 | `fp8-prefill` | `layer.kv_cache_dtype != "auto"`, or `prefill.q_data_type` differs from `q.dtype` | an FP8 prefill uses quantized queries/keys the rebuild would not reproduce |
 | `dcp` | `layer.dcp_q_replicate` set, or `impl.dcp_world_size != 1` | decode context parallelism changes what a rank holds |

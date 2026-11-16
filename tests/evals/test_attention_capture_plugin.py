@@ -1061,6 +1061,42 @@ def test_register_wraps_mla_forward_once(monkeypatch, tmp_path: Path) -> None:
     assert StubMLAAttention.forward is first
 
 
+def _stub_flashattn_mla(monkeypatch, threshold):
+    """Install a stub of vLLM's flash-attention MLA backend module and return its builder class."""
+    class FlashAttnMLAMetadataBuilder:
+        reorder_batch_threshold = threshold
+
+    for name in ("vllm.v1", "vllm.v1.attention", "vllm.v1.attention.backends", "vllm.v1.attention.backends.mla"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    mod = types.ModuleType("vllm.v1.attention.backends.mla.flashattn_mla")
+    mod.FlashAttnMLAMetadataBuilder = FlashAttnMLAMetadataBuilder
+    monkeypatch.setitem(sys.modules, mod.__name__, mod)
+    return FlashAttnMLAMetadataBuilder
+
+
+def test_register_lowers_the_mla_decode_threshold_so_short_sequences_prefill(monkeypatch, tmp_path: Path) -> None:
+    """vLLM sends sequences of up to 512 tokens down the decode path; the plugin makes that 1."""
+    builder = _stub_flashattn_mla(monkeypatch, 512)
+    _load_plugin(monkeypatch, tmp_path)
+    assert builder.reorder_batch_threshold == 1
+
+
+def test_register_leaves_a_threshold_of_one_and_tolerates_a_missing_builder(monkeypatch, tmp_path: Path) -> None:
+    builder = _stub_flashattn_mla(monkeypatch, 1)
+    _load_plugin(monkeypatch, tmp_path)
+    assert builder.reorder_batch_threshold == 1
+    # No such module (an older vLLM, or another MLA backend): register() still wraps both classes.
+    monkeypatch.delitem(sys.modules, "vllm.v1.attention.backends.mla.flashattn_mla")
+    _load_plugin(monkeypatch, tmp_path)
+    assert StubMLAAttention.forward is not _STUB_MLA_FORWARD
+
+
+def test_the_decode_threshold_is_untouched_without_mla_layers(monkeypatch, tmp_path: Path) -> None:
+    builder = _stub_flashattn_mla(monkeypatch, 512)
+    _load_plugin(monkeypatch, tmp_path, with_mla=False)
+    assert builder.reorder_batch_threshold == 512
+
+
 # --------------------------------------------------------------------------- summary mode
 from tests.evals.test_attention_analysis import summarize_rows  # noqa: E402
 

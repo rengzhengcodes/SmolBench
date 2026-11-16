@@ -986,6 +986,29 @@ def _put(url, data, content_type):
 
 
 # --------------------------------------------------------------------------- entry
+def _mla_prefill_short_sequences():
+    """Make vLLM send short sequences through the MLA prefill path, so they are captured.
+
+    vLLM's flash-attention MLA metadata builder classifies a request of up to
+    ``reorder_batch_threshold = 512`` tokens as decode. That path feeds latents
+    to the kernel, which guard ``prefill-only`` refuses, so a job of 512 tokens
+    or fewer could never be captured. With the threshold at 1 (the value of
+    vLLM's other MLA builders) only single-token steps are decode. A builder
+    reads the class attribute when it is constructed, which is after plugins
+    load. Never raises: a vLLM without that builder keeps its own behaviour and
+    the guard still protects the capture.
+    """
+    try:
+        from vllm.v1.attention.backends.mla.flashattn_mla import FlashAttnMLAMetadataBuilder as builder
+    except Exception as exc:  # noqa: BLE001 -- serving must never break
+        _log("MLA decode threshold left alone (%r)" % (exc,))
+        return
+    old = getattr(builder, "reorder_batch_threshold", None)
+    if isinstance(old, int) and old > 1:
+        builder.reorder_batch_threshold = 1
+        _log("MLA decode threshold %d -> 1: short sequences take the prefill path" % (old,))
+
+
 def register():
     """vLLM general-plugin entry point: wrap ``Attention.forward`` (and ``MLAAttention.forward``) once.
 
@@ -1035,6 +1058,7 @@ def register():
             return output
 
         MLAAttention.forward = mla_forward
+        _mla_prefill_short_sequences()
     _STATE["patched"] = True
     _log("registered (attn dir %s, gate tol %g, classes %s)"
          % (_attn_dir(), _gate_tol(), [c.__name__ for c in classes]))
