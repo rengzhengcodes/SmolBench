@@ -171,6 +171,10 @@ class StubMLAAttention:
         return k, v
 
     def forward(self, q, kv_c_normed, k_pe, output_shape=None, q_dcp_replicated=None):
+        if getattr(self, "forced_output_numel", None) is not None:
+            # A malformed-input probe: the tensors do not fit the layer's dimensions, so the
+            # real math below cannot run. The plugin's shape guards must see them anyway.
+            return torch.zeros(self.forced_output_numel, dtype=self.out_dtype)
         t, h = q.shape[0], self.num_heads
         k, v = self.keys_values(kv_c_normed, k_pe)
         if getattr(self, "ref_v_perm", None) is not None:   # a kernel that mixed up value heads
@@ -905,6 +909,85 @@ def test_every_mla_guard_fails_the_job_loudly(monkeypatch, tmp_path: Path, case)
     assert done["ok"] is False, done
     assert f"MLA guard {guard}" in done["error"], done["error"]
     assert not uploads
+
+
+def _guard_failure(tmp_path: Path, uploads: dict, job_id: str) -> str:
+    """The error of a job that failed through the done file; asserts the failure is clean."""
+    done = json.loads((tmp_path / "done" / f"{job_id}.r0.json").read_text())
+    assert done["ok"] is False, done
+    assert not uploads
+    return done["error"]
+
+
+@pytest.mark.parametrize("value, detail", [
+    (float("nan"), "not a finite positive number"),
+    (float("inf"), "not a finite positive number"),
+    (0.0, "not a finite positive number"),
+    (-0.37, "not a finite positive number"),
+    ("abc", "is not a number"),       # float() raises ValueError
+    (None, "is not a number"),        # float() raises TypeError
+    ([0.37], "is not a number"),      # float() raises TypeError
+])
+def test_mla_scale_guard_rejects_a_scale_that_is_not_a_finite_positive_number(
+        monkeypatch, tmp_path: Path, value, detail) -> None:
+    """The two branches of the scale check (not a number; not finite or not positive) both
+    fail the job through the done file; nothing is uploaded."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", seed=i) for i in range(2)]
+    layers[0].impl.scale = value
+    _arm(tmp_path, "sc", 1, 16, [15])
+    assert _run_mla_forward(layers, 16, seed=6)
+    error = _guard_failure(tmp_path, uploads, "sc")
+    assert "MLA guard scale failed" in error and detail in error, error
+
+
+# Each shape guard of ``_mla_guard`` with the tensors that trip it (and no earlier guard):
+# the stub's own math is switched off (``forced_output_numel``) because the tensors do not
+# fit the layer, so the plugin sees them as vLLM would hand them over after a mismatch.
+# Layer dims: 2 heads, qk_nope 4, qk_rope 2, v 3, lora 5; t = 16 tokens.
+_SHAPE_CASES = {
+    "q": (dict(q_shape=(16, 2, 7)), "q.shape="),                        # last dim 7, expected 6
+    "kv_c-too-few-rows": (dict(kv_c_shape=(15, 5)), "kv_c_normed.shape="),
+    "kv_c-wrong-width": (dict(kv_c_shape=(16, 6)), "kv_c_normed.shape="),
+    "k_pe-too-few-rows": (dict(k_pe_shape=(15, 1, 2)), "k_pe.shape="),
+    "k_pe-wrong-numel": (dict(k_pe_shape=(16, 1, 3)), "k_pe.shape="),
+    "output": (dict(output_numel=16 * 2 * 3 + 1), "output.numel()="),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_SHAPE_CASES))
+def test_every_mla_shape_guard_fails_the_job_loudly(monkeypatch, tmp_path: Path, case) -> None:
+    sizes, detail = _SHAPE_CASES[case]
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t = 16
+    layer = StubMLAAttention("model.layers.0.self_attn.attn")
+    layer.forced_output_numel = sizes.get("output_numel", t * 2 * 3)
+    gen = torch.Generator().manual_seed(3)
+    q = torch.randn(*sizes.get("q_shape", (t, 2, 6)), generator=gen).to(torch.bfloat16)
+    kv_c = torch.randn(*sizes.get("kv_c_shape", (t, 5)), generator=gen).to(torch.bfloat16)
+    k_pe = torch.randn(*sizes.get("k_pe_shape", (t, 1, 2)), generator=gen).to(torch.bfloat16)
+    _arm(tmp_path, "sh", 1, t, [15])
+    layer.forward(q, kv_c, k_pe, output_shape=(t, 6), q_dcp_replicated=None)
+    error = _guard_failure(tmp_path, uploads, "sh")
+    assert "MLA guard shape failed" in error and detail in error, error
+
+
+def test_mla_shape_probe_with_matching_tensors_is_not_refused(monkeypatch, tmp_path: Path) -> None:
+    """Control for the shape cases: the same driver with well-formed tensors passes every guard
+    (it then fails only at the later gate, as the stub's zero output is not the kernel's)."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t = 16
+    layer = StubMLAAttention("model.layers.0.self_attn.attn")
+    layer.forced_output_numel = t * 2 * 3
+    gen = torch.Generator().manual_seed(3)
+    q = torch.randn(t, 2, 6, generator=gen).to(torch.bfloat16)
+    kv_c = torch.randn(t, 5, generator=gen).to(torch.bfloat16)
+    k_pe = torch.randn(t, 1, 2, generator=gen).to(torch.bfloat16)
+    _arm(tmp_path, "ctl", 1, t, [15])
+    layer.forward(q, kv_c, k_pe, output_shape=(t, 6), q_dcp_replicated=None)
+    done = json.loads((tmp_path / "done" / "ctl.r0.json").read_text())
+    assert done["ok"] is False and "MLA guard" not in done["error"], done
+    assert "gate failed" in done["error"], done
 
 
 def test_mla_mass_mode_prompt_entropy_matches_a_direct_computation(monkeypatch, tmp_path: Path) -> None:

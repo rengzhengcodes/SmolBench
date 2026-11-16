@@ -361,6 +361,26 @@ _MASS_FLOOR: float = -1e-3
 #: Slack added to the entropy ceiling ``ln(attended keys)``: the box stores entropy
 #: as float16, whose spacing near the largest values (~12 nats) is about 8e-3.
 _ENTROPY_CEIL_TOL: float = 1e-2
+#: Absolute part of the slack in the ``prompt_entropy`` chain-rule cross-check (nats).
+#: Five float16 quantities enter the check (the prompt mass ``m``, the response mass
+#: ``r``, the sink mass ``s``, the whole-row entropy ``H`` and ``prompt_entropy`` ``Hp``).
+#: float16 keeps about 3 significant decimal digits (relative error up to 2**-11), so ``H``
+#: and ``Hp`` of about 11 nats are stored to within about 4e-3, ``m * Hp`` inherits that
+#: scaled by ``m`` plus ``m``'s own relative error times ``Hp``, and the grouping term
+#: ``G = -(m ln m + r ln r + s ln s)`` has slope ``-(ln p + 1)`` in each mass, which is
+#: unbounded as ``p`` goes to 0 or 1 but multiplied by an error proportional to ``p``
+#: itself. Measured on clean synthetic captures built from real softmax rows (every
+#: combination of global or windowed layer, with or without a sink, flat, peaked and mixed
+#: logits, response part random, one-hot or uniform, 8 to 33000 keys, 1200 rows per
+#: configuration for the short sequences and about 190 for the long ones), the largest
+#: violation of either side before any tolerance was 0.0086 nats, and the largest
+#: violation as a fraction of this tolerance was 0.13. The value 0.05 therefore keeps a
+#: margin of 5.8 times on the absolute part alone (7.9 times with the relative part);
+#: that is above the required 3 times, so the starting value was kept.
+_PE_CHAIN_ABS_TOL: float = 0.05
+#: Relative part of the slack: ``tol = _PE_CHAIN_ABS_TOL + _PE_CHAIN_REL_TOL * (1 + H)``,
+#: since the float16 spacing of ``H`` and ``Hp`` grows with their size.
+_PE_CHAIN_REL_TOL: float = 2e-3
 #: Capture format the shipped plugin writes; version 2 added ``prompt_entropy``. New
 #: captures come from the plugin in this repository, so the audit requires it.
 CAPTURE_VERSION: int = 2
@@ -1512,7 +1532,9 @@ class ReplayPlan:
     unreasoned_marks: int
     #: Per-mark and per-model rebuild failures.
     errors: List[str]
-    #: Per arm: ``marks`` (rebuilt), ``total_tokens``, ``max_tokens``.
+    #: Per arm: ``marks`` (rebuilt), ``total_tokens``, ``max_tokens`` and
+    #: ``over_context`` (jobs above the capture context, so excluded from the capture).
+    #: Per arm because exclusions that differ by arm would bias a mean over responses.
     per_arm: Dict[str, Dict[str, int]]
     #: Tokens over all rebuilt jobs, prompt plus completion.
     total_tokens: int
@@ -1556,7 +1578,8 @@ class ReplayPlan:
         for arm, stats in self.per_arm.items():
             lines.append(
                 f"  arm {arm}: {stats['marks']} jobs, {stats['total_tokens']} tokens, "
-                f"longest {stats['max_tokens']}"
+                f"longest {stats['max_tokens']}, {stats['over_context']} over the "
+                f"{self.capture_max_model_len}-token capture context"
             )
         if self.capture_supported:
             lines.append("  capture: supported")
@@ -1628,7 +1651,8 @@ def _plan_one(
     for arm in ARMS:
         sizes = [p.job.n_tokens for p in built.planned if p.run.arm == arm]
         per_arm[arm] = {
-            "marks": len(sizes), "total_tokens": sum(sizes), "max_tokens": max(sizes, default=0)
+            "marks": len(sizes), "total_tokens": sum(sizes), "max_tokens": max(sizes, default=0),
+            "over_context": sum(1 for size in sizes if size > max_len),
         }
 
     instance_types = tuple(INSTANCE_TYPES.get(model, ()))
@@ -1772,26 +1796,34 @@ def _audit_prompt_entropy(
             f"prompt_entropy {float(pe[l, i, h]):.4g} at (layer {l}, row {i}, head {h}) "
             f"is below {_ENTROPY_FLOOR}"
         )
-    # The renormalised distribution lives on at most query_start prompt keys (fewer on
-    # windowed layers) with the sink excluded, so ln(query_start) bounds it; the slack is
-    # the float16 spacing, as for the whole-row entropy. With query_start == 0 there is no
-    # prompt key and no ceiling: every finite value is then rejected by phase 2.
+    # The renormalised distribution lives on the prompt keys a row can attend, with the
+    # sink excluded: at most query_start, and on a windowed layer (window w, row i) at
+    # most min(query_start, w - 1 - i). ln of that count bounds it; the slack is the
+    # float16 spacing, as for the whole-row entropy. With query_start == 0 there is no
+    # prompt key and no ceiling: every finite value is then rejected by phase 2. Rows past
+    # a window hold no prompt key at all; their count is floored at 1 here (ceiling 0 plus
+    # slack) so that phase 2, not this check, reports a finite value there.
+    rows = np.arange(mass.shape[1], dtype=np.int64)[None, :]
+    win = window.astype(np.int64)[:, None]
     if query_start > 0:
-        ceiling = float(np.log(float(query_start))) + _ENTROPY_CEIL_TOL
-        above = pe > ceiling
+        count = np.where(win > 0, np.minimum(query_start, win - 1 - rows), query_start)
+        count = np.maximum(count, 1)  # [L, P]
+        ceiling3 = np.broadcast_to(
+            (np.log(count.astype(np.float64)) + _ENTROPY_CEIL_TOL)[:, :, None], pe.shape
+        )
+        above = pe > ceiling3
         if above.any():
             l, i, h = _first_index(above)
             return (
                 f"prompt_entropy {float(pe[l, i, h]):.4g} at (layer {l}, row {i}, head {h}) "
-                f"is above the ceiling ln(query_start) + {_ENTROPY_CEIL_TOL} = {ceiling:.4g}"
+                f"is above the ceiling ln(attendable prompt keys) + {_ENTROPY_CEIL_TOL} = "
+                f"{float(ceiling3[l, i, h]):.4g} (window {int(window[l])}, query_start {query_start})"
             )
 
     # Phase 2: NaN placement. A row can see a prompt key unless the layer is windowed
     # and the row has moved past the window (row i is at absolute position
     # query_start + i, and a window w admits keys j >= pos - (w - 1), i.e. a prompt key
     # iff i < w - 1), or there is no prompt at all.
-    rows = np.arange(mass.shape[1], dtype=np.int64)[None, :]
-    win = window.astype(np.int64)[:, None]
     no_prompt = ((win > 0) & (rows >= win - 1)) | (query_start == 0)  # [L, P]
     no_prompt3 = np.broadcast_to(no_prompt[:, :, None], pe.shape)
     # Masked keys get -inf logits, so softmax gives them EXACTLY 0 and the one-hot class
@@ -1819,6 +1851,62 @@ def _audit_prompt_entropy(
             f"{float(prompt_mass[l, i, h]):.3g}; NaN is valid only where no prompt key is "
             "attendable and the stored prompt mass is 0"
         )
+
+    # Phase 3: cross-check against the other stored arrays (grouping rule of entropy).
+    # Group the row's keys into prompt (mass m), response so far (mass r) and sink (mass
+    # s). With G = -(m ln m + r ln r + s ln s) the entropy of the three-group split,
+    #     H = G + m * Hp + r * Hr,  0 <= Hr <= ln(attendable response keys) <= ln(i + 1),
+    # where Hr is the (unstored) entropy of the renormalised response part and the sink
+    # group is a single key. Solving for m * Hp gives an interval, checked on every cell
+    # where Hp is finite. Design: an interval (not an equality) because Hr is not stored;
+    # it still refuses halved, shuffled and constant arrays. It cannot catch a wrong Hp on
+    # rows where the interval is wide: late rows with a large response mass r, where
+    # r * ln(i + 1) is large. The whole-row entropy copied in as Hp is caught only when
+    # r is large: with a small r, H is close to Hp and the copy stays inside the tolerance.
+    return _check_prompt_entropy_chain(pe, np.asarray(mass), np.asarray(arrays["sink"]), entropy)
+
+
+def _check_prompt_entropy_chain(
+    pe: np.ndarray, mass: np.ndarray, sink: np.ndarray, entropy: np.ndarray
+) -> Optional[str]:
+    """Return a failure when ``m * Hp`` leaves its grouping-rule interval, else ``None``.
+
+    `pe` is the float64 ``prompt_entropy`` (NaN allowed); `mass`, `sink` and `entropy` are
+    the stored float16 arrays of the same ``[L, P, H]`` leading shape. Cells with a NaN
+    `pe` are skipped. The interval and the tolerance are described in
+    ``_audit_prompt_entropy``; the failure names the first offending
+    ``(layer, row, head)`` (lowest layer, then row, then head), the side and the numbers.
+    """
+    m64 = mass[..., :3].astype(np.float64).sum(-1)
+    r64 = mass[..., 3].astype(np.float64)
+    s64 = sink.astype(np.float64)
+    h64 = entropy.astype(np.float64)
+
+    def plogp(p: np.ndarray) -> np.ndarray:
+        # A zero probability contributes exactly 0 (the limit of p ln p); the inner
+        # where() only keeps the log away from 0, the outer one picks the 0 branch.
+        return np.where(p > 0.0, p * np.log(np.where(p > 0.0, p, 1.0)), 0.0)
+
+    group = -(plogp(m64) + plogp(r64) + plogp(s64))
+    # Row i holds at most i + 1 response keys, itself included.
+    ln_resp = np.log(np.arange(1, mass.shape[1] + 1, dtype=np.float64))[None, :, None]
+    tol = _PE_CHAIN_ABS_TOL + _PE_CHAIN_REL_TOL * (1.0 + h64)
+    m_hp = m64 * pe  # NaN where pe is NaN, so those cells never trip a mask below
+    upper = h64 - group + tol
+    lower = h64 - group - r64 * ln_resp - tol
+    for side, bad, bound in (
+        ("above", m_hp > upper, upper),
+        ("below", m_hp < lower, lower),
+    ):
+        if bad.any():
+            l, i, h = _first_index(bad)
+            return (
+                f"prompt_entropy fails the chain-rule cross-check at (layer {l}, row {i}, head "
+                f"{h}): m * prompt_entropy = {float(m_hp[l, i, h]):.4g} is {side} the bound "
+                f"{float(bound[l, i, h]):.4g} derived from entropy {float(h64[l, i, h]):.4g}, "
+                f"mass {float(m64[l, i, h]):.4g} (prompt) / {float(r64[l, i, h]):.4g} "
+                f"(response) / {float(s64[l, i, h]):.4g} (sink)"
+            )
     return None
 
 
@@ -2059,8 +2147,9 @@ def audit_captures(
     missing-array failures can fire only for the jobs whose arrays are
     downloaded (`arrays`); the version check above runs for every job. Then, in
     this order: no ``+-inf``; every finite value at least ``-1e-3``; every finite
-    value at most ``ln(query_start) + 1e-2`` (the distribution lives on at most
-    ``query_start`` prompt keys, so this bounds it; the slack covers float16
+    value at most ``ln(n) + 1e-2``, where ``n`` is the number of prompt keys the
+    row can attend (``query_start`` on a global layer; ``min(query_start, w - 1 - i)``
+    on a layer with window ``w`` and row ``i < w - 1``; the slack covers float16
     storage; with ``query_start == 0`` there is no ceiling and every finite value
     fails the next rule). NaN is legitimate in ``prompt_entropy`` and is placed
     by rule. A row ``i`` (absolute position ``query_start + i``) can attend a
@@ -2074,7 +2163,24 @@ def audit_captures(
     rule encodes the plugin's masks (causal plus sliding window); a layer type
     that masks prompt keys another way needs its geometry stored in the npz, or
     its NaNs fail this check. The failure names the first offending
-    ``(layer, row, head)``. A version-1 capture is audited exactly as before.
+    ``(layer, row, head)``.
+
+    Last comes a cross-check of ``prompt_entropy`` against the other arrays, on every
+    cell where it is finite. With ``m = mass[..., 0] + mass[..., 1] + mass[..., 2]``,
+    ``r = mass[..., 3]``, ``s = sink``, ``H = entropy``, ``Hp = prompt_entropy`` and
+    ``G = -(m ln m + r ln r + s ln s)`` (a zero probability contributes 0), the grouping
+    rule of entropy gives ``H = G + m * Hp + r * Hr`` with ``Hr``, the entropy of the
+    response part, between 0 and ``ln(i + 1)`` for row ``i``. The audit requires
+    ``H - G - r ln(i + 1) - tol <= m * Hp <= H - G + tol`` with
+    ``tol = 0.05 + 2e-3 * (1 + H)`` (float16 storage of the five quantities; see
+    ``_PE_CHAIN_ABS_TOL``). The failure names the first offending cell, the side that
+    failed and the numbers. This catches halved, shuffled-across-heads and constant
+    arrays, and a copy of the whole-row entropy when the response mass is large (with a
+    small response mass the whole-row entropy is close to ``prompt_entropy``, so the
+    copy stays inside the tolerance). It cannot catch a wrong ``prompt_entropy`` where
+    the interval is wide: late rows with a large response mass ``r``, where the
+    unstored ``Hr`` leaves ``r ln(i + 1)`` nats of room. A version-1 capture is audited
+    exactly as before.
 
     The ceiling follows from how the box computes entropy: over the row's
     attended tokens plus the sink column. Row ``i`` sits at absolute position
@@ -2312,10 +2418,12 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     instance_types : Sequence[str], optional
         Types to hunt, overriding ``INSTANCE_TYPES[model_key]``.
     allow_unsupported_capture : bool, optional
-        Run a model listed in ``CAPTURE_UNSUPPORTED`` anyway.
+        Run a model listed in ``CAPTURE_UNSUPPORTED`` anyway. Must be the singleton
+        ``True``; anything else (``1``, ``"yes"``) leaves the refusal in place.
     allow_unverified_serve : bool, optional
         Run a model listed in ``SERVE_UNVERIFIED`` anyway (its serving on the
-        pinned image is unverified and may fail on a billed box).
+        pinned image is unverified and may fail on a billed box). Must be the
+        singleton ``True``, like `approved`.
     batch_size, poll_s, batch_timeout_s, url_ttl_s : int, optional
         Passed to ``attention.run_capture_batches``.
     audit_arrays : str, optional
@@ -2340,11 +2448,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         When ``approved is not True``. Raised before any EC2 or S3 client or
         factory is touched.
     CaptureUnsupported
-        When the model is in ``CAPTURE_UNSUPPORTED`` and not overridden (also
-        before any AWS call).
+        When the model is in ``CAPTURE_UNSUPPORTED`` and ``allow_unsupported_capture``
+        is not ``True`` (also before any AWS call).
     ServeUnverified
         When the model is in ``SERVE_UNVERIFIED`` and ``allow_unverified_serve``
-        is false (also before any AWS call).
+        is not ``True`` (also before any AWS call).
     ValueError
         When no instance type is known for the model, or the batch arguments are
         invalid (before any AWS call).
@@ -2389,9 +2497,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             f"replay of {model_key} was not approved: pass approved=True after reading the "
             "launch summary above (it provisions a billed spot GPU box)"
         )
-    if model_key in CAPTURE_UNSUPPORTED and not allow_unsupported_capture:
+    # The overrides follow the approval gate's rule: only the True singleton lifts a
+    # refusal, so a truthy 1 or "yes" from a careless call keeps the refusal in place.
+    if model_key in CAPTURE_UNSUPPORTED and allow_unsupported_capture is not True:
         raise CaptureUnsupported(f"{model_key}: {CAPTURE_UNSUPPORTED[model_key]}")
-    if model_key in SERVE_UNVERIFIED and not allow_unverified_serve:
+    if model_key in SERVE_UNVERIFIED and allow_unverified_serve is not True:
         raise ServeUnverified(f"{model_key}: {SERVE_UNVERIFIED[model_key]}")
     if not types:
         raise ValueError(f"no instance types known for {model_key!r}; pass instance_types=")

@@ -264,6 +264,27 @@ def test_plan_replay_records_a_missing_template_instead_of_raising(tmp_path: Pat
 
 # --------------------------------------------------------------- replay_model
 
+def _chain_entropy(mass, sink, prompt_entropy) -> np.ndarray:
+    """Whole-row entropy (float16) that the grouping rule implies for the given arrays.
+
+    Takes the response part to be a point mass (``Hr = 0``), which satisfies both sides of
+    the audit's chain-rule interval exactly (``H = G + m * Hp``). ``NaN`` entries of
+    `prompt_entropy` (and any non-finite value) count as 0: NaN sits where the prompt mass
+    is 0, and a deliberately corrupt inf must not turn the entropy into inf too. Hand-built
+    captures use this so that their arrays stay consistent with each other.
+    """
+    m = np.asarray(mass, np.float64)[..., :3].sum(-1)
+    r = np.asarray(mass, np.float64)[..., 3]
+    s = np.asarray(sink, np.float64)
+
+    def plogp(p):
+        return np.where(p > 0.0, p * np.log(np.where(p > 0.0, p, 1.0)), 0.0)
+
+    group = -(plogp(m) + plogp(r) + plogp(s))
+    pe = np.asarray(prompt_entropy, np.float64)
+    return (group + m * np.where(np.isfinite(pe), pe, 0.0)).astype(np.float16)
+
+
 class AuditedBox:
     """Fake ec2 module: provision/serve/shutdown recorded, /attn uploads like the plugin."""
 
@@ -313,11 +334,13 @@ class AuditedBox:
                 # as ranks holding different heads do (the audit refuses identical ranks).
                 mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
                 buf = io.BytesIO()
-                arrays = dict(mass=mass, entropy=np.ones((2, p, 2), np.float16),
-                              sink=np.zeros((2, p, 2), np.float16),
+                sink = np.zeros((2, p, 2), np.float16)
+                # The same prompt_entropy as below; the entropy follows from the grouping rule.
+                pe = np.full((2, p, 2), 0.5, np.float16)
+                arrays = dict(mass=mass, entropy=_chain_entropy(mass, sink, pe), sink=sink,
                               has_sink=np.zeros(2, bool), sliding_window=np.zeros(2, np.int32))
                 if self.capture_version >= 2:
-                    arrays["prompt_entropy"] = np.full((2, p, 2), 0.5, np.float16)
+                    arrays["prompt_entropy"] = pe
                 np.savez(buf, **arrays,
                          classes=np.asarray(line["classes"], np.uint8),
                          query_start=np.asarray(qs, np.int32), layers=np.arange(2, dtype=np.int32),
@@ -486,6 +509,53 @@ def test_capture_unsupported_still_refuses_a_listed_model_unless_overridden(tmp_
         _replay(tmp_path, box, box.s3)
     assert box.calls == []
     assert _replay(tmp_path, box, box.s3, allow_unsupported_capture=True).verified
+
+
+@pytest.mark.parametrize("value", [1, "yes", "True"])
+def test_a_truthy_serve_override_is_refused_like_the_approval(tmp_path, value) -> None:
+    """Only the literal True lifts the serve refusal, before any AWS client is built."""
+    _write_results(tmp_path, DSV31)
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ar.ServeUnverified, match="tokenizer"):
+        ar.replay_model(DSV31, tmp_path, approved=True, allow_unverified_serve=value, ec2=box,
+                        s3_client_factory=lambda: (_ for _ in ()).throw(AssertionError("S3")),
+                        **_plan_kwargs(CharTokenizer(DS_SPECIALS)))
+    assert box.calls == []
+
+
+@pytest.mark.parametrize("value", [1, "yes", "True"])
+def test_a_truthy_unsupported_capture_override_is_refused(tmp_path, monkeypatch, value) -> None:
+    _write_results(tmp_path, GEMMA)
+    monkeypatch.setitem(ar.CAPTURE_UNSUPPORTED, GEMMA, "a test reason")
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ar.CaptureUnsupported, match="a test reason"):
+        _replay(tmp_path, box, box.s3, allow_unsupported_capture=value)
+    assert box.calls == []
+
+
+def test_over_context_exclusions_are_counted_per_arm(tmp_path) -> None:
+    """The capture context is shorter than the generation context; exclusions that differ by
+    arm would bias a mean over responses, so each arm's plan line carries its own count."""
+    seed_dir = tmp_path / "induction" / DSV31 / "seed=0"
+    seed_dir.mkdir(parents=True)
+
+    def marks(*queries):
+        return Marks(model=DSV31, marks=tuple(
+            Mark(query=q, answer=1, response="1", score=1, compliance=COMPLIANT, reasoning="r")
+            for q in queries)).dumps()
+
+    (seed_dir / f"intens--{STAMP_A}.yaml").write_text(marks("ab", "x" * 50_000))  # 1 token per char
+    (seed_dir / f"noise_intens--{STAMP_A}.yaml").write_text(marks("ab", "cd"))
+    plan = ar.plan_replay(tmp_path, [DSV31], **_plan_kwargs(CharTokenizer(DS_SPECIALS)))[DSV31]
+    assert plan.over_context == 1
+    assert plan.per_arm["intens"]["over_context"] == 1
+    assert plan.per_arm["noise_intens"]["over_context"] == 0
+    assert all(stats["over_context"] == 0 for arm, stats in plan.per_arm.items() if arm != "intens")
+    assert sum(stats["over_context"] for stats in plan.per_arm.values()) == plan.over_context
+    lines = {line.split(":")[0].strip(): line for line in plan.summary().splitlines() if "  arm " in line}
+    limit = plan.capture_max_model_len
+    assert f"1 over the {limit}-token capture context" in lines["arm intens"]
+    assert f"0 over the {limit}-token capture context" in lines["arm noise_intens"]
 
 
 def test_the_storage_estimate_uses_the_vendored_deepseek_config(tmp_path, monkeypatch) -> None:
@@ -815,14 +885,23 @@ class CountingS3(FakeS3):
 
 
 def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=None, entropy=None,
-                   mass_row=None, prompt_entropy=None, windows=None, version=2, mass_over=None):
+                   mass_row=None, prompt_entropy=None, windows=None, version=2, mass_over=None,
+                   sink_over=None, has_sink=None):
     """Store one job's per-rank objects as the plugin writes them; ``meta_over[rank]`` edits a meta.
 
     Ranks differ by a small rank-dependent term (they hold different heads); ``mass_row``
-    replaces every row's four class masses, ``mass_over(rank)`` (``[L, P, H_local, 4]``) the whole array.
+    replaces every row's four class masses, ``mass_over(rank)`` (``[L, P, H_local, 4]``) the
+    whole array, ``sink_over(rank)`` (``[L, P, H_local]``) the sink mass (zero by default) and
+    ``has_sink`` (``[L]`` booleans, all false by default) marks the layers that have one.
     ``version`` 2 writes ``prompt_entropy`` (default 0.5 everywhere, or the given
     ``[L, P, H_local]`` array; the string ``"omit"`` leaves it out) and ``capture_version``
     in the meta; ``version`` 1 writes neither. ``windows`` is the ``sliding_window`` array.
+
+    The whole-row ``entropy`` defaults to the value the grouping rule implies for the rank's
+    mass, sink and prompt entropy (``_chain_entropy``), so a default capture is consistent.
+    A given ``entropy`` is an array (the same for every rank) or a callable
+    ``f(rank, default) -> array``; ``prompt_entropy`` may likewise be a callable
+    ``f(rank) -> array``.
     """
     p = job.n_tokens - int(job.query_start)
     local = heads // tp
@@ -833,15 +912,29 @@ def _store_capture(s3, job, tp=2, *, layers=2, heads=4, model=GEMMA, meta_over=N
             mass[...] = np.asarray(mass_row, np.float16)
         if mass_over is not None:
             mass[...] = np.asarray(mass_over(rank), np.float16)
-        ent = np.full((layers, p, local), 0.5, np.float16) if entropy is None else entropy
+        sink = np.zeros((layers, p, local), np.float16)
+        if sink_over is not None:
+            sink[...] = np.asarray(sink_over(rank), np.float16)
         extra = {}
+        pe = None
         if version >= 2 and not (isinstance(prompt_entropy, str) and prompt_entropy == "omit"):
-            pe = np.full((layers, p, local), 0.5) if prompt_entropy is None else prompt_entropy
+            if prompt_entropy is None:
+                pe = np.full((layers, p, local), 0.5)
+            else:
+                pe = prompt_entropy(rank) if callable(prompt_entropy) else prompt_entropy
             extra["prompt_entropy"] = np.asarray(pe).astype(np.float16)
+        default_ent = _chain_entropy(mass, sink, pe if pe is not None else np.full(sink.shape, 0.5))
+        if entropy is None:
+            ent = default_ent
+        elif callable(entropy):
+            ent = entropy(rank, default_ent.astype(np.float32))
+        else:
+            ent = entropy
         buf = io.BytesIO()
-        np.savez(buf, mass=mass, entropy=ent.astype(np.float16), sink=np.zeros((layers, p, local), np.float16),
+        np.savez(buf, mass=mass, entropy=np.asarray(ent).astype(np.float16), sink=sink,
                  classes=np.asarray(job.classes, np.uint8), query_start=np.asarray(job.query_start, np.int32),
-                 layers=np.arange(layers, dtype=np.int32), has_sink=np.zeros(layers, bool),
+                 layers=np.arange(layers, dtype=np.int32),
+                 has_sink=np.asarray(has_sink if has_sink is not None else [False] * layers, bool),
                  sliding_window=np.asarray(windows if windows is not None else [0] * layers, np.int32),
                  positions=np.asarray([job.n_tokens - 1], np.int32), **extra)
         blob = buf.getvalue()
@@ -913,15 +1006,26 @@ def test_the_audit_rejects_entropy_above_the_log_of_the_attended_positions(tmp_p
     jobs = _gemma_jobs(tmp_path)
     job = jobs[0]
     p = job.n_tokens - int(job.query_start)
-    ceiling0 = math.log(int(job.query_start) + 1)  # the first completion row's bound
+    q = int(job.query_start)
+
+    def mass_over(rank):
+        mass = np.zeros((2, p, 2, 4), np.float32)
+        mass[..., 0], mass[..., 3] = 0.5 - 0.05 * rank, 0.5 + 0.05 * rank
+        # Row 0 uniform over its q + 1 keys: its entropy is exactly its bound ln(q + 1).
+        mass[:, 0, :, 0], mass[:, 0, :, 3] = q / (q + 1), 1 / (q + 1)
+        return mass
+
+    pe = np.full((2, p, 2), 0.5)
+    pe[:, 0, :] = math.log(q)  # the same uniform row, restricted to the prompt keys
     s3 = FakeS3()
-    ok = np.full((2, p, 2), 0.5, np.float32)
-    ok[:, 0, :] = ceiling0 - 0.05  # just under row 0's own bound: legal
-    _store_capture(s3, job, entropy=ok)
+    _store_capture(s3, job, mass_over=mass_over, prompt_entropy=pe)
     assert _audit(s3, [job])[job.job_id] is None
-    bad = ok.copy()
-    bad[1, 0, 1] = math.log(int(job.query_start) + 2) + 0.2  # above the bound even with a sink column
-    _store_capture(s3, job, entropy=bad)
+
+    def bump(_rank, default):
+        default[1, 0, 1] = math.log(q + 2) + 0.2  # above the bound even with a sink column
+        return default
+
+    _store_capture(s3, job, mass_over=mass_over, prompt_entropy=pe, entropy=bump)
     reason = _audit(s3, [job])[job.job_id]
     assert reason and "entropy" in reason.lower(), reason
 
@@ -1131,6 +1235,216 @@ def test_replay_fails_the_audit_of_captures_from_an_old_plugin(tmp_path) -> None
     report = _replay(tmp_path, AuditedBox(s3, capture_version=1), s3)
     assert not report.verified and report.audit_failures
     assert all("capture_version" in r for r in report.audit_failures.values()), report.audit_failures
+
+
+# ------------------------------------------- content audit: prompt entropy vs the other arrays
+
+#: One (window, has_sink) pair per layer of the synthetic captures: a global and a windowed
+#: layer, each without and with a sink. Windows 6 and 10 are below ``query_start`` (29).
+_SYNTH_LAYERS = ((0, False), (6, False), (0, True), (10, True))
+
+
+def _attention_rows(rng, q, p, *, window, sink, scale, boost=0.0, spike=False):
+    """Softmax rows of one head, reduced to the stored quantities (float64).
+
+    ``q`` prompt keys then ``p`` response keys; row ``i`` sits at position ``q + i`` and
+    attends keys ``j <= q + i`` (and ``j >= q + i - (window - 1)`` when ``window > 0``), plus
+    one sink key when ``sink``. Logits are ``N(0, scale)``, response keys get ``+boost`` and
+    ``spike`` adds +25 to one random attendable key per row (a peaked row). Returns
+    ``(mass [p, 4], sink [p], entropy [p], prompt_entropy [p])``; ``prompt_entropy`` is NaN
+    where no prompt key is attendable. Prompt keys carry random classes 0..2.
+    """
+    n = q + p
+    cls = np.concatenate([rng.integers(0, 3, q), np.full(p, 3)])
+    logits = rng.normal(0.0, scale, (p, n + 1))
+    logits[:, q:n] += boost
+    pos = q + np.arange(p)[:, None]
+    keys = np.arange(n)[None, :]
+    attend = keys <= pos
+    if window:
+        attend &= keys >= pos - (window - 1)
+    if spike:
+        for i in range(p):
+            logits[i, rng.choice(np.flatnonzero(attend[i]))] += 25.0
+    attend_all = np.concatenate([attend, np.full((p, 1), sink)], axis=1)
+    z = np.where(attend_all, logits, -np.inf)
+    z = z - z.max(axis=1, keepdims=True)
+    prob = np.exp(z)
+    prob /= prob.sum(axis=1, keepdims=True)
+    mass = np.stack([prob[:, :n][:, cls == c].sum(1) for c in range(4)], axis=1)
+    plogp = np.where(prob > 0, prob * np.log(np.where(prob > 0, prob, 1.0)), 0.0)
+    entropy = -plogp.sum(1)
+    pp = prob[:, :q]
+    pm = pp.sum(1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        rp = pp / pm[:, None]
+        rplogp = np.where(rp > 0, rp * np.log(np.where(rp > 0, rp, 1.0)), 0.0)
+    prompt_entropy = np.where(attend[:, :q].any(1), -rplogp.sum(1), np.nan)
+    return mass, prob[:, n], entropy, prompt_entropy
+
+
+def _synthetic_capture(seed, q, p, *, heads_local=2, tp=2, boost=0.0, spike=False,
+                       scales=(0.3, 4.0), layers=_SYNTH_LAYERS):
+    """Per-rank stored arrays built from real softmax rows, rounded to float16.
+
+    Head ``h`` draws its logits with scale ``scales[h % len(scales)]``, so the heads differ
+    clearly (a flat one and a peaked one with the defaults). Returns a list over ranks of
+    dicts with ``mass [L, P, H, 4]``, ``sink``, ``entropy`` and ``prompt_entropy`` (all
+    float16, ``prompt_entropy`` NaN where no prompt key is attendable).
+    """
+    out = []
+    for rank in range(tp):
+        rng = np.random.default_rng([seed, rank])
+        arrays = {k: [] for k in ("mass", "sink", "entropy", "prompt_entropy")}
+        for window, has_sink in layers:
+            cells = [
+                _attention_rows(rng, q, p, window=window, sink=has_sink,
+                                scale=scales[h % len(scales)], boost=boost, spike=spike)
+                for h in range(heads_local)
+            ]
+            for k, idx in (("mass", 0), ("sink", 1), ("entropy", 2), ("prompt_entropy", 3)):
+                arrays[k].append(np.stack([c[idx] for c in cells], axis=1))  # [P, H(, 4)]
+        out.append({k: np.stack(v).astype(np.float16) for k, v in arrays.items()})
+    return out
+
+
+def _store_synthetic(s3, job, captures, *, corrupt=None):
+    """Store `captures` (``_synthetic_capture``) for `job`; ``corrupt(rank, pe)`` edits prompt_entropy."""
+    windows = [w for w, _ in _SYNTH_LAYERS]
+    pe_of = (lambda rank: captures[rank]["prompt_entropy"]) if corrupt is None else (
+        lambda rank: corrupt(rank, captures[rank]["prompt_entropy"].astype(np.float64)))
+    _store_capture(
+        s3, job, layers=len(_SYNTH_LAYERS), windows=windows,
+        has_sink=[sink for _, sink in _SYNTH_LAYERS],
+        mass_over=lambda rank: captures[rank]["mass"], sink_over=lambda rank: captures[rank]["sink"],
+        entropy=lambda rank, _default: captures[rank]["entropy"], prompt_entropy=pe_of,
+    )
+
+
+def _audit_synthetic(s3, job):
+    config = {"num_hidden_layers": len(_SYNTH_LAYERS), "num_attention_heads": 4}
+    return ar.audit_captures(s3, "b", [job], 2, model=GEMMA, config=config, arrays="all")[job.job_id]
+
+
+def _synthetic_job(tmp_path):
+    _write_results(tmp_path, GEMMA)
+    job = _gemma_jobs(tmp_path)[0]
+    return job, int(job.query_start), job.n_tokens - int(job.query_start)
+
+
+@pytest.mark.parametrize("boost, spike", [(0.0, False), (0.0, True), (3.0, False)])
+def test_the_audit_passes_captures_built_from_real_softmax_rows(tmp_path, boost, spike) -> None:
+    """Global and windowed layers, with and without a sink; flat, peaked and response-heavy rows."""
+    job, q, p = _synthetic_job(tmp_path)
+    for seed in range(8):
+        s3 = FakeS3()
+        _store_synthetic(s3, job, _synthetic_capture(seed, q, p, boost=boost, spike=spike))
+        assert _audit_synthetic(s3, job) is None, (seed, boost, spike)
+
+
+# Each corruption keeps the array well formed: right shape, right NaN pattern, in range
+# of the global ceiling. The halved, shuffled and constant arrays and the window ceiling
+# are caught on every capture tried, including the response-heavy one: row 0 of every
+# layer has a single attendable response key, which pins its interval to the tolerance.
+# Not caught, by design: (a) a wrong value on a late row with a large response mass
+# (the unstored response entropy leaves r * ln(i + 1) nats of room); (b) the whole-row
+# entropy copied into a global layer when the response mass is small, because then the
+# whole-row entropy is close to the prompt entropy (G and r * H are both small), so the
+# copy sits inside the tolerance (measured: with flat rows, query_start 200 or 1000 and
+# 13 response rows, 0 of 20 seeds are caught; at query_start 29 the response mass of the
+# later rows is large enough and all 20 are). The copy is therefore asserted only on
+# response-heavy captures (``boost=3``), in its own test below.
+_GLOBAL_LAYERS = [i for i, (window, _sink) in enumerate(_SYNTH_LAYERS) if window == 0]
+
+
+def _constant_on_global_layers(pe):
+    out = pe.copy()
+    out[_GLOBAL_LAYERS] = 1.0
+    return out
+
+
+# Name -> (edit of the float64 prompt_entropy [L, P, H], reason must name the chain rule).
+# A constant on the windowed layers is also above their ceilings ln(w - 1 - i), which is
+# reported first, so the chain rule is asserted on the constant of the global layers.
+_CORRUPTIONS = {
+    "halved": (lambda pe: pe * 0.5, True),
+    "shuffled_across_heads": (lambda pe: pe[:, :, ::-1], True),
+    "constant_on_global_layers": (_constant_on_global_layers, True),
+    "constant_everywhere": (lambda pe: np.where(np.isnan(pe), np.nan, 1.0), False),
+}
+
+
+@pytest.mark.parametrize("boost", [0.0, 3.0])
+@pytest.mark.parametrize("name", sorted(_CORRUPTIONS))
+def test_the_audit_rejects_a_well_formed_but_wrong_prompt_entropy(tmp_path, name, boost) -> None:
+    job, q, p = _synthetic_job(tmp_path)
+    edit, chain = _CORRUPTIONS[name]
+    for seed in range(4):
+        captures = _synthetic_capture(seed, q, p, boost=boost)
+        s3 = FakeS3()
+        _store_synthetic(s3, job, captures, corrupt=lambda rank, pe: edit(pe))
+        reason = _audit_synthetic(s3, job)
+        assert reason and "prompt_entropy" in reason and "(layer " in reason, (name, seed, reason)
+        if chain:
+            assert "chain-rule" in reason and (" above " in reason or " below " in reason), reason
+
+
+def test_the_audit_rejects_the_whole_row_entropy_copied_into_a_global_layer(tmp_path) -> None:
+    """Asserted on response-heavy captures only (see the note above ``_CORRUPTIONS``)."""
+    job, q, p = _synthetic_job(tmp_path)
+    for seed in range(4):
+        captures = _synthetic_capture(seed, q, p, boost=3.0)
+        s3 = FakeS3()
+
+        def copy_entropy(rank, pe):
+            out = pe.copy()
+            out[0] = captures[rank]["entropy"][0].astype(np.float64)  # layer 0 is global
+            return out
+
+        _store_synthetic(s3, job, captures, corrupt=copy_entropy)
+        reason = _audit_synthetic(s3, job)
+        assert reason and "chain-rule" in reason and "layer 0" in reason, (seed, reason)
+
+
+def test_the_chain_rule_failure_names_the_side_and_the_numbers(tmp_path) -> None:
+    job, q, p = _synthetic_job(tmp_path)
+    captures = _synthetic_capture(0, q, p)
+
+    def halve(pe):
+        return pe * 0.5
+
+    def raise_peaked_head(pe):
+        # Head 1 is the peaked one: doubling its global-layer values (capped at the global
+        # ceiling ln(q)) stays in range and is too large for the stored entropy.
+        out = pe.copy()
+        out[0, :, 1] = np.minimum(out[0, :, 1] * 2.0, math.log(q))
+        return out
+
+    for edit, side in ((halve, "below"), (raise_peaked_head, "above")):
+        s3 = FakeS3()
+        _store_synthetic(s3, job, captures, corrupt=lambda rank, pe, e=edit: e(pe))
+        reason = _audit_synthetic(s3, job)
+        assert reason and f"is {side} the bound" in reason, (side, reason)
+        assert re.search(r"\(layer \d+, row \d+, head \d+\)", reason), reason
+        assert "m * prompt_entropy = " in reason and "derived from entropy" in reason, reason
+
+
+def test_the_audit_applies_the_window_aware_ceiling_on_a_windowed_layer(tmp_path) -> None:
+    """Layer 1 has window 6: row 0 sees at most 5 prompt keys, so its ceiling is ln(5), not ln(q)."""
+    job, q, p = _synthetic_job(tmp_path)
+    assert math.log(5) + 0.5 < math.log(q)  # a value that only the window-aware ceiling refuses
+    captures = _synthetic_capture(0, q, p)
+
+    def raise_row0(rank, pe):
+        pe = pe.copy()
+        pe[1, 0, :] = math.log(5) + 0.5
+        return pe
+
+    s3 = FakeS3()
+    _store_synthetic(s3, job, captures, corrupt=raise_row0)
+    reason = _audit_synthetic(s3, job)
+    assert reason and "above the ceiling" in reason and "window 6" in reason, reason
+    assert "(layer 1, row 0, head 0)" in reason, reason
 
 
 # ------------------------------------------------------------ offline reader: rank sets, runs
