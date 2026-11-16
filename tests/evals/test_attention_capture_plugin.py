@@ -15,6 +15,11 @@ and the tensor-parallel rank. Each stub layer computes its output with an
 eager reference (float32 softmax over the causal, windowed, soft-capped,
 sink-augmented logits), so the plugin's rows must both match that reference
 and pass its own ``rows @ V`` gate.
+
+``StubMLAAttention`` does the same for vLLM's multi-head latent attention layer
+(DeepSeek-V3.1): ``forward(q, kv_c_normed, k_pe)`` rebuilds per-head keys and values
+with its ``kv_b_proj`` as vLLM's prefill path does, and the forward context carries
+the per-layer ``attn_metadata`` the plugin's MLA guards read.
 """
 from __future__ import annotations
 
@@ -99,25 +104,107 @@ class StubAttention:
         return self.reference(q3, k3, v3)
 
 
+class _KVBProj:
+    """Stands in for vLLM's ``ColumnParallelLinear`` ``kv_b_proj``: returns ``(x @ W.T, None)``.
+
+    ``W`` is ``[heads * (P + V), L]``, each head's rows laid out ``[k_nope P | v V]``,
+    as in the checkpoint.
+    """
+
+    def __init__(self, weight):
+        self.weight = weight
+
+    def __call__(self, x):
+        return x @ self.weight.T, None
+
+
+class StubMLAAttention:
+    """Behaves like vLLM's ``MLAAttention`` for everything the plugin may touch.
+
+    Carries the real class's attribute traps: ``num_kv_heads = 1`` and
+    ``head_size = kv_lora_rank + qk_rope_head_dim`` describe the latent cache, not the
+    per-head keys, so a plugin that reads them as per-head shapes mis-reshapes. The
+    forward reproduces vLLM's prefill path (``forward_mha``): per-head keys and values
+    come from ``kv_b_proj(kv_c_normed)``, the shared rotated ``k_pe`` is broadcast to
+    every head, causal float32 softmax with the layer's scale, output ``[T, H*V]`` bf16.
+    """
+
+    registry: dict = StubAttention.registry   # one no_compile_layers registry for both classes
+    metadata: dict = {}                       # the forward context's attn_metadata, by layer name
+
+    def __init__(self, name, heads=2, qk_nope=4, qk_rope=2, v_head_dim=3, kv_lora_rank=5,
+                 scale=0.37, weight=None, seed=0):
+        self.layer_name = name
+        self.num_heads = heads
+        self.qk_nope_head_dim = qk_nope
+        self.qk_rope_head_dim = qk_rope
+        self.qk_head_dim = qk_nope + qk_rope
+        self.v_head_dim = v_head_dim
+        self.kv_lora_rank = kv_lora_rank
+        self.scale = scale
+        self.num_kv_heads = 1                          # trap: the latent cache has one "head"
+        self.head_size = kv_lora_rank + qk_rope        # trap: the latent cache row, not 192/P+R
+        self.sliding_window = None
+        self.dcp_q_replicate = False
+        self.use_pcp = False
+        self.use_sparse = False
+        self.kv_cache_dtype = "auto"
+        self.impl = types.SimpleNamespace(scale=scale, dcp_world_size=1)
+        if weight is None:
+            gen = torch.Generator().manual_seed(1000 + seed)
+            weight = (torch.randn(heads * (qk_nope + v_head_dim), kv_lora_rank, generator=gen)
+                      * kv_lora_rank ** -0.5).to(torch.bfloat16)
+        self.kv_b_proj = _KVBProj(weight)
+        self.out_dtype = torch.bfloat16
+        StubMLAAttention.registry[name] = self
+        StubMLAAttention.metadata[name] = types.SimpleNamespace(
+            num_decode_tokens=0,
+            prefill=types.SimpleNamespace(chunked_context=None, q_data_type=torch.bfloat16))
+
+    def keys_values(self, kv_c_normed, k_pe):
+        """Per-head (k [T, H, P+R], v [T, H, V]) exactly as the prefill path builds them."""
+        t, h = kv_c_normed.shape[0], self.num_heads
+        p, r, dv = self.qk_nope_head_dim, self.qk_rope_head_dim, self.v_head_dim
+        kv = self.kv_b_proj(kv_c_normed)[0].view(t, h, p + dv)
+        k_nope, v = kv.split([p, dv], dim=-1)
+        k = torch.cat([k_nope, k_pe.view(t, 1, r).expand(t, h, r)], dim=-1)
+        return k, v
+
+    def forward(self, q, kv_c_normed, k_pe, output_shape=None, q_dcp_replicated=None):
+        t, h = q.shape[0], self.num_heads
+        k, v = self.keys_values(kv_c_normed, k_pe)
+        if getattr(self, "ref_v_perm", None) is not None:   # a kernel that mixed up value heads
+            v = v[:, list(self.ref_v_perm)]
+        logits = torch.einsum("thd,nhd->htn", q.float(), k.float()) * getattr(self, "ref_scale", self.scale)
+        mask = torch.arange(t)[None, :] > torch.arange(t)[:, None]
+        probs = torch.softmax(logits.masked_fill(mask[None], float("-inf")), dim=-1)
+        o = torch.einsum("htn,nhd->thd", probs, v.float())
+        return o.reshape(t, h * self.v_head_dim).to(self.out_dtype)
+
+
 #: The unwrapped forward. ``register()`` wraps the class attribute in place, so without a
 #: reset every earlier test's plugin instance stays in the chain and captures (and PUTs)
 #: again on each later forward.
 _STUB_FORWARD = StubAttention.forward
+_STUB_MLA_FORWARD = StubMLAAttention.forward
 
 
-def _install_stub_vllm(monkeypatch):
+def _install_stub_vllm(monkeypatch, with_mla=True):
     vllm = types.ModuleType("vllm")
     layers_pkg = types.ModuleType("vllm.model_executor.layers.attention.attention")
     layers_pkg.Attention = StubAttention
+    mla_pkg = types.ModuleType("vllm.model_executor.layers.attention.mla_attention")
+    mla_pkg.MLAAttention = StubMLAAttention
     fwd = types.ModuleType("vllm.forward_context")
 
     class _Ctx:
         no_compile_layers = StubAttention.registry
+        attn_metadata = StubMLAAttention.metadata
 
     fwd.get_forward_context = lambda: _Ctx()
     dist = types.ModuleType("vllm.distributed.parallel_state")
     dist.get_tensor_model_parallel_rank = lambda: 0
-    for name, mod in {
+    modules = {
         "vllm": vllm,
         "vllm.model_executor": types.ModuleType("vllm.model_executor"),
         "vllm.model_executor.layers": types.ModuleType("vllm.model_executor.layers"),
@@ -126,14 +213,22 @@ def _install_stub_vllm(monkeypatch):
         "vllm.forward_context": fwd,
         "vllm.distributed": types.ModuleType("vllm.distributed"),
         "vllm.distributed.parallel_state": dist,
-    }.items():
+    }
+    if with_mla:
+        modules["vllm.model_executor.layers.attention.mla_attention"] = mla_pkg
+    else:
+        monkeypatch.delitem(sys.modules, "vllm.model_executor.layers.attention.mla_attention",
+                            raising=False)
+    for name, mod in modules.items():
         monkeypatch.setitem(sys.modules, name, mod)
 
 
-def _load_plugin(monkeypatch, tmp_path):
-    _install_stub_vllm(monkeypatch)
+def _load_plugin(monkeypatch, tmp_path, with_mla=True):
+    _install_stub_vllm(monkeypatch, with_mla=with_mla)
     StubAttention.registry.clear()
+    StubMLAAttention.metadata.clear()
     monkeypatch.setattr(StubAttention, "forward", _STUB_FORWARD)
+    monkeypatch.setattr(StubMLAAttention, "forward", _STUB_MLA_FORWARD)
     spec = importlib.util.spec_from_loader("smolbench_attn", loader=None)
     module = importlib.util.module_from_spec(spec)
     exec(compile(PLUGIN.read_text(), str(PLUGIN), "exec"), module.__dict__)
@@ -598,3 +693,286 @@ def test_rows_mode_meta_carries_the_capture_version(monkeypatch, tmp_path: Path)
     npz = np.load(io.BytesIO(uploads["put://rv/r0.npz"]))
     assert json.loads(uploads["put://rv/r0.json"])["capture_version"] == 2
     assert "prompt_entropy" not in npz.files  # mass mode only
+
+
+# --------------------------------------------------------------------------- MLA (DeepSeek-V3.1)
+def _run_mla_forward(layers, t, seed=0):
+    """Feed random post-RoPE q, latent kv_c_normed and shared k_pe through each MLA stub layer.
+
+    Called the way vLLM's ``MultiHeadLatentAttentionWrapper`` calls the layer: the three
+    tensors positionally, ``output_shape`` and ``q_dcp_replicated`` by keyword.
+    """
+    gen = torch.Generator().manual_seed(seed)
+    tensors = {}
+    for layer in layers:
+        h, p, r = layer.num_heads, layer.qk_nope_head_dim, layer.qk_rope_head_dim
+        q = torch.randn(t, h, p + r, generator=gen).to(torch.bfloat16)
+        kv_c = torch.randn(t, layer.kv_lora_rank, generator=gen).to(torch.bfloat16)
+        k_pe = torch.randn(t, 1, r, generator=gen).to(torch.bfloat16)
+        tensors[layer.layer_name] = (layer, q, kv_c, k_pe)
+    for _name, (layer, q, kv_c, k_pe) in tensors.items():
+        layer.forward(q, kv_c, k_pe, output_shape=(t, layer.num_heads * layer.v_head_dim),
+                      q_dcp_replicated=None)
+    return tensors
+
+
+def _mla_reference_rows(layer, q, kv_c, k_pe, positions):
+    """Softmax rows [P, H, T] from first principles: scale * (q_nope.k_nope + q_pe.k_pe), causal."""
+    t, p = q.shape[0], layer.qk_nope_head_dim
+    kv = (kv_c @ layer.kv_b_proj.weight.T).view(t, layer.num_heads, p + layer.v_head_dim)
+    k_nope = kv[..., :p].float()                                   # [T, H, P]
+    qp = q[positions].float()                                      # [P, H, P+R]
+    logits = (torch.einsum("phd,nhd->phn", qp[..., :p], k_nope)
+              + torch.einsum("phd,nd->phn", qp[..., p:], k_pe.view(t, -1).float())) * layer.scale
+    mask = torch.arange(t)[None, :] > torch.tensor(positions)[:, None]
+    return torch.softmax(logits.masked_fill(mask[:, None, :], float("-inf")), dim=-1)
+
+
+@pytest.mark.parametrize("qk_nope, v_head_dim", [(4, 3), (3, 3)])
+def test_mla_rows_equal_the_reference_softmax(monkeypatch, tmp_path: Path, qk_nope, v_head_dim) -> None:
+    """MLA-only model: per-head keys rebuilt from the latent, rows exact, the gate passes.
+
+    (3, 3) makes the key and value halves of ``kv_b_proj`` the same width, as in
+    DeepSeek-V3.1 (128 | 128), so swapping them is shape-preserving and only the rows
+    can catch it.
+    """
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t = 24
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", heads=2, qk_nope=qk_nope,
+                               v_head_dim=v_head_dim, seed=i) for i in range(3)]
+    positions = [5, 17, 23]
+    _arm(tmp_path, "mla1", 1, t, positions)
+    tensors = _run_mla_forward(layers, t, seed=11)
+
+    done = json.loads((tmp_path / "done" / "mla1.r0.json").read_text())
+    assert done["ok"] is True, done
+    assert done["gate_max_rel"] < 3e-2
+    npz = np.load(io.BytesIO(uploads["put://mla1/r0.npz"]))
+    assert list(npz["layers"]) == [0, 1, 2]
+    assert npz["rows"].shape == (3, len(positions), 2, t)
+    assert list(npz["kv_shared_from"]) == [-1, -1, -1]
+    assert list(npz["sliding_window"]) == [0, 0, 0] and not npz["has_sink"].any()
+    for li, layer in enumerate(layers):
+        _, q, kv_c, k_pe = tensors[layer.layer_name]
+        ref = _mla_reference_rows(layer, q, kv_c, k_pe, positions)
+        got = torch.from_numpy(npz["rows"][li].astype(np.float32))
+        assert torch.allclose(got, ref, atol=2e-3), layer.layer_name
+        for pi, p in enumerate(positions):
+            if p + 1 < t:
+                assert float(got[pi, :, p + 1:].abs().max()) == 0.0
+
+
+def test_mla_meta_reports_per_head_shapes_not_the_latent_traps(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubMLAAttention("model.layers.0.self_attn.attn", heads=2, qk_nope=4, qk_rope=2,
+                             v_head_dim=3, kv_lora_rank=5)
+    _arm(tmp_path, "mm", 1, 12, [11])
+    _run_mla_forward([layer], 12)
+    meta = json.loads(uploads["put://mm/r0.json"])
+    assert meta["num_heads_local"] == 2
+    assert meta["num_kv_heads_local"] == meta["num_heads_local"]     # not the latent's 1
+    assert meta["head_size"] == 4 + 2                                 # P + R, not L + R = 7
+    assert meta["attention"] == "mla"
+    assert meta["qk_head_dim"] == 6 and meta["v_head_dim"] == 3 and meta["kv_lora_rank"] == 5
+    assert isinstance(meta["head_order"], str) and meta["head_order"]
+    assert meta["capture_version"] == 2
+
+
+def test_plain_attention_meta_says_mha_and_carries_no_mla_fields(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 2, 8)
+    _arm(tmp_path, "pa", 1, 10, [9])
+    _run_forward([layer], 10, 8)
+    meta = json.loads(uploads["put://pa/r0.json"])
+    assert meta["attention"] == "mha"
+    assert meta["num_kv_heads_local"] == 2 and meta["head_size"] == 8
+    assert not {"qk_head_dim", "v_head_dim", "kv_lora_rank"} & set(meta)
+
+
+def test_mla_gate_fails_under_a_wrong_reference_scale(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubMLAAttention("model.layers.0.self_attn.attn")
+    layer.ref_scale = 4.0       # what the "kernel" used; the layer reports 0.37
+    _arm(tmp_path, "msc", 1, 20, [19])
+    _run_mla_forward([layer], 20, seed=2)
+    done = json.loads((tmp_path / "done" / "msc.r0.json").read_text())
+    assert done["ok"] is False and "gate failed" in done["error"], done
+    assert done["gate_max_rel"] > 3e-2
+    assert not uploads
+
+
+def test_mla_gate_fails_when_the_kernel_permuted_the_value_heads(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubMLAAttention("model.layers.0.self_attn.attn", heads=2)
+    layer.ref_v_perm = (1, 0)
+    _arm(tmp_path, "mvp", 1, 20, [19, 12])
+    _run_mla_forward([layer], 20, seed=4)
+    done = json.loads((tmp_path / "done" / "mvp.r0.json").read_text())
+    assert done["ok"] is False and "gate failed" in done["error"], done
+    assert not uploads
+
+
+def test_mla_two_rank_split_concatenates_to_the_full_model(monkeypatch, tmp_path: Path) -> None:
+    """Local head j of rank r is global head 2r + j: rank rows concatenated in rank order
+    equal the 4-head model's rows."""
+    t, heads, P, R, V, L = 18, 4, 4, 2, 3, 5
+    gen = torch.Generator().manual_seed(21)
+    weight = (torch.randn(heads * (P + V), L, generator=gen) * L ** -0.5).to(torch.bfloat16)
+    q = torch.randn(t, heads, P + R, generator=gen).to(torch.bfloat16)
+    kv_c = torch.randn(t, L, generator=gen).to(torch.bfloat16)
+    k_pe = torch.randn(t, 1, R, generator=gen).to(torch.bfloat16)
+    positions = [9, 17]
+    full = StubMLAAttention.__new__(StubMLAAttention)      # reference only, never registered
+    full.num_heads, full.qk_nope_head_dim, full.v_head_dim, full.scale = heads, P, V, 0.37
+    full.kv_b_proj = _KVBProj(weight)
+    ref = _mla_reference_rows(full, q, kv_c, k_pe, positions)            # [P, 4, T]
+
+    per_rank = []
+    for rank in range(2):
+        rank_dir = tmp_path / f"r{rank}"
+        rank_dir.mkdir()
+        plugin, uploads = _load_plugin(monkeypatch, rank_dir)           # one process per rank
+        monkeypatch.setattr(plugin, "_rank", lambda rank=rank: rank)
+        rows = slice(rank * 2 * (P + V), (rank + 1) * 2 * (P + V))      # ColumnParallel shard
+        layer = StubMLAAttention("model.layers.0.self_attn.attn", heads=2, qk_nope=P, qk_rope=R,
+                                 v_head_dim=V, kv_lora_rank=L, weight=weight[rows])
+        _arm(rank_dir, "tp2", 1, t, positions, tp=2)
+        layer.forward(q[:, 2 * rank: 2 * rank + 2].contiguous(), kv_c, k_pe,
+                      output_shape=(t, 2 * V), q_dcp_replicated=None)
+        done = json.loads((rank_dir / "done" / f"tp2.r{rank}.json").read_text())
+        assert done["ok"] is True and done["rank"] == rank, done
+        meta = json.loads(uploads[f"put://tp2/r{rank}.json"])
+        assert meta["rank"] == rank and meta["tp"] == 2 and meta["num_heads_local"] == 2
+        per_rank.append(np.load(io.BytesIO(uploads[f"put://tp2/r{rank}.npz"]))["rows"][0])
+    got = torch.from_numpy(np.concatenate(per_rank, axis=1).astype(np.float32))   # [P, 4, T]
+    assert torch.allclose(got, ref, atol=2e-3)
+
+
+def _set(obj_path, value):
+    """Return a mutator setting a dotted attribute path on an MLA stub layer."""
+    def apply(layer):
+        target = layer
+        *head, last = obj_path.split(".")
+        for part in head:
+            target = getattr(target, part)
+        setattr(target, last, value)
+    return apply
+
+
+def _metadata(mutate):
+    def apply(layer):
+        mutate(StubMLAAttention.metadata, layer.layer_name)
+    return apply
+
+
+_GUARD_CASES = {
+    # design item 2: decode/prefill split
+    "decode-tokens": (_metadata(lambda md, n: setattr(md[n], "num_decode_tokens", 3)), "prefill-only"),
+    "no-prefill": (_metadata(lambda md, n: setattr(md[n], "prefill", None)), "prefill-only"),
+    "no-metadata": (_metadata(lambda md, n: md.pop(n)), "prefill-only"),
+    # design item 3: chunked context
+    "chunked-context": (_metadata(lambda md, n: setattr(md[n].prefill, "chunked_context", object())),
+                        "chunked-context"),
+    # design item 4: FP8 prefill query
+    "fp8-kv-cache": (_set("kv_cache_dtype", "fp8"), "fp8-prefill"),
+    "fp8-query": (_metadata(lambda md, n: setattr(md[n].prefill, "q_data_type", torch.float8_e4m3fn)),
+                  "fp8-prefill"),
+    # design item 7: context parallelism, DCP query replication, sparse attention, sliding window
+    "dcp-q-replicate": (_set("dcp_q_replicate", True), "dcp"),
+    "dcp-world-size": (_set("impl.dcp_world_size", 2), "dcp"),
+    "pcp": (_set("use_pcp", True), "pcp"),
+    "sparse": (_set("use_sparse", True), "sparse"),
+    "sliding-window": (_set("sliding_window", 3), "sliding-window"),
+    # design item 9: fused output quantisation
+    "output-dtype": (_set("out_dtype", torch.float16), "output-dtype"),
+    # the scale is read from the layer, and the two copies vLLM keeps must agree
+    "scale-disagrees": (_set("impl.scale", 0.5), "scale"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_GUARD_CASES))
+def test_every_mla_guard_fails_the_job_loudly(monkeypatch, tmp_path: Path, case) -> None:
+    """Each condition under which the capture could be silently wrong fails the job through
+    the done file with a reason naming the guard; nothing is uploaded, serving continues."""
+    mutate, guard = _GUARD_CASES[case]
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", seed=i) for i in range(2)]
+    mutate(layers[0])
+    _arm(tmp_path, "g", 1, 16, [15])
+    tensors = _run_mla_forward(layers, 16, seed=6)
+    assert tensors  # the forward pass itself completed
+    done = json.loads((tmp_path / "done" / "g.r0.json").read_text())
+    assert done["ok"] is False, done
+    assert f"MLA guard {guard}" in done["error"], done["error"]
+    assert not uploads
+
+
+def test_mla_mass_mode_prompt_entropy_matches_a_direct_computation(monkeypatch, tmp_path: Path) -> None:
+    """Mass, entropy and prompt_entropy of an MLA layer go through the shared tail."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 2 * 30 * 4)   # several query chunks
+    t, query_start = 30, 18
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", heads=2, seed=i) for i in range(2)]
+    classes = [0] * 8 + [1] * 8 + [2] * 2 + [3] * 12
+    _mass_job(tmp_path, "mpe", t, query_start, classes, [t - 1, 20])
+    tensors = _run_mla_forward(layers, t, seed=8)
+
+    done = json.loads((tmp_path / "done" / "mpe.r0.json").read_text())
+    assert done["ok"] is True, done
+    npz = np.load(io.BytesIO(uploads["put://mpe/r0.npz"]))
+    meta = json.loads(uploads["put://mpe/r0.json"])
+    assert meta["capture_version"] == 2 and meta["attention"] == "mla"
+    assert npz["prompt_entropy"].shape == (2, t - query_start, 2)
+    onehot = torch.zeros(t, 4)
+    onehot[torch.arange(t), torch.tensor(classes)] = 1.0
+    positions = list(range(query_start, t))
+    for li, layer in enumerate(layers):
+        _, q, kv_c, k_pe = tensors[layer.layer_name]
+        ref_rows = _mla_reference_rows(layer, q, kv_c, k_pe, positions)
+        ref_pe = _prompt_entropy_reference(ref_rows, query_start).float()
+        got_pe = torch.from_numpy(npz["prompt_entropy"][li].astype(np.float32))
+        assert not torch.isnan(ref_pe).any() and not torch.isnan(got_pe).any()
+        assert torch.allclose(got_pe, ref_pe, atol=1e-2, rtol=2e-3), layer.layer_name
+        got_mass = torch.from_numpy(npz["mass"][li].astype(np.float32))
+        assert torch.allclose(got_mass, torch.einsum("phn,nc->phc", ref_rows, onehot), atol=3e-3)
+        ref_ent = -(ref_rows * torch.log(ref_rows.clamp_min(1e-30))).sum(-1)
+        got_ent = torch.from_numpy(npz["entropy"][li].astype(np.float32))
+        assert torch.allclose(got_ent, ref_ent, atol=2e-2)
+
+
+def test_a_model_mixing_both_layer_classes_finalizes_once_after_all_of_them(monkeypatch, tmp_path: Path) -> None:
+    """The plugin counts the union of both classes, so neither class finalizes the job early."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d = 16, 8
+    plain0 = StubAttention("model.layers.0.self_attn.attn", 2, 2, d)
+    mla1 = StubMLAAttention("model.layers.1.self_attn.attn", heads=2)
+    plain2 = StubAttention("model.layers.2.self_attn.attn", 2, 1, d)
+    _arm(tmp_path, "mix", 1, t, [15])
+    _run_forward([plain0], t, d, seed=1)
+    _run_mla_forward([mla1], t, seed=2)
+    assert not uploads                       # two of three layers seen: not finalized yet
+    _run_forward([plain2], t, d, seed=3)
+    done = json.loads((tmp_path / "done" / "mix.r0.json").read_text())
+    assert done["ok"] is True, done
+    meta = json.loads(uploads["put://mix/r0.json"])
+    assert meta["layers"] == [0, 1, 2]
+    assert meta["attention"] == "mixed"
+
+
+def test_attention_only_model_works_when_vllm_has_no_mla_module(monkeypatch, tmp_path: Path) -> None:
+    """An older vLLM without the MLA module: register() still wraps Attention and captures."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path, with_mla=False)
+    assert StubMLAAttention.forward is _STUB_MLA_FORWARD      # nothing to wrap, nothing wrapped
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    _arm(tmp_path, "nomla", 1, 10, [9])
+    _run_forward([layer], 10, 8)
+    assert json.loads((tmp_path / "done" / "nomla.r0.json").read_text())["ok"] is True
+    assert "put://nomla/r0.npz" in uploads
+
+
+def test_register_wraps_mla_forward_once(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    first = StubMLAAttention.forward
+    assert first is not _STUB_MLA_FORWARD
+    plugin.register()
+    assert StubMLAAttention.forward is first

@@ -68,8 +68,9 @@ increasing counter so a re-written file with the same job id is a new job.
 ## What each rank captures and uploads
 
 Rank `r` (tensor-parallel shard `r` of `tp`) computes, for every `Attention`
-layer it runs (Mamba blocks never call in and are absent; the captured
-layer indices are recorded), rows
+layer it runs (and every `MLAAttention` layer, see the last section; Mamba
+blocks never call in and are absent; the captured layer indices are
+recorded), rows
 `softmax(scale * q_p . k_j [+ softcap] )` over `j <= p`, with the layer's
 sliding window (vLLM convention: keys `j >= p - (w - 1)`), grouped-query
 head mapping, `logits_soft_cap` (tanh) when the impl has one, and, for
@@ -94,7 +95,8 @@ Upload (per rank, via the presigned URLs in the job file):
   `sliding_window` int32 `[L]` (0 = full), `kv_shared_from` int32 `[L]`
   (-1 = own KV).
 * `.json` meta: `job_id, rank, tp, n_tokens, positions, layers, num_heads_local,
-  num_kv_heads_local, head_size, capture_version (2; absent = 1), dtype ("float16"), gate: {layer: {max_abs,
+  num_kv_heads_local, head_size, capture_version (2; absent = 1), attention ("mha" | "mla" | "mixed"; see
+  the last section), dtype ("float16"), gate: {layer: {max_abs,
   max_rel}}, gate_tol, vllm_commit, model, bytes, wall_s`.
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
   `{"ok": bool, "error": str|null, "gate_max_rel": float, "bytes": int,
@@ -213,3 +215,106 @@ Rows mode has no `prompt_entropy`.
 A new masking rule (a layer type that masks prompt keys other than causally or
 by the sliding window) must encode its geometry in the npz: the audit derives
 which rows must be NaN from `sliding_window` and `query_start` alone.
+
+## Multi-head latent attention (DeepSeek-V3.1)
+
+The plugin also wraps `MLAAttention.forward(q, kv_c_normed, k_pe,
+output_shape=None, q_dcp_replicated=None)` from
+`vllm.model_executor.layers.attention.mla_attention`, in addition to
+`Attention.forward`. The import is defensive: a vLLM without the module
+captures `Attention` layers only. Both wrappers share one class tuple, so a
+job finalizes only after every layer of either class has been captured. Job
+protocol, upload, gate and done file are as above.
+
+Tensors a rank sees per layer (`T` tokens, `H` local heads, `P` = nope dim,
+`R` = rope dim, `V` = value dim, `L` = latent rank):
+* `q [T, H, P+R]`, post-RoPE;
+* `kv_c_normed [T, L]`;
+* `k_pe [T, 1, R]`, shared by all heads, post-RoPE;
+* output `[T, H*V]`, before `o_proj`.
+
+For DeepSeek-V3.1: `P=128`, `R=64`, `V=128`, `L=512`, 128 heads, `tp=8` so
+`H=16` per rank, 61 attention layers.
+
+### Keys and values
+
+Rebuilt from the layer's own `kv_b_proj(kv_c_normed)[0].view(T, H, P+V)`,
+split into `k_nope | v`; the key is `[k_nope | k_pe broadcast over heads]`.
+This is vLLM's prefill path (`forward_mha`, `mla_attention.py:2851-2855` at
+vLLM commit `8efa13b7`), not the decode path's absorbed `W_UK_T`/`W_UV`. Why:
+it is the same FP8 block GEMM the kernel's keys came from.
+
+### Logits
+
+`logit(p, j) = scale * (q_nope[p,h] . k_nope[j,h] + q_pe[p,h] . k_pe[j])` for
+`j <= p`, `-inf` otherwise. No soft cap, window, sinks or ALiBi. `scale` is
+read from `layer.impl.scale` (which must equal `layer.scale`), never
+recomputed. For DeepSeek-V3.1 the design derivation is
+`192**-0.5 * mscale**2` with YaRN `mscale = 0.1*ln(40) + 1`, about 0.1352
+(derived, not measured).
+
+The gate is unchanged: `rows @ rebuilt v` against the layer's output at the
+gate positions. `prompt_entropy` and the mass statistics are produced for MLA
+layers by the same code as for `Attention` layers.
+
+### Head order across ranks
+
+Local head `j` of rank `r` is global head `r * num_heads_local + j` (`16r + j`
+for `tp=8`). Concatenate the ranks' arrays in rank order along the head axis,
+as for `Attention`.
+
+### Guards
+
+Each guard fails the job: `ok: false`, nothing uploaded, error
+`MLA guard <name> failed at <layer>: <detail>` in the done file. None skips
+silently. Guards run only on the job's forward (never on a warm-up or
+other-length forward), in this order, first failure wins:
+
+| guard | fails when | why it exists |
+|---|---|---|
+| `prefill-only` | no attention metadata for the layer, `num_decode_tokens != 0`, or no prefill part | sequences of 512 tokens or fewer take the decode path (`reorder_batch_threshold = 512` for FLASH_ATTN_MLA on SM90); such a job fails loudly instead of being captured from the wrong path |
+| `chunked-context` | `prefill.chunked_context` is not None | the prefill reads context in chunks, not the one pass reconstructed here |
+| `fp8-prefill` | `layer.kv_cache_dtype != "auto"`, or `prefill.q_data_type` differs from `q.dtype` | an FP8 prefill uses quantized queries/keys the rebuild would not reproduce |
+| `dcp` | `layer.dcp_q_replicate` set, or `impl.dcp_world_size != 1` | decode context parallelism changes what a rank holds |
+| `pcp` | `layer.use_pcp` set | prefill context parallelism changes what a rank holds |
+| `sparse` | `layer.use_sparse` set | sparse attention does not attend to all causal keys |
+| `sliding-window` | `layer.sliding_window` is not None | the logit formula has no window |
+| `output-dtype` | output dtype is not `torch.bfloat16` | the gate compares against a bf16 output; a quantized output would make it meaningless |
+| `scale` | `impl.scale` not a finite positive number, or `layer.scale` differs from it by more than relative 1e-6 | the scale must be the one the kernel used |
+| `shape` | `q`, `kv_c_normed`, `k_pe` or the output do not have the shapes listed above | the rebuild assumes them |
+
+### Meta
+
+* `attention`: `"mha"`, `"mla"` or `"mixed"`; present for every job, plain
+  `Attention` jobs included.
+* Only when an MLA layer was captured: `qk_head_dim`, `v_head_dim`,
+  `kv_lora_rank`, `head_order` (the head-order rule above, as text).
+* For MLA, `num_kv_heads_local == num_heads_local` and `head_size == P+R`
+  (192), not the layer's latent-cache attributes (`num_kv_heads = 1`,
+  `head_size = 576`).
+* In a `"mixed"` job the head counts and `head_size` describe the last
+  captured layer (the plugin reads them from that layer's view).
+* `capture_version` stays 2: the new fields are additive.
+
+### Limits
+
+The design's optional `n_layers` job field (to fail fast when a never-called
+MLA layer, e.g. a multi-token-prediction drafter, sits in the forward
+context) is NOT implemented, because it needs an agent change. Such a layer
+keeps the job from ever finalizing: no rank uploads and the job fails only
+when the agent's per-job wait expires, on a billed box. (The replay audit's
+layer-count check covers the different case of a capture that finalized with
+fewer layers than the model has.)
+
+### Not verified live
+
+* The MLA path has only run against a CPU stub of vLLM; nothing has run on
+  the pinned vLLM image.
+* DeepSeek-V3.1 failed at engine start on that image on 2026-09-19 with a
+  tokenizer error (cause undiagnosed).
+* That FA3 prefill against the float32 recompute stays within the 3e-2 gate.
+* That repeated `kv_b_proj` calls are bit-identical.
+* That `prefill.q_data_type` equals the bf16 query dtype in the default
+  config.
+* That the pinned image's vLLM matches the source clone (only the version
+  string was matched).
