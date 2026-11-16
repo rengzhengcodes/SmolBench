@@ -1454,3 +1454,303 @@ def test_the_default_s3_client_signs_the_no_overwrite_condition(monkeypatch) -> 
                                 "application/octet-stream", 60)
     signed = parse_qs(urlsplit(url).query).get("X-Amz-SignedHeaders", [""])[0].split(";")
     assert "if-none-match" in signed, url
+
+
+# ------------------------------------------------- related_intens: pad by construction
+
+#: Two real rule lines, then what the arm adds, then the question (``bt.QUESTION_START``).
+REAL_RULES = "Every 2 positions write ab.\nEvery 3 positions write cd.\n"
+ADDED_RULES = "Every 4 positions write mk.\n" * 3
+TAIL_WS = "  \t"
+QUESTION = "\nQuestion: next?"
+RELATED_STAMP = "2026-11-14T01:00:00.000001Z"
+
+
+def _related_query(question: str = QUESTION, added: str = ADDED_RULES, tail: str = TAIL_WS) -> str:
+    return REAL_RULES + added + tail + question
+
+
+def _write_related_results(root: Path, model: str, *, intens=None, related=None,
+                           noise: bool = True) -> None:
+    """Write a seed-0 fixture with ``intens``, ``related_intens`` and ``noise_intens`` runs.
+
+    ``intens=None`` writes no intens run at all; the default queries pair question ``i`` of
+    both arms. Reasoning is stored for every mark, so no mark is rebuilt with an empty block.
+    """
+    def marks(queries):
+        return Marks(model=model, marks=tuple(
+            Mark(query=q, answer=1, response="1", score=1, compliance=COMPLIANT, reasoning="r")
+            for q in queries))
+
+    seed_dir = root / "induction" / model / "seed=0"
+    seed_dir.mkdir(parents=True)
+    if intens is not False:
+        queries = [REAL_RULES + QUESTION] if intens is None else intens
+        (seed_dir / f"intens--{STAMP_A}.yaml").write_text(marks(queries).dumps())
+    related = [_related_query(), _related_query("\nQuestion: and then?")] if related is None else related
+    (seed_dir / f"related_intens--{RELATED_STAMP}.yaml").write_text(marks(related).dumps())
+    if noise:
+        (seed_dir / f"noise_intens--{STAMP_A}.yaml").write_text(marks(["ab" + PAD + "c"]).dumps())
+
+
+def _build_related(root: Path, model: str = DSV31, tok=None):
+    tok = tok or CharTokenizer(DS_SPECIALS)
+    return ar.build_jobs(model, root, "p", tokenizer=tok, template=ds_template())
+
+
+def _by_arm(planned):
+    return {(p.run.arm, p.mark_index): p for p in planned}
+
+
+def _query_classes(planned_job, query: str):
+    """Classes of the query's tokens, for a character-level tokenizer (query starts after 2 specials)."""
+    classes = planned_job.job.classes
+    return list(classes[2:2 + len(query)])
+
+
+def test_related_intens_pad_is_the_added_lines_and_trailing_whitespace(tmp_path: Path) -> None:
+    _write_related_results(tmp_path, DSV31, intens=[REAL_RULES + QUESTION, REAL_RULES + "\nQuestion: and then?"])
+    planned, errors = _build_related(tmp_path)
+    assert errors == []
+    jobs = _by_arm(planned)
+    for idx, question in enumerate((QUESTION, "\nQuestion: and then?")):
+        query = _related_query(question)
+        classes = _query_classes(jobs[("related_intens", idx)], query)
+        lo, hi = len(REAL_RULES), len(REAL_RULES) + len(ADDED_RULES) + len(TAIL_WS)
+        # Class 1 exactly on the added lines and the trailing whitespace, and on nothing else.
+        assert [i for i, c in enumerate(classes) if c == 1] == list(range(lo, hi))
+        # Outside the pad: class 0 on every visible character, class 2 on whitespace.
+        for i, (ch, c) in enumerate(zip(query, classes)):
+            if not lo <= i < hi:
+                assert c == (2 if ch.isspace() else 0), (i, ch, c)
+        note = next(n for n in jobs[("related_intens", idx)].notes if "by construction" in n)
+        assert note == f"pad span by construction: {hi - lo} tokens class 1, 0 straddle an edge of the span"
+    # The other arms of the same fixture are as before: by rule, or no pad at all.
+    noise = jobs[("noise_intens", 0)].job.classes
+    assert noise.count(1) == len(PAD)
+    assert 1 not in jobs[("intens", 0)].job.classes
+    assert all("by construction" not in n for k in (("noise_intens", 0), ("intens", 0)) for n in jobs[k].notes)
+
+
+def test_related_intens_question_i_is_compared_with_intens_question_i(tmp_path: Path) -> None:
+    """The head comes from the intens query at the same question index."""
+    _write_related_results(
+        tmp_path, DSV31,
+        intens=[REAL_RULES + QUESTION, "Every 9 positions write zz.\n" + QUESTION],
+        related=[_related_query(), _related_query()],
+    )
+    planned, errors = _build_related(tmp_path)
+    assert _by_arm(planned).keys() >= {("related_intens", 0)}
+    assert ("related_intens", 1) not in _by_arm(planned)  # its head differs from intens q1's
+    assert len(errors) == 1 and errors[0].endswith(
+        "does not start with the intens query's rules") and "#q1" in errors[0]
+    assert "related_intens--" in errors[0]
+
+
+@pytest.mark.parametrize("case, reason", [
+    ("no_intens_run", "no intens run for seed 0"),
+    ("missing_question", "question 1 is missing from the intens run"),
+    ("prefix_mismatch", "does not start with the intens query's rules"),
+    ("empty_pad", "empty pad"),
+    ("no_question_after_head", "no '\\nQuestion:' after the rules"),
+])
+def test_related_intens_mark_with_no_usable_intens_query_is_an_error_not_a_job(
+        tmp_path: Path, case: str, reason: str) -> None:
+    good = _related_query()
+    if case == "no_intens_run":
+        _write_related_results(tmp_path, DSV31, intens=False, related=[good])
+        bad = 0
+    elif case == "missing_question":
+        _write_related_results(tmp_path, DSV31, related=[good, good])
+        bad = 1
+    elif case == "prefix_mismatch":
+        _write_related_results(tmp_path, DSV31, related=["Every 5 positions write qq.\n" + QUESTION])
+        bad = 0
+    elif case == "empty_pad":
+        _write_related_results(tmp_path, DSV31, related=[REAL_RULES + QUESTION])
+        bad = 0
+    else:
+        _write_related_results(tmp_path, DSV31, related=[REAL_RULES + "no question here"])
+        bad = 0
+    planned, errors = _build_related(tmp_path)
+    related_jobs = [p for p in planned if p.run.arm == "related_intens"]
+    assert [p.mark_index for p in related_jobs] == ([0] if case == "missing_question" else [])
+    assert len(errors) == 1
+    assert f"related_intens--{RELATED_STAMP}.yaml#q{bad}: " in errors[0] and reason in errors[0]
+    # The error is the plan's too, and the other arms still plan.
+    plan = ar.plan_replay(tmp_path, [DSV31], **_plan_kwargs(CharTokenizer(DS_SPECIALS)))[DSV31]
+    assert plan.errors == errors and plan.per_arm["noise_intens"]["marks"] == 1
+
+
+def test_a_token_straddling_the_pad_edge_is_not_class_one_and_is_counted(tmp_path: Path) -> None:
+    """Trailing " " plus the question's "\\n" merge into one token that crosses the span's end."""
+    tok = CharTokenizer(DS_SPECIALS + (" \n",))
+    query = _related_query(tail=" ")
+    _write_related_results(tmp_path, DSV31, related=[query])
+    planned, errors = _build_related(tmp_path, tok=tok)
+    assert errors == []
+    job = _by_arm(planned)[("related_intens", 0)]
+    note = next(n for n in job.notes if "by construction" in n)
+    assert note == (f"pad span by construction: {len(ADDED_RULES)} tokens class 1, "
+                    "1 straddle an edge of the span")
+    # The merged token (one id for two characters) follows the last class-1 token as class 2.
+    classes = list(job.job.classes[2:])
+    assert classes[len(REAL_RULES):len(REAL_RULES) + len(ADDED_RULES)] == [1] * len(ADDED_RULES)
+    assert classes[len(REAL_RULES) + len(ADDED_RULES)] == 2
+
+
+def test_rebuild_sequence_pad_span_is_validated_and_the_query_must_be_unique() -> None:
+    tok = CharTokenizer(DS_SPECIALS)
+    fmt = ar.REASONING_FORMATS[DSV31]
+    for span in ((-1, 2), (3, 2), (0, 99)):
+        with pytest.raises(ValueError, match="pad_query_span"):
+            ar.rebuild_sequence("abcdef", "r", "1", tokenizer=tok, template=ds_template(), fmt=fmt,
+                                pad_query_span=span)
+    twice = ar.ChatTemplate("{{ messages[0]['content'] }}|{{ messages[0]['content'] }}")
+    with pytest.raises(ValueError, match="2 times"):
+        ar.rebuild_sequence("abcdef", "r", "1", tokenizer=tok, template=twice, fmt=fmt,
+                            pad_query_span=(1, 3))
+    # Without a span the same template is accepted, as before.
+    ar.rebuild_sequence("abcdef", "r", "1", tokenizer=tok, template=twice, fmt=fmt)
+
+
+def test_rebuild_sequence_shifts_the_span_when_the_template_strips_the_query() -> None:
+    """Gemma's template trims the query: a span given in the untrimmed text still hits the same characters."""
+    tok = CharTokenizer(GEMMA_SPECIALS)
+    fmt = ar.REASONING_FORMATS[GEMMA]
+    query = "  head" + "XYZ" + "tail  "
+    r = ar.rebuild_sequence(query, "r", "1", tokenizer=tok, template=gemma_template(), fmt=fmt,
+                            pad_query_span=(len("  head"), len("  head") + 3))
+    pad = [i for i, c in enumerate(r.classes[: len(r.prompt_ids)]) if c == 1]
+    assert "".join(tok.decode_tokens([r.prompt_ids[i] for i in pad])) == "XYZ"
+
+
+# ---------------------------------------------------------------- pull_captures
+
+PULL_PREFIX = "bedrock-trio/attention"
+PULL_URI = f"s3://bucket/{PULL_PREFIX}"
+
+
+class RecordingS3:
+    """Wraps a fake client and records every method called on it."""
+
+    def __init__(self, inner: FakeS3) -> None:
+        self._inner = inner
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str):
+        self.calls.append(name)
+        return getattr(self._inner, name)
+
+
+def _fill_bucket(tmp_path: Path, model_runs: dict[str, str]) -> tuple[FakeS3, Path]:
+    """Return a fake bucket holding one verified two-rank capture (q0) per model and its source tree.
+
+    The objects are the bytes ``_mirror_job`` and ``_write_manifest_file`` write, so a pulled
+    tree can be compared with ``read_captures`` of the source. ``q0.r<rank>.json`` metas are tiny.
+    """
+    source = tmp_path / "source"
+    s3 = FakeS3()
+    for model, run_name in model_runs.items():
+        run_dir = source / "induction" / model / "seed=0" / run_name
+        _mirror_job(run_dir, 0, [0, 1])
+        for rank in (0, 1):
+            (run_dir / f"q0.r{rank}.json").write_text(json.dumps({"rank": rank}))
+    for path in source.rglob("*"):
+        if path.is_file():
+            s3.objects[f"{PULL_PREFIX}/{path.relative_to(source).as_posix()}"] = path.read_bytes()
+    return s3, source
+
+
+def _files_below(root: Path) -> set[str]:
+    return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+
+def test_pull_captures_mirrors_what_read_captures_reads(tmp_path: Path) -> None:
+    run = f"noise_intens--{STAMP_A}"
+    s3, source = _fill_bucket(tmp_path, {GEMMA: run, NEMO: run})
+    # Objects that are not captures or manifests: a probe, a stray file, a non-run folder.
+    for key in (f"{PULL_PREFIX}/_probe/q0.r0.npz", f"{PULL_PREFIX}/induction/{GEMMA}/_probe/q0.r0.npz",
+                f"{PULL_PREFIX}/induction/{GEMMA}/seed=0/{run}/notes.txt",
+                f"{PULL_PREFIX}/induction/{GEMMA}/seed=0/q0.r0.npz"):
+        s3.objects[key] = b"x"
+    mirror = tmp_path / "mirror"
+    written = ar.pull_captures(PULL_URI, mirror, [GEMMA], s3_client_factory=lambda: s3)
+    expected = {p for p in _files_below(source) if f"induction/{GEMMA}/" in p}
+    assert written == len(expected) == 5  # 2 ranks x (npz, json) + one manifest
+    assert _files_below(mirror) == expected
+    for rel in expected:
+        assert (mirror / rel).read_bytes() == (source / rel).read_bytes()
+    # The mirror is the ``mirror_root`` of read_captures and reads exactly like the source tree.
+    got = ar.read_captures(GEMMA, mirror, config=_MIRROR_CONFIG)
+    want = ar.read_captures(GEMMA, source, config=_MIRROR_CONFIG)
+    assert got["noise_intens"]["jobs"] == 1
+    assert got["noise_intens"]["ratio_mean"] == want["noise_intens"]["ratio_mean"]
+    # models=None pulls every model found.
+    everything = tmp_path / "all"
+    assert ar.pull_captures(PULL_URI, everything, s3_client_factory=lambda: s3) == 10
+    assert _files_below(everything) == _files_below(source)
+
+
+def test_pull_captures_keeps_same_size_files_and_replaces_other_sizes(tmp_path: Path) -> None:
+    s3, _source = _fill_bucket(tmp_path, {GEMMA: f"noise_intens--{STAMP_A}"})
+    counting = CountingS3()
+    counting.objects = s3.objects
+    mirror = tmp_path / "mirror"
+    assert ar.pull_captures(PULL_URI, mirror, [GEMMA], s3_client_factory=lambda: counting) == 5
+    assert len(counting.gets) == 5
+    # Second pull: every size matches, so nothing is fetched or written.
+    assert ar.pull_captures(PULL_URI, mirror, [GEMMA], s3_client_factory=lambda: counting) == 0
+    assert len(counting.gets) == 5
+    # A file of another size (here truncated) is replaced; a same-size one is not touched.
+    victim = next(mirror.rglob("q0.r1.npz"))
+    good = victim.read_bytes()
+    victim.write_bytes(good[:10])
+    bystander = next(mirror.rglob("q0.r0.npz"))
+    bystander.write_bytes(b"\0" * len(bystander.read_bytes()))  # same size, different bytes: kept
+    assert ar.pull_captures(PULL_URI, mirror, [GEMMA], s3_client_factory=lambda: counting) == 1
+    assert victim.read_bytes() == good and set(bystander.read_bytes()) == {0}
+    assert not [p for p in mirror.rglob("*") if p.name.endswith(".part")]
+
+
+def test_pull_captures_never_leaves_a_partial_file_under_a_final_name(tmp_path: Path) -> None:
+    s3, _source = _fill_bucket(tmp_path, {GEMMA: f"noise_intens--{STAMP_A}"})
+
+    class Dies(FakeS3):
+        def get_object(self, Bucket: str, Key: str) -> dict:
+            if Key.endswith("q0.r1.npz"):
+                class Body:
+                    def read(self, *_):
+                        raise ConnectionError("connection reset")
+                return {"Body": Body()}
+            return super().get_object(Bucket, Key)
+
+    dying = Dies()
+    dying.objects = s3.objects
+    mirror = tmp_path / "mirror"
+    with pytest.raises(ConnectionError):
+        ar.pull_captures(PULL_URI, mirror, [GEMMA], s3_client_factory=lambda: dying)
+    left = _files_below(mirror)
+    assert not any(name.endswith(".part") for name in left)
+    assert not any(name.endswith("q0.r1.npz") for name in left)
+
+
+def test_pull_captures_only_lists_and_gets_and_follows_every_page(tmp_path: Path) -> None:
+    s3, source = _fill_bucket(tmp_path, {GEMMA: f"noise_intens--{STAMP_A}"})
+    s3.page_size = 2  # five matching keys over three pages
+    recorder = RecordingS3(s3)
+    mirror = tmp_path / "mirror"
+    assert ar.pull_captures(PULL_URI, mirror, s3_client_factory=lambda: recorder) == 5
+    assert s3.list_calls == 3
+    assert _files_below(mirror) == _files_below(source)
+    assert set(recorder.calls) == {"list_objects_v2", "get_object"}
+    assert s3.puts == [] and s3.if_none_match == []
+
+
+def test_pull_captures_refuses_a_bad_uri_or_model_name(tmp_path: Path) -> None:
+    for uri in ("bucket/prefix", "s3://"):
+        with pytest.raises(ValueError):
+            ar.pull_captures(uri, tmp_path, s3_client_factory=FakeS3)
+    for model in ("", "..", "a/b"):
+        with pytest.raises(ValueError, match="model name"):
+            ar.pull_captures(PULL_URI, tmp_path, [model], s3_client_factory=FakeS3)

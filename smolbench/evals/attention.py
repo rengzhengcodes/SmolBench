@@ -252,6 +252,8 @@ def token_classes(
     prompt_token_ids: Sequence[int],
     completion_token_ids: Sequence[int],
     decode_tokens: Callable[[Sequence[int]], Sequence[str]],
+    *,
+    pad_span: Optional[Tuple[int, int]] = None,
 ) -> List[int]:
     """Label every token of ``prompt + completion`` with its mass-mode key class.
 
@@ -260,23 +262,30 @@ def token_classes(
     * ``0`` -- prompt token carrying information: its decoded piece holds at
       least one non-whitespace character. ``" answer"`` is class 0, not
       whitespace: a piece that CONTAINS a space still carries a word.
-    * ``1`` -- prompt whitespace PAD token: a whitespace-only piece lying
-      inside the prompt's longest whitespace run, when that run is at least
-      ``MIN_PAD_RUN_CHARS`` characters long. This is the noise arm's appended
-      ``pad_unit * n``; the length floor and the longest-run restriction
-      together are what keep an ordinary two-space indent, a newline between
-      chat turns, or a blank line out of the pad class.
+    * ``1`` -- prompt PAD token. Without `pad_span`: a whitespace-only piece
+      lying inside the prompt's longest whitespace run, when that run is at
+      least ``MIN_PAD_RUN_CHARS`` characters long. This is the noise arm's
+      appended ``pad_unit * n``; the length floor and the longest-run
+      restriction together are what keep an ordinary two-space indent, a
+      newline between chat turns, or a blank line out of the pad class. With
+      `pad_span`: a non-empty piece (whitespace or not) whose character range
+      lies entirely inside `pad_span`, and the whitespace rule is not applied.
     * ``2`` -- other prompt whitespace or template token: a whitespace-only
-      piece outside the pad run (short structural whitespace, or a second
+      piece outside the pad (short structural whitespace, or a second
       whitespace run), and an EMPTY piece -- chat-template specials decode to
       ``""`` and are structure, not information.
     * ``3`` -- completion token, reasoning and response alike. No completion id
       is decoded: its class does not depend on its text.
 
-    Only whitespace-only tokens can be class 1, and a whitespace-only token can
-    never straddle the boundary of a MAXIMAL whitespace run (whitespace on the
-    far side of the boundary would have extended the run), so "inside the run"
-    is a plain span containment with no partial-overlap case to resolve.
+    Without `pad_span` only whitespace-only tokens can be class 1, and a
+    whitespace-only token can never straddle the boundary of a MAXIMAL
+    whitespace run (whitespace on the far side of the boundary would have
+    extended the run), so "inside the run" is a plain span containment with no
+    partial-overlap case to resolve. With `pad_span` the caller states the pad
+    by construction (an arm that pads with non-whitespace text, such as added
+    rule lines), and a token CAN straddle an edge of the span (a merge such as
+    ``".\\n"`` across the last pad character and the text after it): it is not
+    class 1 and takes the class of any other prompt token, 0 or 2 by its piece.
 
     Parameters
     ----------
@@ -289,6 +298,13 @@ def token_classes(
         returns one decoded piece per id, same order. The pieces are
         concatenated to recover the prompt text, and each token's
         ``[start, end)`` character span comes from the cumulative lengths.
+    pad_span : Optional[Tuple[int, int]], optional
+        Half-open character range ``[start, end)`` of the pad in the text those
+        pieces concatenate to (the decoded prompt text). Default ``None``: the
+        longest-whitespace-run rule decides. Given, it replaces the rule
+        entirely, so a long whitespace run elsewhere in the prompt is not
+        class 1. An empty span (``start == end``) is valid and labels nothing.
+        Must satisfy ``0 <= start <= end <= len(prompt text)``.
 
     Returns
     -------
@@ -301,7 +317,8 @@ def token_classes(
     ValueError
         When `decode_tokens` does not return exactly one piece per prompt id
         (the spans, and hence every prompt class, would be misaligned, and the
-        plugin rejects a ``classes`` array that does not cover every token).
+        plugin rejects a ``classes`` array that does not cover every token), or
+        when `pad_span` is not ``0 <= start <= end <= len(prompt text)``.
 
     Notes
     -----
@@ -313,6 +330,9 @@ def token_classes(
     >>> table = {0: "", 1: "Hi", 2: ".", 3: " " * 40, 9: " ok"}
     >>> token_classes([0, 1, 2, 3], [9], lambda ids: [table[i] for i in ids])
     [2, 0, 0, 1, 3]
+    >>> pieces = {1: "ab", 2: " ", 3: "cd"}
+    >>> token_classes([1, 2, 3], [], lambda ids: [pieces[i] for i in ids], pad_span=(2, 3))
+    [0, 1, 0]
     """
     prompt_ids = list(prompt_token_ids)
     pieces = list(decode_tokens(prompt_ids))
@@ -332,18 +352,27 @@ def token_classes(
         cursor += len(piece)
     text = "".join(pieces)
 
-    # Phase 2: the one run that may hold pad tokens. Below the floor there is
-    # no pad run at all, and every whitespace token falls to class 2.
-    run_start, run_len = _longest_whitespace_run(text)
-    pad_span: Optional[Tuple[int, int]] = (
-        (run_start, run_start + run_len) if run_len >= MIN_PAD_RUN_CHARS else None
-    )
+    # Phase 2: the span that may hold pad tokens. A caller-given span replaces the
+    # rule; otherwise it is the longest whitespace run, and below the floor there
+    # is no pad at all (every whitespace token falls to class 2).
+    if pad_span is not None:
+        if not 0 <= pad_span[0] <= pad_span[1] <= len(text):
+            raise ValueError(
+                f"pad_span {tuple(pad_span)} must satisfy 0 <= start <= end <= {len(text)} "
+                "(the length of the prompt text)"
+            )
+        span: Optional[Tuple[int, int]] = (int(pad_span[0]), int(pad_span[1]))
+    else:
+        run_start, run_len = _longest_whitespace_run(text)
+        span = (run_start, run_start + run_len) if run_len >= MIN_PAD_RUN_CHARS else None
 
-    # Phase 3: classify the prompt, then append the completion wholesale.
+    # Phase 3: classify the prompt, then append the completion wholesale. By rule
+    # only whitespace-only pieces may be pad; by construction the span decides.
     classes: List[int] = []
     for piece, (start, end) in zip(pieces, spans):
         whitespace_only = bool(piece) and all(ch.isspace() for ch in piece)
-        if whitespace_only and pad_span is not None and start >= pad_span[0] and end <= pad_span[1]:
+        in_span = span is not None and start >= span[0] and end <= span[1]
+        if piece and in_span and (whitespace_only or pad_span is not None):
             classes.append(1)
         elif whitespace_only or not piece:
             classes.append(2)

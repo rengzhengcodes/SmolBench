@@ -60,10 +60,14 @@ the same list, one line each, and every plan and manifest carries it.
    and kernels), teacher-forced on the stored completion. It measures that
    checkpoint's attention on the hosted model's text, not the hosted service's
    internal computation.
-7. The pad class is recognised by a rule, not by construction: the longest
-   whitespace run of at least ``attention.MIN_PAD_RUN_CHARS`` characters inside
-   the query. A mark whose query holds another long whitespace run is mislabelled,
-   and a mark without a pad has an undefined ratio (reported as nan).
+7. The pad class is found by rule for ``noise_intens`` and by construction for
+   ``related_intens``. By rule: the longest whitespace run of at least
+   ``attention.MIN_PAD_RUN_CHARS`` characters inside the query; a mark whose query
+   holds another long whitespace run is mislabelled. By construction: the added
+   rule lines and the whitespace after them, located from the ``intens`` query of
+   the same seed and question (``_related_pad_span``); a mark whose ``intens``
+   query is missing or does not match is not planned. A mark without a pad has an
+   undefined ratio (reported as nan).
 8. Tokens that straddle the edge of the query (template text merged into the
    query's first or last token) take the full token text as their piece. The
    template tokens next to the query are class 2, never class 0.
@@ -130,7 +134,9 @@ import logging
 import os
 import re
 import signal
+import shutil
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -183,6 +189,7 @@ __all__ = [
     "load_model_config",
     "looks_misdecoded",
     "plan_replay",
+    "pull_captures",
     "read_captures",
     "rebuild_sequence",
     "replay_model",
@@ -325,8 +332,9 @@ APPROXIMATIONS: Tuple[str, ...] = (
     "5. one user turn, no system message; server-side defaults are not represented",
     "6. the capture runs the pinned open-weights checkpoint on EC2, teacher-forced on the stored "
     "completion, not the hosted service's computation",
-    "7. the pad class is the longest whitespace run of at least "
-    f"{attention.MIN_PAD_RUN_CHARS} characters in the query, found by rule not by construction",
+    "7. the pad class is found by rule for noise_intens (longest whitespace run of at least "
+    f"{attention.MIN_PAD_RUN_CHARS} characters in the query) and by construction for "
+    "related_intens (added rule lines and trailing whitespace, located from the intens query)",
     "8. tokens straddling the query edge take their full token text as their piece",
     "9. only the earliest stored run per seed and arm is replayed",
     "10. bedrock_token_counts is None: the stored marks carry no usage field",
@@ -872,6 +880,69 @@ class Rebuilt:
     notes: Tuple[str, ...]
 
 
+def _pad_span_in_pieces(
+    offsets: Sequence[Tuple[int, int]],
+    pieces: Sequence[str],
+    pad_query_span: Tuple[int, int],
+    query: str,
+    located: str,
+    q_start: int,
+) -> Tuple[Tuple[int, int], int]:
+    """Map a pad range of the query to ``token_classes`` coordinates and count straddlers.
+
+    ``token_classes`` reads a span in the concatenation of the pieces, but
+    ``rebuild_sequence`` blanks the piece of every token outside the query, so
+    that concatenation starts at the first token that overlaps the query, not at
+    the prompt's start. The range is first moved to prompt coordinates, then
+    shifted by the start of the first non-empty piece. One shift is exact only
+    when the non-empty pieces tile the prompt text, which is checked.
+
+    Parameters
+    ----------
+    offsets : Sequence[Tuple[int, int]]
+        ``(start, end)`` prompt-text character offsets of every prompt token.
+    pieces : Sequence[str]
+        The piece of each token as ``rebuild_sequence`` builds it (empty outside the query).
+    pad_query_span : Tuple[int, int]
+        Pad range in `query` coordinates, already validated.
+    query : str
+        The stored query.
+    located : str
+        The query as found in the prompt: `query`, or its stripped form.
+    q_start : int
+        Offset of `located` in the prompt text.
+
+    Returns
+    -------
+    Tuple[Tuple[int, int], int]
+        The span in piece-concatenation coordinates, and the number of tokens
+        with a non-empty piece that contain a span edge strictly inside them.
+
+    Raises
+    ------
+    ValueError
+        When the non-empty pieces are not adjacent in the prompt text, so the
+        shift between the two coordinate systems is not one number. (A ``ValueError``,
+        not an assertion: ``_build`` reports it for the one mark and plans the rest.)
+    """
+    lead = len(query) - len(query.lstrip()) if located != query else 0
+    # Prompt coordinates, clipped to the located text (the template may have stripped the query).
+    low = q_start + min(max(pad_query_span[0] - lead, 0), len(located))
+    high = q_start + min(max(pad_query_span[1] - lead, 0), len(located))
+
+    # The pieces concatenate to the prompt text from the first overlapping token on
+    # only while those tokens tile it without gaps or overlaps.
+    kept = [(start, end) for (start, end), piece in zip(offsets, pieces) if piece]
+    if any(a_end != b_start for (_s, a_end), (b_start, _e) in zip(kept, kept[1:])):
+        raise ValueError(
+            "the tokens that overlap the query are not adjacent in the prompt text; "
+            "the pad span cannot be mapped to piece coordinates"
+        )
+    origin = kept[0][0] if kept else 0
+    straddling = sum(1 for start, end in kept if start < low < end or start < high < end)
+    return (low - origin, high - origin), straddling
+
+
 def rebuild_sequence(
     query: str,
     reasoning: Optional[str],
@@ -880,6 +951,7 @@ def rebuild_sequence(
     tokenizer: Any,
     template: Any,
     fmt: ReasoningFormat,
+    pad_query_span: Optional[Tuple[int, int]] = None,
 ) -> Rebuilt:
     """Rebuild one mark's prompt ids, completion ids and key classes from its stored text.
 
@@ -893,6 +965,16 @@ def rebuild_sequence(
     tokens by the character offsets of the tokenizer: a token whose span overlaps
     the query keeps its text as its piece, any other prompt token gets an empty
     piece (so ``token_classes`` makes it class 2); completion tokens are class 3.
+    The pad class is found by rule unless `pad_query_span` is given (see below).
+
+    With `pad_query_span` the pad is stated by construction. The query must then
+    occur exactly once in the rendered prompt; the range is shifted to the
+    prompt's coordinates and then into the coordinates of the concatenated pieces
+    (the pieces of tokens outside the query are empty, so those coordinates start
+    at the first token that overlaps the query), and handed to
+    ``token_classes`` as ``pad_span``. A token that straddles an edge of the span
+    is not class 1. The notes then say how many tokens are class 1 and how many
+    straddle an edge.
 
     Parameters
     ----------
@@ -908,6 +990,12 @@ def rebuild_sequence(
         ``ChatTemplate``-like: ``render(messages=, add_generation_prompt=, **kwargs)``.
     fmt : ReasoningFormat
         The model's thinking delimiters and template kwargs.
+    pad_query_span : Optional[Tuple[int, int]], optional
+        Half-open character range ``[start, end)`` of the pad inside `query`
+        (``0 <= start <= end <= len(query)``). Default ``None``: the longest
+        whitespace run of the query is the pad, by rule. When the template
+        stripped the query, the range is shifted by the stripped leading
+        characters and clipped to the stripped text.
 
     Returns
     -------
@@ -917,7 +1005,12 @@ def rebuild_sequence(
     Raises
     ------
     TemplateMismatch
-        When the query is empty or is not found in the rendered prompt.
+        When the query is empty or is not found in the rendered prompt, or (with
+        `pad_query_span`) when it occurs more than once there.
+    ValueError
+        When `pad_query_span` is not ``0 <= start <= end <= len(query)``, or when
+        the tokens that overlap the query do not tile it without gaps or overlaps,
+        so the span cannot be mapped to piece coordinates.
     AssertionError
         When the tokenizer returns a different number of offsets than ids.
 
@@ -926,6 +1019,11 @@ def rebuild_sequence(
     Pure given its collaborators; cost is two encodes of the full sequence.
     """
     notes: List[str] = []
+    if pad_query_span is not None and not 0 <= pad_query_span[0] <= pad_query_span[1] <= len(query):
+        raise ValueError(
+            f"pad_query_span {tuple(pad_query_span)} must satisfy 0 <= start <= end <= "
+            f"{len(query)} (the length of the query)"
+        )
 
     # Phase 1: render the prompt and locate the query in it.
     prompt_text = template.render(
@@ -944,6 +1042,12 @@ def rebuild_sequence(
             raise TemplateMismatch("the rendered prompt does not contain the stored query")
         notes.append("template stripped the query")
     q_end = q_start + len(located)
+    if pad_query_span is not None and prompt_text.count(located) != 1:
+        # A second copy (say, in a system turn) would make the span's position ambiguous.
+        raise TemplateMismatch(
+            f"the stored query occurs {prompt_text.count(located)} times in the rendered prompt; "
+            "the pad span needs exactly one"
+        )
 
     # Phase 2: completion text. No whitespace is inserted around the delimiters:
     # whatever separated reasoning from answer at collection time is unknown.
@@ -974,7 +1078,20 @@ def rebuild_sequence(
         prompt_text[start:end] if start < q_end and end > q_start else ""
         for start, end in offsets
     ]
-    classes = attention.token_classes(prompt_ids, completion_ids, lambda ids: pieces)
+    pad_span: Optional[Tuple[int, int]] = None
+    if pad_query_span is not None:
+        pad_span, n_straddle = _pad_span_in_pieces(
+            offsets, pieces, pad_query_span, query, located, q_start
+        )
+    classes = attention.token_classes(
+        prompt_ids, completion_ids, lambda ids: pieces, pad_span=pad_span
+    )
+    if pad_query_span is not None:
+        n_pad = classes[: len(prompt_ids)].count(1)
+        notes.append(
+            f"pad span by construction: {n_pad} tokens class 1, "
+            f"{n_straddle} straddle an edge of the span"
+        )
     return Rebuilt(
         prompt_ids=prompt_ids,
         completion_ids=completion_ids,
@@ -1156,6 +1273,54 @@ def looks_misdecoded(text: Optional[str]) -> bool:
         return False
 
 
+#: The arm whose pad is stated by construction (added rule lines plus trailing whitespace).
+RELATED_ARM: str = "related_intens"
+#: The arm whose query the ``related_intens`` query extends; the pad is located against it.
+RELATED_BASE_ARM: str = "intens"
+
+
+def _related_pad_span(intens_query: str, related_query: str) -> Tuple[int, int]:
+    """Return the pad range of a ``related_intens`` query, by comparison with its ``intens`` query.
+
+    The related query is the intens query up to the end of the real rule lines
+    (its ``head``, everything before ``bt.QUESTION_START``), then added rule
+    lines and a few whitespace characters, then the question. The pad is
+    everything between the head and the LAST ``QUESTION_START`` of the related
+    query (the same split ``bedrock_trio.check_related_prompts`` uses).
+
+    Parameters
+    ----------
+    intens_query : str
+        The ``intens`` query of the same seed and question.
+    related_query : str
+        The ``related_intens`` query.
+
+    Returns
+    -------
+    Tuple[int, int]
+        ``[start, end)`` in `related_query`; ``0 < start < end``.
+
+    Raises
+    ------
+    ValueError
+        With the reason, when `intens_query` has no ``QUESTION_START``, when
+        `related_query` does not start with the head, has no ``QUESTION_START``
+        after it, or has nothing between the two.
+    """
+    cut = intens_query.find(bt.QUESTION_START)
+    if cut < 0:
+        raise ValueError(f"the intens query has no {bt.QUESTION_START!r}; cannot find the head")
+    head = intens_query[:cut]
+    if not related_query.startswith(head):
+        raise ValueError("the related_intens query does not start with the intens query's rules")
+    end = related_query.rfind(bt.QUESTION_START)
+    if end < len(head):
+        raise ValueError(f"the related_intens query has no {bt.QUESTION_START!r} after the rules")
+    if end == len(head):
+        raise ValueError("the related_intens query has an empty pad (nothing between rules and question)")
+    return len(head), end
+
+
 @dataclass
 class _Built:
     """Internal result of reading and rebuilding every run of one model."""
@@ -1193,6 +1358,19 @@ def _build(
         fmt = REASONING_FORMATS[model]
 
     checked = False
+    # The one run per (seed, arm) that find_runs chose, to locate a related_intens pad
+    # against the intens run of the same seed; its queries are read once per seed.
+    run_of = {(r.seed, r.arm): r for r in built.runs}
+    intens_queries: Dict[int, Optional[List[str]]] = {}
+
+    def base_queries(seed: int) -> Optional[List[str]]:
+        if seed not in intens_queries:
+            base = run_of.get((seed, RELATED_BASE_ARM))
+            intens_queries[seed] = None if base is None else [
+                m.query for m in Marks.loads(base.path.read_text(encoding="utf-8")).marks
+            ]
+        return intens_queries[seed]
+
     for run in built.runs:
         marks = Marks.loads(run.path.read_text(encoding="utf-8")).marks
         prefix = run_prefix(s3_prefix, run)
@@ -1217,9 +1395,25 @@ def _build(
                 )
                 continue
             try:
+                # By construction for related_intens: the pad range comes from the intens
+                # query of the same seed and question. Any failure here is this mark's error.
+                pad_span: Optional[Tuple[int, int]] = None
+                if run.arm == RELATED_ARM:
+                    base = base_queries(run.seed)
+                    if base is None:
+                        raise ValueError(
+                            f"no {RELATED_BASE_ARM} run for seed {run.seed}; "
+                            "cannot locate the pad of a related_intens mark"
+                        )
+                    if idx >= len(base):
+                        raise ValueError(
+                            f"question {idx} is missing from the {RELATED_BASE_ARM} run "
+                            f"({len(base)} questions); cannot locate the pad"
+                        )
+                    pad_span = _related_pad_span(base[idx], mark.query)
                 rebuilt = rebuild_sequence(
                     mark.query, mark.reasoning, mark.response,
-                    tokenizer=tokenizer, template=template, fmt=fmt,
+                    tokenizer=tokenizer, template=template, fmt=fmt, pad_query_span=pad_span,
                 )
                 if not checked:
                     # Once per model: a wrong delimiter table is wrong for every
@@ -2495,6 +2689,118 @@ def _write_manifests(
 
 
 # --------------------------------------------------------------- offline reader
+
+#: What ``pull_captures`` copies, relative to ``<prefix>/induction/<model>/``: a capture
+#: array or its metadata, or a run manifest, inside ``seed=<s>/<arm>--<stamp>/``. Anything
+#: else (a ``_probe/`` object, a stray file) does not match and is left in the bucket.
+_PULLED_KEY_RE = re.compile(
+    r"^seed=\d+/[^/]+--[^/]+/(?:q\d+\.r\d+\.(?:npz|json)|manifest--[^/]+\.json)$"
+)
+
+
+def _list_objects(client: Any, bucket: str, prefix: str) -> Iterator[Tuple[str, int]]:
+    """Yield ``(key, size)`` of every object under `prefix`, following the listing's pages."""
+    token: Optional[str] = None
+    while True:
+        kwargs: Dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+        if token is not None:
+            kwargs["ContinuationToken"] = token
+        page = client.list_objects_v2(**kwargs)
+        for obj in page.get("Contents") or []:
+            yield obj["Key"], int(obj["Size"])
+        if not page.get("IsTruncated"):
+            return
+        token = page["NextContinuationToken"]
+
+
+def pull_captures(
+    s3_uri: str,
+    local_root: Path,
+    models: Optional[Sequence[str]] = None,
+    *,
+    s3_client_factory: Optional[Callable[[], Any]] = None,
+) -> int:
+    """Copy the captures and manifests of the bucket to a local folder, for ``read_captures``.
+
+    Lists every object under ``<prefix>/induction/<model>/`` (``<prefix>`` is the key
+    prefix of `s3_uri`) and downloads those named ``seed=<s>/<arm>--<stamp>/q<i>.r<rank>.npz``,
+    ``.../q<i>.r<rank>.json`` or ``.../manifest--*.json``, to the same key path below
+    `local_root`. Every other object, such as one under ``_probe/``, is ignored. The
+    tree this builds is what ``read_captures`` reads: pass `local_root` as its
+    ``mirror_root`` argument (it looks for ``<mirror_root>/induction/<model>/seed=...``).
+
+    A local file whose size equals the object's listed size is kept as it is. Any other
+    object is written to a temporary name (``<name>.<random>.part``) in the destination
+    folder and renamed over the final name, so an interrupted pull never leaves a
+    partial file under a final name; the temporary file is removed when the download
+    fails. A local file of another size is replaced.
+
+    Parameters
+    ----------
+    s3_uri : str
+        ``s3://<bucket>[/<prefix>]``; normally ``DEFAULT_S3_URI``.
+    local_root : Path
+        Folder to mirror into; created when absent.
+    models : Optional[Sequence[str]], optional
+        Roster keys to pull. Default ``None``: every model found under
+        ``<prefix>/induction/``.
+    s3_client_factory : Optional[Callable[[], Any]], optional
+        Returns an S3 client with ``list_objects_v2`` and ``get_object``. Default
+        ``_default_s3_factory``.
+
+    Returns
+    -------
+    int
+        Number of files written (kept files are not counted).
+
+    Raises
+    ------
+    ValueError
+        When `s3_uri` is malformed, or a model name is empty, ``.``/``..``, or holds ``/``.
+
+    Notes
+    -----
+    Read-only on the bucket: it calls ``list_objects_v2`` (paginated) and ``get_object``
+    only. Needs no approval: nothing is written to S3 and nothing is billed beyond the
+    requests and the transfer. Cost is one listing per model (one for all when
+    `models` is ``None``) and one GET per file it writes.
+    """
+    bucket, prefix = parse_s3_uri(s3_uri)
+    root = Path(local_root)
+    for model in models or ():
+        if not model or model in (".", "..") or "/" in model:
+            raise ValueError(f"model name {model!r} must be a non-empty name without '/'")
+    client = (s3_client_factory or _default_s3_factory)()
+    induction = "/".join(part for part in (prefix, "induction") if part) + "/"
+
+    # Phase 1: list. With explicit models, one listing per model prefix; otherwise one
+    # listing of the whole induction/ folder, grouped by the model folder in the key.
+    listings = [induction + model + "/" for model in models] if models is not None else [induction]
+    written = 0
+    for listing_prefix in listings:
+        for key, size in _list_objects(client, bucket, listing_prefix):
+            below_induction = key[len(induction):]
+            model, _, rest = below_induction.partition("/")
+            if model in ("", ".", "..") or not _PULLED_KEY_RE.match(rest):
+                continue
+            # Every component is regex-limited or checked above, so none can climb out of `root`.
+            dest = root.joinpath("induction", *below_induction.split("/"))
+            # Phase 2: keep a same-size file, else download beside it and rename.
+            if dest.is_file() and dest.stat().st_size == size:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=dest.name + ".", suffix=".part")
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    shutil.copyfileobj(client.get_object(Bucket=bucket, Key=key)["Body"], out)
+                # os.replace is atomic on one filesystem, which the same-folder name guarantees.
+                os.replace(tmp_name, dest)
+            except BaseException:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp_name)
+                raise
+            written += 1
+    return written
 
 
 class _MirrorClient:

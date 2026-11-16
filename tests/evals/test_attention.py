@@ -24,6 +24,8 @@ class FakeS3:
         self.presigned: list[str] = []
         self.puts: list[str] = []
         self.if_none_match: list[Any] = []  # the IfNoneMatch of each put, None when absent
+        self.page_size: int | None = None  # keys per list_objects_v2 page; None = a single page
+        self.list_calls = 0
 
     def put_object(self, Bucket: str, Key: str, Body: bytes, IfNoneMatch: Any = None, **_: Any) -> None:
         self.if_none_match.append(IfNoneMatch)
@@ -44,10 +46,19 @@ class FakeS3:
             raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
         return {"ContentLength": len(self.objects[Key])}
 
-    def list_objects_v2(self, Bucket: str, Prefix: str = "", **_: Any) -> dict:
+    def list_objects_v2(self, Bucket: str, Prefix: str = "", ContinuationToken: Any = None,
+                        **_: Any) -> dict:
         keys = sorted(k for k in self.objects if k.startswith(Prefix))
-        return {"Contents": [{"Key": k, "Size": len(self.objects[k])} for k in keys],
-                "IsTruncated": False}
+        self.list_calls += 1
+        # One page holding everything, unless a test sets ``page_size``; then the token is
+        # the index of the first key of the next page, as an opaque string.
+        start = int(ContinuationToken) if ContinuationToken is not None else 0
+        stop = len(keys) if self.page_size is None else start + self.page_size
+        page = {"Contents": [{"Key": k, "Size": len(self.objects[k])} for k in keys[start:stop]],
+                "IsTruncated": stop < len(keys)}
+        if stop < len(keys):
+            page["NextContinuationToken"] = str(stop)
+        return page
 
     def generate_presigned_url(self, op: str, Params: dict, ExpiresIn: int) -> str:
         assert op == "put_object"
@@ -146,6 +157,53 @@ def test_token_classes_labels_only_the_prompts_long_whitespace_run() -> None:
     assert attention.token_classes(two_runs, (1,), decode) == [1] * 8 + [0] + [2] * 8 + [3]
     with pytest.raises(ValueError, match="one piece per token"):
         attention.token_classes((1, 2), (), lambda ids: ["x"])
+
+
+#: Pieces for the ``pad_span`` tests; the prompt text of ``SPAN_PROMPT`` is ``"The.ab..\nThe"``
+#: with token spans The 0-3, "." 3-4, "ab." 4-7, "." 7-8, "\n" 8-9, The 9-12.
+SPAN_TABLE = {**CLASS_TABLE, 7: "ab."}
+SPAN_PROMPT = (1, 6, 7, 6, 3, 1)
+
+
+def span_decode(ids):
+    return [SPAN_TABLE[int(i)] for i in ids]
+
+
+def test_pad_span_labels_exactly_the_tokens_inside_it() -> None:
+    """Non-whitespace tokens inside the span are class 1; the rest keep their class 0/2."""
+    got = attention.token_classes(SPAN_PROMPT, (1,), span_decode, pad_span=(4, 8))
+    assert got == [0, 0, 1, 1, 2, 0, 3]
+    # The "\n" right after the span is whitespace outside it: class 2, not 1.
+    assert attention.token_classes(SPAN_PROMPT, (), span_decode, pad_span=(0, 12)) == [1] * 6
+    # An empty piece inside the span is a template token, not a pad token.
+    assert attention.token_classes((1, 5, 6), (), span_decode, pad_span=(0, 4)) == [1, 2, 1]
+    # An empty span is valid and labels nothing.
+    assert attention.token_classes(SPAN_PROMPT, (), span_decode, pad_span=(4, 4)) == [0, 0, 0, 0, 2, 0]
+
+
+def test_pad_span_never_labels_a_token_that_straddles_an_edge() -> None:
+    # Left edge at 5 cuts "ab." (4-7): that token is text, the "." after it is pad.
+    assert attention.token_classes(SPAN_PROMPT, (), span_decode, pad_span=(5, 8)) == [0, 0, 0, 1, 2, 0]
+    # Right edge at 6 cuts the same token from the other side.
+    assert attention.token_classes(SPAN_PROMPT, (), span_decode, pad_span=(4, 6)) == [0, 0, 0, 0, 2, 0]
+    # A straddling whitespace token takes class 2, as any whitespace outside the pad.
+    assert attention.token_classes((1, 4), (), span_decode, pad_span=(2, 5)) == [0, 2]
+
+
+def test_pad_span_replaces_the_whitespace_run_rule() -> None:
+    """With a span, a long whitespace run elsewhere is NOT class 1; without one it still is."""
+    prompt = (1,) + (4,) * 10 + (6,)  # "The", a 40-char whitespace run, "."
+    by_rule = [0] + [1] * 10 + [0]
+    assert attention.token_classes(prompt, (), span_decode) == by_rule
+    assert attention.token_classes(prompt, (), span_decode, pad_span=None) == by_rule
+    assert attention.token_classes(prompt, (), span_decode, pad_span=(0, 3)) == [1] + [2] * 10 + [0]
+    assert attention.token_classes(prompt, (), span_decode, pad_span=(3, 43)) == [0] + [1] * 10 + [0]
+
+
+@pytest.mark.parametrize("span", [(-1, 2), (3, 2), (0, 13), (13, 13)])
+def test_pad_span_outside_the_prompt_text_is_refused(span) -> None:
+    with pytest.raises(ValueError, match="pad_span"):
+        attention.token_classes(SPAN_PROMPT, (), span_decode, pad_span=span)
 
 
 def test_mass_job_gates_inside_the_completion_and_refuses_malformed_jobs() -> None:
