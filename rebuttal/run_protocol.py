@@ -10,13 +10,26 @@ can run side by side, each with its own concurrency, deadline and failure limit:
     python rebuttal/run_protocol.py horn --model <key> [--seeds 100-199] [--reps 3]
         [--arms lem pad ...] [--concurrency 24] [--deadline 2026-11-16T10:30:00Z]
         [--max-consecutive-failures 8] [--push-every 200] [--smoke] [--region us-east-1]
-        [--no-s3]
+        [--no-s3] [--rep-indices 0,2] [--rows-label LABEL] [--ramp-start K [--ramp-minutes 30]]
 
 The steps are those of the notebook: check the results bucket, mint a Bedrock token that
 belongs to this process, resolve the model's Bedrock id, find the reasoning arguments with
 one small billed request (and refuse to go on if the model does not reason), then run the
 study. Both studies resume from the bucket, so a run that stopped (at its deadline, or
 after repeated failures) is continued by running the same command again.
+
+Two processes can collect one model's cells at once, for example from two Bedrock regions
+without confounding arm with region: give each its own cells (``--rep-indices 0,2`` in one,
+``--rep-indices 1`` in the other, so that every arm has the same mix of regions) and its own
+local rows file (``--rows-label``, which names ``horn/<model>--<label>.jsonl``; the rows lock
+is per file). Each process pulls the bucket's rows before it chooses cells and pushes only
+rows the bucket lacks. A labelled file is a working copy: the reports read
+``horn/<model>.jsonl``, which ``bedrock_trio.pull_horn_rows`` refreshes from the bucket. The
+caller keeps the cells disjoint; ``run_horn`` prints how many of its cells were already
+done at the start and how many rows it wrote for cells the bucket covers twice at the end.
+``--ramp-start K`` starts with at most K cells in flight and doubles that every
+``--ramp-minutes`` (default 30) up to ``--concurrency``, because Bedrock answers 503 when
+the load more than doubles within 30 minutes.
 
 Exit code: 0 when the run finished or stopped at its deadline, 2 when ``run_horn`` stopped
 after consecutive failures (``bedrock_trio.HornRunStopped``, usually expired credentials),
@@ -168,6 +181,45 @@ def _non_negative_int(text: str) -> int:
     return value
 
 
+def _index_list(text: str) -> list[int]:
+    """Parse a comma list of non-negative integers such as ``"0,2"``; each is kept once, in order.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        If an item is not a non-negative integer, or the list is empty.
+
+    Examples
+    --------
+    >>> _index_list("0,2")
+    [0, 2]
+    >>> _index_list("1,1")
+    [1]
+    """
+    items = [item.strip() for item in text.split(",")]
+    if not all(item.isascii() and item.isdigit() for item in items):
+        raise argparse.ArgumentTypeError(f"bad index list {text!r}: use non-negative integers such as 0,2")
+    return list(dict.fromkeys(int(item) for item in items))
+
+
+def _rows_label(text: str) -> str:
+    """A rows-file label: only ``A-Za-z0-9._-`` (it becomes part of a file name)."""
+    if not bt.HORN_LABEL.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"bad label {text!r}: use only A-Za-z0-9._- (at least one character)")
+    return text
+
+
+def _positive_float(text: str) -> float:
+    """A finite number above 0 (see ``_positive_int``)."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not 0 < value < float("inf"):
+        raise argparse.ArgumentTypeError(f"{text!r} must be positive and finite")
+    return value
+
+
 class _Parser(argparse.ArgumentParser):
     """An ``ArgumentParser`` whose usage errors exit with 1, not argparse's 2.
 
@@ -216,6 +268,17 @@ def build_parser() -> argparse.ArgumentParser:
     horn.add_argument("--max-consecutive-failures", type=_non_negative_int, default=8,
                       help="stop after this many failed cells in a row; 0 disables (default %(default)s)")
     horn.add_argument("--push-every", type=_positive_int, default=200, help="new rows per upload (default %(default)s)")
+    horn.add_argument("--rep-indices", type=_index_list, default=None, metavar="I,J",
+                      help="run only these replicate indices, e.g. 0,2 (default: all of range(reps)); "
+                           "a second process takes the others")
+    horn.add_argument("--rows-label", type=_rows_label, default=None, metavar="LABEL",
+                      help="use the local rows file horn/<model>--LABEL.jsonl so that a second process of "
+                           "this model can run at once (only A-Za-z0-9._-)")
+    horn.add_argument("--ramp-start", type=_positive_int, default=None, metavar="K",
+                      help="start with at most K cells in flight and double that every --ramp-minutes "
+                           "up to --concurrency (default: no ramp)")
+    horn.add_argument("--ramp-minutes", type=_positive_float, default=30, metavar="M",
+                      help="minutes between doublings with --ramp-start (default %(default)s)")
     return parser
 
 
@@ -238,11 +301,40 @@ def resolve_defaults(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
+def check_horn_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse the Horn options that need another option to judge, as a usage error.
+
+    ``--rep-indices`` is judged against ``--reps`` and ``--ramp-start`` against
+    ``--concurrency``, which are known only after ``resolve_defaults``. The same checks sit
+    in ``bt.run_horn``, but by then the (billed) reasoning probe has run.
+    """
+    if args.study != "horn":
+        return
+    if args.rep_indices is not None and max(args.rep_indices) >= args.reps:
+        parser.error(f"--rep-indices {args.rep_indices} must lie in range(--reps), that is 0-{args.reps - 1}")
+    if args.ramp_start is not None and args.ramp_start > args.concurrency:
+        parser.error(f"--ramp-start {args.ramp_start} must not exceed --concurrency {args.concurrency}")
+
+
 def _seed_text(seeds: Sequence[int]) -> str:
     """``100-199`` for a consecutive run, else the comma list."""
     if len(seeds) > 1 and list(seeds) == list(range(seeds[0], seeds[0] + len(seeds))):
         return f"{seeds[0]}-{seeds[-1]}"
     return ",".join(map(str, seeds))
+
+
+def _horn_scope_text(args: argparse.Namespace) -> str:
+    """The Horn options that narrow or pace the run, for the start line (empty when none is set)."""
+    text = ""
+    if args.rep_indices is not None:
+        text += f", rep indices {','.join(map(str, args.rep_indices))}"
+    if args.rows_label is not None:
+        text += f", rows label {args.rows_label}"
+    if args.ramp_start is not None and args.ramp_start < args.concurrency:
+        text += f", ramp {args.ramp_start} doubling every {args.ramp_minutes:g} min to {args.concurrency}"
+    else:
+        text += ", ramp none"
+    return text
 
 
 def _results_location(args: argparse.Namespace) -> tuple[Optional[str], Path]:
@@ -318,11 +410,30 @@ def _run_induction(args: argparse.Namespace, s3_uri: Optional[str], results: Pat
     return EXIT_OK
 
 
-def _print_horn_summary(key: str, results: Path, written: Optional[int]) -> None:
-    """Rows written by this call (when known) and the model's verdict and finish-reason counts."""
+def _print_horn_summary(
+    key: str, results: Path, written: Optional[int], label: Optional[str] = None, s3_uri: Optional[str] = None
+) -> None:
+    """Rows written by this call (when known) and the verdict and finish-reason counts of its rows file.
+
+    With a ``label`` the file is a working copy: the summary says so, and how to refresh the
+    main file that the reports read.
+    """
     if written is not None:
         print(f"== {key} horn: {written} rows written by this call")
-    path = bt.horn_rows_path(key, results)
+    path = bt.horn_rows_path(key, results, label)
+    if label is not None:
+        main = bt.horn_rows_path(key, results)
+        if s3_uri is None:
+            print(f"  {path} is a working copy of this process; with --no-s3 nothing links it to {main}")
+        else:
+            print(
+                f"  {path} is a working copy: it holds this process's rows and the bucket's rows as of its start, "
+                f"not the other process's later rows, and the reports read {main}.\n"
+                f"  Refresh {main} with every row of the bucket (no process may be writing it) by running from "
+                f"the repository root:\n"
+                f"    python -c \"import sys; sys.path.insert(0, 'rebuttal'); import bedrock_trio as bt; "
+                f"print(bt.pull_horn_rows({key!r}, {s3_uri!r}, results_dir=bt.Path({str(results)!r})))\""
+            )
     if not path.exists():
         return
     print(f"  counts by (model, arm) over {path}")
@@ -339,16 +450,17 @@ def _run_horn(args: argparse.Namespace, s3_uri: Optional[str], results: Path) ->
     try:
         rows = bt.run_horn(
             model, args.region, reasoning, rung, args.seeds, args.reps,
-            concurrency=args.concurrency, out=bt.horn_rows_path(model.key, results),
+            concurrency=args.concurrency, out=bt.horn_rows_path(model.key, results, args.rows_label),
             arms=args.arms, s3_uri=s3_uri, push_every=args.push_every,
             deadline=args.deadline, max_consecutive_failures=args.max_consecutive_failures,
+            rep_indices=args.rep_indices, ramp_start=args.ramp_start, ramp_minutes=args.ramp_minutes,
         )
     except bt.HornRunStopped as err:
         # The rows are on disk and pushed; the run is continued by running the command again.
         LOG.error("stopped: %s", err)
-        _print_horn_summary(model.key, results, None)
+        _print_horn_summary(model.key, results, None, args.rows_label, s3_uri)
         return EXIT_STOPPED
-    _print_horn_summary(model.key, results, len(rows))
+    _print_horn_summary(model.key, results, len(rows), args.rows_label, s3_uri)
     return EXIT_OK
 
 
@@ -378,6 +490,7 @@ def run(args: argparse.Namespace) -> int:
         + f", arms {' '.join(arms)}, concurrency {args.concurrency}, results {s3_uri or results}"
         + (f" (mirror {results})" if s3_uri else "")
         + f", deadline {deadline.isoformat() if deadline else 'none'}"
+        + (_horn_scope_text(args) if args.study == "horn" else "")
     )
     # Design: a deadline already past is answered before authenticating, so that a late
     # start costs neither a token nor the (billed) reasoning probe.
@@ -407,7 +520,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         The exit code (see the module docstring). A usage error exits through
         ``SystemExit(1)``.
     """
-    args = resolve_defaults(build_parser().parse_args(argv))
+    parser = build_parser()
+    args = resolve_defaults(parser.parse_args(argv))
+    check_horn_args(parser, args)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     return run(args)
 

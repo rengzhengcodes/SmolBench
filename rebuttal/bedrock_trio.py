@@ -29,6 +29,7 @@ import re
 import string
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -1144,9 +1145,48 @@ def render_horn_rung(
     return rung
 
 
-def horn_rows_path(key: str, results_dir: Path = RESULTS_DIR) -> Path:
-    """Rows file for one model."""
-    return results_dir / "horn" / f"{key}.jsonl"
+#: Characters a rows-file label may hold: the label becomes part of a file name.
+HORN_LABEL = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def horn_rows_path(key: str, results_dir: Path = RESULTS_DIR, label: Optional[str] = None) -> Path:
+    """Rows file for one model, or a labelled working copy of it.
+
+    ``horn/<key>.jsonl`` is the file the reports read. With ``label``, the file is
+    ``horn/<key>--<label>.jsonl`` next to it, so that a second process of the same model
+    can hold its own rows lock (``run_horn`` locks the rows file, one process per file).
+
+    Parameters
+    ----------
+    key : str
+        Roster key of the model.
+    results_dir : Path
+        Local mirror root.
+    label : Optional[str]
+        ``None`` for the main file; otherwise only ``A-Za-z0-9._-`` (no path separator).
+
+    Returns
+    -------
+    Path
+        The rows file; neither it nor its folder is created.
+
+    Raises
+    ------
+    ValueError
+        If ``label`` is empty or holds a character outside ``A-Za-z0-9._-``.
+
+    Examples
+    --------
+    >>> horn_rows_path("m", Path("r")).as_posix()
+    'r/horn/m.jsonl'
+    >>> horn_rows_path("m", Path("r"), "east-2").as_posix()
+    'r/horn/m--east-2.jsonl'
+    """
+    if label is None:
+        return results_dir / "horn" / f"{key}.jsonl"
+    if not HORN_LABEL.fullmatch(label):
+        raise ValueError(f"rows label must be non-empty and use only A-Za-z0-9._-, got {label!r}")
+    return results_dir / "horn" / f"{key}--{label}.jsonl"
 
 
 def _row_lines(text: str) -> list[str]:
@@ -1304,6 +1344,144 @@ def push_horn_rows(
     return part
 
 
+def _cell_key(row: dict) -> tuple:
+    """Resume key of a Horn row, as ``sweep.done_keys`` builds it (model, rung, arm, seed, rep)."""
+    return tuple(row.get(f) for f in ("model", "rung", "arm", "seed", "rep"))
+
+
+def count_horn_duplicates(
+    key: str,
+    s3_uri: str,
+    rows: Sequence[dict],
+    region: str = RESULTS_S3_REGION,
+) -> int:
+    """Count rows that the bucket holds next to another row for the same cell.
+
+    Two processes of one model that were given overlapping cells each bill those cells
+    and each push a row for them; neither sees the other's row before it starts. A row
+    in ``rows`` is a duplicate when the bucket holds a different line with the same
+    (model, rung, arm, seed, rep) and a verdict other than ``exception``. An
+    ``exception`` row never covers a cell (``sweep.done_keys`` repeats those cells), so a
+    retry after a failure is not counted.
+
+    Parameters
+    ----------
+    key : str
+        Roster key of the model.
+    s3_uri : str
+        ``s3://bucket[/prefix]`` of the results store.
+    rows : Sequence[dict]
+        Rows a call wrote, with the ``provider`` field, as ``run_horn`` returns them. They
+        must already be pushed; a row the bucket lacks is not found and not counted.
+    region : str
+        Region of the bucket.
+
+    Returns
+    -------
+    int
+        Number of rows in ``rows`` that are duplicates.
+
+    Notes
+    -----
+    Every part is downloaded. If both rows of a pair belong to ``rows`` (one call ran a
+    cell twice) each counts. Lines that are not JSON objects are ignored.
+    """
+    bucket, base = parse_s3_uri(s3_uri)
+    client = _s3(region)
+    by_cell: dict[tuple, list[tuple[str, Any]]] = collections.defaultdict(list)
+    for part in _horn_parts(client, bucket, _join_key(base, "deduction", "horn", key) + "/"):
+        for line in _part_lines(client, bucket, part):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                by_cell[_cell_key(row)].append((line, row.get("verdict")))
+    return sum(
+        1
+        for row in rows
+        if any(
+            line != _dump_row(row) and verdict != "exception"
+            for line, verdict in by_cell.get(_cell_key(row), ())
+        )
+    )
+
+
+def _ramp_clock() -> float:
+    """Monotonic seconds for ``_Ramp``; a function so that a test can observe it."""
+    return time.monotonic()
+
+
+class _Ramp:
+    """A limit on cells in flight that starts low and doubles at a fixed interval.
+
+    ``acquire`` is called by a pool thread that is about to start a cell. It waits until
+    fewer than ``limit()`` cells are in flight, or until the stop flag is set or the
+    deadline has passed. ``limit()`` is ``start * 2 ** n`` (at most ``ceiling``) after
+    ``n`` whole intervals since construction, so the first ``interval_s`` seconds run at
+    most ``start`` cells.
+
+    Design: a condition variable, not polling. A waiter sleeps until a cell finishes
+    (``release``), the next doubling, the deadline or ``wake`` (the stop flag), whichever
+    is first, so it neither spins nor starts a cell late. The pool keeps ``ceiling``
+    threads; a limit on the pool size alone could not shrink or grow while it runs.
+    """
+
+    #: Added to a computed sleep so that a waiter wakes just after a boundary, not just before it.
+    _SLACK_S = 0.001
+
+    def __init__(self, start: int, ceiling: int, interval_s: float) -> None:
+        self.start, self.ceiling, self.interval_s = start, ceiling, interval_s
+        self._t0 = _ramp_clock()
+        self._cond = threading.Condition()
+        self._running = 0
+
+    def limit(self) -> int:
+        """Cells allowed in flight now."""
+        steps = int((_ramp_clock() - self._t0) // self.interval_s)
+        # The exponent is capped: the result is clamped to ``ceiling`` long before 2**62.
+        return min(self.ceiling, self.start * 2 ** min(steps, 62))
+
+    def _seconds_to_next_step(self) -> Optional[float]:
+        """Seconds until the limit next doubles; ``None`` once it is at ``ceiling``."""
+        if self.limit() >= self.ceiling:
+            return None
+        return self.interval_s - (_ramp_clock() - self._t0) % self.interval_s + self._SLACK_S
+
+    def acquire(self, stop: threading.Event, deadline: Optional[datetime]) -> bool:
+        """Wait for a free slot and take it.
+
+        Returns
+        -------
+        bool
+            ``True`` with a slot taken (the caller must ``release`` it), ``False`` with no
+            slot when ``stop`` is set or ``deadline`` has passed.
+        """
+        with self._cond:
+            while True:
+                if stop.is_set() or (deadline is not None and utcnow() >= deadline):
+                    return False
+                if self._running < self.limit():
+                    self._running += 1
+                    return True
+                sleeps = [] if deadline is None else [(deadline - utcnow()).total_seconds()]
+                step = self._seconds_to_next_step()
+                if step is not None:
+                    sleeps.append(step)
+                self._cond.wait(min(sleeps) if sleeps else None)
+
+    def release(self) -> None:
+        """Give a slot back and wake the waiters."""
+        with self._cond:
+            self._running -= 1
+            self._cond.notify_all()
+
+    def wake(self) -> None:
+        """Wake the waiters so that they see a stop flag that was just set."""
+        with self._cond:
+            self._cond.notify_all()
+
+
 class HornRunStopped(RuntimeError):
     """``run_horn`` stopped early because consecutive cells failed.
 
@@ -1330,6 +1508,9 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
     max_tokens: int = HORN_MAX_TOKENS,
     deadline: Optional[datetime] = None,
     max_consecutive_failures: int = 8,
+    rep_indices: Optional[Sequence[int]] = None,
+    ramp_start: Optional[int] = None,
+    ramp_minutes: float = 30,
 ) -> list[dict]:
     """Run and score every outstanding Horn cell of one model with ``sweep.run_cell``.
 
@@ -1340,6 +1521,17 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
     bucket's rows are pulled into ``out`` so that resume sees rows collected on any
     machine. New rows are pushed as one part after every ``push_every`` of them, and
     again in a ``finally``, so an interrupted run keeps what it collected.
+
+    ``rep_indices`` and a distinct ``out`` let two processes collect one model's cells at
+    once (for example two regions: one runs replicate 1, the other replicates 0 and 2, so
+    every arm has the same mix of regions). Each process pulls the bucket's rows into its
+    own ``out`` before it chooses cells, so it sees what the other has pushed, and each
+    pushes only rows the bucket lacks. The caller must give the processes disjoint cells;
+    two lines of output make an overlap visible (see Notes).
+
+    ``ramp_start`` makes the load rise gently: during the first ``ramp_minutes`` after
+    the cells start, at most ``ramp_start`` of them run at once, and the limit doubles
+    every ``ramp_minutes`` until it reaches ``concurrency``.
 
     Two limits end a run early without losing rows. After ``deadline`` no new cell is
     started (the run returns normally; a rerun sends the rest). After
@@ -1386,6 +1578,16 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
         Rows with verdict ``exception`` in a row (in the order they were written) that
         stop the run; a row with any other verdict resets the count. ``0`` disables the
         check.
+    rep_indices : Optional[Sequence[int]]
+        Replicate indices to run; ``None`` runs every replicate in ``range(reps)``. The
+        decoding seed of a cell is still its replicate index. An empty sequence runs
+        nothing.
+    ramp_start : Optional[int]
+        Cells allowed in flight at first, from 1 to ``concurrency``; ``None`` means no
+        ramp (``concurrency`` from the start).
+    ramp_minutes : float
+        Minutes between doublings of the limit; positive and finite. Used only with
+        ``ramp_start``.
 
     Returns
     -------
@@ -1396,7 +1598,10 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
     ------
     ValueError
         If the Bedrock id is unresolved, ``push_every`` is below 1,
-        ``max_consecutive_failures`` is negative, or ``deadline`` is naive.
+        ``max_consecutive_failures`` is negative, ``deadline`` is naive, an entry of
+        ``rep_indices`` is outside ``range(reps)``, ``ramp_start`` is outside
+        ``1..concurrency``, or ``ramp_minutes`` is not positive and finite while
+        ``ramp_start`` is set.
     RuntimeError
         If another sweep holds the rows lock.
     HornRunStopped
@@ -1405,7 +1610,16 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
 
     Notes
     -----
-    A line saying how many cells were left unstarted is printed when there are any.
+    Before the first request, a line says how many of this call's cells (after the
+    ``arms``, ``seeds`` and ``rep_indices`` filters) are already done in ``out`` once the
+    bucket's rows are pulled. After the final push, with ``s3_uri``, a line says how many
+    rows this call wrote for cells that another row in the bucket also covers
+    (``count_horn_duplicates``). Both are zero for processes with disjoint cells. A line
+    saying how many cells were left unstarted is printed when there are any.
+
+    The rows lock is per ``out`` file, so two processes of one model need different
+    ``out`` files (``horn_rows_path(key, label=...)``). Do not refresh the main rows file
+    with ``pull_horn_rows`` while a process holds it: the pull does not take the lock.
     """
     from botocore.exceptions import (  # pylint: disable=import-outside-toplevel
         BotoCoreError,
@@ -1425,6 +1639,15 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
     if deadline is not None and deadline.utcoffset() is None:
         # A naive deadline would raise a TypeError in a worker thread at the first compare.
         raise ValueError(f"deadline must be timezone-aware, got {deadline!r}")
+    wanted = None if rep_indices is None else set(rep_indices)
+    if wanted is not None and not wanted <= set(range(reps)):
+        outside = sorted(wanted - set(range(reps)))
+        raise ValueError(f"rep_indices must lie in range({reps}), got {outside} outside it")
+    if ramp_start is not None:
+        if not 1 <= ramp_start <= concurrency:
+            raise ValueError(f"ramp_start must be between 1 and concurrency ({concurrency}), got {ramp_start}")
+        if not 0 < ramp_minutes < float("inf"):
+            raise ValueError(f"ramp_minutes must be positive and finite, got {ramp_minutes}")
     sweep = load_sweep()
     out = out or horn_rows_path(model.key)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1458,16 +1681,45 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
             pull_horn_rows(model.key, s3_uri, region=s3_region, out=out)
         done = sweep.done_keys(out)
         cells = sweep.cells_in(rung, list(arms), list(seeds), reps)
+        if wanted is not None:
+            cells = [c for c in cells if c.rep in wanted]
         todo = [c for c in cells if (st.model,) + c.key not in done]
+        # The overlap guard, first half: a process that was given cells that the other
+        # process already pushed sees them here, before it bills anything.
+        print(
+            f"{model.key}: {len(cells) - len(todo)} of {len(cells)} cells of this call are already done "
+            f"(rows file after the pull); {len(todo)} to run"
+        )
         # Design: the deadline and the stop flag are checked in the worker, at the moment a
         # cell is about to start. Pool threads take queued cells on their own, so a check
         # in the result loop alone would let them start cells after the deadline.
         stop = threading.Event()
+        # Design: the ramp is a limit checked when a cell is about to start, not a smaller
+        # pool, so the deadline and the stop flag keep their meaning while a thread waits.
+        # A ramp that starts at ``concurrency`` limits nothing, so none is built.
+        ramp = (
+            None
+            if ramp_start is None or ramp_start == concurrency
+            else _Ramp(ramp_start, concurrency, ramp_minutes * 60)
+        )
+
+        def halt() -> None:
+            """Set the stop flag and wake the threads that wait for the ramp."""
+            stop.set()
+            if ramp is not None:
+                ramp.wake()
 
         def start_cell(cell):
             if stop.is_set() or (deadline is not None and utcnow() >= deadline):
                 return None  # not started: no request, no row
-            return sweep.run_cell(client, cell, st)
+            if ramp is None:
+                return sweep.run_cell(client, cell, st)
+            if not ramp.acquire(stop, deadline):
+                return None  # the stop flag or the deadline came while it waited
+            try:
+                return sweep.run_cell(client, cell, st)
+            finally:
+                ramp.release()
 
         stopped: Optional[str] = None
         with _env(HORN_STREAM_COMPLETIONS="1" if stream else "0"), ThreadPoolExecutor(concurrency) as pool:
@@ -1500,7 +1752,7 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
                         failures = 0
                     if max_consecutive_failures and failures >= max_consecutive_failures:
                         # Workers may pick a cell before the cancel below; the flag stops them.
-                        stop.set()
+                        halt()
                         stopped = (
                             f"{model.key}: {failures} consecutive cells failed; "
                             f"last error: {row.get('reason')}"
@@ -1516,7 +1768,9 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
             finally:
                 # Cells that have not started are dropped, so an interrupt does not bill
                 # the rest of the queue. Cells already running are billed either way, so
-                # their rows are kept before the final push.
+                # their rows are kept before the final push. A thread that waits for the
+                # ramp counts as started, so it is stopped by the flag, not by the cancel.
+                halt()
                 for fut in futs:
                     fut.cancel()
                 for fut in futs:
@@ -1528,6 +1782,17 @@ def run_horn(  # pylint: disable=too-many-arguments,too-many-locals,too-many-sta
                         print(f"{model.key}: a running cell left no row: {err!r}")
                 if s3_uri is not None:
                     push_horn_rows(model.key, s3_uri, region=s3_region, out=out)
+        # The overlap guard, second half. A failed read is reported, not raised: the rows
+        # are on disk and pushed, and the count is only a warning.
+        if s3_uri is not None and rows:
+            try:
+                dups = count_horn_duplicates(model.key, s3_uri, rows, region=s3_region)
+                print(
+                    f"{model.key}: {dups} of {len(rows)} rows written by this call duplicate "
+                    f"cells that another row in the bucket covers"
+                )
+            except (BotoCoreError, ClientError) as err:
+                print(f"{model.key}: could not count duplicate rows: {err}")
         # Every future is done here (the pool has shut down); a cell that returned
         # ``None`` or was cancelled never started.
         unstarted = sum(1 for f in futs if f.cancelled() or (not f.exception() and f.result() is None))

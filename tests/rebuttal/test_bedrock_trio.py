@@ -1,8 +1,10 @@
 """Offline tests for ``rebuttal/bedrock_trio.py`` against the shared OpenAI stub."""
 
+import collections
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -734,6 +736,271 @@ def test_a_torn_last_line_is_neither_pushed_nor_counted(fake_s3, tmp_path):
     out.write_text(out.read_text() + '{"torn')
     breakdown = bt.horn_breakdown([out])
     assert sum(c["rows"] for c in breakdown.values()) == 2
+
+
+# ------------------------------------------------- replicate filter, second process, ramp
+def _store_rows(fake_s3):
+    """Every row line in the bucket, parsed, in part order."""
+    return [json.loads(l) for p in _parts(fake_s3) for l in fake_s3.objects[p].decode().splitlines()]
+
+
+def _cell_counts(rows):
+    return collections.Counter((r["arm"], r["seed"], r["rep"]) for r in rows)
+
+
+def test_horn_rep_indices_run_only_those_replicates_and_a_later_call_sends_the_rest(mantle, tmp_path, capsys):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    out = tmp_path / "rows.jsonl"
+    rows = _horn_run(NEMO, rung, out, reps=3, rep_indices=[1])
+    assert len(rows) == 8 == len(mantle.requests)
+    assert {r["rep"] for r in rows} == {1} and {r["body"]["seed"] for r in mantle.requests} == {1}
+    assert "0 of 8 cells of this call are already done" in capsys.readouterr().out
+
+    # The decoding seed is still the replicate index, and what the filter left is what remains.
+    assert len(_horn_run(NEMO, rung, out, reps=3)) == 16 == len(mantle.requests) - 8
+    assert {r["body"]["seed"] for r in mantle.requests[8:]} == {0, 2}
+    assert _horn_run(NEMO, rung, out, reps=3, rep_indices=[0, 1, 2]) == []
+    assert len(mantle.requests) == 24
+    assert _horn_run(NEMO, rung, tmp_path / "none.jsonl", reps=3, rep_indices=[]) == []
+    assert len(mantle.requests) == 24, "an empty filter runs nothing"
+    printed = capsys.readouterr().out
+    assert "8 of 24 cells of this call are already done" in printed and "24 of 24 cells of this call" in printed
+
+
+@pytest.mark.parametrize("bad", [[3], [0, -1], [1, 7]])
+def test_horn_refuses_replicate_indices_outside_the_protocol(mantle, tmp_path, bad):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    with pytest.raises(ValueError, match="rep_indices"):
+        _horn_run(NEMO, rung, tmp_path / "a.jsonl", reps=3, rep_indices=bad)
+    assert mantle.requests == [] and not (tmp_path / "a.jsonl").exists()
+
+
+def test_horn_rows_path_labels_a_working_copy_and_refuses_odd_labels(tmp_path):
+    key = NEMO.key
+    assert bt.horn_rows_path(key, tmp_path) == tmp_path / "horn" / f"{key}.jsonl"
+    assert bt.horn_rows_path(key, tmp_path, "east-2.v1_x") == tmp_path / "horn" / f"{key}--east-2.v1_x.jsonl"
+    for bad in ("", "a/b", "a b", "é", "../x"):
+        with pytest.raises(ValueError, match="label"):
+            bt.horn_rows_path(key, tmp_path, bad)
+
+
+def _two_regions(mantle, rung, fake_s3, tmp_path, **kw):
+    """Run replicates 0 and 2 from us-east-1 and replicate 1 from us-east-2, one local file each."""
+    runs = {}
+    for label, region, reps in (("east-1", "us-east-1", [0, 2]), ("east-2", "us-east-2", [1])):
+        out = bt.horn_rows_path(NEMO.key, tmp_path, label)
+        runs[label] = (out, bt.run_horn(
+            NEMO, region, {"reasoning_effort": "high"}, rung, [100], reps=3, out=out, s3_uri=URI,
+            rep_indices=reps, **kw))
+    return runs
+
+
+def test_two_processes_of_one_model_fill_the_store_once_and_every_file_after_a_pull(
+    mantle, fake_s3, tmp_path, monkeypatch, capsys
+):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    monkeypatch.setattr(bt, "utcnow", lambda: FIXED_NOW)  # both pushes pick the same stamp
+    runs = _two_regions(mantle, rung, fake_s3, tmp_path)
+    (out1, rows1), (out2, rows2) = runs["east-1"], runs["east-2"]
+    assert (len(rows1), len(rows2)) == (16, 8) and len(mantle.requests) == 24
+
+    # The store holds every cell once; the same-instant pushes took distinct, free stamps.
+    store = _store_rows(fake_s3)
+    assert len(store) == 24 and set(_cell_counts(store).values()) == {1} and len(_cell_counts(store)) == 24
+    assert len(_parts(fake_s3)) == 2
+    assert {r["provider"] for r in store if r["rep"] == 1} == {"bedrock-mantle:us-east-2"}
+    assert {r["provider"] for r in store if r["rep"] != 1} == {"bedrock-mantle:us-east-1"}
+    out = capsys.readouterr().out
+    assert "0 of 16 cells of this call are already done" in out and "0 of 8 cells of this call are already done" in out
+    assert "0 of 16 rows written by this call duplicate" in out and "0 of 8 rows written by this call duplicate" in out
+
+    # The second process saw the first one's rows only by pulling them: its file held 16 + 8.
+    assert len(out2.read_text().splitlines()) == 24 and len(out1.read_text().splitlines()) == 16
+    assert bt.pull_horn_rows(NEMO.key, URI, out=out1) == 8
+    assert bt.pull_horn_rows(NEMO.key, URI, out=out2) == 0
+    lines = sorted(l for p in _parts(fake_s3) for l in fake_s3.objects[p].decode().splitlines())
+    assert sorted(out1.read_text().splitlines()) == lines == sorted(out2.read_text().splitlines())
+
+    # The reports read the main file: the existing pull fills it with every row.
+    main = bt.horn_rows_path(NEMO.key, tmp_path)
+    assert not main.exists() and bt.pull_horn_rows(NEMO.key, URI, results_dir=tmp_path) == 24
+    assert sorted(main.read_text().splitlines()) == lines
+    cells, dropped = stats.load_rows([main])
+    assert not dropped and len(cells[(NEMO.key, "m2")]) == 8, "eight arms"
+    assert {len(reps) for per_seed in cells[(NEMO.key, "m2")].values() for reps in per_seed.values()} == {3}
+
+    # Nothing is left to run for either process.
+    before = len(mantle.requests)
+    assert _two_regions(mantle, rung, fake_s3, tmp_path) and len(mantle.requests) == before
+    assert len(_store_rows(fake_s3)) == 24
+
+
+def test_a_second_process_started_while_the_first_pushes_sees_the_rows_pushed_so_far(
+    mantle, fake_s3, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HORN_STREAM_COMPLETIONS", "1")  # two overlapping runs share the process environment
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    sweep, run_cell = bt.load_sweep(), bt.load_sweep().run_cell
+
+    def slow_cell(*args):
+        time.sleep(0.1)
+        return run_cell(*args)
+
+    monkeypatch.setattr(sweep, "run_cell", slow_cell)
+    out1, out2 = (bt.horn_rows_path(NEMO.key, tmp_path, name) for name in ("east-1", "east-2"))
+    result = {}
+
+    def first():
+        try:
+            result["rows"] = bt.run_horn(NEMO, "us-east-1", {}, rung, [100], reps=3, out=out1, s3_uri=URI,
+                                         concurrency=2, push_every=2, rep_indices=[0, 2])
+        except Exception as err:  # pylint: disable=broad-exception-caught
+            result["error"] = err
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not _parts(fake_s3) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    pushed = set(l for p in _parts(fake_s3) for l in fake_s3.objects[p].decode().splitlines())
+    assert pushed, "the first process must have pushed before the second starts"
+    rows2 = bt.run_horn(NEMO, "us-east-2", {}, rung, [100], reps=3, out=out2, s3_uri=URI, concurrency=2,
+                        rep_indices=[1])
+    thread.join(30)
+    assert "error" not in result and len(result["rows"]) == 16 and len(rows2) == 8
+    assert pushed <= set(out2.read_text().splitlines()), "the second process pulled what the first had pushed"
+    store = _store_rows(fake_s3)
+    assert len(store) == 24 and set(_cell_counts(store).values()) == {1}
+    assert len(mantle.requests) == 24
+
+
+def test_overlapping_processes_report_the_duplicate_rows(mantle, fake_s3, tmp_path, monkeypatch, capsys):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    out_a, out_b = (bt.horn_rows_path(NEMO.key, tmp_path, name) for name in ("a", "b"))
+    # Process A keeps its rows local for now: replicate 1.
+    rows_a = bt.run_horn(NEMO, "us-east-1", {}, rung, [100], reps=3, out=out_a, rep_indices=[1])
+    capsys.readouterr()
+
+    # Process B (replicates 1 and 2) starts with an empty bucket, so it cannot see A's rows;
+    # A's rows reach the bucket while B runs.
+    sweep, run_cell, pushed = bt.load_sweep(), bt.load_sweep().run_cell, []
+
+    def push_a_then_run(*args):
+        if not pushed:
+            pushed.append(bt.push_horn_rows(NEMO.key, URI, out=out_a))
+        return run_cell(*args)
+
+    monkeypatch.setattr(sweep, "run_cell", push_a_then_run)
+    rows_b = bt.run_horn(NEMO, "us-east-2", {}, rung, [100], reps=3, out=out_b, s3_uri=URI, concurrency=1,
+                         rep_indices=[1, 2])
+    out = capsys.readouterr().out
+    assert "0 of 16 cells of this call are already done" in out
+    assert "8 of 16 rows written by this call duplicate" in out
+    assert len(_store_rows(fake_s3)) == 24 and sorted(_cell_counts(_store_rows(fake_s3)).values()) == [1] * 8 + [2] * 8
+    assert bt.count_horn_duplicates(NEMO.key, URI, rows_a) == 8
+    assert bt.count_horn_duplicates(NEMO.key, URI, rows_b) == 8
+
+    # A process that starts now finds replicate 1 done and says so.
+    capsys.readouterr()
+    assert _horn_run(NEMO, rung, tmp_path / "c.jsonl", reps=3, rep_indices=[1], s3_uri=URI) == []
+    assert "8 of 8 cells of this call are already done" in capsys.readouterr().out
+
+
+def test_an_exception_row_does_not_make_a_retry_a_duplicate(fake_s3, tmp_path):
+    cell = {"model": "m", "rung": "r", "arm": "lem", "seed": 100, "rep": 0, "provider": "p"}
+    failed, retried = cell | {"verdict": "exception"}, cell | {"verdict": "success", "t": 1}
+    out = tmp_path / "rows.jsonl"
+    out.write_text(bt._dump_row(failed) + "\n" + bt._dump_row(retried) + "\n")
+    assert bt.push_horn_rows(NEMO.key, URI, out=out)
+    assert bt.count_horn_duplicates(NEMO.key, URI, [failed, retried]) == 1, "only the failed row has a covering row"
+    assert bt.count_horn_duplicates(NEMO.key, URI, [retried]) == 0
+
+
+def _ramp_run(mantle, tmp_path, monkeypatch, sleep, reps=1, **kw):
+    """Run the 8 cells of one theory per replicate with each cell holding for ``sleep`` seconds.
+
+    Returns the rows, the (cells in flight, seconds since the ramp started) seen as each cell
+    began, and the elapsed seconds of the whole run.
+    """
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    sweep, run_cell = bt.load_sweep(), bt.load_sweep().run_cell
+    clock, started, lock, inflight, seen = bt._ramp_clock, [], threading.Lock(), [0], []
+
+    def watched_clock():
+        now = clock()
+        started.append(now)
+        return now
+
+    def slow_cell(*args):
+        with lock:
+            inflight[0] += 1
+            seen.append((inflight[0], clock() - started[0] if started else 0.0))  # no ramp, no start time
+        try:
+            time.sleep(sleep)
+            return run_cell(*args)
+        finally:
+            with lock:
+                inflight[0] -= 1
+
+    monkeypatch.setattr(sweep, "run_cell", slow_cell)
+    monkeypatch.setattr(bt, "_ramp_clock", watched_clock)
+    begun = time.monotonic()
+    rows = _horn_run(NEMO, rung, tmp_path / "rows.jsonl", reps=reps, **kw)
+    return rows, seen, time.monotonic() - begun
+
+
+def test_horn_ramp_never_exceeds_the_current_limit_and_reaches_the_concurrency(mantle, tmp_path, monkeypatch):
+    interval = 0.01 * 60  # ramp_minutes=0.01
+    rows, seen, _ = _ramp_run(mantle, tmp_path, monkeypatch, sleep=0.25, reps=4, concurrency=8, ramp_start=2,
+                              ramp_minutes=0.01)
+    assert len(rows) == 32 == len(mantle.requests)
+    for flying, elapsed in seen:
+        assert flying <= min(8, 2 * 2 ** int(elapsed // interval)), (flying, elapsed)
+    assert max(flying for flying, _ in seen) == 8, "the limit reaches the concurrency"
+    assert max(flying for flying, elapsed in seen if elapsed < interval) == 2, "and starts at ramp_start"
+
+
+def test_horn_without_a_ramp_starts_all_workers_at_once(mantle, tmp_path, monkeypatch):
+    rows, seen, _ = _ramp_run(mantle, tmp_path, monkeypatch, sleep=0.25, concurrency=8)
+    assert len(rows) == 8 and max(flying for flying, _ in seen) == 8
+
+
+def test_horn_deadline_passing_while_cells_wait_for_the_ramp_leaves_them_unstarted(
+    mantle, tmp_path, monkeypatch, capsys
+):
+    deadline = bt.utcnow() + timedelta(seconds=0.4)
+    rows, seen, took = _ramp_run(mantle, tmp_path, monkeypatch, sleep=1.0, concurrency=4, ramp_start=1,
+                                 ramp_minutes=30, deadline=deadline)
+    assert len(rows) == 1 == len(mantle.requests) == len(seen), "only the cell that held the single slot ran"
+    assert "7 of 8 cells left unstarted (deadline passed)" in capsys.readouterr().out
+    assert took < 10, "the waiting cells gave up at the deadline, not at the next doubling in 30 minutes"
+
+
+def test_horn_stop_flag_releases_cells_that_wait_for_the_ramp(mantle, tmp_path, monkeypatch):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    _reject_with_400(mantle, monkeypatch)
+    begun = time.monotonic()
+    with pytest.raises(bt.HornRunStopped, match="2 consecutive"):
+        _horn_run(NEMO, rung, tmp_path / "rows.jsonl", concurrency=4, ramp_start=1, ramp_minutes=30,
+                  max_consecutive_failures=2)
+    assert 2 <= len(mantle.requests) <= 3, "one slot: a third cell may start before the stop flag is set"
+    assert time.monotonic() - begun < 20, "the waiting cells did not wait out the 30-minute ramp"
+
+
+@pytest.mark.parametrize("kw", [{"ramp_start": 9}, {"ramp_start": 0}, {"ramp_start": -1},
+                                {"ramp_start": 2, "ramp_minutes": 0}, {"ramp_start": 2, "ramp_minutes": -1.0},
+                                {"ramp_start": 2, "ramp_minutes": float("inf")}])
+def test_horn_refuses_a_ramp_outside_one_to_the_concurrency(mantle, tmp_path, kw):
+    rung = _proof_response(mantle, tmp_path, reasoning="plan")
+    with pytest.raises(ValueError, match="ramp_"):
+        _horn_run(NEMO, rung, tmp_path / "a.jsonl", concurrency=8, **kw)
+    assert mantle.requests == [] and not (tmp_path / "a.jsonl").exists()
+
+
+def test_horn_ramp_start_equal_to_the_concurrency_limits_nothing(mantle, tmp_path, monkeypatch):
+    rows, seen, _ = _ramp_run(mantle, tmp_path, monkeypatch, sleep=0.2, concurrency=4, ramp_start=4,
+                              ramp_minutes=30)
+    assert len(rows) == 8 and max(flying for flying, _ in seen) == 4
 
 
 def test_horn_reference_gives_published_rates_and_output_lengths(tmp_path):

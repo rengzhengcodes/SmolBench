@@ -12,7 +12,7 @@ import pytest
 # The stub Bedrock server, the proof response and the test module's own copy of
 # ``bedrock_trio`` are shared with test_bedrock_trio.py, which sits in this folder.
 import test_bedrock_trio as tbt
-from test_bedrock_trio import _final, _proof_response, mantle  # noqa: F401  # pylint: disable=unused-import
+from test_bedrock_trio import _final, _proof_response, fake_s3, mantle  # noqa: F401  # pylint: disable=unused-import
 from tests._paths import REPO_ROOT, load_by_path
 from conftest import StubTokenizer
 
@@ -250,3 +250,73 @@ def test_bad_numbers_are_usage_errors_before_any_billed_call(cli, mantle, bad):
     with pytest.raises(SystemExit) as err:
         rp.main(["horn", "--smoke", "--no-s3", "--model", NEMO.key] + bad)
     assert err.value.code == 1 and calls["mint"] == 0 and calls["probe"] == 0 and not _posts(mantle)
+
+
+@pytest.mark.parametrize("text, indices", [("0,2", [0, 2]), ("1", [1]), (" 2, 0 ", [2, 0]), ("1,1", [1])])
+def test_parse_rep_indices(rp, text, indices):
+    assert rp.build_parser().parse_args(["horn", "--model", "m", "--rep-indices", text]).rep_indices == indices
+
+
+@pytest.mark.parametrize("bad", [["--rep-indices", "a"], ["--rep-indices", "-1"], ["--rep-indices", ""],
+                                 ["--rep-indices", "0,,2"], ["--rep-indices", "1.5"], ["--rep-indices", "3"],
+                                 ["--rows-label", ""], ["--rows-label", "a/b"], ["--rows-label", "a b"],
+                                 ["--ramp-start", "0"], ["--ramp-start", "x"], ["--ramp-minutes", "0"],
+                                 ["--ramp-minutes", "-2"], ["--ramp-minutes", "nan"], ["--ramp-minutes", "inf"],
+                                 ["--ramp-start", "9", "--concurrency", "8"]])
+def test_bad_replicate_label_and_ramp_options_are_usage_errors_before_any_billed_call(cli, mantle, bad):
+    rp, calls = cli
+    with pytest.raises(SystemExit) as err:
+        rp.main(["horn", "--smoke", "--no-s3", "--model", NEMO.key, "--reps", "3"] + bad)
+    assert err.value.code == 1 and calls["mint"] == 0 and calls["probe"] == 0 and not _posts(mantle)
+
+
+def test_replicate_label_and_ramp_options_reach_run_horn_and_the_start_line(cli, mantle, tmp_path, monkeypatch, capsys):
+    rp, calls = cli
+    seen = {}
+
+    def fake_run_horn(model, region, reasoning, rung, seeds, reps, **kw):
+        seen.update(region=region, reps=reps, **kw)
+        return []
+
+    monkeypatch.setattr(bt, "run_horn", fake_run_horn)
+    monkeypatch.setattr(bt, "render_horn_rung", lambda m, seeds, rungs_dir, arms: tmp_path)
+    base = ["horn", "--smoke", "--no-s3", "--model", NEMO.key, "--reps", "3", "--concurrency", "8"]
+    assert rp.main(base) == 0
+    assert (seen["rep_indices"], seen["ramp_start"], seen["ramp_minutes"]) == (None, None, 30)
+    assert seen["out"] == tmp_path / "results" / bt.SMOKE_PREFIX / "horn" / f"{NEMO.key}.jsonl"
+    assert "ramp none" in capsys.readouterr().out
+
+    argv = base + ["--rep-indices", "0,2", "--rows-label", "east-1", "--ramp-start", "2", "--ramp-minutes", "0.5",
+                   "--region", "us-east-1"]
+    assert rp.main(argv) == 0
+    assert (seen["rep_indices"], seen["ramp_start"], seen["ramp_minutes"]) == ([0, 2], 2, 0.5)
+    assert seen["out"] == tmp_path / "results" / bt.SMOKE_PREFIX / "horn" / f"{NEMO.key}--east-1.jsonl"
+    printed = capsys.readouterr().out
+    assert ", rep indices 0,2, rows label east-1, ramp 2 doubling every 0.5 min to 8" in printed
+    assert "ramp none" not in printed
+
+
+def test_a_labelled_run_writes_its_own_file_and_the_summary_says_how_to_refresh_the_main_one(
+    cli, mantle, fake_s3, tmp_path, capsys
+):
+    rp, calls = cli
+    _proof_response(mantle, tmp_path, reasoning="plan")
+    argv = ["horn", "--smoke", "--model", NEMO.key, "--arms", "lem", "--seeds", "100", "--reps", "3",
+            "--rep-indices", "1", "--rows-label", "east-2"]
+    assert rp.main(argv) == 0
+    folder = tmp_path / "results" / bt.SMOKE_PREFIX / "horn"
+    assert sorted(f.name for f in folder.iterdir()) == [f"{NEMO.key}--east-2.jsonl"], "the main file is not written"
+    assert len(_posts(mantle)) == 1
+    printed = capsys.readouterr().out
+    assert "1 rows written by this call" in printed and "is a working copy" in printed
+    assert f"{NEMO.key}.jsonl" in printed and "pull_horn_rows" in printed and bt.RESULTS_S3 in printed
+    assert "lem: " in printed, "the counts come from the labelled file"
+
+    # The printed command does what it says: it fills the main file with every row of the bucket.
+    smoke_uri, smoke_dir = f"{bt.RESULTS_S3}/{bt.SMOKE_PREFIX}", tmp_path / "results" / bt.SMOKE_PREFIX
+    assert bt.pull_horn_rows(NEMO.key, smoke_uri, results_dir=smoke_dir) == 1
+    assert len((folder / f"{NEMO.key}.jsonl").read_text().splitlines()) == 1
+
+    # Without a bucket nothing links the working copy to the main file, and the summary says that.
+    assert rp.main(argv + ["--no-s3", "--rows-label", "local-only"]) == 0
+    assert "nothing links it to" in capsys.readouterr().out
