@@ -37,8 +37,8 @@ overwritten or deleted, and a rerun adds new stamped keys.
 | `deduction/horn/<model>/rows--<stamp>.jsonl` | A part of Horn rows: the rows one push added |
 | `probes/probes--<stamp>.json` | Model ids and the reasoning fields each model accepted |
 | `probes/cap-probe--<label>--<stamp>.jsonl` | Rows of one output-cap probe (`cap_probe.py`) |
-| `attention/induction/<model>/seed=<s>/<arm>--<stamp>/q<i>.r<rank>.{npz,json}` | Attention summary of one induction mark, one object pair per tensor-parallel rank |
-| `attention/induction/<model>/seed=<s>/<arm>--<stamp>/manifest--<ts>.json` | What one replay captured for that run |
+| `attention-v2/induction/<model>/seed=<s>/<arm>--<stamp>/q<i>.r<rank>.{npz,json}` | Attention summary of one induction mark, one object pair per tensor-parallel rank |
+| `attention-v2/induction/<model>/seed=<s>/<arm>--<stamp>/manifest--<ts>.json` | What one replay captured for that run |
 
 `results/` is a mirror that the report cells read: `results/induction/induction/<model>/seed=<s>/...`
 (what `smolbench.induction.repro` reads), `results/horn/<model>.jsonl` (what
@@ -99,40 +99,60 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
 Bedrock returns no attention weights. `attention_replay.py` replays each stored induction
 mark (prompt, returned reasoning, answer) through the matching open-weights checkpoint on a
 self-hosted vLLM server on EC2, teacher-forced, with a capture plugin. For each response
-token, layer and head it stores the attention mass on four classes of earlier tokens (the
-informative prompt, the whitespace padding of `noise_intens`, template tokens, the response
-so far) and the entropy. The captures measure the open checkpoint reading Bedrock's text,
-not Bedrock's own serving. `attention_replay.APPROXIMATIONS` lists the differences: token
-ids are encoded again from text, the chat template is the open repository's, and newlines
-around the thinking delimiters are not restored.
+token, layer and head it stores:
 
-The notebook section is off by default and has two switches:
+- the prompt entropy: the Shannon entropy, in nats, of the attention weights on the input
+  prompt after they are renormalized to sum to 1;
+- the entropy of the whole attention row;
+- the attention mass on four classes of earlier tokens: the informative prompt, the
+  padding (the whitespace of `noise_intens`, the added rule lines of `related_intens`),
+  template tokens, and the response so far.
 
-- `ATTENTION = True` plans the replay offline (jobs, tokens, errors, storage estimate). It
-  makes no AWS call.
+`read_captures` averages the prompt entropy over one response and then over responses, and
+reports global-attention and sliding-window layers apart. A response token with no prompt
+token in reach (late tokens in a sliding-window layer) has no prompt entropy and is left
+out. `pull_captures` mirrors the stored captures for it. Only captures that a manifest
+records as verified are read.
+
+The captures measure the open checkpoint reading Bedrock's text, not Bedrock's own serving.
+`attention_replay.APPROXIMATIONS` lists the differences: token ids are encoded again from
+text, the chat template is the open repository's, and newlines around the thinking
+delimiters are not restored.
+
+The notebook section is off by default and has three switches:
+
+- `ATTENTION = True` plans the replay offline (jobs, tokens, errors, storage estimate) and
+  reports the captures already stored. Planning makes no AWS call.
 - `ATTENTION_APPROVED = True` launches. `replay_model` provisions one billed EC2 spot GPU
   instance, serves the checkpoint, captures, audits every stored array against the model's
   shape and terminates the instance. It refuses anything but the literal `True` before
   any AWS client is built.
+- `ATTENTION_ALLOW_UNVERIFIED = True` is also needed for `deepseek-v3.1`.
 
 Safeguards: a mark with mis-decoded text is listed as an error and never sent; jobs already
 in the bucket are skipped; uploads use `If-None-Match: *`, so they cannot replace an
 object; a job with only some of its rank objects is reported as partial.
-The offline reader `read_captures` reads only captures that a manifest records as verified.
 
 The instance serves from the fleet's weight mirror (`EC2_S3_MODEL_CACHE`, set in the
 notebook's first cell). `replay_model` refuses to launch without it: on 2026-11-16 an
 instance without the mirror was billed for 15 minutes and vLLM failed at startup.
 
-`deepseek-v3.1` is refused. vLLM serves it with multi-head latent attention (a separate
-MLA layer), which the capture hook does not reach, so a run would store nothing.
+`deepseek-v3.1`: vLLM serves it with multi-head latent attention. The plugin captures that
+layer by rebuilding per-head keys and values with the layer's own projection, as vLLM's
+prefill path does. This is tested against a stub and has never run on a live server. Serving
+is unverified too: the pinned vLLM image failed to start this model on 2026-09-19 with a
+tokenizer error whose cause is unknown. For capture it is served with a 49,152-token
+context, because startup memory at 131,072 tokens is unmeasured.
 
-The replay ran once against a live instance: the Gemma 4 31B pilot of 2026-11-16 on the
-second smoke (54 jobs, all verified; captures under `bedrock-trio/smoke-2/attention/`).
-Its offline tests are in
-`tests/rebuttal/test_attention_replay.py` and `tests/evals/test_attention*.py`. The capture
-plugin tests need torch and are skipped by the default suite. In an environment with torch,
-run `python -m pytest tests/evals/test_attention_capture_plugin.py`.
+What has run live: the Gemma 4 31B pilot of 2026-11-16 on the second smoke (54 jobs, all
+verified; captures under `bedrock-trio/smoke-2/attention/`). It predates the prompt entropy
+and the `related_intens` arm, so new captures go under `attention-v2/`. Nemotron Super and
+DeepSeek V3.1 have no captures.
+
+The offline tests are in `tests/rebuttal/test_attention_replay.py` and
+`tests/evals/test_attention*.py`. The capture plugin tests need torch and are skipped by
+the default suite. In an environment with torch, run
+`python -m pytest tests/evals/test_attention_capture_plugin.py`.
 
 ## Run
 
