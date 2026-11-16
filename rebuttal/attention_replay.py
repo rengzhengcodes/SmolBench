@@ -1,14 +1,21 @@
-"""Replay the rebuttal's stored induction transcripts through an open-weights attention capture.
+"""Replay the rebuttal's stored transcripts through an open-weights attention capture.
 
-The rebuttal collected the three induction arms (``intens``, ``noise_intens``,
-``extens``) from three hosted models and stored, per mark, only text: the
-query, the reasoning, the response. Those hosted models expose no attention.
-This module asks what the same text looks like to the matching open-weights
-checkpoint: it rebuilds each mark's token sequence, sends it to a spot GPU box
-running the vLLM attention-capture plugin (``smolbench.evals.attention`` is the
-store-agnostic client half), and keeps the per-class attention mass arrays in
-a private S3 bucket. The offline reader (``read_captures``) then computes the
-pad-mass ratio the noise arm is about.
+The rebuttal collected the induction arms (``intens``, ``noise_intens``,
+``extens``, ``related_intens``) and the deduction (Horn) arms from three hosted
+models and stored, per mark or per cell, only text: the query, the reasoning, the
+response. Those hosted models expose no attention. This module asks what the
+same text looks like to the matching open-weights checkpoint: it rebuilds each
+transcript's token sequence, sends it to a spot GPU box running the vLLM
+attention-capture plugin (``smolbench.evals.attention`` is the store-agnostic
+client half), and keeps the attention arrays in a private S3 bucket. The offline
+reader (``read_captures``) then computes the pad-mass ratio the noise arm is about
+and the attention entropies; ``read_entropy_table`` returns both studies' entropies
+in one table.
+
+Two studies share this driver, chosen with the ``study`` keyword of the entry
+points: ``"induction"`` (default; the stored YAML runs) and ``"horn"`` (the
+deduction rows files; see "The deduction (Horn) replay" below). Everything that
+spends money or touches the bucket is one implementation for both.
 
 What it does, in order
 ----------------------
@@ -25,13 +32,14 @@ What it does, in order
 3. ``audit_existing``: audit and manifest the captures that are already in the bucket
    (those whose audit never ran, for example because it outlived the AWS session);
    S3 only, no box.
-4. ``read_captures``: offline, over a local mirror of the S3 tree.
+4. ``read_captures``: offline, over a local mirror of the S3 tree (``pull_captures`` makes
+   one); ``read_entropy_table`` returns the entropies of both studies in one table.
 
 Capture modes and versions
 --------------------------
 The plugin stores a job in one of two kinds, chosen per run with the ``mode``
 keyword of ``plan_replay``, ``replay_model`` and ``build_jobs`` (default
-``"mass"``; ``MODES`` lists both):
+``"mass"`` for induction and ``"summary"`` for deduction; ``MODES`` lists both):
 
 * ``"mass"``: per-row arrays ``[L, P, H_local, ...]`` (``mass``, ``entropy``,
   ``sink``, and from version 2 ``prompt_entropy``). Size grows with the number
@@ -78,9 +86,11 @@ the same list, one line each, and every plan and manifest carries it.
    with no stored reasoning is rebuilt with an empty reasoning block. A
    generation that was cut at the output cap is rebuilt with a closing
    end-of-turn token it never emitted.
-5. The conversation is one user turn with no system message, matching the
-   collection harness. Server-side defaults the harness did not send (a system
-   prompt, guardrails, sampling settings) are not represented.
+5. The conversation matches what the collection harness sent. Induction: one
+   user turn, no system message. Deduction: one system turn holding the cell's
+   ``system.md`` and one user turn holding its ``prompt.md``. Server-side
+   defaults the harness did not send (a system prompt, guardrails, sampling
+   settings) are not represented.
 6. The capture runs the pinned open-weights checkpoint on EC2 (its own numerics
    and kernels), teacher-forced on the stored completion. It measures that
    checkpoint's attention on the hosted model's text, not the hosted service's
@@ -96,12 +106,24 @@ the same list, one line each, and every plan and manifest carries it.
 8. Tokens that straddle the edge of the query (template text merged into the
    query's first or last token) take the full token text as their piece. The
    template tokens next to the query are class 2, never class 0.
-9. When a seed and arm has more than one stored run, only the earliest run
-   (lexicographic minimum of the stamp) is replayed, as in the released-results
-   reader. Marks of later runs are never captured.
-10. ``bedrock_token_counts`` is always ``None``: the stored marks carry no usage
-    field, so the rebuilt length cannot be compared with the length the hosted
-    service counted.
+9. Induction: when a seed and arm has more than one stored run, only the
+   earliest run (lexicographic minimum of the stamp) is replayed, as in the
+   released-results reader. Marks of later runs are never captured. Deduction:
+   when a cell (rung, arm, seed, replicate) has several non-exception rows, only
+   the earliest by ``(ts, line index)`` is replayed.
+10. Induction: ``bedrock_token_counts`` is always ``None``: the stored marks carry
+    no usage field, so the rebuilt length cannot be compared with the length the
+    hosted service counted. Deduction: each row stores ``prompt_tokens`` and
+    ``completion_tokens`` as the service counted them, and a job carries them as
+    ``bedrock_token_counts`` for that comparison.
+11. What the system message adds (deduction only). The cell's ``system.md`` is
+    rendered as a system turn before the user turn, as the collection sent it. Its
+    tokens are class 2 (they are not query text, like the template's own tokens).
+    The template may trim or move that text (the Gemma-4 template puts it after the
+    thinking marker inside its own system turn); the rebuild only checks that the
+    text, or its stripped form, occurs in the rendered prompt. No token is class 1:
+    the deduction study has no whitespace pad (its ``pad`` arm adds lorem-ipsum lines
+    and is not marked), so the pad-ratio fields of a deduction arm are undefined.
 
 S3 layout, append-only rule and approval gate
 ---------------------------------------------
@@ -135,6 +157,50 @@ provider's own spend guards stay in force: the idle watchdog from the default
 provisioning arguments, the lifetime backstop, and termination in a
 ``finally`` block.
 
+The deduction (Horn) replay
+---------------------------
+``study="horn"`` replays the cells of the deduction experiment. Inputs: the model's
+rows file (JSON lines, ``bt.horn_rows_path(model)`` by default, or ``horn_rows=``: a
+rows file, a folder holding ``<model>.jsonl``, or a mapping per model) and the rendered
+rungs (``<rungs_dir>/<rung>/s<seed:04d>/<arm>/prompt.md`` and ``system.md``, default
+``bt.RUNGS_DIR``). ``results_root`` is ignored. Each row is one cell and holds the
+generation: ``content`` (the answer), ``reasoning``, the token counts and ``ts``.
+The collection sent ``system.md`` as a system message and ``prompt.md`` as the user
+message, so the rebuild renders both (approximation 11).
+
+Selection rule. The rows file can be appended to while it is read, and several
+machines can write parts of it, so rows can be out of time order. Each line is
+parsed; an unterminated last line that does not parse is reported as torn and any
+other bad line is reported with its line number (neither stops the plan). The filters
+``arms``, ``seeds`` and ``reps`` apply first. Rows are then grouped by cell ``(rung,
+arm, seed, rep)``. A row with ``verdict == "exception"`` holds no generation and never
+counts (it is only counted per arm, ``exception_rows``). Of the other rows of a cell
+the EARLIEST by ``(ts, line index)`` is replayed. A selected row that cannot be
+rebuilt faithfully is a plan error and its cell is not planned: its ``spec_key`` is
+another model's, the collection added a provider system prompt (whose text is not
+stored), ``prompt.md`` or ``system.md`` is missing, the digest of ``prompt.md`` is not
+the row's ``prompt_sha256`` (the rung changed since the collection), the stored text
+is mis-decoded, or the rebuild fails.
+
+Layout and keys. Objects live next to the induction ones, never under them::
+
+    <prefix>/deduction/horn/<model>/<rung>/<arm>/s<seed>.rep<rep>.r<rank>.npz
+    <prefix>/deduction/horn/<model>/<rung>/<arm>/s<seed>.rep<rep>.r<rank>.json
+    <prefix>/deduction/horn/<model>/<rung>/<arm>/manifest--<utc>.json
+
+The job id is ``horn.<rung>.<arm>.s<seed>.rep<rep>``. One manifest per ``<rung>/<arm>``
+folder per run records the cell's seed, replicate, ``prompt_sha256`` and the row's
+line index (``row_index``). The listing prefix ``s<seed>.rep<rep>.`` cannot match
+another cell's objects, and no key matches an induction key.
+
+Mode. Deduction responses are long (up to 131072 tokens), so jobs default to
+``"summary"``, whose size does not grow with the response. ``plan_replay`` plans either
+mode, so the size of the mass capture can be compared. ``replay_model(study="horn",
+mode="mass")`` raises ``ValueError`` unless ``allow_horn_mass=True``, and the message
+states the mass estimate. The instance tag is ``EC2_TAG-horn-<model>[-label]``
+(``run_tag``), so a deduction run and an induction run of one model use separate boxes
+and state files.
+
 The deepseek-v3.1 serving refusal
 ---------------------------------
 The shipped plugin wraps vLLM's ``Attention.forward`` and also its multi-head
@@ -145,7 +211,9 @@ model on the pinned vLLM image is unverified: it failed at engine start there on
 ``allow_unverified_serve=True`` (see ``SERVE_UNVERIFIED``). The plan for that
 model still works, so its token sizes are known. Capture serves it with a
 49152-token context (``CAPTURE_MAX_MODEL_LEN``); jobs longer than that are
-excluded as over-context, in the plan and in the run.
+excluded as over-context, in the plan and in the run. The ``capture_max_model_len``
+keyword of ``plan_replay``, ``replay_model`` and ``audit_existing`` replaces that context
+(of any model) for one run; it must be an integer up to the spec's ``max_model_len``.
 """
 
 from __future__ import annotations
@@ -164,12 +232,13 @@ import shutil
 import sys
 import tempfile
 import threading
+from collections.abc import Hashable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -193,6 +262,7 @@ __all__ = [
     "DEFAULT_S3_URI",
     "EC2_TAG",
     "run_tag",
+    "HornRun",
     "INSTANCE_TYPES",
     "PlannedJob",
     "REASONING_FORMATS",
@@ -205,6 +275,7 @@ __all__ = [
     "Run",
     "SERVE_UNVERIFIED",
     "STATE_DIR",
+    "STUDIES",
     "ServeUnverified",
     "ShutdownFailed",
     "TemplateMismatch",
@@ -223,6 +294,7 @@ __all__ = [
     "plan_replay",
     "pull_captures",
     "read_captures",
+    "read_entropy_table",
     "rebuild_sequence",
     "replay_model",
     "run_prefix",
@@ -363,19 +435,29 @@ APPROXIMATIONS: Tuple[str, ...] = (
     "presence; whitespace around them is not restored",
     "4. reasoning/response were split by the hosted service; missing reasoning is rebuilt empty "
     "and capped generations get an end-of-turn token they never emitted",
-    "5. one user turn, no system message; server-side defaults are not represented",
+    "5. induction: one user turn, no system message; deduction: one system turn (the cell's "
+    "system.md) and one user turn (its prompt.md); server-side defaults are not represented",
     "6. the capture runs the pinned open-weights checkpoint on EC2, teacher-forced on the stored "
     "completion, not the hosted service's computation",
     "7. the pad class is found by rule for noise_intens (longest whitespace run of at least "
     f"{attention.MIN_PAD_RUN_CHARS} characters in the query) and by construction for "
     "related_intens (added rule lines and trailing whitespace, located from the intens query)",
     "8. tokens straddling the query edge take their full token text as their piece",
-    "9. only the earliest stored run per seed and arm is replayed",
-    "10. bedrock_token_counts is None: the stored marks carry no usage field",
+    "9. induction: only the earliest stored run per seed and arm is replayed; deduction: only "
+    "the earliest non-exception row per (rung, arm, seed, rep) cell",
+    "10. induction: bedrock_token_counts is None (the stored marks carry no usage field); "
+    "deduction: the row's prompt_tokens and completion_tokens as the service counted them",
+    "11. deduction: the cell's system.md is rendered as a system turn before the user turn, as "
+    "the collection sent it; its tokens are class 2; the template may trim or move it (Gemma-4 "
+    "puts it after the thinking marker inside its system turn); no class-1 token exists",
 )
 
 #: Message when the plan cannot say how big the capture is.
 _BEDROCK_COUNTS_NOTE: str = "not stored in the marks; no comparison possible"
+#: The deduction counterpart: each row stores the service's own usage counts.
+_HORN_BEDROCK_COUNTS_NOTE: str = (
+    "stored per row (prompt_tokens, completion_tokens); summed per arm in per_arm"
+)
 
 #: Wire-safe job-id characters; ``attention.mass_job`` accepts exactly these.
 _UNSAFE_ID_CHAR = re.compile(r"[^A-Za-z0-9._=+-]")
@@ -433,17 +515,39 @@ MODES: Tuple[str, ...] = ("mass", "summary")
 _SUMMARY_VALUES_PER_HEAD: int = 13
 
 
-def _resolve_mode(mode: Optional[str]) -> str:
-    """Return the capture mode to use: `mode`, or ``"mass"`` for ``None``.
+#: The two studies this driver replays; ``"induction"`` is the default of every entry point.
+STUDIES: Tuple[str, ...] = ("induction", "horn")
+
+
+def _check_study(study: str) -> str:
+    """Return `study` when it is one of ``STUDIES``.
+
+    Raises
+    ------
+    ValueError
+        When `study` is not ``"induction"`` or ``"horn"``.
+    """
+    if study not in STUDIES:
+        raise ValueError(f"study must be one of {STUDIES}, got {study!r}")
+    return study
+
+
+def _resolve_mode(mode: Optional[str], study: str = "induction") -> str:
+    """Return the capture mode to use: `mode`, or the study's default for ``None``.
 
     Design: ``None`` (not ``"mass"``) is the signature default so that a caller who
     passes nothing keeps the behaviour from before summary mode existed, while the
-    resolution and the refusal of an unknown value live in this one place.
+    resolution and the refusal of an unknown value live in this one place. The default
+    differs by study: induction keeps ``"mass"``; the deduction responses are long
+    (up to 131072 tokens) and a mass capture grows with the response, so deduction
+    defaults to ``"summary"``.
 
     Parameters
     ----------
     mode : Optional[str]
         ``None`` or one of ``MODES``.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``; only picks the default for ``None``.
 
     Returns
     -------
@@ -455,12 +559,18 @@ def _resolve_mode(mode: Optional[str]) -> str:
     ValueError
         When `mode` is neither ``None`` nor in ``MODES`` (``"rows"`` included: this
         replay needs key classes).
+
+    Examples
+    --------
+    >>> _resolve_mode(None), _resolve_mode(None, "horn"), _resolve_mode("mass", "horn")
+    ('mass', 'summary', 'mass')
     """
     if mode is None:
-        return "mass"
+        return "summary" if study == "horn" else "mass"
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
     return mode
+
 
 # --------------------------------------------------------------------------- errors
 
@@ -1064,11 +1174,13 @@ def rebuild_sequence(
     template: Any,
     fmt: ReasoningFormat,
     pad_query_span: Optional[Tuple[int, int]] = None,
+    system: Optional[str] = None,
 ) -> Rebuilt:
     """Rebuild one mark's prompt ids, completion ids and key classes from its stored text.
 
     Steps. (1) Render the generation prompt of a single user turn holding
-    `query`, with thinking on, and find the query inside it. (2) Build the
+    `query` (preceded by a system turn holding `system` when that is given), with
+    thinking on, and find the query inside it. (2) Build the
     completion text: if the prompt already ends with the thinking opener the
     template opened the block, so the completion starts at the reasoning;
     otherwise it starts with the opener. Then the closer, the response and the
@@ -1086,7 +1198,15 @@ def rebuild_sequence(
     at the first token that overlaps the query), and handed to
     ``token_classes`` as ``pad_span``. A token that straddles an edge of the span
     is not class 1. The notes then say how many tokens are class 1 and how many
-    straddle an edge.
+    straddle an edge. An EMPTY span (``start == end``, the deduction rebuild passes
+    ``(0, 0)``) marks no token: no token is class 1, and the note says "no pad class
+    (deduction)" instead of the by-construction wording.
+
+    With `system` the conversation is ``[system, user]``. The template may trim the
+    system text (Gemma-4 does) or move it (Gemma-4 puts it after the thinking marker
+    inside its own system turn), so the check is only that `system` or its stripped
+    form occurs in the rendered prompt. System tokens are class 2: only tokens that
+    overlap the user query keep their text as piece (the rule for every prompt token).
 
     Parameters
     ----------
@@ -1108,6 +1228,9 @@ def rebuild_sequence(
         whitespace run of the query is the pad, by rule. When the template
         stripped the query, the range is shifted by the stripped leading
         characters and clipped to the stripped text.
+    system : Optional[str], optional
+        Text of a system message to render before the user turn. Default ``None``: no system
+        message (the induction rebuild, byte-identical to before this parameter existed).
 
     Returns
     -------
@@ -1117,8 +1240,10 @@ def rebuild_sequence(
     Raises
     ------
     TemplateMismatch
-        When the query is empty or is not found in the rendered prompt, or (with
-        `pad_query_span`) when it occurs more than once there.
+        When the query is empty or is not found in the rendered prompt, when (with
+        `pad_query_span`) it occurs more than once there, or when `system` is given and
+        neither it nor its stripped form occurs in the rendered prompt (a template that
+        drops system messages; the message says "system").
     ValueError
         When `pad_query_span` is not ``0 <= start <= end <= len(query)``, or when
         the tokens that overlap the query do not tile it without gaps or overlaps,
@@ -1138,13 +1263,23 @@ def rebuild_sequence(
         )
 
     # Phase 1: render the prompt and locate the query in it.
+    messages: List[Dict[str, str]] = [{"role": "user", "content": query}]
+    if system is not None:
+        messages.insert(0, {"role": "system", "content": system})
     prompt_text = template.render(
-        messages=[{"role": "user", "content": query}],
+        messages=messages,
         add_generation_prompt=True,
         **fmt.template_kwargs,
     )
     if not query.strip():
         raise TemplateMismatch("the stored query is empty or whitespace-only")
+    # A template may drop system messages without complaint; the rebuilt prompt would then
+    # lack the text the model was given, so refuse instead of measuring another sequence.
+    if system is not None and system not in prompt_text and system.strip() not in prompt_text:
+        raise TemplateMismatch(
+            "the rendered prompt does not contain the system message; the chat template "
+            "dropped or rewrote it"
+        )
     located = query
     q_start = prompt_text.find(located)
     if q_start < 0:
@@ -1199,11 +1334,15 @@ def rebuild_sequence(
         prompt_ids, completion_ids, lambda ids: pieces, pad_span=pad_span
     )
     if pad_query_span is not None:
-        n_pad = classes[: len(prompt_ids)].count(1)
-        notes.append(
-            f"pad span by construction: {n_pad} tokens class 1, "
-            f"{n_straddle} straddle an edge of the span"
-        )
+        if pad_query_span[0] == pad_query_span[1]:
+            # An empty span marks nothing; "by construction" would suggest a pad was found.
+            notes.append("no pad class (deduction)")
+        else:
+            n_pad = classes[: len(prompt_ids)].count(1)
+            notes.append(
+                f"pad span by construction: {n_pad} tokens class 1, "
+                f"{n_straddle} straddle an edge of the span"
+            )
     return Rebuilt(
         prompt_ids=prompt_ids,
         completion_ids=completion_ids,
@@ -1280,49 +1419,90 @@ def find_runs(results_root: Path, model: str) -> List[Run]:
     return runs
 
 
-def _seed_set(seeds: Optional[Sequence[int]]) -> Optional[FrozenSet[int]]:
-    """Return `seeds` as a frozen set, or ``None`` (every seed) when `seeds` is ``None``.
+def _int_set(values: Optional[Sequence[int]], name: str) -> Optional[FrozenSet[int]]:
+    """Return `values` as a frozen set, or ``None`` (select all) when `values` is ``None``.
 
-    An empty sequence stays an empty set: it selects no run, which is not the same
+    An empty sequence stays an empty set: it selects nothing, which is not the same
     as ``None``. A string or a bool is refused so that ``seeds="01"`` or
-    ``seeds=[True]`` cannot silently select nothing or seed 1.
+    ``reps=[True]`` cannot silently select nothing or the value 1.
+
+    Parameters
+    ----------
+    values : Optional[Sequence[int]]
+        The filter, or ``None``.
+    name : str
+        Name of the filter (``"seeds"`` or ``"reps"``), for the error message.
 
     Raises
     ------
     ValueError
         When an entry is not an integer.
     """
-    if seeds is None:
+    if values is None:
         return None
     chosen = set()
-    for seed in seeds:
-        if isinstance(seed, bool) or not isinstance(seed, numbers.Integral):
-            raise ValueError(f"seeds must be integers, got {seed!r}")
-        chosen.add(int(seed))
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+            raise ValueError(f"{name} must be integers, got {value!r}")
+        chosen.add(int(value))
     return frozenset(chosen)
 
 
-def run_prefix(s3_prefix: str, run: Run) -> str:
+def _seed_set(seeds: Optional[Sequence[int]]) -> Optional[FrozenSet[int]]:
+    """Return `seeds` as a frozen set, or ``None`` (every seed) when `seeds` is ``None``.
+
+    See ``_int_set``: an empty sequence selects no run, and a string or a bool is refused.
+
+    Raises
+    ------
+    ValueError
+        When an entry is not an integer.
+    """
+    return _int_set(seeds, "seeds")
+
+
+@dataclass(frozen=True)
+class HornRun:
+    """One ``<rung>/<arm>`` folder of one model's deduction (Horn) rows.
+
+    The deduction counterpart of ``Run``: the unit that owns a key prefix and a manifest.
+    Frozen so that it is hashable (``_group_by_run`` groups jobs by it).
+    """
+
+    model: str
+    rung: str
+    arm: str
+    #: The rows file the cells of this folder were read from.
+    rows_path: Path
+
+
+def run_prefix(s3_prefix: str, run: Union[Run, HornRun]) -> str:
     """Return the key prefix (trailing ``/``) holding one run's captures.
 
     Parameters
     ----------
     s3_prefix : str
-        Key prefix above ``induction/`` (no bucket); may be empty.
-    run : Run
-        The stored run.
+        Key prefix above ``induction/`` or ``deduction/`` (no bucket); may be empty.
+    run : Union[Run, HornRun]
+        The stored induction run, or the deduction ``<rung>/<arm>`` folder.
 
     Returns
     -------
     str
-        ``<s3_prefix>/induction/<model>/seed=<seed>/<arm>--<stamp>/``.
+        Induction: ``<s3_prefix>/induction/<model>/seed=<seed>/<arm>--<stamp>/``.
+        Deduction: ``<s3_prefix>/deduction/horn/<model>/<rung>/<arm>/``.
 
     Examples
     --------
     >>> r = Run("m", 3, "intens", "2026-01-01T00:00:00Z", Path("x.yaml"))
     >>> run_prefix("a/b", r)
     'a/b/induction/m/seed=3/intens--2026-01-01T00:00:00Z/'
+    >>> run_prefix("a/b", HornRun("m", "m64", "lem", Path("m.jsonl")))
+    'a/b/deduction/horn/m/m64/lem/'
     """
+    if isinstance(run, HornRun):
+        parts = [p for p in (s3_prefix.strip("/"), "deduction", "horn", run.model) if p]
+        return "/".join(parts) + f"/{run.rung}/{run.arm}/"
     parts = [p for p in (s3_prefix.strip("/"), "induction", run.model) if p]
     return "/".join(parts) + f"/seed={run.seed}/{run.arm}--{run.stamp}/"
 
@@ -1344,17 +1524,42 @@ def job_id_for(run: Run, mark_index: int) -> str:
     return f"s{run.seed}.{run.arm}.{safe}.q{mark_index}"
 
 
+def _horn_job_id(rung: str, arm: str, seed: int, rep: int) -> str:
+    """Return the wire id of one deduction cell: ``horn.<rung>.<arm>.s<seed>.rep<rep>``.
+
+    Every character outside the wire-safe set becomes ``-`` (``_UNSAFE_ID_CHAR``).
+    ``read_captures`` rebuilds the same id from directory and file names to look a cell up
+    in the manifests, so this is the one place that spells it.
+
+    Examples
+    --------
+    >>> _horn_job_id("m64", "lem", 100, 2)
+    'horn.m64.lem.s100.rep2'
+    """
+    return _UNSAFE_ID_CHAR.sub("-", f"horn.{rung}.{arm}.s{seed}.rep{rep}")
+
+
 @dataclass(frozen=True)
 class PlannedJob:
     """A capture job plus where it came from."""
 
     job: attention.Job
-    run: Run
+    #: Induction: the stored result file. Deduction: the ``<rung>/<arm>`` folder.
+    run: Union[Run, HornRun]
+    #: Induction: the mark's index in its run. Deduction: the row's 0-based line index in the
+    #: rows file.
     mark_index: int
     notes: Tuple[str, ...]
-    #: Always ``None``: the stored marks carry no token counts, so the rebuilt
-    #: length cannot be compared with the hosted service's (approximation 10).
-    bedrock_token_counts: None = None
+    #: Induction: always ``None``: the stored marks carry no token counts, so the rebuilt
+    #: length cannot be compared with the hosted service's (approximation 10). Deduction:
+    #: ``{"prompt_tokens": ..., "completion_tokens": ...}`` as the service counted them.
+    bedrock_token_counts: Optional[Dict[str, int]] = None
+    #: Deduction only: the cell's theory seed.
+    seed: Optional[int] = None
+    #: Deduction only: the cell's replicate number.
+    rep: Optional[int] = None
+    #: Deduction only: the 16-hex digest of ``prompt.md`` the row recorded and the rebuild checked.
+    prompt_sha256: Optional[str] = None
 
 
 def looks_misdecoded(text: Optional[str]) -> bool:
@@ -1459,14 +1664,314 @@ def _related_pad_span(intens_query: str, related_query: str) -> Tuple[int, int]:
 class _Built:
     """Internal result of reading and rebuilding every run of one model."""
 
-    runs: List[Run] = field(default_factory=list)
+    #: Induction: the stored result files. Deduction: the ``<rung>/<arm>`` folders with a selected cell.
+    runs: List[Union[Run, HornRun]] = field(default_factory=list)
+    #: Induction: marks read. Deduction: cells selected (planned plus errored).
     marks: int = 0
     unreasoned: int = 0
     planned: List[PlannedJob] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    #: Deduction only: the arms of the plan, in plan order (see ``_horn_arm_order``).
+    arm_order: List[str] = field(default_factory=list)
+    #: Deduction only: arm -> the plan errors of that arm's cells (a subset of ``errors``).
+    errors_by_arm: Dict[str, List[str]] = field(default_factory=dict)
+    #: Deduction only: arm -> exception rows left out of the selection.
+    exception_rows: Dict[str, int] = field(default_factory=dict)
 
 
-def _build(
+#: Allowed spelling of a rung or arm name in a rows file. Both become a folder name in the
+#: rungs directory and a key component, so ``/`` and every other unusual character is refused
+#: (and ``.`` and ``..`` are refused separately: this class admits them).
+_HORN_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _horn_name_ok(name: Any) -> bool:
+    """Return whether `name` is a usable rung or arm name: ``[A-Za-z0-9._-]+`` and not ``.``/``..``."""
+    return isinstance(name, str) and bool(_HORN_NAME_RE.match(name)) and name not in (".", "..")
+
+
+@dataclass(frozen=True)
+class _HornCell:
+    """One selected deduction cell: its identity and the row that represents it."""
+
+    #: 0-based physical line index of the row in the rows file (blank lines count).
+    line_index: int
+    rung: str
+    arm: str
+    seed: int
+    rep: int
+    row: Dict[str, Any]
+
+
+@dataclass
+class _HornSelection:
+    """Result of ``_horn_select``: the cells to replay and what was refused on the way."""
+
+    rows_path: Path
+    #: Selected cells in plan order: rung (natural order), arm (``arm_order``), seed, rep.
+    cells: List[_HornCell] = field(default_factory=list)
+    #: File- and line-level plan errors (no arm to attach them to).
+    errors: List[str] = field(default_factory=list)
+    #: arm -> exception rows (after the filters).
+    exception_rows: Dict[str, int] = field(default_factory=dict)
+    arm_order: List[str] = field(default_factory=list)
+
+
+def _natural_key(text: str) -> List[Union[int, str]]:
+    """Return a sort key that orders ``m20`` before ``m64`` before ``m128`` (digit runs as numbers).
+
+    Even positions are strings and odd ones integers for every input, so two keys always
+    compare.
+    """
+    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", text)]
+
+
+def _horn_arm_order(seen: Sequence[str], wanted: Optional[Sequence[str]]) -> List[str]:
+    """Return the arms of a deduction plan, in plan order.
+
+    With an ``arms`` filter: its order, every arm present (also with no rows). Without: every
+    arm of ``bt.HORN_ARMS`` in that order, then the other arms found in the rows, sorted.
+
+    Design: all of ``bt.HORN_ARMS`` is listed even for an arm with no rows, as the induction
+    plan lists every one of ``ARMS``, so two plans of one model read the same way.
+    """
+    if wanted is not None:
+        return list(wanted)
+    known = list(bt.HORN_ARMS)
+    return known + sorted(arm for arm in set(seen) if arm not in known)
+
+
+def _horn_cell_key(row: Any) -> Tuple[str, str, int, int]:
+    """Return ``(rung, arm, seed, rep)`` of a parsed rows-file line.
+
+    Raises
+    ------
+    ValueError
+        With the reason, when the line is not a JSON object, lacks ``rung``, ``arm``,
+        ``seed``, ``rep`` or ``verdict``, a name is not ``[A-Za-z0-9._-]+`` (not ``.``/``..``), a
+        seed or replicate is not a non-negative integer, or a generation row (verdict other than
+        ``"exception"``) has no ``ts`` string. Such a row cannot be placed in a cell or ordered.
+    """
+    if not isinstance(row, dict):
+        raise ValueError(f"the line is JSON but not an object ({type(row).__name__})")
+    for name in ("rung", "arm", "seed", "rep", "verdict"):
+        if name not in row:
+            raise ValueError(f"the row has no {name!r}")
+    rung, arm, seed, rep = row["rung"], row["arm"], row["seed"], row["rep"]
+    for label, name in (("rung", rung), ("arm", arm)):
+        if not _horn_name_ok(name):
+            raise ValueError(f"{label} {name!r} is not a folder name made of [A-Za-z0-9._-]")
+    for label, number in (("seed", seed), ("rep", rep)):
+        if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+            raise ValueError(f"{label} {number!r} is not a non-negative integer")
+    if not isinstance(row["verdict"], str):
+        raise ValueError(f"verdict {row['verdict']!r} is not a string")
+    if row["verdict"] != "exception" and not isinstance(row.get("ts"), str):
+        raise ValueError("the row has no 'ts' string to order the cell's rows by")
+    return rung, arm, seed, rep
+
+
+def _horn_select(
+    rows_path: Path,
+    arms: Optional[Sequence[str]],
+    seeds: Optional[FrozenSet[int]],
+    reps: Optional[FrozenSet[int]],
+) -> _HornSelection:
+    """Read a deduction rows file and select one generation row per cell.
+
+    The one reader of a rows file: building, planning, replaying and auditing all go
+    through it, so they select the same cells. The file is read once as bytes (a snapshot:
+    it may be appended to meanwhile) and split on ``\\n`` only, as ``bt._row_lines`` does
+    (``str.splitlines`` also splits on U+2028, which a row's text can hold). Blank lines are
+    skipped; the line index of every other line is its physical position, blank lines counted.
+    Each line must decode as UTF-8 and parse as a JSON object with the keys of
+    ``_horn_cell_key``; one that does not becomes a plan error with its 1-based line number,
+    except an unterminated last line, which is reported as torn (a writer was cut off or is
+    still writing). A missing or unreadable file is one plan error naming its path.
+
+    The ``arms``, ``seeds`` and ``reps`` filters apply before the cells are formed. A row whose
+    verdict is ``"exception"`` holds no generation: it is counted per arm and never selected.
+    Of the other rows of a cell the earliest by ``(ts, line index)`` is kept: rows of one
+    cell can come from several machines' parts of the file and be out of time order, and
+    ``ts`` strings are ISO UTC, so they sort as text.
+
+    Parameters
+    ----------
+    rows_path : Path
+        The model's rows file.
+    arms : Optional[Sequence[str]]
+        Arms to keep, ``None`` for all. Also fixes the order of the plan's arms.
+    seeds, reps : Optional[FrozenSet[int]]
+        Theory seeds / replicate numbers to keep, ``None`` for all.
+
+    Returns
+    -------
+    _HornSelection
+        Cells in plan order, the file- and line-level errors, the exception rows per arm and
+        the arm order.
+
+    Notes
+    -----
+    Design: only the best row of each cell is kept while the file is scanned, so memory holds
+    one row per cell, not the whole file (a row's reasoning can be hundreds of kilobytes).
+    The raw bytes are held once.
+    """
+    sel = _HornSelection(rows_path=rows_path)
+    try:
+        data = rows_path.read_bytes()
+    except FileNotFoundError:
+        sel.errors.append(f"{rows_path}: the rows file does not exist")
+        sel.arm_order = _horn_arm_order((), arms)
+        return sel
+    except OSError as exc:
+        sel.errors.append(f"{rows_path}: cannot read the rows file: {type(exc).__name__}: {exc}")
+        sel.arm_order = _horn_arm_order((), arms)
+        return sel
+
+    wanted_arms = None if arms is None else set(arms)
+    chunks = data.split(b"\n")
+    terminated = data.endswith(b"\n") or not data
+    best: Dict[Tuple[str, str, int, int], Tuple[str, int, Dict[str, Any]]] = {}
+    seen_arms: set = set()
+    for index, chunk in enumerate(chunks):
+        if not chunk.strip():
+            continue  # blank line (also the empty piece after the final newline)
+        try:
+            row = json.loads(chunk.decode("utf-8"))
+            rung, arm, seed, rep = _horn_cell_key(row)
+        except ValueError as exc:  # UnicodeDecodeError and JSONDecodeError are ValueErrors too
+            # Torn: the last line, cut off before its newline, so it does not parse. A last line
+            # that parses but has a bad shape is an ordinary bad line.
+            parse_failure = isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError))
+            if index == len(chunks) - 1 and not terminated and parse_failure:
+                sel.errors.append(
+                    f"{rows_path}: line {index + 1}: torn last line (no trailing newline and it "
+                    f"does not parse: {exc}); a writer was cut off or is still writing"
+                )
+            else:
+                sel.errors.append(f"{rows_path}: line {index + 1}: {exc}")
+            continue
+        # Filters first: a filtered-out row takes no part in the cells or the counts.
+        if wanted_arms is not None and arm not in wanted_arms:
+            continue
+        if (seeds is not None and seed not in seeds) or (reps is not None and rep not in reps):
+            continue
+        seen_arms.add(arm)
+        if row["verdict"] == "exception":
+            sel.exception_rows[arm] = sel.exception_rows.get(arm, 0) + 1
+            continue
+        key = (rung, arm, seed, rep)
+        rank = (row["ts"], index)
+        if key not in best or rank < best[key][:2]:
+            best[key] = (row["ts"], index, row)
+
+    sel.arm_order = _horn_arm_order(sorted(seen_arms), arms)
+    arm_rank = {arm: i for i, arm in enumerate(sel.arm_order)}
+    for (rung, arm, seed, rep), (_ts, index, row) in sorted(
+        best.items(),
+        key=lambda item: (_natural_key(item[0][0]), arm_rank.get(item[0][1], len(arm_rank)), item[0][2], item[0][3]),
+    ):
+        sel.cells.append(_HornCell(index, rung, arm, seed, rep, row))
+    return sel
+
+
+def _horn_runs(model: str, sel: _HornSelection) -> List[HornRun]:
+    """Return the ``<rung>/<arm>`` folders of the selected cells, in plan order (first cell first)."""
+    seen: Dict[Tuple[str, str], HornRun] = {}
+    for cell in sel.cells:
+        seen.setdefault((cell.rung, cell.arm), HornRun(model, cell.rung, cell.arm, sel.rows_path))
+    return list(seen.values())
+
+
+@dataclass(frozen=True)
+class _Source:
+    """Where one study's stored transcripts come from, as the internal functions take it."""
+
+    study: str = "induction"
+    #: Induction: folder holding ``induction/<model>/...``.
+    results_root: Path = DEFAULT_RESULTS_ROOT
+    #: Deduction: the model's rows file.
+    rows_path: Optional[Path] = None
+    #: Deduction: the rendered rungs; ``None`` means ``bt.RUNGS_DIR``.
+    rungs_dir: Optional[Path] = None
+    #: Deduction: arm filter in the order given, ``None`` = all.
+    arms: Optional[Tuple[str, ...]] = None
+    #: Deduction: replicate filter, ``None`` = all.
+    reps: Optional[FrozenSet[int]] = None
+
+
+def _horn_rows_file(model: str, horn_rows: Any, n_models: int = 1) -> Path:
+    """Return the rows file of `model` from the ``horn_rows`` argument of an entry point.
+
+    ``None`` is ``bt.horn_rows_path(model)``. A mapping must hold `model` (an absent model is
+    refused, not defaulted: a typo in a model key would otherwise read another file). A
+    directory means ``<dir>/<model>.jsonl``; anything else is the rows file itself, whether or
+    not it exists (a missing file is a plan error, not a crash here).
+
+    Raises
+    ------
+    ValueError
+        When a mapping has no entry for `model`, or a rows FILE is given for more than one model
+        (`n_models` > 1: one file holds one model's rows).
+    """
+    if horn_rows is None:
+        return bt.horn_rows_path(model)
+    if isinstance(horn_rows, Mapping):
+        if model not in horn_rows:
+            raise ValueError(f"horn_rows has no entry for model {model!r}")
+        horn_rows, n_models = horn_rows[model], 1  # the mapping already names one file per model
+    path = Path(horn_rows)
+    if path.is_dir():
+        return path / f"{model}.jsonl"
+    if n_models > 1:
+        raise ValueError(
+            "horn_rows names one rows file, but several models are planned; pass a folder "
+            "holding <model>.jsonl or a mapping model -> file"
+        )
+    return path
+
+
+def _make_source(
+    study: str,
+    results_root: Path,
+    rows_path: Optional[Path],
+    rungs_dir: Optional[Path],
+    arms: Optional[Sequence[str]],
+    reps: Optional[Sequence[int]],
+) -> _Source:
+    """Validate the study arguments and return the ``_Source`` the internals take.
+
+    Raises
+    ------
+    ValueError
+        When `study` is unknown; when a deduction-only argument (`rows_path`, `rungs_dir`,
+        `arms`, `reps`) is given for the induction study, where it would be silently
+        ignored; when `arms` is a string or holds a non-string; or `reps` holds a non-integer.
+    """
+    _check_study(study)
+    if study == "induction":
+        extras = [
+            name for name, value in (
+                ("horn_rows", rows_path), ("rungs_dir", rungs_dir), ("arms", arms), ("reps", reps)
+            ) if value is not None
+        ]
+        if extras:
+            raise ValueError(f"{', '.join(extras)} apply only to study='horn'")
+        return _Source("induction", Path(results_root))
+    if rows_path is None:
+        raise ValueError("study='horn' needs the rows file (callers resolve it with _horn_rows_file)")
+    arm_filter: Optional[Tuple[str, ...]] = None
+    if arms is not None:
+        if isinstance(arms, str) or not all(isinstance(arm, str) for arm in arms):
+            raise ValueError(f"arms must be a sequence of arm names, got {arms!r}")
+        arm_filter = tuple(dict.fromkeys(arms))  # drop duplicates, keep the order given
+    return _Source(
+        "horn", Path(results_root), Path(rows_path),
+        None if rungs_dir is None else Path(rungs_dir), arm_filter, _int_set(reps, "reps"),
+    )
+
+
+def _build_induction(
     model: str,
     results_root: Path,
     s3_prefix: str,
@@ -1476,7 +1981,7 @@ def _build(
     seeds: Optional[FrozenSet[int]] = None,
     mode: str = "mass",
 ) -> _Built:
-    """Read the runs of `model` and rebuild every mark (shared by ``build_jobs`` and the plan).
+    """Read the induction runs of `model` and rebuild every mark (see ``_build``).
 
     Tokenizer and template are fetched through callables on first need, so a model
     with no result files never touches the hub. When `seeds` is given only the runs
@@ -1574,6 +2079,176 @@ def _build(
     return built
 
 
+class _HornRowError(ValueError):
+    """A selected deduction row cannot be rebuilt faithfully; the message says why."""
+
+
+def _horn_cell_inputs(
+    cell: _HornCell, model: str, rungs_dir: Path
+) -> Tuple[str, str, str, Optional[str], str, Dict[str, int]]:
+    """Check one selected row against its rendered cell; return what the rebuild needs.
+
+    The checks run in a fixed order, and the first failure is the cell's plan error (each
+    message holds the quoted word the caller of this module greps for): (1) ``spec_key`` is
+    `model`; (2) the collection added no provider system prompt (``provider_system_prompt``;
+    its text is not stored, so the prompt cannot be rebuilt); (3) ``prompt.md`` and
+    ``system.md`` exist; (4) the digest of ``prompt.md`` equals the row's ``prompt_sha256``,
+    so the rung was not re-rendered since the collection; (5) neither ``content`` nor
+    ``reasoning`` is mis-decoded text; (6) ``prompt_tokens`` and ``completion_tokens`` are
+    integers. The text of the two files is read as the collection read it
+    (``Path.read_text`` with UTF-8); the digest is over the bytes.
+
+    Returns
+    -------
+    Tuple[str, str, str, Optional[str], str, Dict[str, int]]
+        ``(query, system, prompt_sha256, reasoning, content, bedrock_token_counts)``.
+
+    Raises
+    ------
+    _HornRowError
+        With the reason, for each failed check above. (A file that cannot be decoded as
+        UTF-8 raises ``UnicodeDecodeError``, also a ``ValueError``.)
+    """
+    row = cell.row
+    if row.get("spec_key") != model:
+        raise _HornRowError(f"spec_key {row.get('spec_key')!r} is not {model!r}")
+    if row.get("provider_system_prompt"):
+        raise _HornRowError(
+            "the collection added a provider system prompt (provider_system_prompt is true); "
+            "its text is not stored, so the prompt cannot be rebuilt"
+        )
+    cell_dir = rungs_dir / cell.rung / f"s{cell.seed:04d}" / cell.arm
+    paths = {name: cell_dir / name for name in ("prompt.md", "system.md")}
+    for name, path in paths.items():
+        if not path.is_file():
+            raise _HornRowError(f"{name} not found at {path}")
+    digest = hashlib.sha256(paths["prompt.md"].read_bytes()).hexdigest()[:16]
+    if digest != row.get("prompt_sha256"):
+        raise _HornRowError(
+            f"prompt_sha256 {row.get('prompt_sha256')!r} of the row is not the digest {digest} of "
+            f"{paths['prompt.md']}; the rung was rendered again since the collection"
+        )
+    text: Dict[str, Optional[str]] = {}
+    for name in ("content", "reasoning"):
+        value = row.get(name)
+        if value is not None and not isinstance(value, str):
+            raise _HornRowError(f"{name} is {type(value).__name__}, not text")
+        text[name] = value
+    bad = [name for name, value in text.items() if looks_misdecoded(value)]
+    if bad:
+        raise _HornRowError(f"mis-decoded text (UTF-8 read as ISO-8859-1) in {', '.join(bad)}; not planned")
+    counts: Dict[str, int] = {}
+    for name in ("prompt_tokens", "completion_tokens"):
+        value = row.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise _HornRowError(f"{name} {value!r} is not an integer (the usage the collection counted)")
+        counts[name] = value
+    return (
+        paths["prompt.md"].read_text(encoding="utf-8"),
+        paths["system.md"].read_text(encoding="utf-8"),
+        digest, text["reasoning"], text["content"] or "", counts,
+    )
+
+
+def _build_horn(
+    model: str,
+    source: _Source,
+    s3_prefix: str,
+    get_tokenizer: Callable[[], Any],
+    get_template: Callable[[], Any],
+    fmt: Optional[ReasoningFormat],
+    seeds: Optional[FrozenSet[int]],
+    mode: str,
+) -> _Built:
+    """Read the deduction rows of `model` and rebuild every selected cell (see ``_build``).
+
+    Selection is ``_horn_select``. Each selected row is checked and rebuilt in
+    ``_horn_cell_inputs`` order and then through ``rebuild_sequence`` with the cell's system
+    turn and an empty pad span (the deduction study has no whitespace pad). A failure of one
+    cell is a plan error for its arm and the other cells still plan; a
+    ``ReasoningFormatError`` stops the model, as for induction. Tokenizer and template are
+    fetched only when there is a cell to rebuild.
+    """
+    import jinja2.exceptions
+
+    if source.rows_path is None:
+        raise ValueError("the deduction build needs the rows file")
+    rungs_dir = source.rungs_dir if source.rungs_dir is not None else bt.RUNGS_DIR
+    sel = _horn_select(source.rows_path, source.arms, seeds, source.reps)
+    runs = _horn_runs(model, sel)
+    built = _Built(
+        runs=list(runs), marks=len(sel.cells), errors=list(sel.errors), arm_order=sel.arm_order,
+        exception_rows=dict(sel.exception_rows),
+    )
+    built.unreasoned = sum(1 for cell in sel.cells if not bt.reasoned(cell.row.get("reasoning")))
+    if not sel.cells:
+        return built
+    tokenizer = get_tokenizer()
+    template = get_template()
+    if fmt is None:
+        if model not in REASONING_FORMATS:
+            raise ReasoningFormatError(f"{model}: no entry in REASONING_FORMATS")
+        fmt = REASONING_FORMATS[model]
+
+    run_of = {(run.rung, run.arm): run for run in runs}
+    checked = False
+    for cell in sel.cells:
+        run = run_of[(cell.rung, cell.arm)]
+        where = (
+            f"{sel.rows_path} line {cell.line_index + 1} "
+            f"({cell.rung}/{cell.arm} seed {cell.seed} rep {cell.rep})"
+        )
+        try:
+            query, system, digest, reasoning, content, counts = _horn_cell_inputs(cell, model, rungs_dir)
+            # An empty pad span: the deduction study has no whitespace pad, so no token is class 1.
+            rebuilt = rebuild_sequence(
+                query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
+                pad_query_span=(0, 0), system=system,
+            )
+            if not checked:
+                # Once per model, as for induction: a wrong delimiter table is wrong for every cell.
+                check_reasoning_format(model, tokenizer, rebuilt.prompt_text, fmt=fmt)
+                checked = True
+            job = attention.mass_job(
+                _horn_job_id(cell.rung, cell.arm, cell.seed, cell.rep), rebuilt.prompt_ids,
+                rebuilt.completion_ids, rebuilt.classes,
+                run_prefix(s3_prefix, run) + f"s{cell.seed}.rep{cell.rep}.npz", mode=mode,
+            )
+        except (ValueError, jinja2.exceptions.TemplateError) as exc:
+            if isinstance(exc, ReasoningFormatError):
+                raise
+            message = f"{where}: {exc}"
+            built.errors.append(message)
+            built.errors_by_arm.setdefault(cell.arm, []).append(message)
+            continue
+        built.planned.append(PlannedJob(
+            job, run, cell.line_index, rebuilt.notes, counts, cell.seed, cell.rep, digest,
+        ))
+    return built
+
+
+def _build(
+    model: str,
+    source: _Source,
+    s3_prefix: str,
+    get_tokenizer: Callable[[], Any],
+    get_template: Callable[[], Any],
+    fmt: Optional[ReasoningFormat],
+    seeds: Optional[FrozenSet[int]] = None,
+    mode: str = "mass",
+) -> _Built:
+    """Read the stored transcripts of `model` and rebuild every mark or cell (shared by ``build_jobs`` and the plan).
+
+    Dispatches on ``source.study``: ``_build_induction`` or ``_build_horn``. Both fetch the
+    tokenizer and template through callables on first need, apply `seeds` before reading
+    any content, record `mode` (already resolved) on every job, check the reasoning format
+    once and report a per-mark failure as an error instead of a crash.
+    """
+    if source.study == "horn":
+        return _build_horn(model, source, s3_prefix, get_tokenizer, get_template, fmt, seeds, mode)
+    return _build_induction(model, source.results_root, s3_prefix, get_tokenizer, get_template, fmt, seeds, mode)
+
+
 def build_jobs(
     model: str,
     results_root: Path,
@@ -1583,8 +2258,14 @@ def build_jobs(
     template: Any = None,
     fmt: Optional[ReasoningFormat] = None,
     mode: Optional[str] = None,
+    seeds: Optional[Sequence[int]] = None,
+    study: str = "induction",
+    horn_rows: Optional[Path] = None,
+    rungs_dir: Optional[Path] = None,
+    arms: Optional[Sequence[str]] = None,
+    reps: Optional[Sequence[int]] = None,
 ) -> Tuple[List[PlannedJob], List[str]]:
-    """Rebuild every stored mark of `model` into a capture job, offline.
+    """Rebuild every stored mark or cell of `model` into a capture job, offline.
 
     Never builds an S3 or EC2 client. The reasoning format is checked once, on the
     first successfully rendered prompt.
@@ -1594,9 +2275,10 @@ def build_jobs(
     model : str
         Roster key.
     results_root : Path
-        Folder holding ``induction/<model>/...`` (see ``find_runs``).
+        Induction: folder holding ``induction/<model>/...`` (see ``find_runs``). Ignored for
+        ``study="horn"``.
     s3_prefix : str
-        Key prefix above ``induction/`` (no bucket).
+        Key prefix above ``induction/`` or ``deduction/`` (no bucket).
     tokenizer : Any, optional
         Defaults to ``tokenization.for_model(model)``.
     template : Any, optional
@@ -1605,32 +2287,55 @@ def build_jobs(
         Defaults to ``REASONING_FORMATS[model]``.
     mode : Optional[str], optional
         Capture mode recorded on every job, ``"mass"`` or ``"summary"``; ``None``
-        (default) means ``"mass"``. Keyword-only. The token sequences and classes
-        are identical in both modes.
+        (default) means ``"mass"`` for induction and ``"summary"`` for deduction. Keyword-only.
+        The token sequences and classes are identical in both modes.
+    seeds : Optional[Sequence[int]], optional
+        Only the runs (induction) or cells (deduction) of these seeds; ``None`` (default) is
+        every seed, an empty sequence selects nothing.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``.
+    horn_rows : Optional[Path], optional
+        Deduction: the rows file, or a folder holding ``<model>.jsonl``. Default
+        ``bt.horn_rows_path(model)``. A rows file that does not exist is a plan error.
+    rungs_dir : Optional[Path], optional
+        Deduction: the rendered rungs; default ``bt.RUNGS_DIR``.
+    arms, reps : Optional[Sequence], optional
+        Deduction: keep only these arms / replicate numbers (``None`` = all).
 
     Returns
     -------
     Tuple[List[PlannedJob], List[str]]
-        The jobs, in run order then mark order, and one ``"<path>#q<idx>: <error>"``
-        line per mark that could not be rebuilt. No mark is dropped silently. The
-        ``bedrock_token_counts`` of every job is ``None`` because the stored marks
-        carry no token counts. Every job's ``mode`` is the resolved `mode`.
+        The jobs, and one error line per mark or cell that could not be rebuilt (induction:
+        ``"<path>#q<idx>: <error>"``; deduction: ``"<rows file> line <n> (<cell>): <error>"``,
+        plus one line per torn or unparseable line of the rows file). No mark is dropped
+        silently. Induction jobs come in run order then mark order, with
+        ``bedrock_token_counts`` ``None`` (the stored marks carry no token counts). Deduction
+        jobs come by rung, arm, seed and replicate, with ``bedrock_token_counts`` taken from the
+        row. Every job's ``mode`` is the resolved `mode`.
 
     Raises
     ------
     ValueError
-        When `mode` is not ``None`` or one of ``MODES`` (before any file is read).
+        When `mode` or `study` is invalid, `seeds` or `reps` holds a non-integer, `arms` is
+        not a sequence of names, or a deduction-only argument is given for the induction
+        study (before any file is read).
     TemplateUnavailable
-        When the template or tokenizer cannot be loaded (only when there are runs).
+        When the template or tokenizer cannot be loaded (only when there is something to
+        rebuild).
     ReasoningFormatError
         When the delimiters fail validation: every mark would be wrong the same way.
     """
-    resolved = _resolve_mode(mode)
+    _check_study(study)
+    resolved = _resolve_mode(mode, study)
+    source = _make_source(
+        study, results_root,
+        _horn_rows_file(model, horn_rows) if study == "horn" else horn_rows, rungs_dir, arms, reps,
+    )
     built = _build(
-        model, Path(results_root), s3_prefix,
+        model, source, s3_prefix,
         (lambda: tokenizer) if tokenizer is not None else (lambda: _default_tokenizer(model)),
         (lambda: template) if template is not None else (lambda: load_chat_template(model)),
-        fmt, mode=resolved,
+        fmt, _seed_set(seeds), resolved,
     )
     return built.planned, built.errors
 
@@ -1651,20 +2356,27 @@ class ReplayPlan:
     """What replaying one model would do. Built offline; nothing here costs money."""
 
     model: str
-    #: Stored runs found (one per seed and arm).
+    #: Induction: stored runs found (one per seed and arm). Deduction: ``<rung>/<arm>``
+    #: folders with a selected cell.
     runs: int
-    #: Marks read from those runs.
+    #: Induction: marks read from those runs. Deduction: cells selected (planned plus errored).
     marks: int
-    #: Marks rebuilt into jobs.
+    #: Marks (induction) or cells (deduction) rebuilt into jobs.
     jobs: int
-    #: Marks with no stored reasoning.
+    #: Marks or cells with no stored reasoning.
     unreasoned_marks: int
-    #: Per-mark and per-model rebuild failures.
+    #: Per-mark, per-cell and per-model rebuild failures; for deduction also the torn,
+    #: unparseable and missing rows-file errors.
     errors: List[str]
     #: Per arm: ``marks`` (rebuilt), ``total_tokens``, ``max_tokens`` and
     #: ``over_context`` (jobs above the capture context, so excluded from the capture).
     #: Per arm because exclusions that differ by arm would bias a mean over responses.
-    per_arm: Dict[str, Dict[str, int]]
+    #: Deduction adds, per arm: ``errors`` (plan errors of the arm's cells), ``exception_rows``
+    #: (rows with no generation, never selected), ``prompt_tokens`` (rebuilt prompt lengths
+    #: summed over the planned jobs), ``bedrock_prompt_tokens`` and ``bedrock_completion_tokens``
+    #: (the rows' own counts summed over the planned jobs) and ``est_capture_bytes`` (the
+    #: arm's share of ``ReplayPlan.est_capture_bytes``, ``None`` when that is unknown).
+    per_arm: Dict[str, Dict[str, Any]]
     #: Tokens over all rebuilt jobs, prompt plus completion.
     total_tokens: int
     #: Longest rebuilt sequence.
@@ -1689,6 +2401,8 @@ class ReplayPlan:
     approximations: List[str] = field(default_factory=lambda: list(APPROXIMATIONS))
     #: Capture mode the plan sizes (an element of ``MODES``); it sets the storage estimate.
     mode: str = "mass"
+    #: The study planned: ``"induction"`` or ``"horn"``.
+    study: str = "induction"
 
     def summary(self) -> str:
         """Return a short multi-line description of the plan.
@@ -1699,20 +2413,34 @@ class ReplayPlan:
             Counts, token sizes, the capture mode, capture support, instance types and
             the labelled storage estimate.
         """
+        horn = self.study == "horn"
         lines = [
-            f"{self.model}: {self.runs} runs, {self.marks} marks -> {self.jobs} jobs "
-            f"({self.unreasoned_marks} marks without stored reasoning), {len(self.errors)} errors",
+            f"{self.model}: " + (
+                f"deduction (horn), {self.runs} rung/arm folders, {self.marks} cells -> {self.jobs} jobs "
+                f"({self.unreasoned_marks} cells without stored reasoning)"
+                if horn else
+                f"{self.runs} runs, {self.marks} marks -> {self.jobs} jobs "
+                f"({self.unreasoned_marks} marks without stored reasoning)"
+            ) + f", {len(self.errors)} errors",
             f"  capture mode: {self.mode}",
             f"  tokens: total {self.total_tokens}, longest {self.max_tokens}; "
             f"{self.over_context} job(s) over the {self.capture_max_model_len}-token capture "
             "context (excluded)",
         ]
         for arm, stats in self.per_arm.items():
-            lines.append(
+            line = (
                 f"  arm {arm}: {stats['marks']} jobs, {stats['total_tokens']} tokens, "
                 f"longest {stats['max_tokens']}, {stats['over_context']} over the "
                 f"{self.capture_max_model_len}-token capture context"
             )
+            if horn:
+                line += (
+                    f"; {stats['errors']} error(s), {stats['exception_rows']} exception row(s); "
+                    f"prompt tokens {stats['prompt_tokens']} rebuilt vs {stats['bedrock_prompt_tokens']} "
+                    f"counted by the service, completion tokens {stats['bedrock_completion_tokens']} "
+                    "counted by the service"
+                )
+            lines.append(line)
         if self.capture_supported:
             lines.append("  capture: supported")
         else:
@@ -1770,76 +2498,157 @@ def _estimate_bytes(
         layers, heads = attention_shape(config)
     except ValueError as exc:
         return None, f"{formula}; not computed: {exc} (config from {source})"
-    total = 0
-    for item in planned:
-        job = item.job
-        if mode == "summary":
-            total += layers * heads * _SUMMARY_VALUES_PER_HEAD * 8 + tp * job.n_tokens
-        else:
-            queries = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
-            total += layers * queries * heads * (4 + 1 + 1 + 1) * 2 + tp * job.n_tokens
+    total = sum(_job_capture_bytes(item.job, layers, heads, tp, mode) for item in planned)
     return total, f"{formula}; layers={layers}, heads={heads}, tp={tp}; config: {source}"
+
+
+def _job_capture_bytes(job: attention.Job, layers: int, heads: int, tp: int, mode: str) -> int:
+    """Return the estimated captured bytes of one job (the term ``_estimate_bytes`` sums).
+
+    Kept apart so that the per-arm estimates of a deduction plan are sums of the same terms
+    and add up to the plan's total exactly.
+    """
+    if mode == "summary":
+        return layers * heads * _SUMMARY_VALUES_PER_HEAD * 8 + tp * job.n_tokens
+    queries = job.n_tokens - int(job.query_start)  # type: ignore[arg-type]
+    return layers * queries * heads * (4 + 1 + 1 + 1) * 2 + tp * job.n_tokens
+
+
+def _resolve_capture_len(model: str, spec: Mapping[str, Any], override: Optional[int]) -> int:
+    """Return the context length a capture of `model` serves with and is planned against.
+
+    Parameters
+    ----------
+    model : str
+        Roster key.
+    spec : Mapping[str, Any]
+        The model's deploy spec (``max_model_len`` is the ceiling of an override).
+    override : Optional[int]
+        The ``capture_max_model_len`` keyword of an entry point, or ``None``.
+
+    Returns
+    -------
+    int
+        `override` when given, else ``capture_max_model_len(model, spec)``.
+
+    Raises
+    ------
+    ValueError
+        When `override` is not an integer (a bool is refused) with ``0 < value <=
+        spec["max_model_len"]``. The message names ``capture_max_model_len``.
+
+    Notes
+    -----
+    A module function called ``capture_max_model_len`` exists, and the keyword of the entry
+    points has the same name and shadows it in their bodies; this helper is the one place
+    that reaches the function from there.
+    """
+    if override is None:
+        return capture_max_model_len(model, spec)
+    ceiling = int(spec["max_model_len"])
+    if isinstance(override, bool) or not isinstance(override, numbers.Integral) or not 0 < override <= ceiling:
+        raise ValueError(
+            f"capture_max_model_len must be an integer with 0 < value <= {ceiling} (the max_model_len "
+            f"of the {model} deploy spec), got {override!r}"
+        )
+    return int(override)
+
+
+def _usage_total(items: Sequence[PlannedJob], name: str) -> int:
+    """Return the sum of the service's ``bedrock_token_counts[name]`` over deduction `items`."""
+    return sum((item.bedrock_token_counts or {}).get(name, 0) for item in items)
 
 
 def _plan_one(
     model: str,
-    results_root: Path,
+    source: _Source,
     s3_prefix: str,
     tokenizer_for: Optional[Callable[[str], Any]],
     template_for: Optional[Callable[[str], Any]],
     config_for: Optional[Callable[[str], Mapping[str, Any]]],
     seeds: Optional[Sequence[int]] = None,
     mode: Optional[str] = None,
+    capture_len: Optional[int] = None,
 ) -> Tuple[ReplayPlan, List[PlannedJob]]:
     """Build one model's plan and its planned jobs (no AWS access).
 
-    `seeds` restricts the plan to the runs of those seeds (``None`` = every seed), so
+    `seeds` restricts the plan to the runs or cells of those seeds (``None`` = every seed), so
     every count, token total and the storage estimate cover only them. `mode` is the
-    capture mode (``None`` means ``"mass"``): it is set on every job, recorded on the
-    plan and selects the storage formula.
+    capture mode (``None`` means the study's default, see ``_resolve_mode``): it is set on
+    every job, recorded on the plan and selects the storage formula. `capture_len` replaces the
+    capture context of the model (``_resolve_capture_len``).
 
     Raises
     ------
     ValueError
-        When `mode` is not ``None`` or one of ``MODES``, or `seeds` holds a non-integer.
+        When `mode` is not ``None`` or one of ``MODES``, `seeds` holds a non-integer, or
+        `capture_len` is not valid for the model's spec.
     """
-    resolved = _resolve_mode(mode)
+    resolved = _resolve_mode(mode, source.study)
     from smolbench.evals.providers import ec2
 
+    horn = source.study == "horn"
     wanted = _seed_set(seeds)
     spec = ec2.EC2_DEPLOY_SPECS[model]
+    max_len = _resolve_capture_len(model, spec, capture_len)
     get_tokenizer = (lambda: tokenizer_for(model)) if tokenizer_for else (lambda: _default_tokenizer(model))
     get_template = (lambda: template_for(model)) if template_for else (lambda: load_chat_template(model))
-    runs = [r for r in find_runs(results_root, model) if wanted is None or r.seed in wanted]
     try:
-        built = _build(
-            model, results_root, s3_prefix, get_tokenizer, get_template, None, wanted, resolved
-        )
+        built = _build(model, source, s3_prefix, get_tokenizer, get_template, None, wanted, resolved)
     except (TemplateUnavailable, ReasoningFormatError) as exc:
-        # One model's missing template must not stop the other models' plans.
-        built = _Built(runs=runs, errors=[f"{model}: {exc} (marks not counted)"])
+        # One model's missing template must not stop the other models' plans. The marks are
+        # not counted, but the runs (induction) or folders and exception rows (deduction) are.
+        message = f"{model}: {exc} (marks not counted)"
+        if horn:
+            sel = _horn_select(source.rows_path, source.arms, wanted, source.reps)  # type: ignore[arg-type]
+            built = _Built(
+                runs=list(_horn_runs(model, sel)), errors=[message], arm_order=sel.arm_order,
+                exception_rows=dict(sel.exception_rows),
+            )
+        else:
+            built = _Built(
+                runs=[r for r in find_runs(source.results_root, model) if wanted is None or r.seed in wanted],
+                errors=[message],
+            )
 
-    max_len = capture_max_model_len(model, spec)
     capturable = [p for p in built.planned if p.job.n_tokens <= max_len]
-    per_arm: Dict[str, Dict[str, int]] = {}
-    for arm in ARMS:
-        sizes = [p.job.n_tokens for p in built.planned if p.run.arm == arm]
+    per_arm: Dict[str, Dict[str, Any]] = {}
+    arms = built.arm_order if horn else list(ARMS)
+    for arm in arms:
+        jobs_of_arm = [p for p in built.planned if p.run.arm == arm]
+        sizes = [p.job.n_tokens for p in jobs_of_arm]
         per_arm[arm] = {
             "marks": len(sizes), "total_tokens": sum(sizes), "max_tokens": max(sizes, default=0),
             "over_context": sum(1 for size in sizes if size > max_len),
         }
+        if horn:
+            per_arm[arm].update({
+                "errors": len(built.errors_by_arm.get(arm, [])),
+                "exception_rows": built.exception_rows.get(arm, 0),
+                "prompt_tokens": sum(int(p.job.query_start) for p in jobs_of_arm),  # type: ignore[arg-type]
+                "bedrock_prompt_tokens": _usage_total(jobs_of_arm, "prompt_tokens"),
+                "bedrock_completion_tokens": _usage_total(jobs_of_arm, "completion_tokens"),
+                "est_capture_bytes": None,  # filled below once the total is known
+            })
 
     instance_types = tuple(INSTANCE_TYPES.get(model, ()))
     tp = ec2.derive_tp(model, instance_types[0], spec) if instance_types else None
     config: Optional[Mapping[str, Any]]
     try:
         if config_for is not None:
-            config, source = config_for(model), "injected config"
+            config, source_text = config_for(model), "injected config"
         else:
-            config, source = _load_model_config_with_source(model)
+            config, source_text = _load_model_config_with_source(model)
     except (TemplateUnavailable, OSError, ValueError) as exc:
-        config, source = None, f"config unavailable: {exc}"
-    est_bytes, est_basis = _estimate_bytes(capturable, config, tp, source, resolved)
+        config, source_text = None, f"config unavailable: {exc}"
+    est_bytes, est_basis = _estimate_bytes(capturable, config, tp, source_text, resolved)
+    if horn and est_bytes is not None and config is not None and tp is not None:
+        # Per arm, the same terms the total sums: the arm values add up to the total exactly.
+        layers, heads = attention_shape(config)  # succeeded inside _estimate_bytes
+        for arm, arm_stats in per_arm.items():
+            arm_stats["est_capture_bytes"] = sum(
+                _job_capture_bytes(p.job, layers, heads, tp, resolved) for p in capturable if p.run.arm == arm
+            )
 
     sizes_all = [p.job.n_tokens for p in built.planned]
     plan = ReplayPlan(
@@ -1863,6 +2672,8 @@ def _plan_one(
         est_capture_bytes=est_bytes,
         est_basis=est_basis,
         mode=resolved,
+        study=source.study,
+        bedrock_token_counts=_HORN_BEDROCK_COUNTS_NOTE if horn else _BEDROCK_COUNTS_NOTE,
     )
     return plan, built.planned
 
@@ -1877,13 +2688,20 @@ def plan_replay(
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
     seeds: Optional[Sequence[int]] = None,
     mode: Optional[str] = None,
+    study: str = "induction",
+    horn_rows: Union[Path, Mapping[str, Path], None] = None,
+    rungs_dir: Optional[Path] = None,
+    arms: Optional[Sequence[str]] = None,
+    reps: Optional[Sequence[int]] = None,
+    capture_max_model_len: Optional[int] = None,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
     Parameters
     ----------
     results_root : Path, optional
-        Folder holding ``induction/<model>/...`` (see ``find_runs``).
+        Induction: folder holding ``induction/<model>/...`` (see ``find_runs``). Ignored for
+        ``study="horn"``.
     models : Sequence[str], optional
         Roster keys; defaults to the three keys of ``bedrock_trio.TRIO``.
     s3_uri : str, optional
@@ -1892,38 +2710,69 @@ def plan_replay(
         ``model -> object`` overrides of the pinned tokenizer, chat template and
         ``config.json`` (tests and offline use).
     seeds : Sequence[int], optional
-        Plan only the runs of these seeds; every count, token total, per-arm number
-        and the storage estimate then cover only them. ``None`` (default) plans every
-        seed. An empty sequence selects no run, so every plan has zero marks.
+        Plan only the runs (induction) or cells (deduction) of these seeds; every count,
+        token total, per-arm number and the storage estimate then cover only them. ``None``
+        (default) plans every seed. An empty sequence selects nothing, so every plan has zero
+        marks.
     mode : Optional[str], optional
-        Capture mode to plan, ``"mass"`` or ``"summary"``; ``None`` (default) means
-        ``"mass"``. Keyword-only. It sets every job's mode, ``ReplayPlan.mode`` and the
-        storage estimate (summary storage does not grow with the response length).
+        Capture mode to plan, ``"mass"`` or ``"summary"``; ``None`` (default) means ``"mass"``
+        for induction and ``"summary"`` for deduction. Keyword-only. It sets every job's mode,
+        ``ReplayPlan.mode`` and the storage estimate (summary storage does not grow with the
+        response length). Either mode can be planned for either study.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``. Keyword-only.
+    horn_rows : Union[Path, Mapping[str, Path], None], optional
+        Deduction only. ``None`` (default): ``bt.horn_rows_path(model)`` for each model. A
+        folder: ``<folder>/<model>.jsonl`` for each model. A file: that file, for ONE model
+        (refused for several). A mapping: the entry of each model (a model without an entry is
+        refused).
+    rungs_dir : Optional[Path], optional
+        Deduction only: the rendered rungs; default ``bt.RUNGS_DIR``.
+    arms, reps : Optional[Sequence], optional
+        Deduction only: keep only these arms (their order orders ``per_arm``) / replicate
+        numbers. ``None`` keeps all.
+    capture_max_model_len : Optional[int], optional
+        Plan against this capture context instead of ``capture_max_model_len(model, spec)``
+        (both studies): an integer with ``0 < value <= spec["max_model_len"]``. It decides
+        which jobs are over-context and is reported as ``ReplayPlan.capture_max_model_len``.
 
     Returns
     -------
     Dict[str, ReplayPlan]
-        One plan per model. A model with no result files gets a plan with zero
-        marks. A ``TemplateUnavailable`` or ``ReasoningFormatError`` for one model
+        One plan per model. A model with no result files (or no rows file) gets a plan with
+        zero marks. A ``TemplateUnavailable`` or ``ReasoningFormatError`` for one model
         is recorded in that plan's ``errors`` (with ``jobs == 0``), so the other
-        models still plan.
+        models still plan. For deduction, ``per_arm`` is keyed by arm (see
+        ``ReplayPlan.per_arm``) and ``runs`` counts ``<rung>/<arm>`` folders.
 
     Raises
     ------
     ValueError
-        When `s3_uri` is malformed, `seeds` holds a non-integer, or `mode` is not
-        ``None`` or one of ``MODES``.
+        When `s3_uri` is malformed, `seeds` or `reps` holds a non-integer, `mode` or `study` is
+        invalid, `capture_max_model_len` is not valid for a model's spec, `horn_rows` does not fit
+        the models (see above), or a deduction-only argument is given for the induction study.
     KeyError
         When a model has no deploy spec.
     """
     _bucket, prefix = parse_s3_uri(s3_uri)
-    root = Path(results_root)
-    resolved = _resolve_mode(mode)
+    _check_study(study)
+    model_list = list(models) if models is not None else list(bt.TRIO)
+    # Every source is built before any model is planned, so a bad argument fails the call whole.
+    sources = {
+        model: _make_source(
+            study, Path(results_root),
+            _horn_rows_file(model, horn_rows, len(model_list)) if study == "horn" else horn_rows,
+            rungs_dir, arms, reps,
+        )
+        for model in model_list
+    }
+    resolved = _resolve_mode(mode, study)
     return {
         model: _plan_one(
-            model, root, prefix, tokenizer_for, template_for, config_for, seeds, resolved
+            model, sources[model], prefix, tokenizer_for, template_for, config_for, seeds, resolved,
+            capture_max_model_len,
         )[0]
-        for model in (list(models) if models is not None else list(bt.TRIO))
+        for model in model_list
     }
 
 
@@ -2960,12 +3809,12 @@ class ReplayReport:
     plan: Optional[ReplayPlan] = None
 
 
-def run_tag(model_key: str, run_label: Optional[str] = None) -> str:
+def run_tag(model_key: str, run_label: Optional[str] = None, study: str = "induction") -> str:
     """Return the EC2 experiment tag of one replay run.
 
-    The tag names the model and, when given, a label, so that runs of different models (or
-    two runs of one model over different seeds) each provision and terminate their own
-    box. The state file is named after the tag.
+    The tag names the study (deduction only), the model and, when given, a label, so that
+    runs of different models, of different studies, or of one model over different seeds
+    each provision and terminate their own box. The state file is named after the tag.
 
     Parameters
     ----------
@@ -2973,12 +3822,20 @@ def run_tag(model_key: str, run_label: Optional[str] = None) -> str:
         Roster key.
     run_label : Optional[str]
         Distinguishes concurrent runs of one model, for example ``"s0-14"``.
+    study : str, optional
+        ``"induction"`` (default; the tag is what it was before the deduction replay
+        existed) or ``"horn"``.
 
     Returns
     -------
     str
-        ``EC2_TAG-<model>[-<label>]`` with every character outside ``A-Za-z0-9._-``
-        replaced by ``-``.
+        ``EC2_TAG-<model>[-<label>]`` for induction, ``EC2_TAG-horn-<model>[-<label>]`` for
+        deduction, with every character outside ``A-Za-z0-9._-`` replaced by ``-``.
+
+    Raises
+    ------
+    ValueError
+        When `study` is neither ``"induction"`` nor ``"horn"``.
 
     Examples
     --------
@@ -2986,8 +3843,11 @@ def run_tag(model_key: str, run_label: Optional[str] = None) -> str:
     'smolbench-rebuttal-attention-gemma-4-31b'
     >>> run_tag("deepseek-v3.1", "s0-14")
     'smolbench-rebuttal-attention-deepseek-v3.1-s0-14'
+    >>> run_tag("gemma-4-31b", study="horn")
+    'smolbench-rebuttal-attention-horn-gemma-4-31b'
     """
-    parts = [EC2_TAG, model_key] + ([run_label] if run_label else [])
+    _check_study(study)
+    parts = [EC2_TAG] + (["horn"] if study == "horn" else []) + [model_key] + ([run_label] if run_label else [])
     return re.sub(r"[^A-Za-z0-9._-]", "-", "-".join(parts))
 
 
@@ -3043,11 +3903,19 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     ec2: Any = None,
     s3_client_factory: Optional[Callable[[], Any]] = None,
     mode: Optional[str] = None,
+    study: str = "induction",
+    horn_rows: Optional[Path] = None,
+    rungs_dir: Optional[Path] = None,
+    arms: Optional[Sequence[str]] = None,
+    reps: Optional[Sequence[int]] = None,
+    capture_max_model_len: Optional[int] = None,
+    allow_horn_mass: bool = False,
 ) -> ReplayReport:
-    """Capture one model's stored induction transcripts on one spot box. BILLED.
+    """Capture one model's stored transcripts (induction marks or deduction cells) on one spot box. BILLED.
 
     Order of events. (1) Build the plan and jobs offline and print the launch
-    summary. (2) Refuse unless ``approved is True``. (3) Refuse a model in
+    summary. (2) Refuse unless ``approved is True``; right after it, refuse a deduction run
+    in mass mode unless `allow_horn_mass` says otherwise. (3) Refuse a model in
     ``CAPTURE_UNSUPPORTED`` unless overridden, then one in ``SERVE_UNVERIFIED``
     unless overridden. (4) Skip every job that already has
     a key in the bucket (never re-sent, never overwritten); when nothing remains,
@@ -3066,7 +3934,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         Roster key; needs a deploy spec and an ``INSTANCE_TYPES`` entry (or
         `instance_types`).
     results_root : Path, optional
-        Folder holding ``induction/<model>/...`` (see ``find_runs``).
+        Induction: folder holding ``induction/<model>/...`` (see ``find_runs``). Ignored for
+        ``study="horn"``.
     s3_uri : str, optional
         ``s3://bucket/prefix`` destination.
     approved : bool, optional
@@ -3093,10 +3962,10 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     tokenizer_for, template_for, config_for : Callable, optional
         Overrides of the pinned tokenizer, chat template and config (see ``plan_replay``).
     seeds : Sequence[int], optional
-        Replay only the runs of these seeds, to split a model across several
-        sessions. The plan, the jobs sent and the manifests cover only them; skipped
-        and over-context counts too. ``None`` (default) means every seed; an empty
-        sequence selects no run, so nothing is sent and no box is provisioned.
+        Replay only the runs (induction) or cells (deduction) of these seeds, to split a
+        model across several sessions. The plan, the jobs sent and the manifests cover only
+        them; skipped and over-context counts too. ``None`` (default) means every seed; an
+        empty sequence selects nothing, so nothing is sent and no box is provisioned.
     run_label : str, optional
         Distinguishes concurrent runs of one model; part of the instance tag and of the
         state file name (see ``run_tag``).
@@ -3105,13 +3974,35 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     s3_client_factory : Callable[[], Any], optional
         Returns a NEW S3 client per call; defaults to a fresh boto3 client in ``REGION``.
     mode : Optional[str], optional
-        Capture mode, ``"mass"`` or ``"summary"``; ``None`` (default) means ``"mass"``.
+        Capture mode, ``"mass"`` or ``"summary"``; ``None`` (default) means ``"mass"`` for
+        induction and ``"summary"`` for deduction.
         Keyword-only. It is set on every job, passed to ``attention.run_capture_batches``,
         required of every rank's meta by the audit (with ``CAPTURE_VERSION`` for mass,
         ``SUMMARY_CAPTURE_VERSION`` for summary), and written to every manifest. Summary
         mode stores sums over the response rows instead of per-row arrays, so its
         objects do not grow with the response length. The captures of the two modes of
         one job share a key, so a job captured in one mode is never re-sent in the other.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"`` (the deduction cells; see the module
+        docstring). Keyword-only, like every argument below. The approval gate, the refusals,
+        the provisioning, the shutdown-before-audit order, the audit, the manifests and the
+        no-overwrite upload rule are the same for both.
+    horn_rows : Optional[Path], optional
+        Deduction only: the model's rows file, or a folder holding ``<model>.jsonl``. Default
+        ``bt.horn_rows_path(model_key)``.
+    rungs_dir : Optional[Path], optional
+        Deduction only: the rendered rungs; default ``bt.RUNGS_DIR``.
+    arms, reps : Optional[Sequence], optional
+        Deduction only: replay only these arms / replicate numbers (``None`` = all).
+    capture_max_model_len : Optional[int], optional
+        Capture context for this run (both studies), replacing ``capture_max_model_len(model,
+        spec)``: an integer with ``0 < value <= spec["max_model_len"]``. Jobs longer than it are
+        excluded as over-context, and it is passed to ``ec2.serve_model`` as ``max_model_len``.
+        ``None`` keeps ``CAPTURE_MAX_MODEL_LEN.get(model_key)``.
+    allow_horn_mass : bool, optional
+        A deduction run in mass mode is refused (``ValueError``) unless this is the singleton
+        ``True``: a mass capture grows with the response length, which for deduction is up to
+        131072 tokens. Has no effect on induction or on summary mode.
 
     Returns
     -------
@@ -3137,9 +4028,13 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         is not ``True`` (also before any AWS call).
     ValueError
         When no instance type is known for the model, the batch arguments are
-        invalid, `audit_workers` is below 1, `seeds` holds a non-integer, or `mode` is
-        not ``None`` or one of ``MODES`` (before any AWS call, and for `mode` before
-        even the plan is built).
+        invalid, `audit_workers` is below 1, `seeds` or `reps` holds a non-integer, `mode`
+        or `study` is not valid, `capture_max_model_len` is not valid for the model's spec, or
+        a deduction-only argument is given for the induction study (before any AWS call, and
+        for `mode`, `study` and the context before even the plan is built or printed). Also
+        when ``study="horn"`` and the mode is ``"mass"`` without ``allow_horn_mass=True``: raised
+        right after the approval gate, before any EC2 or S3 client or factory is touched, with
+        the plan's mass estimate in bytes and GB.
     RuntimeError
         When the model could not be planned at all (template or tokenizer
         unavailable), when its ``config.json`` cannot be loaded or has no
@@ -3171,17 +4066,22 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     box is already down; with a failed shutdown it is logged and ``ShutdownFailed``
     is raised instead.
     """
-    # Phase 0: an unknown mode is refused before anything is read or built.
-    run_mode = _resolve_mode(mode)
+    # Phase 0: an unknown study or mode is refused before anything is read or built.
+    _check_study(study)
+    run_mode = _resolve_mode(mode, study)
     run_version = SUMMARY_CAPTURE_VERSION if run_mode == "summary" else CAPTURE_VERSION
+    source = _make_source(
+        study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
+        rungs_dir, arms, reps,
+    )
 
     # Phase 1: offline plan and the launch summary, shown before the gate.
     from smolbench.evals.providers import ec2 as real_ec2
 
     _bucket_for_plan, plan_prefix = parse_s3_uri(s3_uri)
     plan, planned = _plan_one(
-        model_key, Path(results_root), plan_prefix, tokenizer_for, template_for, config_for, seeds,
-        run_mode,
+        model_key, source, plan_prefix, tokenizer_for, template_for, config_for, seeds,
+        run_mode, capture_max_model_len,
     )
     types = tuple(instance_types or INSTANCE_TYPES.get(model_key, ()))
     regions = tuple(getattr(ec2, "EC2_REGIONS", real_ec2.EC2_REGIONS))
@@ -3194,6 +4094,20 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         raise ApprovalRequired(
             f"replay of {model_key} was not approved: pass approved=True after reading the "
             "launch summary above (it provisions a billed spot GPU box)"
+        )
+    # Design: the mass refusal sits directly after the gate, before every other check and
+    # before any client, so a refused run costs nothing and nothing was touched. A mass
+    # capture grows with the response length (deduction responses reach 131072 tokens), so it
+    # is allowed only on an explicit True, like the other overrides.
+    if study == "horn" and run_mode == "mass" and allow_horn_mass is not True:
+        size = (
+            "unknown (the config or the tp is not available)" if plan.est_capture_bytes is None
+            else f"{plan.est_capture_bytes} bytes (about {plan.est_capture_bytes / 1e9:.1f} GB)"
+        )
+        raise ValueError(
+            f"{model_key}: a mass capture of the deduction cells is refused: its estimated size is "
+            f"{size}, and it grows with the response length. Use mode='summary' (the default for "
+            "study='horn'), or pass allow_horn_mass=True to capture the mass arrays anyway."
         )
     # The overrides follow the approval gate's rule: only the True singleton lifts a
     # refusal, so a truthy 1 or "yes" from a careless call keeps the refusal in place.
@@ -3239,7 +4153,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     make_s3 = s3_client_factory or _default_s3_factory
     bucket, prefix = parse_s3_uri(s3_uri)
     spec = (getattr(ec2, "EC2_DEPLOY_SPECS", None) or real_ec2.EC2_DEPLOY_SPECS)[model_key]
-    max_len = capture_max_model_len(model_key, spec)
+    max_len = _resolve_capture_len(model_key, spec, capture_max_model_len)
     report = ReplayReport(model_key, None, None, None, plan=plan)
     by_id = {p.job.job_id: p for p in planned}
     report.over_context = [p.job.job_id for p in planned if p.job.n_tokens > max_len]
@@ -3292,7 +4206,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     shutdown_exc: Optional[Exception] = None
     result: Optional[attention.CaptureResult] = None
     tp: Optional[int] = None
-    tag = run_tag(model_key, run_label)
+    tag = run_tag(model_key, run_label, study)
     with _scoped_env(
         EC2_EXPERIMENT_TAG=tag, EC2_STATE_FILE=str(STATE_DIR / f".ec2_state--{tag}.json")
     ):
@@ -3302,7 +4216,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             tp = ec2.derive_tp(model_key, state["instance_type"], spec)
             report.tp = tp
             with ec2.serve_model(
-                model_key, capture=True, max_model_len=CAPTURE_MAX_MODEL_LEN.get(model_key)
+                model_key, capture=True,
+                max_model_len=(
+                    max_len if capture_max_model_len is not None
+                    else CAPTURE_MAX_MODEL_LEN.get(model_key)
+                ),
             ) as served:
                 report.served_model_name = served
                 result = attention.run_capture_batches(
@@ -3470,30 +4388,48 @@ def _default_s3_factory() -> Any:
 
 
 def _group_by_run(planned: Sequence[PlannedJob]) -> List[List[PlannedJob]]:
-    """Group `planned` by stored run (seed, arm, stamp), keeping the planned order of both levels."""
-    by_run: Dict[Tuple[int, str, str], List[PlannedJob]] = {}
+    """Group `planned` by the run that owns a manifest, keeping the planned order of both levels.
+
+    Induction: by stored run (seed, arm, stamp). Deduction: by ``HornRun`` (one ``<rung>/<arm>``
+    folder). Design: one dict keyed on a hashable per-study key, not two functions, so the
+    manifest code that consumes the groups stays single.
+    """
+    by_run: Dict[Hashable, List[PlannedJob]] = {}
     for item in planned:
-        by_run.setdefault((item.run.seed, item.run.arm, item.run.stamp), []).append(item)
+        run = item.run
+        key: Hashable = run if isinstance(run, HornRun) else (run.seed, run.arm, run.stamp)
+        by_run.setdefault(key, []).append(item)
     return list(by_run.values())
 
 
 def _manifest_entry(item: PlannedJob, status: str, gate_max_rel: Any) -> Dict[str, Any]:
-    """Return the manifest's per-job entry (the shape ``read_captures`` reads)."""
-    return {
-        "job_id": item.job.job_id,
-        "mark_index": item.mark_index,
+    """Return the manifest's per-job entry (the shape ``read_captures`` reads).
+
+    A deduction entry has the induction entry's keys with ``mark_index`` replaced by
+    ``row_index`` (the row's line index in the rows file), plus ``seed``, ``rep`` and
+    ``prompt_sha256``. ``read_captures`` finds a deduction cell by its ``job_id``.
+    """
+    entry: Dict[str, Any] = {"job_id": item.job.job_id}
+    if isinstance(item.run, HornRun):
+        entry["row_index"] = item.mark_index
+    else:
+        entry["mark_index"] = item.mark_index
+    entry.update({
         "n_tokens": item.job.n_tokens,
         "query_start": item.job.query_start,
         "status": status,
         "gate_max_rel": gate_max_rel,
         "notes": list(item.notes),
-    }
+    })
+    if isinstance(item.run, HornRun):
+        entry.update({"seed": item.seed, "rep": item.rep, "prompt_sha256": item.prompt_sha256})
+    return entry
 
 
 def _manifest_payload(
     model: str,
     spec: Mapping[str, Any],
-    run: Run,
+    run: Union[Run, HornRun],
     entries: List[Dict[str, Any]],
     *,
     tp: Optional[int],
@@ -3507,13 +4443,18 @@ def _manifest_payload(
     ``post_hoc_audit`` adds the key ``"post_hoc_audit": True``; it is absent otherwise,
     so a manifest written at capture time is unchanged. `mode` is written as the
     manifest's ``"mode"``: the capture mode of the run's jobs (``"mass"``, ``"summary"``,
-    or ``"mixed"`` from ``audit_existing`` when one run directory holds both).
+    or ``"mixed"`` from ``audit_existing`` when one run directory holds both). For a
+    ``HornRun`` the ``"run"`` field is ``{"study": "horn", "rung", "arm", "source_file":
+    <rows file name>}``; every other key is the same for both studies.
     """
+    run_field: Dict[str, Any] = (
+        {"study": "horn", "rung": run.rung, "arm": run.arm, "source_file": run.rows_path.name}
+        if isinstance(run, HornRun) else
+        {"seed": run.seed, "arm": run.arm, "stamp": run.stamp, "source_file": run.path.name}
+    )
     payload: Dict[str, Any] = {
         "model": model,
-        "run": {
-            "seed": run.seed, "arm": run.arm, "stamp": run.stamp, "source_file": run.path.name,
-        },
+        "run": run_field,
         "tp": tp,
         "instance_type": instance_type,
         "served_model_name": served_model_name,
@@ -3523,7 +4464,8 @@ def _manifest_payload(
         "mode": mode,
         "jobs": entries,
         "approximations": list(APPROXIMATIONS),
-        "bedrock_token_counts": None,
+        # Induction marks carry no usage; a deduction row carries its own (see approximation 10).
+        "bedrock_token_counts": _HORN_BEDROCK_COUNTS_NOTE if isinstance(run, HornRun) else None,
     }
     if post_hoc_audit:
         payload["post_hoc_audit"] = True
@@ -3665,6 +4607,12 @@ def audit_existing(
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
     s3_client_factory: Optional[Callable[[], Any]] = None,
+    study: str = "induction",
+    horn_rows: Optional[Path] = None,
+    rungs_dir: Optional[Path] = None,
+    arms: Optional[Sequence[str]] = None,
+    reps: Optional[Sequence[int]] = None,
+    capture_max_model_len: Optional[int] = None,
 ) -> ReplayReport:
     """Audit the captures of one model that are already in the bucket, and manifest them.
 
@@ -3674,7 +4622,8 @@ def audit_existing(
     and writes S3 only: it has no EC2 parameter and starts nothing.
 
     Steps. (1) Plan the jobs offline as ``replay_model`` does (same job ids and keys).
-    (2) For each stored run, list its keys once and classify every planned job: no key
+    (2) For each stored run (deduction: each ``<rung>/<arm>`` folder), list its keys once and
+    classify every planned job: no key
     is *not captured* (counted in ``report.not_captured``); some but not all of the
     expected rank objects is *partial* (``report.partial``, logged, not audited); the
     rest are candidates. The expected rank count is the ``tp`` in the job's rank-0 meta
@@ -3692,11 +4641,12 @@ def audit_existing(
     model_key : str
         Roster key; needs a deploy spec.
     results_root : Path, optional
-        Folder holding ``induction/<model>/...`` (see ``find_runs``); gives the planned jobs.
+        Induction: folder holding ``induction/<model>/...`` (see ``find_runs``); gives the
+        planned jobs. Ignored for ``study="horn"``.
     s3_uri : str, optional
         ``s3://bucket/prefix`` where the captures are.
     seeds : Sequence[int], optional
-        Only the runs of these seeds (see ``plan_replay``); ``None`` is every seed.
+        Only the runs or cells of these seeds (see ``plan_replay``); ``None`` is every seed.
     arrays : str, optional
         ``"all"`` (default) or ``"sample"``: which jobs get their arrays downloaded
         (see ``audit_captures``).
@@ -3709,6 +4659,15 @@ def audit_existing(
         Returns a NEW S3 client per call; defaults to a fresh boto3 client in ``REGION``.
         A new client is taken for the listing, for every run directory's audit and for
         every manifest write, so rotated credentials are picked up.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``; the listing, the audit and the manifests are
+        the same code for both (a deduction run directory is one ``<rung>/<arm>`` folder).
+    horn_rows, rungs_dir, arms, reps
+        Deduction only, as for ``replay_model``: they select the cells that are planned and so
+        audited. ``horn_rows`` is the rows file or a folder holding ``<model>.jsonl``.
+    capture_max_model_len : Optional[int], optional
+        Capture context to plan against (see ``replay_model``); it only sets the plan's
+        ``capture_max_model_len``, since stored captures are audited whatever their length.
 
     Returns
     -------
@@ -3723,8 +4682,10 @@ def audit_existing(
     Raises
     ------
     ValueError
-        When `arrays` or `workers` is invalid, `s3_uri` is malformed, `seeds` holds a
-        non-integer, or an existing manifest is unreadable (before any audit starts).
+        When `arrays` or `workers` is invalid, `s3_uri` is malformed, `seeds` or `reps` holds a
+        non-integer, `study` is unknown, a deduction-only argument is given for the induction
+        study, `capture_max_model_len` is not valid for the spec, or an existing manifest is
+        unreadable (before any audit starts).
     KeyError
         When the model has no deploy spec.
     RuntimeError
@@ -3754,8 +4715,14 @@ def audit_existing(
 
     # Phase 1: offline plan and config, exactly as replay_model builds them.
     bucket, prefix = parse_s3_uri(s3_uri)
+    _check_study(study)
+    source = _make_source(
+        study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
+        rungs_dir, arms, reps,
+    )
     plan, planned = _plan_one(
-        model_key, Path(results_root), prefix, tokenizer_for, template_for, config_for, seeds
+        model_key, source, prefix, tokenizer_for, template_for, config_for, seeds, None,
+        capture_max_model_len,
     )
     if not planned and plan.errors:
         raise RuntimeError(f"{model_key}: nothing to audit, the plan failed: {plan.errors[0]}")
@@ -3778,7 +4745,7 @@ def audit_existing(
     # ``attention.job_keys_present`` would (every key under ``<stem>.``) in far fewer calls.
     client = make_s3()
     # (run, planned jobs to audit, {job id: (tp, capture_version, mode) or the reason it has none})
-    work: List[Tuple[Run, List[PlannedJob], Dict[str, Any]]] = []
+    work: List[Tuple[Union[Run, HornRun], List[PlannedJob], Dict[str, Any]]] = []
     for items in _group_by_run(planned):
         run = items[0].run
         run_keys_prefix = run_prefix(prefix, run)
@@ -3878,8 +4845,9 @@ def audit_existing(
             entries.append(_manifest_entry(item, status, None))
         tps = {fmt[0] for fmt in formats.values() if not isinstance(fmt, str)}
         # The manifest's mode is the mode of the audited jobs when they share one. NOTE: a run
-        # directory with no readable meta at all has no known mode and is also written as
-        # "mixed" (the spec's "else" branch); the reader does not use this field.
+        # directory with no readable meta at all has no known mode (every job there was audited
+        # as failed), so it is written as "mixed" like a directory that holds both modes; the
+        # reader does not use this field.
         modes = {fmt[2] for fmt in formats.values() if not isinstance(fmt, str)}
         payload = _manifest_payload(
             model_key, spec, run, entries, tp=tps.pop() if len(tps) == 1 else None,
@@ -3911,6 +4879,24 @@ def audit_existing(
 _PULLED_KEY_RE = re.compile(
     r"^seed=\d+/[^/]+--[^/]+/(?:q\d+\.r\d+\.(?:npz|json)|manifest--[^/]+\.json)$"
 )
+#: The deduction counterpart, relative to ``<prefix>/deduction/horn/<model>/``: a capture array or
+#: its metadata of one cell, or a manifest, inside ``<rung>/<arm>/``. The name classes also admit
+#: ``.`` and ``..``; ``_pulled_horn_key_ok`` refuses those two.
+_HORN_PULLED_KEY_RE = re.compile(
+    r"^([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/(?:s\d+\.rep\d+\.r\d+\.(?:npz|json)|manifest--[^/]+\.json)$"
+)
+
+
+def _pulled_key_ok(study: str, rest: str) -> bool:
+    """Return whether `rest` (a key below the model folder) is one ``pull_captures`` copies.
+
+    Induction: ``_PULLED_KEY_RE``. Deduction: ``_HORN_PULLED_KEY_RE`` with neither the rung nor
+    the arm being ``.`` or ``..`` (a path component that would climb out of the mirror).
+    """
+    if study == "induction":
+        return bool(_PULLED_KEY_RE.match(rest))
+    match = _HORN_PULLED_KEY_RE.match(rest)
+    return bool(match) and not {match.group(1), match.group(2)} & {".", ".."}
 
 
 def _list_objects(client: Any, bucket: str, prefix: str) -> Iterator[Tuple[str, int]]:
@@ -3934,6 +4920,7 @@ def pull_captures(
     models: Optional[Sequence[str]] = None,
     *,
     s3_client_factory: Optional[Callable[[], Any]] = None,
+    study: str = "induction",
 ) -> int:
     """Copy the captures and manifests of the bucket to a local folder, for ``read_captures``.
 
@@ -3943,6 +4930,11 @@ def pull_captures(
     `local_root`. Every other object, such as one under ``_probe/``, is ignored. The
     tree this builds is what ``read_captures`` reads: pass `local_root` as its
     ``mirror_root`` argument (it looks for ``<mirror_root>/induction/<model>/seed=...``).
+
+    With ``study="horn"`` it lists ``<prefix>/deduction/horn/<model>/`` (``<prefix>/deduction/horn/``
+    when `models` is ``None``) and downloads the keys ``<rung>/<arm>/s<seed>.rep<rep>.r<rank>.npz``,
+    ``.../s<seed>.rep<rep>.r<rank>.json`` and ``<rung>/<arm>/manifest--*.json`` (rung and arm
+    made of ``A-Za-z0-9._-``, neither ``.`` nor ``..``) to ``<local_root>/deduction/horn/<model>/...``.
 
     A local file whose size equals the object's listed size is kept as it is. Any other
     object is written to a temporary name (``<name>.<random>.part``) in the destination
@@ -3962,6 +4954,8 @@ def pull_captures(
     s3_client_factory : Optional[Callable[[], Any]], optional
         Returns an S3 client with ``list_objects_v2`` and ``get_object``. Default
         ``_default_s3_factory``.
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``. Keyword-only.
 
     Returns
     -------
@@ -3971,7 +4965,8 @@ def pull_captures(
     Raises
     ------
     ValueError
-        When `s3_uri` is malformed, or a model name is empty, ``.``/``..``, or holds ``/``.
+        When `s3_uri` is malformed, `study` is unknown, or a model name is empty, ``.``/``..``,
+        or holds ``/``.
 
     Notes
     -----
@@ -3981,25 +4976,29 @@ def pull_captures(
     `models` is ``None``) and one GET per file it writes.
     """
     bucket, prefix = parse_s3_uri(s3_uri)
+    _check_study(study)
     root = Path(local_root)
     for model in models or ():
         if not model or model in (".", "..") or "/" in model:
             raise ValueError(f"model name {model!r} must be a non-empty name without '/'")
     client = (s3_client_factory or _default_s3_factory)()
-    induction = "/".join(part for part in (prefix, "induction") if part) + "/"
+    # Design: the two studies differ only in the folder below the prefix and in which keys
+    # count, so one listing/copy loop serves both.
+    study_dirs = ("induction",) if study == "induction" else ("deduction", "horn")
+    study_root = "/".join(part for part in (prefix, *study_dirs) if part) + "/"
 
     # Phase 1: list. With explicit models, one listing per model prefix; otherwise one
-    # listing of the whole induction/ folder, grouped by the model folder in the key.
-    listings = [induction + model + "/" for model in models] if models is not None else [induction]
+    # listing of the whole study folder, grouped by the model folder in the key.
+    listings = [study_root + model + "/" for model in models] if models is not None else [study_root]
     written = 0
     for listing_prefix in listings:
         for key, size in _list_objects(client, bucket, listing_prefix):
-            below_induction = key[len(induction):]
-            model, _, rest = below_induction.partition("/")
-            if model in ("", ".", "..") or not _PULLED_KEY_RE.match(rest):
+            below_root = key[len(study_root):]
+            model, _, rest = below_root.partition("/")
+            if model in ("", ".", "..") or not _pulled_key_ok(study, rest):
                 continue
             # Every component is regex-limited or checked above, so none can climb out of `root`.
-            dest = root.joinpath("induction", *below_induction.split("/"))
+            dest = root.joinpath(*study_dirs, *below_root.split("/"))
             # Phase 2: keep a same-size file, else download beside it and rename.
             if dest.is_file() and dest.stat().st_size == size:
                 continue
@@ -4042,6 +5041,30 @@ class _MirrorStore:
 
 
 _CAPTURE_FILE_RE = re.compile(r"^q(\d+)\.r(\d+)\.npz$")
+#: The deduction counterpart: one rank's array of one cell, ``s<seed>.rep<rep>.r<rank>.npz``.
+#: It never matches an induction name, nor does ``_CAPTURE_FILE_RE`` match this one.
+_HORN_CAPTURE_FILE_RE = re.compile(r"^s(\d+)\.rep(\d+)\.r(\d+)\.npz$")
+
+
+def _verified_set(run_dir: Path, extract: Callable[[Mapping[str, Any]], Any]) -> set:
+    """Return ``extract(entry)`` of every ``verified`` entry of every ``manifest--*.json`` in `run_dir`.
+
+    Raises
+    ------
+    ValueError
+        When a manifest is not valid JSON or lacks the ``jobs`` entries
+        ``_write_manifests`` writes, or an entry lacks what `extract` reads (the reader must
+        not guess what a manifest holds).
+    """
+    verified: set = set()
+    for path in sorted(run_dir.glob("manifest--*.json")):
+        try:
+            for entry in json.loads(path.read_text())["jobs"]:
+                if entry["status"] == "verified":
+                    verified.add(extract(entry))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f"{path}: unreadable manifest: {exc!r}") from exc
+    return verified
 
 
 def _verified_marks(run_dir: Path) -> set:
@@ -4053,15 +5076,18 @@ def _verified_marks(run_dir: Path) -> set:
         When a manifest is not valid JSON or lacks the ``jobs`` entries
         ``_write_manifests`` writes (the reader must not guess what it holds).
     """
-    verified: set = set()
-    for path in sorted(run_dir.glob("manifest--*.json")):
-        try:
-            for entry in json.loads(path.read_text())["jobs"]:
-                if entry["status"] == "verified":
-                    verified.add(int(entry["mark_index"]))
-        except (ValueError, KeyError, TypeError) as exc:
-            raise ValueError(f"{path}: unreadable manifest: {exc!r}") from exc
-    return verified
+    return _verified_set(run_dir, lambda entry: int(entry["mark_index"]))
+
+
+def _verified_job_ids(arm_dir: Path) -> set:
+    """Return the job ids some ``manifest--*.json`` in the deduction folder `arm_dir` records as verified.
+
+    Raises
+    ------
+    ValueError
+        As for ``_verified_marks``.
+    """
+    return _verified_set(arm_dir, lambda entry: str(entry["job_id"]))
 
 
 #: The two entropy statistics ``read_captures`` summarises, in output order.
@@ -4096,11 +5122,240 @@ def _mean_sd_over_jobs(values: Sequence[float]) -> Tuple[float, int, float]:
     return float(defined.mean()), int(defined.size), sd
 
 
+class _ArmStats:
+    """Running reduction of one arm's loaded captures, shared by both studies of ``read_captures``.
+
+    ``add`` takes one loaded job (``attention_analysis.load_capture``) and folds it in;
+    ``result`` returns the arm's statistics dict. Design: one accumulator for both studies,
+    so a statistic is computed by one code path whatever tree the captures came from.
+    """
+
+    def __init__(self) -> None:
+        self.sums: Optional[np.ndarray] = None
+        self.counts: Optional[np.ndarray] = None
+        self.n_jobs = 0
+        self.pad_total = 0
+        self.n_skipped = 0
+        # Per statistic, one entry per job: the job's all-layer, global-layer and
+        # window-layer means, and its [L] per-layer means (see _pool_layers).
+        self.per_job: Dict[str, Dict[str, List[Any]]] = {
+            stat: {"all": [], "global": [], "window": [], "layer": []} for stat in _ENTROPY_STATS
+        }
+        self.n_v1 = 0
+        self.n_summary = 0
+
+    def add(self, job: Mapping[str, Any], label: str, expected_heads: int, tp: int) -> None:
+        """Fold one loaded job into the arm.
+
+        Parameters
+        ----------
+        job : Mapping[str, Any]
+            A ``load_capture`` result, mass or summary.
+        label : str
+            Where the job came from (``<folder>/<stem>``), for error messages.
+        expected_heads : int
+            The config's head count; the joined job must hold exactly that many.
+        tp : int
+            Number of rank files the job was joined from, for the error message.
+
+        Raises
+        ------
+        ValueError
+            When the joined job's head count differs from `expected_heads` (a rank is
+            missing), or its (layers, heads) shape differs from the arm's earlier jobs.
+        """
+        is_summary = job["kind"] == "summary"
+        # The head axis is axis 2 of the mass arrays [L, P, H, 4] and axis 1 of
+        # the summary arrays [L, H]; sum_entropy stands for the summary arrays.
+        heads_read = np.shape(job["sum_entropy"])[1] if is_summary else job["mass"].shape[2]
+        if heads_read != expected_heads:
+            raise ValueError(
+                f"{label}: the {tp} rank(s) hold {heads_read} heads in "
+                f"total, the config has {expected_heads}; a rank is missing"
+            )
+        # Design: the per-(layer, head) pad-ratio sum and defined-row count come from
+        # attention_analysis.pad_ratio_sums for both kinds. A summary job already holds
+        # them (summed on the box); a mass job reduces its rows to the same two arrays.
+        # Either way the arm pools sums and counts, so the two kinds mix freely.
+        job_sums, job_counts = attention_analysis.pad_ratio_sums(job)
+        layers, heads = job_sums.shape
+        if self.sums is None:
+            self.sums = np.zeros((layers, heads), dtype=np.float64)
+            self.counts = np.zeros((layers, heads), dtype=np.int64)
+        elif self.sums.shape != (layers, heads):
+            raise ValueError(
+                f"{label}: shape (L={layers}, H={heads}) differs from the arm's {self.sums.shape}"
+            )
+        self.sums += job_sums
+        self.counts += job_counts  # type: ignore[operator]
+        # Entropy means of this job: its own pooled defined values per layer set.
+        # A summary job is reduced to ITS OWN means here, before the average over
+        # jobs in result(): rows are never pooled across jobs, whichever kind a job is.
+        by_layer = attention_analysis.entropy_by_layer(job)
+        window = job.get("sliding_window")
+        is_global = None if window is None else np.asarray(window) == 0
+        is_window = None if window is None else np.asarray(window) > 0
+        for stat in _ENTROPY_STATS:
+            mean_l, count_l = by_layer[stat], by_layer[f"{stat}_count"]
+            self.per_job[stat]["all"].append(_pool_layers(mean_l, count_l, None))
+            self.per_job[stat]["global"].append(
+                float("nan") if is_global is None else _pool_layers(mean_l, count_l, is_global)
+            )
+            self.per_job[stat]["window"].append(
+                float("nan") if is_window is None else _pool_layers(mean_l, count_l, is_window)
+            )
+            self.per_job[stat]["layer"].append(mean_l)
+        if is_summary:
+            self.n_summary += 1
+        elif job.get("prompt_entropy") is None:
+            self.n_v1 += 1
+        self.n_jobs += 1
+        self.pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
+
+    def result(self) -> Optional[Dict[str, Any]]:
+        """Return the arm's statistics (the per-arm value of ``read_captures``), or ``None`` with no job."""
+        if self.n_jobs == 0 or self.sums is None or self.counts is None:
+            return None  # nothing read; any skips were already logged per folder
+        # nan, not 0, where no query had a defined baseline (no pad token anywhere);
+        # np.divide with ``where`` never emits a divide warning.
+        layer_head = np.full(self.sums.shape, np.nan, dtype=np.float64)
+        np.divide(self.sums, self.counts, out=layer_head, where=self.counts > 0)
+        total = int(self.counts.sum())
+        out: Dict[str, Any] = {
+            "jobs": self.n_jobs,
+            "pad_tokens_mean": self.pad_total / self.n_jobs,
+            "ratio_mean": float(self.sums.sum() / total) if total else float("nan"),
+            "ratio_layer_head": layer_head,
+            "skipped_unverified": self.n_skipped,
+            "prompt_entropy_v1_jobs": self.n_v1,
+            "summary_jobs": self.n_summary,
+        }
+        # Every job counts once: mean over a job's positions, heads and layers first,
+        # then over jobs (the footnote's "mean per response"), not over pooled rows.
+        for stat in _ENTROPY_STATS:
+            jobs_stat = self.per_job[stat]
+            mean, n_defined, sd = _mean_sd_over_jobs(jobs_stat["all"])
+            out[f"{stat}_mean"] = mean
+            out[f"{stat}_global_mean"] = _mean_sd_over_jobs(jobs_stat["global"])[0]
+            out[f"{stat}_window_mean"] = _mean_sd_over_jobs(jobs_stat["window"])[0]
+            stacked = np.vstack(jobs_stat["layer"])  # [jobs, L]
+            defined = ~np.isnan(stacked)
+            layer_mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
+            np.divide(
+                np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
+                out=layer_mean, where=defined.any(axis=0),
+            )
+            out[f"{stat}_layer"] = layer_mean
+            out[f"{stat}_jobs"] = n_defined
+            out[f"{stat}_sd"] = sd
+        return out
+
+
+#: One folder to read: ``(folder, [(file stem, ranks present)], verified stems or None for all)``.
+_ReadUnit = Tuple[Path, List[Tuple[str, set]], Optional[set]]
+
+
+def _induction_units(base: Path, arm: str, require_verified: bool) -> Iterator[_ReadUnit]:
+    """Yield the run folders of `arm` under ``base`` (``<mirror>/induction/<model>``) to read.
+
+    Several ``<arm>--<stamp>`` folders under one ``seed=<s>`` are re-collections of the same
+    arm. As in ``find_runs``, only the folder with the lexicographically smallest stamp
+    is read; later ones are logged at INFO. The mirror has no ``.superseded`` markers, so
+    that clause of ``find_runs`` does not apply. Units are ``q<idx>`` stems in index order;
+    `verified` holds the stems of the marks a manifest records as verified.
+    """
+    # Earliest wins, per seed and arm: the folders of one seed are
+    # re-collections of the same arm, and the released results count the first.
+    stamp_prefix = f"{arm}--"
+    by_seed: Dict[Path, List[Path]] = {}
+    for candidate in base.glob(f"seed=*/{stamp_prefix}*"):
+        if candidate.is_dir():
+            by_seed.setdefault(candidate.parent, []).append(candidate)
+    for seed_dir in sorted(by_seed):
+        ordered = sorted(by_seed[seed_dir], key=lambda d: d.name[len(stamp_prefix):])
+        run_dir = ordered[0]
+        for later in ordered[1:]:
+            logging.info(
+                f"attention_replay: ignoring {later}: an earlier {arm} run of "
+                f"{seed_dir.name} exists ({ordered[0].name})"
+            )
+        ranks: Dict[int, set] = {}
+        for path in run_dir.iterdir():
+            match = _CAPTURE_FILE_RE.match(path.name)
+            if match:
+                ranks.setdefault(int(match.group(1)), set()).add(int(match.group(2)))
+        verified = {f"q{i}" for i in _verified_marks(run_dir)} if require_verified else None
+        yield run_dir, [(f"q{i}", ranks[i]) for i in sorted(ranks)], verified
+
+
+def _horn_units(rung_dir: Path, arm: str, require_verified: bool) -> Iterator[_ReadUnit]:
+    """Yield the one folder of `arm` under the deduction rung folder `rung_dir`, when it exists.
+
+    Units are ``s<seed>.rep<rep>`` stems in (seed, rep) order. `verified` holds the stems whose
+    job id (``horn.<rung>.<arm>.s<seed>.rep<rep>``) some manifest in the folder records as
+    verified. Unlike induction there is no earliest-run rule here: the selection of one row
+    per cell was made when the jobs were planned, and a cell has one key.
+    """
+    arm_dir = rung_dir / arm
+    if not arm_dir.is_dir():
+        return
+    ranks: Dict[Tuple[int, int], Tuple[str, set]] = {}
+    for path in arm_dir.iterdir():
+        match = _HORN_CAPTURE_FILE_RE.match(path.name)
+        if match:
+            stem = f"s{match.group(1)}.rep{match.group(2)}"
+            ranks.setdefault((int(match.group(1)), int(match.group(2))), (stem, set()))[1].add(int(match.group(3)))
+    verified: Optional[set] = None
+    if require_verified:
+        ids = _verified_job_ids(arm_dir)
+        verified = {
+            stem for (seed, rep), (stem, _r) in ranks.items()
+            if _horn_job_id(rung_dir.name, arm, seed, rep) in ids
+        }
+    yield arm_dir, [ranks[k] for k in sorted(ranks)], verified
+
+
+def _read_unit(
+    stats: _ArmStats, store: Any, mirror_root: Path, unit: _ReadUnit, expected_heads: int
+) -> None:
+    """Load every verified job of one folder into `stats`.
+
+    A job no manifest records as verified is skipped, counted in ``stats.n_skipped`` and
+    reported with one WARNING per folder. The ranks present for a job must be exactly
+    ``0..tp-1``.
+
+    Raises
+    ------
+    ValueError
+        When a job's ranks are not exactly ``0..tp-1`` (``tp`` = the number of rank files), or
+        ``_ArmStats.add`` refuses the job.
+    """
+    run_dir, units, verified = unit
+    rel = run_dir.relative_to(mirror_root).as_posix() + "/"
+    unverified = [stem for stem, _ranks in units if verified is not None and stem not in verified]
+    if unverified:
+        stats.n_skipped += len(unverified)
+        logging.warning(
+            f"attention_replay: {run_dir}: skipping {len(unverified)} job(s) no manifest "
+            f"records as verified: {', '.join(unverified)}"
+        )
+    for stem, rank_set in units:
+        if stem in unverified:
+            continue
+        tp = len(rank_set)
+        if rank_set != set(range(tp)):
+            raise ValueError(f"{run_dir}/{stem}: ranks {sorted(rank_set)} are not exactly 0..{tp - 1}")
+        job = attention_analysis.load_capture(store, rel, stem, tp)
+        stats.add(job, f"{run_dir}/{stem}", expected_heads, tp)
+
+
 def read_captures(
     model_key: str,
     mirror_root: Path,
     *,
-    arms: Sequence[str] = ARMS,
+    study: str = "induction",
+    arms: Optional[Sequence[str]] = None,
+    rung: Optional[str] = None,
     config: Optional[Mapping[str, Any]] = None,
     require_verified: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
@@ -4109,8 +5364,11 @@ def read_captures(
     Offline, no AWS. ``mirror_root`` holds a copy of the S3 tree under the prefix::
 
         <mirror_root>/induction/<model>/seed=<s>/<arm>--<stamp>/q<idx>.r<rank>.npz
+        <mirror_root>/deduction/horn/<model>/<rung>/<arm>/s<seed>.rep<rep>.r<rank>.npz
 
-    Files are grouped per run directory and ``q<idx>``; ``tp`` is the number of
+    (``pull_captures`` builds it; the first line is read for ``study="induction"``, the
+    second for ``study="horn"``.) Files are grouped per run directory and ``q<idx>``
+    (deduction: per ``<rung>/<arm>`` folder and ``s<seed>.rep<rep>``); ``tp`` is the number of
     rank files, which must be exactly ranks ``0..tp-1``. Each job is loaded with
     ``attention_analysis.load_capture`` (ranks joined head-wise in rank order; the job
     is a mass or a summary capture, as its ``kind`` says) and reduced with
@@ -4120,9 +5378,10 @@ def read_captures(
     also be the WHOLE set: the head axis of the joined job (axis 2 of ``mass``, axis 1
     of ``sum_entropy``) must equal the
     config's head count, because ranks ``0..6`` of an 8-way job are a valid
-    ``0..tp-1`` set for ``tp = 7`` and a missing top rank would otherwise pass.
+    ``0..tp-1`` set for ``tp = 7`` and a missing top rank would otherwise pass. Both
+    studies run the same per-job reduction (``_ArmStats``).
 
-    Several ``<arm>--<stamp>`` directories under one ``seed=<s>`` are re-collections
+    Induction: several ``<arm>--<stamp>`` directories under one ``seed=<s>`` are re-collections
     of the same arm. As in ``find_runs``, only the directory with the
     lexicographically smallest stamp (the part after ``<arm>--``) is read; later
     ones are ignored and logged at INFO. The mirror has no ``.superseded``
@@ -4130,7 +5389,8 @@ def read_captures(
 
     By default a job is read only when some ``manifest--<stamp>.json`` in its run
     directory (written by ``_write_manifests``, mirrored with the captures) lists
-    it, by ``mark_index``, with ``status == "verified"``. A capture the audit
+    it with ``status == "verified"``: induction by ``mark_index``, deduction by
+    ``job_id`` (``horn.<rung>.<arm>.s<seed>.rep<rep>``). A capture the audit
     rejected (``audit_failed: ...``), one whose upload failed, and one with no
     manifest at all is skipped, counted, and reported with one WARNING per run
     directory. `require_verified` ``False`` reads every capture file instead.
@@ -4141,15 +5401,22 @@ def read_captures(
         Roster key.
     mirror_root : Path
         Root of the local mirror.
-    arms : Sequence[str], optional
-        Arms to read (default ``ARMS``).
+    study : str, optional
+        ``"induction"`` (default) or ``"horn"``. Keyword-only, like every argument below.
+    arms : Optional[Sequence[str]], optional
+        Arms to read (deduction: folder names made of ``A-Za-z0-9._-``, else ``ValueError``).
+        ``None`` (default): induction reads ``ARMS``; deduction reads every
+        arm folder found, in ``bt.HORN_ARMS`` order and then the others sorted.
+    rung : Optional[str], optional
+        Deduction only: the rung folder to read (e.g. ``"m64"``). ``None`` (default) takes
+        the only rung folder of the model, or reads nothing when there is none.
     config : Mapping[str, Any], optional
         Parsed ``config.json`` of the model, for the expected head count
         (``attention_shape``). Defaults to ``load_model_config(model_key)``, which
         may download the file when the vendored copy does not apply.
     require_verified : bool, optional
         Read only jobs a manifest records as verified (default ``True``). Pass
-        ``False`` to read every ``q*.r*.npz`` regardless of the manifests.
+        ``False`` to read every capture file regardless of the manifests.
 
     Returns
     -------
@@ -4160,7 +5427,8 @@ def read_captures(
         (``[L, H]`` array, mean over queries and jobs). Queries are pooled, so
         longer completions weigh more (a summary job contributes its summed ratios and
         its defined-row counts, which pools exactly the same rows). An arm without any pad token has an
-        undefined ratio: ``nan``, not 0. ``skipped_unverified`` counts the jobs of
+        undefined ratio: ``nan``, not 0; every deduction arm is such an arm (no class-1 token,
+        ``pad_tokens_mean`` 0). ``skipped_unverified`` counts the jobs of
         the arm left unread because no manifest records them as verified (always 0
         with ``require_verified=False``). An arm whose every job was skipped has no
         entry, as an arm without captures has none; its skips are in the WARNINGs.
@@ -4210,147 +5478,112 @@ def read_captures(
         When the ranks of a job are not exactly ``0..tp-1``, when the joined
         job's head count differs from the config's (a rank is missing), or when
         jobs of one arm differ in layer or head count; also when `config` has no
-        readable attention shape.
+        readable attention shape, `study` is unknown, `rung` is given for the induction
+        study or is not a folder name, or (deduction, `rung` ``None``) the model has more than
+        one rung folder (the message says "rung": pass one).
     """
-    base = Path(mirror_root) / "induction" / model_key
-    store = _MirrorStore(Path(mirror_root))
+    _check_study(study)
+    mirror = Path(mirror_root)
+    if study == "induction" and rung is not None:
+        raise ValueError("rung applies only to study='horn'")
+    if rung is not None and not _horn_name_ok(rung):
+        raise ValueError(f"rung {rung!r} is not a folder name made of [A-Za-z0-9._-]")
+    if study == "horn" and arms is not None:
+        # An arm name becomes a path component below, so a name that could climb out is refused.
+        bad_arms = [arm for arm in arms if not _horn_name_ok(arm)]
+        if bad_arms:
+            raise ValueError(f"arms {bad_arms!r} are not folder names made of [A-Za-z0-9._-]")
+    store = _MirrorStore(mirror)
     if config is None:
         config = load_model_config(model_key)
     expected_heads = attention_shape(config)[1]
+
+    # Phase 1: find what to read. Only the discovery differs by study; the reduction below is shared.
+    units_of: Callable[[str], Iterator[_ReadUnit]]
+    if study == "induction":
+        base = mirror / "induction" / model_key
+        arm_list = list(arms) if arms is not None else list(ARMS)
+
+        def units_of(arm: str) -> Iterator[_ReadUnit]:
+            return _induction_units(base, arm, require_verified)
+    else:
+        base = mirror / "deduction" / "horn" / model_key
+        if rung is None:
+            rungs = sorted((d.name for d in base.iterdir() if d.is_dir()), key=_natural_key) if base.is_dir() else []
+            if len(rungs) > 1:
+                raise ValueError(f"{base} holds several rung folders {rungs}; pass rung= to choose one")
+            rung = rungs[0] if rungs else None
+        if rung is None or not (base / rung).is_dir():
+            return {}
+        rung_dir = base / rung
+        if arms is not None:
+            arm_list = list(arms)
+        else:
+            found = {d.name for d in rung_dir.iterdir() if d.is_dir()}
+            arm_list = [a for a in bt.HORN_ARMS if a in found] + sorted(found - set(bt.HORN_ARMS))
+
+        def units_of(arm: str) -> Iterator[_ReadUnit]:
+            return _horn_units(rung_dir, arm, require_verified)
+
+    # Phase 2: reduce every arm's verified jobs with one accumulator per arm.
     out: Dict[str, Dict[str, Any]] = {}
-    for arm in arms:
-        sums: Optional[np.ndarray] = None
-        counts: Optional[np.ndarray] = None
-        n_jobs, pad_total, n_skipped = 0, 0, 0
-        # Per statistic, one entry per job: the job's all-layer, global-layer and
-        # window-layer means, and its [L] per-layer means (see _pool_layers).
-        per_job: Dict[str, Dict[str, List[Any]]] = {
-            stat: {"all": [], "global": [], "window": [], "layer": []} for stat in _ENTROPY_STATS
-        }
-        n_v1 = 0
-        n_summary = 0
-        # Earliest wins, per seed and arm: the directories of one seed are
-        # re-collections of the same arm, and the released results count the first.
-        stamp_prefix = f"{arm}--"
-        by_seed: Dict[Path, List[Path]] = {}
-        for candidate in base.glob(f"seed=*/{stamp_prefix}*"):
-            if candidate.is_dir():
-                by_seed.setdefault(candidate.parent, []).append(candidate)
-        run_dirs: List[Path] = []
-        for seed_dir in sorted(by_seed):
-            ordered = sorted(by_seed[seed_dir], key=lambda d: d.name[len(stamp_prefix):])
-            run_dirs.append(ordered[0])
-            for later in ordered[1:]:
-                logging.info(
-                    f"attention_replay: ignoring {later}: an earlier {arm} run of "
-                    f"{seed_dir.name} exists ({ordered[0].name})"
-                )
-        for run_dir in run_dirs:
-            ranks: Dict[int, set] = {}
-            for path in run_dir.iterdir():
-                match = _CAPTURE_FILE_RE.match(path.name)
-                if match:
-                    ranks.setdefault(int(match.group(1)), set()).add(int(match.group(2)))
-            rel = run_dir.relative_to(Path(mirror_root)).as_posix() + "/"
-            verified = _verified_marks(run_dir) if require_verified else None
-            unverified = [i for i in sorted(ranks) if verified is not None and i not in verified]
-            if unverified:
-                n_skipped += len(unverified)
-                logging.warning(
-                    f"attention_replay: {run_dir}: skipping {len(unverified)} job(s) no manifest "
-                    f"records as verified: q{unverified}"
-                )
-            for idx in sorted(ranks):
-                if idx in unverified:
-                    continue
-                tp = len(ranks[idx])
-                if ranks[idx] != set(range(tp)):
-                    raise ValueError(
-                        f"{run_dir}/q{idx}: ranks {sorted(ranks[idx])} are not exactly 0..{tp - 1}"
-                    )
-                job = attention_analysis.load_capture(store, rel, f"q{idx}", tp)
-                is_summary = job["kind"] == "summary"
-                # The head axis is axis 2 of the mass arrays [L, P, H, 4] and axis 1 of
-                # the summary arrays [L, H]; sum_entropy stands for the summary arrays.
-                heads_read = (
-                    np.shape(job["sum_entropy"])[1] if is_summary else job["mass"].shape[2]
-                )
-                if heads_read != expected_heads:
-                    raise ValueError(
-                        f"{run_dir}/q{idx}: the {tp} rank(s) hold {heads_read} heads in "
-                        f"total, the config has {expected_heads}; a rank is missing"
-                    )
-                # Design: the per-(layer, head) pad-ratio sum and defined-row count come from
-                # attention_analysis.pad_ratio_sums for both kinds. A summary job already holds
-                # them (summed on the box); a mass job reduces its rows to the same two arrays.
-                # Either way the arm pools sums and counts, so the two kinds mix freely.
-                job_sums, job_counts = attention_analysis.pad_ratio_sums(job)
-                layers, heads = job_sums.shape
-                if sums is None:
-                    sums = np.zeros((layers, heads), dtype=np.float64)
-                    counts = np.zeros((layers, heads), dtype=np.int64)
-                elif sums.shape != (layers, heads):
-                    raise ValueError(
-                        f"{run_dir}/q{idx}: shape (L={layers}, H={heads}) differs from the arm's "
-                        f"{sums.shape}"
-                    )
-                sums += job_sums
-                counts += job_counts
-                # Entropy means of this job: its own pooled defined values per layer set.
-                # A summary job is reduced to ITS OWN means here, before the average over
-                # jobs below: rows are never pooled across jobs, whichever kind a job is.
-                by_layer = attention_analysis.entropy_by_layer(job)
-                window = job.get("sliding_window")
-                is_global = None if window is None else np.asarray(window) == 0
-                is_window = None if window is None else np.asarray(window) > 0
-                for stat in _ENTROPY_STATS:
-                    mean_l, count_l = by_layer[stat], by_layer[f"{stat}_count"]
-                    per_job[stat]["all"].append(_pool_layers(mean_l, count_l, None))
-                    per_job[stat]["global"].append(
-                        float("nan") if is_global is None else _pool_layers(mean_l, count_l, is_global)
-                    )
-                    per_job[stat]["window"].append(
-                        float("nan") if is_window is None else _pool_layers(mean_l, count_l, is_window)
-                    )
-                    per_job[stat]["layer"].append(mean_l)
-                if is_summary:
-                    n_summary += 1
-                elif job.get("prompt_entropy") is None:
-                    n_v1 += 1
-                n_jobs += 1
-                pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
-        if n_jobs == 0 or sums is None or counts is None:
-            continue  # nothing read; any skips were already logged per run directory
-        # nan, not 0, where no query had a defined baseline (no pad token anywhere);
-        # np.divide with ``where`` never emits a divide warning.
-        layer_head = np.full(sums.shape, np.nan, dtype=np.float64)
-        np.divide(sums, counts, out=layer_head, where=counts > 0)
-        total = int(counts.sum())
-        out[arm] = {
-            "jobs": n_jobs,
-            "pad_tokens_mean": pad_total / n_jobs,
-            "ratio_mean": float(sums.sum() / total) if total else float("nan"),
-            "ratio_layer_head": layer_head,
-            "skipped_unverified": n_skipped,
-            "prompt_entropy_v1_jobs": n_v1,
-            "summary_jobs": n_summary,
-        }
-        # Every job counts once: mean over a job's positions, heads and layers first,
-        # then over jobs (the footnote's "mean per response"), not over pooled rows.
-        for stat in _ENTROPY_STATS:
-            jobs_stat = per_job[stat]
-            mean, n_defined, sd = _mean_sd_over_jobs(jobs_stat["all"])
-            out[arm][f"{stat}_mean"] = mean
-            out[arm][f"{stat}_global_mean"] = _mean_sd_over_jobs(jobs_stat["global"])[0]
-            out[arm][f"{stat}_window_mean"] = _mean_sd_over_jobs(jobs_stat["window"])[0]
-            stacked = np.vstack(jobs_stat["layer"])  # [jobs, L]
-            defined = ~np.isnan(stacked)
-            layer_mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
-            np.divide(
-                np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
-                out=layer_mean, where=defined.any(axis=0),
-            )
-            out[arm][f"{stat}_layer"] = layer_mean
-            out[arm][f"{stat}_jobs"] = n_defined
-            out[arm][f"{stat}_sd"] = sd
+    for arm in arm_list:
+        stats = _ArmStats()
+        for unit in units_of(arm):
+            _read_unit(stats, store, mirror, unit, expected_heads)
+        arm_result = stats.result()
+        if arm_result is not None:
+            out[arm] = arm_result
     return out
+
+
+def read_entropy_table(
+    model_key: str,
+    mirror_root: Path,
+    *,
+    config: Optional[Mapping[str, Any]] = None,
+    require_verified: bool = True,
+    rung: Optional[str] = None,
+) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Return the per-arm statistics of both studies in one table, keyed ``(study, arm)``.
+
+    The union of ``read_captures(study="induction")`` and ``read_captures(study="horn")`` over
+    the same mirror: every value is the dict ``read_captures`` returns for that arm, so the
+    entropy statistics of the two studies are directly comparable. A study with no tree in the
+    mirror (or with nothing verified) contributes no entries. Induction entries come first.
+
+    Parameters
+    ----------
+    model_key : str
+        Roster key.
+    mirror_root : Path
+        Root of the local mirror (see ``pull_captures``).
+    config : Mapping[str, Any], optional
+        Parsed ``config.json``; loaded once with ``load_model_config`` when ``None``.
+    require_verified : bool, optional
+        As for ``read_captures``.
+    rung : Optional[str], optional
+        The deduction rung to read (see ``read_captures``); induction has none.
+
+    Returns
+    -------
+    Dict[Tuple[str, str], Dict[str, Any]]
+        ``(study, arm) -> statistics``; ``study`` is ``"induction"`` or ``"horn"``.
+
+    Raises
+    ------
+    ValueError
+        As for ``read_captures``; in particular a deduction tree with several rung folders and
+        ``rung=None``.
+    """
+    if config is None:
+        config = load_model_config(model_key)  # once, not once per study
+    table: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for study in STUDIES:
+        stats = read_captures(
+            model_key, mirror_root, study=study, config=config, require_verified=require_verified,
+            rung=rung if study == "horn" else None,
+        )
+        for arm, value in stats.items():
+            table[(study, arm)] = value
+    return table
