@@ -2309,6 +2309,7 @@ def test_each_run_gets_its_own_instance_tag_and_state_file(tmp_path, monkeypatch
             return super().provision_spot_instance(instance_types=instance_types, **kw)
 
     monkeypatch.setattr(ar, "STATE_DIR", tmp_path / "state")
+    monkeypatch.delenv("EC2_EXPERIMENT_TAG", raising=False)  # another test may have left it
     s3 = FakeS3()
     _replay(tmp_path, TagBox(s3), s3)
     s3b = FakeS3()
@@ -2695,3 +2696,33 @@ def test_audit_existing_validates_its_arguments_before_any_read(tmp_path) -> Non
     with pytest.raises(ValueError, match="workers"):
         _audit_existing(tmp_path, s3, workers=0)
     assert not s3.puts
+
+
+
+@pytest.mark.parametrize("code, access", [("ExpiredToken", True), ("AccessDenied", True), ("SlowDown", True),
+                                          ("NoSuchKey", False)])
+def test_an_unreadable_store_stops_the_audit_instead_of_failing_the_capture(tmp_path, code, access) -> None:
+    """An expired session must not be written into an append-only manifest as audit_failed."""
+    from botocore.exceptions import ClientError, EndpointConnectionError
+
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    real_get = s3.get_object
+
+    def get_object(**kw):
+        if kw["Key"].startswith(jobs[1].key.rsplit(".", 1)[0]):
+            raise ClientError({"Error": {"Code": code, "Message": "x"}}, "GetObject")
+        return real_get(**kw)
+
+    s3.get_object = get_object
+    if access:
+        with pytest.raises(ClientError):
+            _audit(s3, jobs, arrays="all")
+    else:
+        result = _audit(s3, jobs, arrays="all")
+        assert "audit raised ClientError" in result[jobs[1].job_id] and result[jobs[0].job_id] is None
+    assert ar._is_access_failure(EndpointConnectionError(endpoint_url="https://s3"))
+    assert not ar._is_access_failure(ValueError("bad npz"))

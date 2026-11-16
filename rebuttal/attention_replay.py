@@ -2162,6 +2162,28 @@ def _audit_job(
     return None
 
 
+#: S3 error codes that mean "this session cannot read the store", not "the object is bad".
+_ACCESS_ERROR_CODES = frozenset({
+    "ExpiredToken", "ExpiredTokenException", "RequestExpired", "InvalidToken", "TokenRefreshRequired",
+    "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "UnrecognizedClientException",
+    "SlowDown", "ServiceUnavailable", "InternalError", "RequestTimeout",
+})  # fmt: skip
+
+
+def _is_access_failure(exc: BaseException) -> bool:
+    """Return whether `exc` is a failure to reach or read S3, as opposed to a bad capture.
+
+    True for botocore transport and credential errors and for S3 answers that name an
+    expired or refused session or a throttled or unavailable service. A missing key
+    (``NoSuchKey``, 404) is False: a capture that lacks an object is a bad capture.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    if isinstance(exc, ClientError):
+        return exc.response.get("Error", {}).get("Code") in _ACCESS_ERROR_CODES
+    return isinstance(exc, BotoCoreError)
+
+
 def audit_captures(
     client: Any,
     bucket: str,
@@ -2352,6 +2374,11 @@ def audit_captures(
                 use, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version
             )
         except Exception as exc:  # noqa: BLE001 -- recorded per job, none hidden
+            if _is_access_failure(exc):
+                # Not a verdict on the capture: the store could not be read (expired
+                # session, no network). Manifests are append-only, so recording this
+                # as an audit failure would retire a good capture for good.
+                raise
             return f"audit raised {type(exc).__name__}: {exc}"
 
     # Phase 2: audit. Outcomes are consumed in job order whichever way they were
