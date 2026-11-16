@@ -186,8 +186,9 @@ prefill path does. `replay_model` asks for `allow_unverified_serve` for this mod
 the pinned vLLM image starts it only when the weight mirror holds the repository's metadata
 archive (`meta.tar`, with `tokenizer.json`; added 2026-11-16). For capture it is served with
 a 49,152-token context by default; `capture_max_model_len` raises it, and 98,304 tokens ran
-live. One limit remains: vLLM's latent-attention backend treats a sequence of 512 tokens or
-fewer as decode, which the plugin does not capture, so short `intens` marks have no capture.
+live. vLLM's flash-attention backend for this layer treats a sequence of 512 tokens or fewer
+as decode, a path the plugin refuses to capture, so the plugin sets that threshold to 1 when
+it loads; short `intens` marks then take the captured prefill path.
 
 ### Captures of 2026-11-16
 
@@ -197,7 +198,7 @@ Induction: all 30 seeds, four arms, 9 questions per replicate. Horn: the arms `l
 
 | | Gemma 4 31B | Nemotron 3 Super | DeepSeek V3.1 |
 |---|---|---|---|
-| induction `intens` | 2.466 | 2.418 | 1.295 |
+| induction `intens` | 2.466 | 2.418 | 1.309 |
 | induction `noise_intens` | 4.638 | 3.116 | 2.118 |
 | induction `extens` | 5.863 | 3.998 | 2.584 |
 | induction `related_intens` | 6.212 | 4.170 | 2.526 |
@@ -208,9 +209,8 @@ Induction: all 30 seeds, four arms, 9 questions per replicate. Horn: the arms `l
 
 Captures missing from these means:
 
-- DeepSeek V3.1 induction: 65 `intens` marks (the 512-token limit above, so its `intens`
-  mean is over the longer marks only) and 4 `related_intens` marks longer than the
-  49,152-token capture context.
+- DeepSeek V3.1 induction: 3 `related_intens` marks longer than the 98,304-token capture
+  context.
 - Gemma 4 31B: 7 induction marks and 1 Horn cell lost one rank to the plugin's self-check
   (a relative error of 0.031 to 0.040 against a tolerance of 0.03). They are recorded as
   failed and are not read.
