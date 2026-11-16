@@ -235,7 +235,9 @@ def test_plan_replay_counts_marks_tokens_and_labels_its_estimate(tmp_path: Path)
     assert plan.per_arm["noise_intens"]["max_tokens"] == lengths["noise"]
     assert plan.total_tokens == sum(lengths.values()) and plan.max_tokens == lengths["noise"]
     assert plan.instance_types == ar.INSTANCE_TYPES[DSV31]
-    assert not plan.capture_supported and plan.unsupported_reason
+    # The plugin captures MLA layers now; serving the model is what is unverified.
+    assert plan.capture_supported and plan.unsupported_reason is None
+    assert not plan.serve_verified and plan.serve_unverified_reason == ar.SERVE_UNVERIFIED[DSV31]
     assert plan.est_basis.startswith("ESTIMATE:") and "prompt_entropy" in plan.est_basis
     expected = 0
     tp = plan.tp_estimate
@@ -372,13 +374,132 @@ def test_replay_refuses_to_provision_without_explicit_approval(tmp_path, approve
 
 
 def test_replay_refuses_deepseek_before_any_aws_call(tmp_path) -> None:
+    """Capture is supported, serving on the pinned image is not verified: refused by default."""
     _write_results(tmp_path, DSV31)
     box = AuditedBox(FakeS3())
-    with pytest.raises(ar.CaptureUnsupported):
+    assert DSV31 not in ar.CAPTURE_UNSUPPORTED
+    with pytest.raises(ar.ServeUnverified, match="tokenizer"):
         ar.replay_model(DSV31, tmp_path, approved=True, ec2=box,
                         s3_client_factory=lambda: (_ for _ in ()).throw(AssertionError("S3")),
                         **_plan_kwargs(CharTokenizer(DS_SPECIALS)))
     assert box.calls == []
+
+
+def test_the_serve_refusal_sits_after_the_approval_gate(tmp_path) -> None:
+    _write_results(tmp_path, DSV31)
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ar.ApprovalRequired):
+        ar.replay_model(DSV31, tmp_path, approved=False, ec2=box,
+                        s3_client_factory=lambda: (_ for _ in ()).throw(AssertionError("S3")),
+                        **_plan_kwargs(CharTokenizer(DS_SPECIALS)))
+    assert box.calls == []
+
+
+class ServeRecordingBox(AuditedBox):
+    """AuditedBox that also records the keyword arguments of every serve call."""
+
+    def __init__(self, *a, **kw) -> None:
+        super().__init__(*a, **kw)
+        self.serve_kwargs: list[dict] = []
+
+    def serve_model(self, model, capture=False, **kw):
+        self.serve_kwargs.append(dict(kw))
+        return super().serve_model(model, capture=capture, **kw)
+
+
+def _replay_ds(tmp_path, box, s3, **kw):
+    tok = CharTokenizer(DS_SPECIALS)
+    return ar.replay_model(
+        DSV31, tmp_path, "s3://bucket/bedrock-trio/attention", approved=True,
+        tokenizer_for=lambda m: tok, template_for=lambda m: ds_template(),
+        config_for=lambda m: {"num_hidden_layers": 2, "num_attention_heads": 4},
+        ec2=box, s3_client_factory=lambda: s3, poll_s=0, batch_timeout_s=10, url_ttl_s=99, **kw)
+
+
+def test_replay_runs_deepseek_with_the_explicit_serve_override(tmp_path) -> None:
+    """With allow_unverified_serve=True the run proceeds against the fake box, and the
+    shorter capture context reaches the serve call."""
+    _write_results(tmp_path, DSV31)
+    s3 = FakeS3()
+    box = ServeRecordingBox(s3)
+    report = _replay_ds(tmp_path, box, s3, allow_unverified_serve=True)
+    assert box.calls[0] == f"provision:{','.join(ar.INSTANCE_TYPES[DSV31])}"
+    assert f"serve:{DSV31}:capture=True" in box.calls and box.calls[-1] == "shutdown"
+    assert box.serve_kwargs == [{"max_model_len": ar.CAPTURE_MAX_MODEL_LEN[DSV31]}]
+    assert ar.CAPTURE_MAX_MODEL_LEN[DSV31] == 49152
+    assert len(report.verified) == 3 and not report.audit_failures and not report.failed
+
+
+def test_a_job_over_the_capture_context_is_excluded_though_under_the_spec_context(tmp_path) -> None:
+    """A ~50k-token job fits the spec's 131072 but not the 49152-token capture context:
+    the plan excludes it and the replay never sends it."""
+    from smolbench.evals.providers import ec2 as real_ec2
+
+    assert real_ec2.EC2_DEPLOY_SPECS[DSV31]["max_model_len"] == 131072
+    seed_dir = tmp_path / "induction" / DSV31 / "seed=0"
+    seed_dir.mkdir(parents=True)
+    long_query = "x" * 50_000          # one CharTokenizer token per character
+    (seed_dir / f"intens--{STAMP_A}.yaml").write_text(Marks(model=DSV31, marks=tuple(
+        Mark(query=q, answer=1, response="1", score=1, compliance=COMPLIANT, reasoning="r")
+        for q in ("ab", long_query))).dumps())
+    tok = CharTokenizer(DS_SPECIALS)
+    plan = ar.plan_replay(tmp_path, [DSV31], **_plan_kwargs(tok))[DSV31]
+    assert plan.jobs == 2 and plan.over_context == 1
+    assert 49152 < plan.max_tokens < 131072
+    assert plan.capture_max_model_len == 49152
+    s3 = FakeS3()
+    box = ServeRecordingBox(s3)
+    report = _replay_ds(tmp_path, box, s3, allow_unverified_serve=True)
+    assert len(report.over_context) == 1 and len(report.verified) == 1
+    sent = [line["job_id"] for batch in box.batches for line in batch["jobs"]]
+    assert report.over_context[0] not in sent and len(sent) == 1
+
+
+def test_plan_summary_shows_capture_supported_and_serving_unverified(tmp_path) -> None:
+    _write_results(tmp_path, DSV31)
+    plan = ar.plan_replay(tmp_path, [DSV31], **_plan_kwargs(CharTokenizer(DS_SPECIALS)))[DSV31]
+    text = plan.summary()
+    assert "capture: supported" in text
+    assert f"serving: UNVERIFIED: {ar.SERVE_UNVERIFIED[DSV31]}" in text
+    assert "49152" in text                       # the context the plan excluded jobs against
+    _write_results(tmp_path, GEMMA)
+    gplan = ar.plan_replay(tmp_path, [GEMMA], tokenizer_for=lambda m: CharTokenizer(GEMMA_SPECIALS),
+                           template_for=lambda m: gemma_template(),
+                           config_for=lambda m: {"num_hidden_layers": 2, "num_attention_heads": 4})[GEMMA]
+    assert gplan.serve_verified and gplan.serve_unverified_reason is None
+    assert "UNVERIFIED" not in gplan.summary() and "capture: supported" in gplan.summary()
+
+
+def test_the_launch_summary_printed_before_the_gate_names_the_serve_risk(tmp_path, capsys) -> None:
+    _write_results(tmp_path, DSV31)
+    with pytest.raises(ar.ApprovalRequired):
+        ar.replay_model(DSV31, tmp_path, approved=False, ec2=AuditedBox(FakeS3()),
+                        **_plan_kwargs(CharTokenizer(DS_SPECIALS)))
+    assert "serving: UNVERIFIED" in capsys.readouterr().out
+
+
+def test_capture_unsupported_still_refuses_a_listed_model_unless_overridden(tmp_path, monkeypatch) -> None:
+    _write_results(tmp_path, GEMMA)
+    monkeypatch.setitem(ar.CAPTURE_UNSUPPORTED, GEMMA, "a test reason")
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ar.CaptureUnsupported, match="a test reason"):
+        _replay(tmp_path, box, box.s3)
+    assert box.calls == []
+    assert _replay(tmp_path, box, box.s3, allow_unsupported_capture=True).verified
+
+
+def test_the_storage_estimate_uses_the_vendored_deepseek_config(tmp_path, monkeypatch) -> None:
+    """61 attention layers (the unloaded MTP layer excluded), 128 heads, tp 8 on a p5e."""
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    assert ar.attention_shape(ar.load_model_config(DSV31, local_files_only=True)) == (61, 128)
+    _write_results(tmp_path, DSV31)
+    tok = CharTokenizer(DS_SPECIALS)
+    plan = ar.plan_replay(tmp_path, [DSV31], tokenizer_for=lambda m: tok,
+                          template_for=lambda m: ds_template())[DSV31]
+    assert plan.tp_estimate == 8
+    assert "layers=61, heads=128, tp=8" in plan.est_basis
+    expected = sum(61 * c * 128 * 7 * 2 + 8 * n for n, c in ((10, 4), (12, 4), (90, 3)))
+    assert plan.est_capture_bytes == expected
 
 
 @pytest.mark.parametrize("kw, expected", [({}, "all"), ({"audit_arrays": "sample"}, "sample")])

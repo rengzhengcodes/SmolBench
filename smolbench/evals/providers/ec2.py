@@ -2585,6 +2585,7 @@ def serve_model(
     timeout_min: Optional[int] = None,
     force: bool = False,
     capture: bool = False,
+    max_model_len: Optional[int] = None,
 ) -> Iterator[str]:
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
@@ -2616,6 +2617,14 @@ def serve_model(
         exist. The payload differs from the generation one, so the
         already-serving fast path (which compares the whole payload) swaps the
         container in both directions between the two serves of one checkpoint.
+    max_model_len : Optional[int]
+        Context length for THIS serve only, replacing the spec's (the
+        ``EC2_DEPLOY_SPECS`` entry is not modified). ``None`` changes nothing.
+        Must be an ``int`` (not ``bool``) with
+        ``0 < max_model_len <= spec max_model_len``. With ``capture=True`` the
+        appended ``--max-num-batched-tokens`` equals it. The already-serving fast
+        path compares the whole payload, so a different context swaps the
+        container.
 
     Yields
     ------
@@ -2635,6 +2644,9 @@ def serve_model(
         (KV-shared layers would skip the captured query positions), or
         carries a ``--max-num-batched-tokens`` below ``max_model_len``
         (chunked prefill), or does not carry ``--no-enable-prefix-caching``.
+        ``max_model_len`` is not an int in ``(0, spec max_model_len]``, or
+        (with ``capture=True``) the spec carries a ``--max-num-batched-tokens``
+        different from it.
     RuntimeError
         The instance became healthy serving something else.
     """
@@ -2644,6 +2656,18 @@ def serve_model(
             f"No EC2_DEPLOY_SPECS entry for model {model!r}; "
             "add one with hf_model_id / tp / max_model_len."
         )
+    # Validated before any state or agent access, so a bad override costs nothing.
+    if max_model_len is not None:
+        ceiling = spec.get("max_model_len", EC2_CONTEXT_LENGTH)
+        if (
+            isinstance(max_model_len, bool)
+            or not isinstance(max_model_len, int)
+            or not 0 < max_model_len <= ceiling
+        ):
+            raise ValueError(
+                f"{model!r}: max_model_len must be an int with 0 < max_model_len <= "
+                f"{ceiling}, got {max_model_len!r}"
+            )
     state = _require_state()
     # BEFORE the swap: a mismatched box must not generate one row.
     _assert_required_gpu(state, model)
@@ -2658,6 +2682,9 @@ def serve_model(
         # the instance at provision time, so it never crosses plain HTTP.
         "vllm_args": list(spec.get("vllm_args", [])),
     }
+    if max_model_len is not None:
+        # Per-call override on the payload copy; the global spec stays untouched.
+        serve_payload["max_model_len"] = max_model_len
     if spec.get("adapters"):
         # LoRA adapters staged from S3 on the box before launch (see
         # _serve).
@@ -2701,6 +2728,13 @@ def serve_model(
         if "--max-num-batched-tokens" in vllm_args:
             at = vllm_args.index("--max-num-batched-tokens")
             present = int(vllm_args[at + 1])
+            if max_model_len is not None and present != max_len:
+                # The ceiling must equal the overridden context; the spec's flag
+                # is not rewritten, so a mismatch is the caller's to resolve.
+                raise ValueError(
+                    f"{model!r}: --max-num-batched-tokens {present} differs from the "
+                    f"overridden max_model_len {max_len}; the ceiling must equal it."
+                )
             if present < max_len:
                 raise ValueError(
                     f"{model!r}: --max-num-batched-tokens {present} is below "

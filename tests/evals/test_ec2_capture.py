@@ -196,3 +196,64 @@ def test_every_spec_switches_prefix_caching_off_for_capture():
     """Invariant: DETERMINISM_ARGS puts the flag on every spec, so no capture serve trips the check."""
     for key, spec in ec2.EC2_DEPLOY_SPECS.items():
         assert "--no-enable-prefix-caching" in spec["vllm_args"], key
+
+
+# ------------------------------------------------------------------ per-serve context override
+def test_a_capture_serve_can_shorten_the_context_for_that_serve_only(monkeypatch):
+    """max_model_len= overrides the payload's context and the un-chunked prefill ceiling for
+    one serve; the global spec and later serves are untouched."""
+    state = dict(_S5_STATE)
+    calls = _capture_harness(monkeypatch, state)
+    spec_before = copy.deepcopy(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    assert spec_before["max_model_len"] > 49152
+    with ec2.serve_model("ministral-3-14b", capture=True, max_model_len=49152):
+        pass
+    (payload,) = [p for _m, path, p in calls if path == "/serve"]
+    assert payload["max_model_len"] == 49152
+    assert payload["vllm_args"] == list(spec_before["vllm_args"]) + ["--max-num-batched-tokens", "49152"]
+    assert ec2.EC2_DEPLOY_SPECS["ministral-3-14b"] == spec_before
+    # The next capture serve without the keyword uses the spec's context again (and swaps,
+    # since the payload differs).
+    calls.clear()
+    with ec2.serve_model("ministral-3-14b", capture=True):
+        pass
+    (again,) = [p for _m, path, p in calls if path == "/serve"]
+    assert again["max_model_len"] == spec_before["max_model_len"]
+    assert again["vllm_args"][-2:] == ["--max-num-batched-tokens", str(spec_before["max_model_len"])]
+
+
+def test_no_override_leaves_the_capture_payload_exactly_as_before(monkeypatch):
+    state = dict(_S5_STATE)
+    calls = _capture_harness(monkeypatch, state)
+    with ec2.serve_model("ministral-3-14b", capture=True, max_model_len=None):
+        pass
+    (payload,) = [p for _m, path, p in calls if path == "/serve"]
+    spec = ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]
+    assert payload["max_model_len"] == spec["max_model_len"]
+    assert payload["vllm_args"] == list(spec["vllm_args"]) + [
+        "--max-num-batched-tokens", str(spec["max_model_len"])]
+
+
+@pytest.mark.parametrize("bad", [0, -1, 10 ** 7])
+def test_a_context_override_outside_the_spec_is_refused_before_serving(monkeypatch, bad):
+    """Only a shorter context than the spec's is accepted; nothing is posted otherwise."""
+    state = dict(_S5_STATE)
+    calls = _capture_harness(monkeypatch, state)
+    with pytest.raises(ValueError, match="max_model_len"):
+        with ec2.serve_model("ministral-3-14b", capture=True, max_model_len=bad):
+            pass
+    assert "/serve" not in [path for _, path, _ in calls]
+
+
+def test_an_override_conflicting_with_a_spec_batched_token_flag_is_refused(monkeypatch):
+    """A spec that pins --max-num-batched-tokens to another value cannot keep the ceiling
+    equal to the overridden context, so the serve is refused."""
+    state = dict(_S5_STATE)
+    calls = _capture_harness(monkeypatch, state)
+    spec = copy.deepcopy(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    spec["vllm_args"] = list(spec["vllm_args"]) + ["--max-num-batched-tokens", str(spec["max_model_len"])]
+    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "ministral-3-14b", spec)
+    with pytest.raises(ValueError, match="max-num-batched-tokens"):
+        with ec2.serve_model("ministral-3-14b", capture=True, max_model_len=49152):
+            pass
+    assert "/serve" not in [path for _, path, _ in calls]

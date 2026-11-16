@@ -106,16 +106,17 @@ provider's own spend guards stay in force: the idle watchdog from the default
 provisioning arguments, the lifetime backstop, and termination in a
 ``finally`` block.
 
-The deepseek-v3.1 refusal
--------------------------
-``replay_model`` refuses ``deepseek-v3.1`` (``CaptureUnsupported``) unless
-``allow_unsupported_capture=True``. The shipped plugin wraps only vLLM's
-``Attention.forward``. That model uses multi-head latent attention, which vLLM
-runs through a separate layer taking compressed latents, not per-head keys.
-Either no layer would be captured (every job would then wait out the agent's
-per-job timeout on a billed box) or the rows would be wrong. This was not
-checked against the pinned vLLM build offline. The plan for that model still
-works, so its token sizes are known.
+The deepseek-v3.1 serving refusal
+---------------------------------
+The shipped plugin wraps vLLM's ``Attention.forward`` and also its multi-head
+latent attention path, so ``deepseek-v3.1`` is capture-supported and
+``CAPTURE_UNSUPPORTED`` is empty. The MLA path has never run live. Serving that
+model on the pinned vLLM image is unverified: it failed at engine start there on
+2026-09-19. ``replay_model`` therefore raises ``ServeUnverified`` for it unless
+``allow_unverified_serve=True`` (see ``SERVE_UNVERIFIED``). The plan for that
+model still works, so its token sizes are known. Capture serves it with a
+49152-token context (``CAPTURE_MAX_MODEL_LEN``); jobs longer than that are
+excluded as over-context, in the plan and in the run.
 """
 
 from __future__ import annotations
@@ -148,6 +149,7 @@ __all__ = [
     "ARMS",
     "ApprovalRequired",
     "BUCKET",
+    "CAPTURE_MAX_MODEL_LEN",
     "CAPTURE_UNSUPPORTED",
     "CAPTURE_VERSION",
     "CaptureUnsupported",
@@ -165,12 +167,15 @@ __all__ = [
     "ReplayPlan",
     "ReplayReport",
     "Run",
+    "SERVE_UNVERIFIED",
     "STATE_DIR",
+    "ServeUnverified",
     "TemplateMismatch",
     "TemplateUnavailable",
     "attention_shape",
     "audit_captures",
     "build_jobs",
+    "capture_max_model_len",
     "check_reasoning_format",
     "find_runs",
     "job_id_for",
@@ -258,18 +263,55 @@ INSTANCE_TYPES: Dict[str, Tuple[str, ...]] = {
 }
 
 #: Models whose capture cannot be trusted, with the reason. ``replay_model``
-#: refuses them unless told otherwise.
-CAPTURE_UNSUPPORTED: Dict[str, str] = {
+#: refuses them unless told otherwise. Empty: the plugin covers every roster model.
+CAPTURE_UNSUPPORTED: Dict[str, str] = {}
+
+#: Models whose serving on the pinned vLLM image is not verified, with the reason.
+#: ``replay_model`` refuses them (``ServeUnverified``) unless told otherwise.
+SERVE_UNVERIFIED: Dict[str, str] = {
     "deepseek-v3.1": (
-        "the shipped capture plugin wraps only vLLM's Attention.forward "
-        "(vllm.model_executor.layers.attention.attention.Attention); "
-        "DeepSeek-V3.1 uses multi-head latent attention, which vLLM runs through a "
-        "separate MLA layer whose inputs are compressed latents, not per-head keys, "
-        "so the plugin would capture no layer (each job would then time out on the "
-        "box after the agent's 1800 s per-job wait) or compute wrong rows. Not "
-        "verified against the pinned vLLM build offline."
+        "on 2026-09-19, on the vLLM image pinned as EC2_VLLM_IMAGE in the EC2 provider "
+        "(digest sha256:26354b5e...), this model died at engine start on every attempt with "
+        "transformers' error \"Couldn't instantiate the backend tokenizer ... You need to have "
+        "sentencepiece or tiktoken installed to convert a slow tokenizer\"; the root cause was "
+        "never diagnosed. The model served on EC2 before only on other (nightly) vLLM images. "
+        "The capture plugin's multi-head latent attention path has never run live."
     ),
 }
+
+#: Context length to serve per model for capture, overriding the spec's
+#: ``max_model_len``. DeepSeek-V3.1: vLLM's startup memory-profiling run at the full
+#: 131072 tokens under eager mode is unmeasured, so capture uses a shorter context.
+CAPTURE_MAX_MODEL_LEN: Dict[str, int] = {"deepseek-v3.1": 49152}
+
+
+def capture_max_model_len(model: str, spec: Mapping[str, Any]) -> int:
+    """Return the context length capture serves `model` with.
+
+    Parameters
+    ----------
+    model : str
+        Roster key.
+    spec : Mapping[str, Any]
+        The model's deploy spec; must carry ``max_model_len`` unless `model` is
+        listed in ``CAPTURE_MAX_MODEL_LEN``.
+
+    Returns
+    -------
+    int
+        The ``CAPTURE_MAX_MODEL_LEN`` override when listed, else ``spec["max_model_len"]``.
+
+    Examples
+    --------
+    >>> capture_max_model_len("deepseek-v3.1", {"max_model_len": 131072})
+    49152
+    >>> capture_max_model_len("other", {"max_model_len": 8192})
+    8192
+    """
+    if model in CAPTURE_MAX_MODEL_LEN:
+        return CAPTURE_MAX_MODEL_LEN[model]
+    return int(spec["max_model_len"])
+
 
 #: One line per approximation item of the module docstring, same order.
 APPROXIMATIONS: Tuple[str, ...] = (
@@ -324,6 +366,10 @@ class ApprovalRequired(PermissionError):
 
 class CaptureUnsupported(RuntimeError):
     """Raised when a model's capture is known not to work and the caller did not override it."""
+
+
+class ServeUnverified(RuntimeError):
+    """A model whose serving on the pinned image is not verified, and the caller did not override it."""
 
 
 class TemplateUnavailable(RuntimeError):
@@ -1285,6 +1331,11 @@ class ReplayPlan:
     tp_estimate: Optional[int]
     capture_supported: bool
     unsupported_reason: Optional[str]
+    #: False when the model is listed in ``SERVE_UNVERIFIED``.
+    serve_verified: bool
+    serve_unverified_reason: Optional[str]
+    #: Context length of the capture serve; jobs above it are ``over_context``.
+    capture_max_model_len: int
     #: Estimated bytes of captured arrays (capturable jobs only), or ``None``.
     est_capture_bytes: Optional[int]
     #: Formula, config source and caveats; always starts with ``"ESTIMATE:"``.
@@ -1305,7 +1356,8 @@ class ReplayPlan:
             f"{self.model}: {self.runs} runs, {self.marks} marks -> {self.jobs} jobs "
             f"({self.unreasoned_marks} marks without stored reasoning), {len(self.errors)} errors",
             f"  tokens: total {self.total_tokens}, longest {self.max_tokens}; "
-            f"{self.over_context} job(s) over the context limit (excluded)",
+            f"{self.over_context} job(s) over the {self.capture_max_model_len}-token capture "
+            "context (excluded)",
         ]
         for arm, stats in self.per_arm.items():
             lines.append(
@@ -1316,6 +1368,10 @@ class ReplayPlan:
             lines.append("  capture: supported")
         else:
             lines.append(f"  capture: NOT SUPPORTED: {self.unsupported_reason}")
+        if self.serve_verified:
+            lines.append("  serving: no known blocker")
+        else:
+            lines.append(f"  serving: UNVERIFIED: {self.serve_unverified_reason}")
         lines.append(
             f"  instance types: {', '.join(self.instance_types) or 'none'}; "
             f"tp estimate: {self.tp_estimate}"
@@ -1372,7 +1428,7 @@ def _plan_one(
         # One model's missing template must not stop the other models' plans.
         built = _Built(runs=runs, errors=[f"{model}: {exc} (marks not counted)"])
 
-    max_len = int(spec["max_model_len"])
+    max_len = capture_max_model_len(model, spec)
     capturable = [p for p in built.planned if p.job.n_tokens <= max_len]
     per_arm: Dict[str, Dict[str, int]] = {}
     for arm in ARMS:
@@ -1409,6 +1465,9 @@ def _plan_one(
         tp_estimate=tp,
         capture_supported=model not in CAPTURE_UNSUPPORTED,
         unsupported_reason=CAPTURE_UNSUPPORTED.get(model),
+        serve_verified=model not in SERVE_UNVERIFIED,
+        serve_unverified_reason=SERVE_UNVERIFIED.get(model),
+        capture_max_model_len=max_len,
         est_capture_bytes=est_bytes,
         est_basis=est_basis,
     )
@@ -2022,6 +2081,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     approved: bool = False,
     instance_types: Optional[Sequence[str]] = None,
     allow_unsupported_capture: bool = False,
+    allow_unverified_serve: bool = False,
     batch_size: int = attention.DEFAULT_BATCH_SIZE,
     poll_s: int = attention.DEFAULT_POLL_S,
     batch_timeout_s: int = attention.DEFAULT_BATCH_TIMEOUT_S,
@@ -2037,7 +2097,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
 
     Order of events. (1) Build the plan and jobs offline and print the launch
     summary. (2) Refuse unless ``approved is True``. (3) Refuse a model in
-    ``CAPTURE_UNSUPPORTED`` unless overridden. (4) Skip every job that already has
+    ``CAPTURE_UNSUPPORTED`` unless overridden, then one in ``SERVE_UNVERIFIED``
+    unless overridden. (4) Skip every job that already has
     a key in the bucket (never re-sent, never overwritten); when nothing remains,
     return without provisioning. (5) Provision one box, serve the checkpoint in
     capture mode, run the batches, audit the uploads by content and write one
@@ -2058,6 +2119,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         Types to hunt, overriding ``INSTANCE_TYPES[model_key]``.
     allow_unsupported_capture : bool, optional
         Run a model listed in ``CAPTURE_UNSUPPORTED`` anyway.
+    allow_unverified_serve : bool, optional
+        Run a model listed in ``SERVE_UNVERIFIED`` anyway (its serving on the
+        pinned image is unverified and may fail on a billed box).
     batch_size, poll_s, batch_timeout_s, url_ttl_s : int, optional
         Passed to ``attention.run_capture_batches``.
     audit_arrays : str, optional
@@ -2084,6 +2148,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     CaptureUnsupported
         When the model is in ``CAPTURE_UNSUPPORTED`` and not overridden (also
         before any AWS call).
+    ServeUnverified
+        When the model is in ``SERVE_UNVERIFIED`` and ``allow_unverified_serve``
+        is false (also before any AWS call).
     ValueError
         When no instance type is known for the model, or the batch arguments are
         invalid (before any AWS call).
@@ -2130,6 +2197,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         )
     if model_key in CAPTURE_UNSUPPORTED and not allow_unsupported_capture:
         raise CaptureUnsupported(f"{model_key}: {CAPTURE_UNSUPPORTED[model_key]}")
+    if model_key in SERVE_UNVERIFIED and not allow_unverified_serve:
+        raise ServeUnverified(f"{model_key}: {SERVE_UNVERIFIED[model_key]}")
     if not types:
         raise ValueError(f"no instance types known for {model_key!r}; pass instance_types=")
     if batch_size < 1:
@@ -2166,7 +2235,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     make_s3 = s3_client_factory or _default_s3_factory
     bucket, prefix = parse_s3_uri(s3_uri)
     spec = (getattr(ec2, "EC2_DEPLOY_SPECS", None) or real_ec2.EC2_DEPLOY_SPECS)[model_key]
-    max_len = int(spec["max_model_len"])
+    max_len = capture_max_model_len(model_key, spec)
     report = ReplayReport(model_key, None, None, None, plan=plan)
     by_id = {p.job.job_id: p for p in planned}
     report.over_context = [p.job.job_id for p in planned if p.job.n_tokens > max_len]
@@ -2221,7 +2290,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             report.instance_type = state["instance_type"]
             tp = ec2.derive_tp(model_key, state["instance_type"], spec)
             report.tp = tp
-            with ec2.serve_model(model_key, capture=True) as served:
+            with ec2.serve_model(
+                model_key, capture=True, max_model_len=CAPTURE_MAX_MODEL_LEN.get(model_key)
+            ) as served:
                 report.served_model_name = served
                 result = attention.run_capture_batches(
                     ec2, state, served, remaining, tp, make_s3, bucket, mode="mass",
