@@ -75,22 +75,20 @@ Seeded, on bedrock-mantle. Induction: 30 seeds per arm, accuracy over 270 questi
 | Nemotron 3 Super | 0.993 | 0.993 | 0.956 | 0.919 |
 | DeepSeek V3.1 | 1.000 | 1.000 | 1.000 | 0.967 |
 
-Horn: 100 seeds × 3 replicates per arm, pass rate in percent. Gemma 4 31B and DeepSeek V3.1
-are complete (300 cells per arm). Nemotron 3 Super has 2,300 of 2,400 cells (287 or 288 per
-arm); a rerun of `run_protocol.py horn` adds the rest.
+Horn: 100 seeds × 3 replicates per arm (300 cells), pass rate in percent.
 
 | | `lem` | `pad` | `disc` | `both` | `fwd` | `tjunk` | `rep` | `marked-lemma` |
 |---|---|---|---|---|---|---|---|---|
 | Gemma 4 31B (`m`=64) | 67.3 | 59.3 | 24.7 | 10.7 | 16.0 | 21.3 | 77.7 | 15.7 |
-| Nemotron 3 Super (`m`=20) | 66.3 | 49.0 | 7.3 | 8.0 | 12.5 | 33.1 | 64.8 | 13.9 |
+| Nemotron 3 Super (`m`=20) | 66.0 | 49.3 | 7.7 | 8.0 | 12.3 | 33.7 | 64.7 | 14.0 |
 | DeepSeek V3.1 (`m`=64) | 65.0 | 45.0 | 12.3 | 12.3 | 29.0 | 32.7 | 72.7 | 33.3 |
 
 `tjunk` minus `both`, seed-paired (`smolbench.deduction.horn.stats.contrast`): Gemma +10.7
-points (95% interval +4.7 to +16.7, p = 0.0011), Nemotron +25.8 (+19.2 to +32.5, p < 5e-05),
+points (95% interval +4.7 to +16.7, p = 0.0011), Nemotron +25.7 (+19.3 to +32.0, p < 5e-05),
 DeepSeek +20.3 (+15.0 to +26.0, p < 5e-05).
 
-Regions: Gemma 2,027 cells in `us-east-1` and 373 in `us-east-2`; Nemotron 989 in
-`us-east-1`, 610 in `us-east-2` and 701 in `us-west-2`; DeepSeek all in `us-east-1`. The
+Regions: Gemma 2,027 cells in `us-east-1` and 373 in `us-east-2`; Nemotron 990 in
+`us-east-1`, 610 in `us-east-2` and 800 in `us-west-2`; DeepSeek all in `us-east-1`. The
 regions ran different replicates, not different arms, and each row records its region in
 `provider`.
 
