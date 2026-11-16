@@ -387,6 +387,17 @@ def test_replay_audits_every_jobs_arrays_unless_told_to_sample(tmp_path, monkeyp
     assert report.verified and not report.audit_failures
 
 
+def test_replay_refuses_a_provider_without_a_weight_mirror(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    box = AuditedBox(FakeS3())
+    box.EC2_S3_MODEL_CACHE = ""  # what the real provider holds when the variable is unset
+    with pytest.raises(RuntimeError, match="EC2_S3_MODEL_CACHE"):
+        _replay(tmp_path, box, box.s3)
+    assert box.calls == []
+    box.EC2_S3_MODEL_CACHE = "s3://mirror/hf"
+    assert _replay(tmp_path, box, box.s3).verified
+
+
 def test_replay_rejects_a_bad_audit_mode_before_the_box_is_provisioned(tmp_path) -> None:
     _write_results(tmp_path, GEMMA)
     box = AuditedBox(FakeS3())
@@ -713,6 +724,7 @@ def test_the_audit_passes_a_consistent_capture(tmp_path) -> None:
 
 @pytest.mark.parametrize("meta_over, word", [
     ({1: {"rank": 0}}, "meta rank"),
+    ({1: {"tp": 4}}, "meta tp"),
     ({0: {"model": "nemotron-3-super-120b-a12b"}}, "meta model"),
     ({0: {"job_id": "s0.intens.other.q9"}}, "meta job_id"),
     ({0: {"layers": [0, 1, 2], "rows_shape": [3, None, 2, 4]}}, "layer"),

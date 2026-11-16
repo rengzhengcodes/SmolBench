@@ -113,10 +113,16 @@ in the bucket are skipped; uploads use `If-None-Match: *`, so they cannot replac
 object; a job with only some of its rank objects is reported as partial.
 The offline reader `read_captures` reads only captures that a manifest records as verified.
 
+The instance serves from the fleet's weight mirror (`EC2_S3_MODEL_CACHE`, set in the
+notebook's first cell). `replay_model` refuses to launch without it: on 2026-11-16 an
+instance without the mirror was billed for 15 minutes and vLLM failed at startup.
+
 `deepseek-v3.1` is refused. vLLM serves it with multi-head latent attention (a separate
 MLA layer), which the capture hook does not reach, so a run would store nothing.
 
-The replay has never run against a live instance. Its offline tests are in
+The replay ran once against a live instance: the Gemma 4 31B pilot of 2026-11-16 on the
+second smoke (54 jobs, all verified; captures under `bedrock-trio/smoke-2/attention/`).
+Its offline tests are in
 `tests/rebuttal/test_attention_replay.py` and `tests/evals/test_attention*.py`. The capture
 plugin tests need torch and are skipped by the default suite. In an environment with torch,
 run `python -m pytest tests/evals/test_attention_capture_plugin.py`.

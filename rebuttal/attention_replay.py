@@ -1579,6 +1579,8 @@ def _audit_job(
             return f"rank {rank}: meta job_id {meta.get('job_id')!r} != job's {job.job_id!r}"
         if meta.get("rank") != rank:
             return f"rank {rank}: meta rank {meta.get('rank')!r} != {rank}"
+        if meta.get("tp") != tp:
+            return f"rank {rank}: meta tp {meta.get('tp')!r} != {tp}"
         if meta.get("model") != model:
             return f"rank {rank}: meta model {meta.get('model')!r} != {model!r}"
         if int(meta["n_tokens"]) != job.n_tokens:
@@ -1941,8 +1943,9 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         invalid (before any AWS call).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
-        unavailable), or when its ``config.json`` cannot be loaded or has no
-        attention shape (the content audit needs it); both before any AWS call.
+        unavailable), when its ``config.json`` cannot be loaded or has no
+        attention shape (the content audit needs it), or when the provider has no
+        weight mirror (``EC2_S3_MODEL_CACHE`` unset); all before any AWS call.
 
     Notes
     -----
@@ -2005,6 +2008,15 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
 
     # Phase 3: bind the real collaborators now that the gate is passed.
     ec2 = ec2 or real_ec2
+    # The fleet serves from its weight mirror. Without it the box fetches the checkpoint
+    # from Hugging Face anonymously, and the vLLM workers failed at startup that way on
+    # 2026-11-16, after the instance was billed. The provider reads the variable at import.
+    if getattr(ec2, "EC2_S3_MODEL_CACHE", None) == "":
+        raise RuntimeError(
+            f"{model_key}: EC2_S3_MODEL_CACHE is not set, so the instance would have no "
+            "weight mirror. Set it (and EC2_S3_CACHE_REGION) in the environment before "
+            "Python starts, as the notebook's first cell does."
+        )
     make_s3 = s3_client_factory or _default_s3_factory
     bucket, prefix = parse_s3_uri(s3_uri)
     spec = (getattr(ec2, "EC2_DEPLOY_SPECS", None) or real_ec2.EC2_DEPLOY_SPECS)[model_key]
