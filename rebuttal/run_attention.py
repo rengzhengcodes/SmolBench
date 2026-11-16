@@ -2,6 +2,7 @@
 
     python rebuttal/run_attention.py --model gemma-4-31b --smoke            # plan only
     python rebuttal/run_attention.py --model gemma-4-31b --seeds 0-9 --approved
+    python rebuttal/run_attention.py --model gemma-4-31b --audit-only       # audit stored captures
 
 Without ``--approved`` it prints the plan of ``attention_replay.plan_replay`` (sizes,
 errors, storage estimate) and exits 0; it builds no AWS client. With ``--approved`` it
@@ -11,6 +12,14 @@ records what landed. A model runs per process so that a failure, or an expired A
 session (they last 4 hours), stops one model and not the others; ``--seeds`` splits one
 model across several runs.
 
+With ``--audit-only`` it calls ``attention_replay.audit_existing`` instead: it audits the
+captures of the model that are already in the bucket and no manifest records yet (for
+example when an audit outlived the AWS session before it wrote any manifest), and writes
+their manifests. It reads and writes S3 only, launches nothing and needs no ``--approved``;
+given together with ``--approved`` it still launches nothing. A rerun resumes: the run
+folders already recorded are skipped. ``--audit-workers`` sets how many jobs are audited at
+once, in both modes (each worker holds one multi-GB array in memory).
+
 Defaults follow the notebook's attention cells: the results root is the induction mirror
 (``bedrock_trio.RESULTS_DIR / "induction"``, or the same under the smoke folder with
 ``--smoke``) and the destination is ``<RESULTS_S3>[/<smoke prefix>]/attention-v2``.
@@ -18,7 +27,9 @@ Defaults follow the notebook's attention cells: the results root is the inductio
 Exit codes: 0 every job that was sent passed the capture and the audit; 1 an exception
 (also a refusal such as an unverified serve); 2 a bad command line; 3 some job failed
 the capture or the content audit; 4 the box could not be shut down (it may still be
-billing; the report is written first).
+billing; the report is written first). With ``--audit-only``: 0 every audited job was
+verified (also when there was nothing to audit), 3 some job failed the audit, 1 an
+exception; the report file is ``attention_audit--<model>--<stamp>.json``.
 
 The module imports without touching AWS or the network.
 """
@@ -62,6 +73,8 @@ from smolbench.evals.results_store import format_run_ts, utcnow  # noqa: E402
 DEFAULT_BATCH_TIMEOUT_S: int = 2400
 #: Presigned-URL lifetime (seconds); must exceed the batch timeout.
 DEFAULT_URL_TTL_S: int = 3600
+#: Jobs audited at once, as ``attention_replay.replay_model`` and ``audit_existing`` default.
+DEFAULT_AUDIT_WORKERS: int = 8
 #: Sub-folder of the destination holding the captures (the notebook's ``attention-v2``).
 ATTENTION_SUBPREFIX: str = "attention-v2"
 
@@ -118,6 +131,17 @@ def parse_seeds(text: str) -> List[int]:
     return sorted(seeds)
 
 
+def _positive_int(text: str) -> int:
+    """Parse an integer of at least 1 (argparse ``type``; a bad value exits with code 2)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
+
 def default_locations(smoke: bool) -> Tuple[Path, str]:
     """Return the default ``(results root, S3 destination)``, as the notebook's cells build them.
 
@@ -169,6 +193,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="presigned-URL lifetime; must exceed --batch-timeout-s (default: %(default)s)")
     parser.add_argument("--audit-arrays", choices=("all", "sample"), default="all",
                         help="download every array for the audit, or one job per run (default: all)")
+    parser.add_argument("--audit-workers", type=_positive_int, default=DEFAULT_AUDIT_WORKERS,
+                        help="jobs audited at once; each holds one array in memory (default: %(default)s)")
+    parser.add_argument("--audit-only", action="store_true",
+                        help="audit and manifest the captures already in the bucket; launches nothing "
+                             "and needs no --approved")
     parser.add_argument("--report-dir", type=Path, default=None,
                         help="where the JSON report goes (default: the results folder next to the mirror)")
     return parser
@@ -206,8 +235,10 @@ def _print_report(model: str, report: "ar.ReplayReport") -> None:
         print("  manifest error:", report.manifest_error)
 
 
-def _write_report(report: "ar.ReplayReport", report_dir: Path) -> Path:
-    """Write `report` as JSON to ``<report_dir>/attention_report--<model>--<stamp>.json``.
+def _write_report(report: "ar.ReplayReport", report_dir: Path, kind: str = "report") -> Path:
+    """Write `report` as JSON to ``<report_dir>/attention_<kind>--<model>--<stamp>.json``.
+
+    `kind` is ``"report"`` for a capture run and ``"audit"`` for ``--audit-only``.
 
     The file is created exclusively (mode ``"x"``): a report is a record of a billed
     run and is never overwritten. The stamp has microsecond precision.
@@ -218,7 +249,7 @@ def _write_report(report: "ar.ReplayReport", report_dir: Path) -> Path:
         When the file already exists.
     """
     report_dir.mkdir(parents=True, exist_ok=True)
-    path = report_dir / f"attention_report--{report.model}--{format_run_ts(utcnow())}.json"
+    path = report_dir / f"attention_{kind}--{report.model}--{format_run_ts(utcnow())}.json"
     with open(path, "x", encoding="utf-8") as handle:
         json.dump(dataclasses.asdict(report), handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -241,8 +272,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     Notes
     -----
     ``--approved`` is the only way to spend money: ``replay_model`` receives the literal
-    ``True`` and still refuses anything else. An interrupt is not caught: the driver has
-    already shut the box down by then.
+    ``True`` and still refuses anything else. ``--audit-only`` is checked first and never
+    reaches ``replay_model``. An interrupt is not caught: the driver has already shut the
+    box down by then (and ``--audit-only`` has no box).
     """
     args = build_parser().parse_args(argv)
     default_root, default_s3 = default_locations(args.smoke)
@@ -251,6 +283,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # The mirror's parent is the results folder (it also holds horn/ and attention-v2/).
     report_dir = args.report_dir if args.report_dir is not None else results_root.parent
     try:
+        if args.audit_only:
+            # Design: checked before --approved so that the two flags together can never
+            # launch a box; the audit path has no way to reach the EC2 provider.
+            report = ar.audit_existing(
+                args.model, results_root, s3_uri,
+                seeds=args.seeds, arrays=args.audit_arrays, workers=args.audit_workers,
+            )
+            _print_report(args.model, report)
+            print(f"  {report.not_captured} planned job(s) have no capture in the bucket")
+            print(f"report: {_write_report(report, report_dir, 'audit')}")
+            # NOTE: as for a capture run, a manifest error or a partial job still exits 0 (both
+            # are printed above and held in the report file); only a failed audit exits 3. After
+            # a manifest error the audited jobs are not recorded: run --audit-only again.
+            return EXIT_JOBS_FAILED if report.audit_failures else EXIT_OK
         if not args.approved:
             return _print_plan(args.model, results_root, s3_uri, args.seeds)
         try:
@@ -262,6 +308,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 batch_timeout_s=args.batch_timeout_s,
                 url_ttl_s=args.url_ttl_s,
                 audit_arrays=args.audit_arrays,
+                audit_workers=args.audit_workers,
                 seeds=args.seeds,
                 run_label=args.run_label,
             )

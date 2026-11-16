@@ -2319,3 +2319,379 @@ def test_each_run_gets_its_own_instance_tag_and_state_file(tmp_path, monkeypatch
     assert ar.run_tag(GEMMA) != ar.run_tag(DSV31)
     assert ar.run_tag("a b/c", "x:y") == f"{ar.EC2_TAG}-a-b-c-x-y"
     assert "EC2_EXPERIMENT_TAG" not in os.environ
+
+
+# ------------------------------------------------------ concurrent audit and audit_existing
+
+class _PoisonS3:
+    """A client that must never be used: any method call fails the test."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"the positional client was used ({name}) although workers > 1")
+
+
+class _RecordingS3(FakeS3):
+    """FakeS3 sharing another fake's objects; records that it was used and which arrays it read."""
+
+    def __init__(self, shared: FakeS3, gets: list) -> None:
+        super().__init__()
+        self.objects = shared.objects
+        self.used = False
+        self._gets = gets
+
+    def get_object(self, Bucket: str, Key: str) -> dict:
+        self.used = True
+        self._gets.append(Key)
+        return super().get_object(Bucket, Key)
+
+    def head_object(self, Bucket: str, Key: str) -> dict:
+        self.used = True
+        return super().head_object(Bucket, Key)
+
+
+def _mixed_store(tmp_path):
+    """Six stored jobs (two seeds): four good, one with a bad meta, one with a bad array."""
+    _two_seeds(tmp_path)
+    jobs = _gemma_jobs(tmp_path)
+    assert len(jobs) == 6
+    s3 = FakeS3()
+    for i, job in enumerate(jobs):
+        if i == 1:
+            _store_capture(s3, job, meta_over={1: {"rank": 0}})
+        elif i == 4:
+            _store_capture(s3, job, mass_row=[1.5, -0.5, 0.0, 0.0])
+        else:
+            _store_capture(s3, job)
+    return s3, jobs
+
+
+@pytest.mark.parametrize("arrays", ["all", "sample"])
+def test_a_threaded_audit_gives_the_sequential_result_on_clients_from_the_factory(tmp_path, arrays) -> None:
+    s3, jobs = _mixed_store(tmp_path)
+    seq_gets: list = []
+    sequential = ar.audit_captures(_RecordingS3(s3, seq_gets), "b", jobs, 2, model=GEMMA,
+                                   config=_AUDIT_CONFIG, arrays=arrays)
+    assert sequential[jobs[1].job_id] and (arrays == "sample" or sequential[jobs[4].job_id])
+    assert [j.job_id for j in jobs if sequential[j.job_id] is None], "the fixture has good jobs"
+
+    made: list = []
+    gets: list = []
+
+    def factory():
+        made.append(_RecordingS3(s3, gets))
+        return made[-1]
+
+    threaded = ar.audit_captures(_PoisonS3(), "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG,
+                                 arrays=arrays, workers=4, client_factory=factory)
+    # Same verdicts, same order, and the same arrays downloaded (the same sampling).
+    assert threaded == sequential and list(threaded) == list(sequential)
+    assert sorted(k for k in gets if k.endswith(".npz")) == sorted(k for k in seq_gets if k.endswith(".npz"))
+    # Each worker thread built its own client and used it; the poison one was never touched.
+    assert 1 <= len(made) <= 4 and all(c.used for c in made)
+
+
+def test_a_threaded_audit_needs_a_client_factory_and_a_valid_worker_count(tmp_path) -> None:
+    s3, jobs = _mixed_store(tmp_path)
+    with pytest.raises(ValueError, match="client_factory"):
+        ar.audit_captures(s3, "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG, workers=4)
+    for bad in (0, -1, True, 2.0):
+        with pytest.raises(ValueError, match="workers"):
+            ar.audit_captures(s3, "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG, workers=bad,
+                              client_factory=lambda: s3)
+    # One worker needs no factory.
+    assert ar.audit_captures(s3, "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG, workers=1)
+
+
+def test_a_failing_client_factory_stops_the_audit_instead_of_failing_the_jobs(tmp_path) -> None:
+    s3, jobs = _mixed_store(tmp_path)
+
+    def factory():
+        raise RuntimeError("credentials expired")
+
+    with pytest.raises(RuntimeError, match="credentials expired"):
+        ar.audit_captures(s3, "b", jobs, 2, model=GEMMA, config=_AUDIT_CONFIG, workers=3,
+                          client_factory=factory)
+
+
+@pytest.mark.parametrize("kw, expected", [({}, 8), ({"audit_workers": 3}, 3), ({"audit_workers": 1}, 1)])
+def test_replay_passes_the_audit_worker_count_and_its_s3_factory(tmp_path, monkeypatch, kw, expected) -> None:
+    _write_results(tmp_path, GEMMA)
+    seen: dict = {}
+    real = ar.audit_captures
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ar, "audit_captures", spy)
+    s3 = FakeS3()
+    report = _replay(tmp_path, AuditedBox(s3), s3, **kw)
+    assert seen["workers"] == expected and callable(seen["client_factory"])
+    assert len(report.verified) == 3
+
+
+@pytest.mark.parametrize("bad", [0, -2, True])
+def test_replay_rejects_a_bad_audit_worker_count_before_the_box_is_provisioned(tmp_path, bad) -> None:
+    _write_results(tmp_path, GEMMA)
+    box = AuditedBox(FakeS3())
+    with pytest.raises(ValueError, match="audit_workers"):
+        _replay(tmp_path, box, box.s3, audit_workers=bad)
+    assert box.calls == []
+
+
+AE_URI = "s3://bucket/bedrock-trio/attention"
+
+
+@pytest.fixture
+def no_ec2(monkeypatch):
+    """Make every way of reaching EC2 or a real AWS client fail the test.
+
+    ``audit_existing`` imports the provider module for its static tables (the plan needs
+    them), so the import cannot be blocked; what must never happen is a call that
+    provisions, serves, talks to or terminates a box, or builds a real client.
+    """
+    from smolbench.evals.providers import ec2
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("audit_existing reached EC2 or built a real AWS client")
+
+    for name in ("provision_spot_instance", "serve_model", "shutdown_instance", "attn_start",
+                 "attn_status"):
+        monkeypatch.setattr(ec2, name, refuse)
+    monkeypatch.setattr(ar, "_default_s3_factory", refuse)
+    monkeypatch.setattr("boto3.session.Session", refuse)
+
+
+def _audit_existing(tmp_path, s3, **kw):
+    tok = CharTokenizer(GEMMA_SPECIALS)
+    return ar.audit_existing(
+        GEMMA, tmp_path, AE_URI, tokenizer_for=lambda m: tok, template_for=lambda m: gemma_template(),
+        config_for=lambda m: _AUDIT_CONFIG, s3_client_factory=lambda: s3, **kw)
+
+
+def _read_back(tmp_path, s3, name: str):
+    """Mirror the bucket the way the reader's user does, then read it."""
+    mirror = tmp_path / name
+    ar.pull_captures(AE_URI, mirror, [GEMMA], s3_client_factory=lambda: s3)
+    return ar.read_captures(GEMMA, mirror, config=_AUDIT_CONFIG)
+
+
+def _stored_unaudited(tmp_path):
+    """Three captures stored with no manifest, as after a run whose audit never happened."""
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    return s3, jobs
+
+
+def _manifest_keys(s3):
+    return sorted(k for k in s3.objects if "manifest--" in k)
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_audits_and_manifests_captures_that_were_never_audited(tmp_path, caplog) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    # Before: nothing is readable, which is the state the function exists to repair.
+    assert _read_back(tmp_path, s3, "before") == {}
+    with caplog.at_level(logging.WARNING):
+        report = _audit_existing(tmp_path, s3)
+    assert report.verified == [j.job_id for j in jobs] and not report.audit_failures
+    assert report.instance_type is None and report.manifest_error is None
+    assert not report.partial and not report.skipped_existing and report.not_captured == 0
+    # One manifest per run folder (the intens run and the noise_intens run), marked post hoc.
+    assert len(report.manifests) == 2 and sorted(report.manifests) == _manifest_keys(s3)
+    entries = {}
+    for key in report.manifests:
+        manifest = json.loads(s3.objects[key])
+        assert manifest["post_hoc_audit"] is True and manifest["tp"] == 2 and manifest["mode"] == "mass"
+        assert manifest["instance_type"] is None and manifest["model"] == GEMMA
+        entries.update({e["job_id"]: e for e in manifest["jobs"]})
+    assert sorted(entries) == sorted(j.job_id for j in jobs)
+    assert {e["status"] for e in entries.values()} == {"verified"}
+    assert sorted(e["mark_index"] for e in entries.values()) == [0, 0, 1]
+    # The plan guessed tp=8; the capture's own meta says 2, and the log says the meta won.
+    assert "capture meta says tp=2" in caplog.text
+    # After: the reader reads the jobs.
+    after = _read_back(tmp_path, s3, "after")
+    assert after["intens"]["jobs"] == 2 and after["noise_intens"]["jobs"] == 1
+    assert after["intens"]["skipped_unverified"] == 0
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_a_second_audit_existing_audits_nothing_and_writes_no_manifest(tmp_path) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    _audit_existing(tmp_path, s3)
+    puts = list(s3.puts)
+    again = _audit_existing(tmp_path, s3)
+    assert not again.verified and not again.audit_failures and not again.manifests
+    assert sorted(again.skipped_existing) == sorted(j.job_id for j in jobs)
+    assert all(keys for keys in again.skipped_existing.values()) and s3.puts == puts
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_reports_a_job_with_missing_rank_objects_as_partial(tmp_path, caplog) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    for key in attention.rank_keys(jobs[0].key, 1):  # rank 1 of 0..1 is gone
+        del s3.objects[key]
+    for key in attention.rank_keys(jobs[2].key, 0) + attention.rank_keys(jobs[2].key, 1):
+        del s3.objects[key]  # a job nothing was stored for
+    with caplog.at_level(logging.WARNING):
+        report = _audit_existing(tmp_path, s3)
+    assert report.partial == [jobs[0].job_id] and report.not_captured == 1
+    assert report.verified == [jobs[1].job_id]
+    for key in attention.rank_keys(jobs[0].key, 1):
+        assert key in caplog.text
+    recorded = {e["job_id"] for k in report.manifests for e in json.loads(s3.objects[k])["jobs"]}
+    assert recorded == {jobs[1].job_id}, "a partial or absent job must not appear in a manifest"
+    # The partial job is audited by nobody, so it is still not readable.
+    assert _read_back(tmp_path, s3, "mirror")["intens"]["jobs"] == 1
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_records_a_bad_capture_as_audit_failed_and_the_reader_skips_it(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, jobs[0])
+    _store_capture(s3, jobs[1], meta_over={0: {"n_tokens": 999}})
+    _store_capture(s3, jobs[2])
+    report = _audit_existing(tmp_path, s3)
+    assert report.verified == [jobs[0].job_id, jobs[2].job_id]
+    assert list(report.audit_failures) == [jobs[1].job_id] and "n_tokens" in report.audit_failures[jobs[1].job_id]
+    statuses = {e["job_id"]: e["status"] for k in report.manifests for e in json.loads(s3.objects[k])["jobs"]}
+    assert statuses[jobs[1].job_id].startswith("audit_failed: rank 0: meta n_tokens")
+    out = _read_back(tmp_path, s3, "mirror")
+    assert out["intens"]["jobs"] == 1 and out["intens"]["skipped_unverified"] == 1
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_audits_a_version_1_capture_as_version_1(tmp_path) -> None:
+    _write_results(tmp_path, GEMMA)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    _store_capture(s3, jobs[0], version=1)
+    _store_capture(s3, jobs[1])
+    _store_capture(s3, jobs[2])
+    report = _audit_existing(tmp_path, s3)
+    assert sorted(report.verified) == sorted(j.job_id for j in jobs) and not report.audit_failures
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_skips_jobs_a_manifest_records_as_audited_only(tmp_path) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    run_dir = jobs[0].key.rsplit("/", 1)[0] + "/"
+
+    def entry(job, idx, status):
+        return {"job_id": job.job_id, "mark_index": idx, "status": status}
+
+    s3.objects[run_dir + "manifest--earlier.json"] = json.dumps({"jobs": [
+        entry(jobs[0], 0, "verified"),
+        # A later replay_model listed this one without auditing it: it still needs an audit.
+        entry(jobs[1], 1, "skipped_existing"),
+    ]}).encode()
+    noise_dir = jobs[2].key.rsplit("/", 1)[0] + "/"
+    s3.objects[noise_dir + "manifest--earlier.json"] = json.dumps(
+        {"jobs": [entry(jobs[2], 0, "audit_failed: rank 0: an old verdict")]}).encode()
+    report = _audit_existing(tmp_path, s3)
+    assert sorted(report.skipped_existing) == sorted([jobs[0].job_id, jobs[2].job_id])
+    assert report.verified == [jobs[1].job_id]
+    # Only the intens run had something to audit, so only it gets a new manifest.
+    assert len(report.manifests) == 1 and report.manifests[0].startswith(run_dir)
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_refuses_an_unreadable_manifest_before_auditing(tmp_path) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    s3.objects[jobs[2].key.rsplit("/", 1)[0] + "/manifest--broken.json"] = b"not json"
+    with pytest.raises(ValueError, match="unreadable manifest"):
+        _audit_existing(tmp_path, s3)
+    assert not s3.puts, "nothing was written before the refusal"
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_with_seeds_touches_only_those_seeds(tmp_path) -> None:
+    _two_seeds(tmp_path)
+    jobs = _gemma_jobs(tmp_path)
+    s3 = FakeS3()
+    for job in jobs:
+        _store_capture(s3, job)
+    report = _audit_existing(tmp_path, s3, seeds=[1])
+    assert report.verified and all(j.startswith("s1.") for j in report.verified)
+    assert len(report.verified) == 3 and report.plan.jobs == 3
+    assert report.manifests and all("seed=1/" in k for k in report.manifests)
+    assert all("seed=1/" in k for k in s3.puts)
+    # Seed 0 is still unaudited; an unfiltered call picks it up and skips seed 1.
+    rest = _audit_existing(tmp_path, s3)
+    assert len(rest.verified) == 3 and all(j.startswith("s0.") for j in rest.verified)
+    assert len(rest.skipped_existing) == 3
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_takes_no_box_and_an_empty_seed_selection_does_nothing(tmp_path) -> None:
+    import inspect
+
+    assert "ec2" not in inspect.signature(ar.audit_existing).parameters
+    s3, _jobs = _stored_unaudited(tmp_path)
+
+    def never():
+        raise AssertionError("an S3 client was built for an empty selection")
+
+    report = ar.audit_existing(
+        GEMMA, tmp_path, AE_URI, seeds=[], s3_client_factory=never,
+        **{k: v for k, v in _gemma_plan_kwargs().items()})
+    assert not report.verified and not report.manifests and report.plan.jobs == 0
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_an_exception_in_one_run_folders_audit_keeps_the_finished_manifests(tmp_path, monkeypatch) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+    real = ar.audit_captures
+    calls = []
+
+    def second_run_explodes(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ar, "audit_captures", second_run_explodes)
+    with pytest.raises(RuntimeError, match="boom"):
+        _audit_existing(tmp_path, s3)
+    (done,) = _manifest_keys(s3)
+    assert "intens--" in done and {e["job_id"] for e in json.loads(s3.objects[done])["jobs"]} == {
+        jobs[0].job_id, jobs[1].job_id}
+    # The rerun resumes: the finished folder is skipped, the other one is audited.
+    monkeypatch.setattr(ar, "audit_captures", real)
+    resumed = _audit_existing(tmp_path, s3)
+    assert resumed.verified == [jobs[2].job_id] and len(resumed.manifests) == 1
+    assert sorted(resumed.skipped_existing) == sorted([jobs[0].job_id, jobs[1].job_id])
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_keeps_the_report_when_a_manifest_cannot_be_written(tmp_path) -> None:
+    s3, jobs = _stored_unaudited(tmp_path)
+
+    class DenyManifests(FakeS3):
+        def put_object(self, Bucket, Key, Body, **kw):
+            if "manifest--" in Key:
+                raise RuntimeError("manifest PUT denied")
+            super().put_object(Bucket, Key, Body, **kw)
+
+    denied = DenyManifests()
+    denied.objects = s3.objects
+    report = _audit_existing(tmp_path, denied)
+    assert report.manifest_error and "manifest PUT denied" in report.manifest_error
+    assert report.manifests == [] and report.verified == [jobs[0].job_id, jobs[1].job_id]
+    assert not _manifest_keys(s3)
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_existing_validates_its_arguments_before_any_read(tmp_path) -> None:
+    s3, _jobs = _stored_unaudited(tmp_path)
+    with pytest.raises(ValueError, match="arrays"):
+        _audit_existing(tmp_path, s3, arrays="every")
+    with pytest.raises(ValueError, match="workers"):
+        _audit_existing(tmp_path, s3, workers=0)
+    assert not s3.puts

@@ -302,3 +302,143 @@ def test_an_unverified_serve_is_refused_unless_the_flag_is_given(cli, tmp_path, 
     assert seen["allow_unverified_serve"] is True
     assert box.calls[-1] == "shutdown"
     capsys.readouterr()
+
+
+# ------------------------------------------------------------------- --audit-only
+
+no_ec2 = helpers.no_ec2  # the fixture of the driver's tests: any EC2 or real-AWS call fails
+
+
+def _inject_audit(monkeypatch, cli, s3) -> dict:
+    """Wrap ``audit_existing`` so the command line runs against the fake S3 and the stub tokenizer.
+
+    Also makes ``replay_model`` and ``plan_replay`` fail the test: ``--audit-only`` must reach
+    neither. Returns the keyword arguments the command line passed to ``audit_existing``.
+    """
+    seen: dict = {}
+    real_audit = ar.audit_existing
+    stubs = helpers._gemma_plan_kwargs()
+
+    def audit(model_key, results_root, s3_uri, **kw):
+        seen.update(kw, model_key=model_key, results_root=results_root, s3_uri=s3_uri)
+        return real_audit(model_key, results_root, s3_uri, s3_client_factory=lambda: s3, **stubs, **kw)
+
+    def never(*a, **k):
+        raise AssertionError("--audit-only reached the capture path")
+
+    monkeypatch.setattr(cli.ar, "audit_existing", audit)
+    monkeypatch.setattr(cli.ar, "replay_model", never)
+    monkeypatch.setattr(cli.ar, "plan_replay", never)
+    return seen
+
+
+def _audit_reports(directory: Path) -> list:
+    return sorted(directory.glob("attention_audit--*.json")) if directory.is_dir() else []
+
+
+def _jobs_at_default_destination(cli, root: Path):
+    """The planned jobs, keyed under the command line's default destination."""
+    _bucket, prefix = ar.parse_s3_uri(cli.default_locations(False)[1])
+    planned, errors = ar.build_jobs(GEMMA, root, prefix, tokenizer=helpers.CharTokenizer(helpers.GEMMA_SPECIALS),
+                                    template=helpers.gemma_template())
+    assert not errors
+    return [p.job for p in planned]
+
+
+def _stored(cli, root: Path):
+    """Three captures stored in a fake bucket with no manifest (the audit never ran)."""
+    jobs = _jobs_at_default_destination(cli, root)
+    s3 = helpers.FakeS3()
+    for job in jobs:
+        helpers._store_capture(s3, job)
+    return s3, jobs
+
+
+@pytest.mark.usefixtures("no_ec2")
+@pytest.mark.parametrize("extra", [[], ["--approved"]])
+def test_audit_only_audits_the_stored_captures_and_launches_nothing(
+        cli, tmp_path, monkeypatch, capsys, extra) -> None:
+    root = _root(tmp_path)
+    s3, jobs = _stored(cli, root)
+    seen = _inject_audit(monkeypatch, cli, s3)
+    code = cli.main(["--model", GEMMA, "--results-root", str(root), "--audit-only", *extra])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"{GEMMA}: 3 verified, 0 failed, 0 failed the audit, 0 already stored, 0 partial, 2 manifests" in out
+    # Defaults: every array, 8 workers, every seed, the notebook's destination.
+    assert seen["arrays"] == "all" and seen["workers"] == 8 and seen["seeds"] is None
+    assert seen["s3_uri"] == cli.default_locations(False)[1] and seen["results_root"] == root
+    # The report goes to the results folder, under a name that says "audit".
+    (path,) = _audit_reports(tmp_path / "results")
+    assert path.name.startswith(f"attention_audit--{GEMMA}--") and not _reports(tmp_path / "results")
+    saved = json.loads(path.read_text())
+    assert len(saved["verified"]) == 3 and len(saved["manifests"]) == 2 and saved["instance_type"] is None
+    assert sum("manifest--" in k for k in s3.objects) == 2
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_only_passes_its_options_through(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    s3, _jobs = _stored(cli, root)
+    seen = _inject_audit(monkeypatch, cli, s3)
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--audit-only", "--seeds", "0",
+                     "--audit-arrays", "sample", "--audit-workers", "3", "--smoke",
+                     "--report-dir", str(tmp_path / "out")]) == 0
+    assert seen["seeds"] == [0] and seen["arrays"] == "sample" and seen["workers"] == 3
+    assert "smoke" in seen["s3_uri"] and len(_audit_reports(tmp_path / "out")) == 1
+    capsys.readouterr()
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_only_exits_3_when_a_capture_fails_the_audit(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    jobs = _jobs_at_default_destination(cli, root)
+    s3 = helpers.FakeS3()
+    helpers._store_capture(s3, jobs[0])
+    helpers._store_capture(s3, jobs[1], meta_over={0: {"n_tokens": 999}})
+    helpers._store_capture(s3, jobs[2])
+    _inject_audit(monkeypatch, cli, s3)
+    code = cli.main(["--model", GEMMA, "--results-root", str(root), "--audit-only"])
+    out = capsys.readouterr().out
+    assert code == 3 and "1 failed the audit" in out and jobs[1].job_id in out
+    (path,) = _audit_reports(tmp_path / "results")
+    assert list(json.loads(path.read_text())["audit_failures"]) == [jobs[1].job_id]
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_only_exits_0_when_there_is_nothing_to_audit(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    s3 = helpers.FakeS3()  # nothing captured at all
+    _inject_audit(monkeypatch, cli, s3)
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--audit-only"]) == 0
+    assert "3 planned job(s) have no capture" in capsys.readouterr().out
+    (path,) = _audit_reports(tmp_path / "results")
+    assert json.loads(path.read_text())["not_captured"] == 3 and not s3.puts
+
+
+@pytest.mark.usefixtures("no_ec2")
+def test_audit_only_exits_1_on_an_exception_without_a_report(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    _inject_audit(monkeypatch, cli, helpers.FakeS3())
+    monkeypatch.setattr(cli.ar, "audit_existing", lambda *a, **k: (_ for _ in ()).throw(
+        RuntimeError("S3 unreachable")))
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--audit-only"]) == 1
+    assert "S3 unreachable" in capsys.readouterr().err and not _audit_reports(tmp_path / "results")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "x", "1.5"])
+def test_a_bad_audit_worker_count_exits_with_the_argparse_code(cli, capsys, value) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--model", GEMMA, "--audit-workers", value])
+    assert caught.value.code == 2 and "--audit-workers" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("extra, expected", [([], 8), (["--audit-workers", "2"], 2)])
+def test_the_capture_path_passes_the_audit_worker_count(
+        cli, tmp_path, monkeypatch, capsys, extra, expected) -> None:
+    root = _root(tmp_path)
+    s3 = helpers.FakeS3()
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(s3), s3)
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved", *extra]) == 0
+    assert seen["audit_workers"] == expected
+    capsys.readouterr()

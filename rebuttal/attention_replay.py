@@ -22,7 +22,10 @@ What it does, in order
    batches, ALWAYS terminate the box as soon as the batches return, and only then
    audit what landed and write a manifest per run (the audit downloads every array
    to this machine, and the box must not bill while that runs).
-3. ``read_captures``: offline, over a local mirror of the S3 tree.
+3. ``audit_existing``: audit and manifest the captures that are already in the bucket
+   (those whose audit never ran, for example because it outlived the AWS session);
+   S3 only, no box.
+4. ``read_captures``: offline, over a local mirror of the S3 tree.
 
 Where the rebuilt sequence is an approximation
 ----------------------------------------------
@@ -140,6 +143,7 @@ import shutil
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,6 +188,7 @@ __all__ = [
     "TemplateUnavailable",
     "attention_shape",
     "audit_captures",
+    "audit_existing",
     "build_jobs",
     "capture_max_model_len",
     "check_reasoning_format",
@@ -1799,6 +1804,12 @@ def plan_replay(
 # --------------------------------------------------------------- audit and manifest
 
 
+def _check_workers(workers: Any, name: str) -> None:
+    """Raise ``ValueError`` unless `workers` is an integer of at least 1 (``True`` is refused)."""
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+        raise ValueError(f"{name} must be an integer >= 1, got {workers!r}")
+
+
 def _object_size(client: Any, bucket: str, key: str) -> int:
     """Return an object's size: ``head_object`` when the client has it, else the listing's ``Size``."""
     head = getattr(client, "head_object", None)
@@ -2162,6 +2173,8 @@ def audit_captures(
     sample_per_run: int = 1,
     arrays: str = "sample",
     capture_version: Optional[int] = None,
+    workers: int = 1,
+    client_factory: Optional[Callable[[], Any]] = None,
 ) -> Dict[str, Optional[str]]:
     """Audit captured objects by content; file counts prove nothing.
 
@@ -2253,6 +2266,8 @@ def audit_captures(
     ----------
     client : Any
         S3 client with ``get_object`` and ``head_object`` or ``list_objects_v2``.
+        Used when ``workers == 1``; with more workers every worker thread builds
+        its own client from `client_factory` and this one is not touched.
     bucket : str
         Bucket holding the captures.
     jobs : Sequence[attention.Job]
@@ -2274,43 +2289,105 @@ def audit_captures(
         Capture format every rank's meta must declare (``None``, the default,
         accepts any version and audits each rank by its own). ``replay_model``
         passes ``CAPTURE_VERSION``.
+    workers : int, optional
+        Jobs audited at once (default 1: one after the other, on `client`). With
+        ``workers > 1`` the jobs run in a thread pool of that size, and the result is
+        identical to the sequential one: the same dict in the same job order, with the
+        same jobs sampled (the sampling is decided in job order before any job starts).
+    client_factory : Optional[Callable[[], Any]], optional
+        Returns a NEW S3 client per call. Required when ``workers > 1``: each worker
+        thread calls it once and keeps that client for all its jobs, so no client is
+        shared between threads.
 
     Returns
     -------
     Dict[str, Optional[str]]
-        Job id -> failure reason, or ``None`` when the job passed. A failure of
-        any kind (including an unreadable object) is a reason, never an exception.
+        Job id -> failure reason, or ``None`` when the job passed, in the order of
+        `jobs`. A failure of any kind (including an unreadable object) is a reason,
+        never an exception.
 
     Raises
     ------
     ValueError
-        When `arrays` is not ``"sample"`` or ``"all"`` (before any read), or when
-        `config` has no readable attention shape (``attention_shape``).
+        When `arrays` is not ``"sample"`` or ``"all"``, when `workers` is not an
+        integer of at least 1, or when ``workers > 1`` and `client_factory` is
+        ``None`` (all before any read), or when `config` has no readable attention
+        shape (``attention_shape``).
+    Exception
+        Whatever `client_factory` raises (with ``workers > 1``): that is an
+        environment failure, not a verdict on a job, so it stops the audit
+        instead of being recorded against the jobs. Jobs not yet started are
+        cancelled; jobs already running finish first.
 
     Notes
     -----
     Network: per job and rank one GET of the meta and one size lookup; the
     jobs selected by `arrays` also download their arrays (``"all"`` downloads
     every capture, which can be large). Read-only.
+
+    Memory: a worker holds the whole body of one array (up to a few GB) and its
+    float32 copies at a time, so peak memory grows with `workers`.
     """
     if arrays not in ("sample", "all"):
         raise ValueError(f"arrays must be 'sample' or 'all', got {arrays!r}")
+    _check_workers(workers, "workers")
+    if workers > 1 and client_factory is None:
+        raise ValueError(f"client_factory is required when workers > 1 (workers={workers})")
     n_layers, n_heads = attention_shape(config)
-    results: Dict[str, Optional[str]] = {}
+
+    # Phase 1: decide which jobs get their arrays checked, in job order. The rule
+    # depends only on that order, so it is settled before any job starts and the
+    # threaded run samples exactly the jobs the sequential run does.
+    todo: List[Tuple[attention.Job, bool]] = []
     seen: Dict[str, int] = {}
     for job in jobs:
         prefix = job.key.rsplit("/", 1)[0]
         sampled = arrays == "all" or seen.get(prefix, 0) < sample_per_run
         seen[prefix] = seen.get(prefix, 0) + 1
+        todo.append((job, sampled))
+
+    def audit_one(use: Any, job: attention.Job, sampled: bool) -> Optional[str]:
         try:
-            reason = _audit_job(
-                client, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version
+            return _audit_job(
+                use, bucket, job, tp, sampled, model, n_layers, n_heads, capture_version
             )
         except Exception as exc:  # noqa: BLE001 -- recorded per job, none hidden
-            reason = f"audit raised {type(exc).__name__}: {exc}"
-        if reason:
-            logging.warning(f"attention_replay: audit failed for {job.job_id}: {reason}")
-        results[job.job_id] = reason
+            return f"audit raised {type(exc).__name__}: {exc}"
+
+    # Phase 2: audit. Outcomes are consumed in job order whichever way they were
+    # produced, so the result dict and the log read the same sequentially or threaded.
+    pool: Optional[ThreadPoolExecutor] = None
+    results: Dict[str, Optional[str]] = {}
+    try:
+        outcomes: Iterator[Optional[str]]
+        if workers == 1 or not todo:
+            outcomes = (audit_one(client, job, sampled) for job, sampled in todo)
+        else:
+            # Design: one client per worker thread (a thread-local, filled on first
+            # use) rather than one per job or one shared client: the audit is
+            # dominated by multi-GB downloads, so a client per thread costs nothing,
+            # and no client object is used by two threads at once.
+            local = threading.local()
+
+            def audit_in_thread(job: attention.Job, sampled: bool) -> Optional[str]:
+                # Built outside audit_one's try: a failing factory must not be
+                # recorded as a verdict on this job (manifests are append-only).
+                thread_client = getattr(local, "client", None)
+                if thread_client is None:
+                    thread_client = local.client = client_factory()  # type: ignore[misc]
+                return audit_one(thread_client, job, sampled)
+
+            pool = ThreadPoolExecutor(max_workers=min(workers, len(todo)))
+            futures = [pool.submit(audit_in_thread, job, sampled) for job, sampled in todo]
+            outcomes = (future.result() for future in futures)
+        for (job, _sampled), reason in zip(todo, outcomes):
+            if reason:
+                logging.warning(f"attention_replay: audit failed for {job.job_id}: {reason}")
+            results[job.job_id] = reason
+    finally:
+        if pool is not None:
+            # An error or interrupt: drop the jobs not started; the running ones finish.
+            pool.shutdown(wait=True, cancel_futures=True)
     return results
 
 
@@ -2372,7 +2449,7 @@ def write_manifest(client: Any, bucket: str, run_prefix: str, payload: Mapping[s
 
 @dataclass
 class ReplayReport:
-    """Outcome of ``replay_model``, keyed by ``attention.Job.job_id``."""
+    """Outcome of ``replay_model`` or ``audit_existing``, keyed by ``attention.Job.job_id``."""
 
     model: str
     #: Landed instance type; ``None`` when nothing was provisioned.
@@ -2393,6 +2470,9 @@ class ReplayReport:
     audit_failures: Dict[str, str] = field(default_factory=dict)
     #: Jobs longer than the context limit, excluded before sending.
     over_context: List[str] = field(default_factory=list)
+    #: Planned jobs with no object in the bucket; counted by ``audit_existing`` only
+    #: (``replay_model`` sends such jobs instead).
+    not_captured: int = 0
     #: Manifest keys written (each key is added as soon as it is written, so the
     #: keys written before a manifest failure are kept).
     manifests: List[str] = field(default_factory=list)
@@ -2476,6 +2556,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     batch_timeout_s: int = attention.DEFAULT_BATCH_TIMEOUT_S,
     url_ttl_s: int = attention.DEFAULT_URL_TTL_S,
     audit_arrays: str = "all",
+    audit_workers: int = 8,
     tokenizer_for: Optional[Callable[[str], Any]] = None,
     template_for: Optional[Callable[[str], Any]] = None,
     config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
@@ -2526,6 +2607,10 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         ``"all"`` (default) downloads and checks the arrays of every captured job;
         ``"sample"`` checks one job per run and only the meta of the rest (see
         ``audit_captures``).
+    audit_workers : int, optional
+        Jobs audited at once after the box is down (default 8; each worker thread uses
+        its own S3 client from `s3_client_factory`). 1 audits one job at a time. Must be
+        at least 1. See ``audit_captures``: peak memory grows with it.
     tokenizer_for, template_for, config_for : Callable, optional
         Overrides of the pinned tokenizer, chat template and config (see ``plan_replay``).
     seeds : Sequence[int], optional
@@ -2564,7 +2649,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         is not ``True`` (also before any AWS call).
     ValueError
         When no instance type is known for the model, the batch arguments are
-        invalid, or `seeds` holds a non-integer (before any AWS call).
+        invalid, `audit_workers` is below 1, or `seeds` holds a non-integer (before
+        any AWS call).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
         unavailable), when its ``config.json`` cannot be loaded or has no
@@ -2629,6 +2715,8 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         raise ValueError(f"url_ttl_s={url_ttl_s} must exceed batch_timeout_s={batch_timeout_s}")
     if audit_arrays not in ("sample", "all"):
         raise ValueError(f"audit_arrays must be 'sample' or 'all', got {audit_arrays!r}")
+    # Checked here, not at the audit: a bad value must not be found after the box is billed.
+    _check_workers(audit_workers, "audit_workers")
     if not planned and plan.errors:
         raise RuntimeError(f"{model_key}: nothing to capture, the plan failed: {plan.errors[0]}")
 
@@ -2768,7 +2856,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         audit = audit_captures(
             make_s3(), bucket, [j for j in remaining if j.job_id in verified_set], tp,
             model=model_key, config=config, arrays=audit_arrays,
-            capture_version=CAPTURE_VERSION,
+            capture_version=CAPTURE_VERSION, workers=audit_workers, client_factory=make_s3,
         )
         for job_id, reason in audit.items():
             if reason is None:
@@ -2886,6 +2974,64 @@ def _default_s3_factory() -> Any:
     )
 
 
+def _group_by_run(planned: Sequence[PlannedJob]) -> List[List[PlannedJob]]:
+    """Group `planned` by stored run (seed, arm, stamp), keeping the planned order of both levels."""
+    by_run: Dict[Tuple[int, str, str], List[PlannedJob]] = {}
+    for item in planned:
+        by_run.setdefault((item.run.seed, item.run.arm, item.run.stamp), []).append(item)
+    return list(by_run.values())
+
+
+def _manifest_entry(item: PlannedJob, status: str, gate_max_rel: Any) -> Dict[str, Any]:
+    """Return the manifest's per-job entry (the shape ``read_captures`` reads)."""
+    return {
+        "job_id": item.job.job_id,
+        "mark_index": item.mark_index,
+        "n_tokens": item.job.n_tokens,
+        "query_start": item.job.query_start,
+        "status": status,
+        "gate_max_rel": gate_max_rel,
+        "notes": list(item.notes),
+    }
+
+
+def _manifest_payload(
+    model: str,
+    spec: Mapping[str, Any],
+    run: Run,
+    entries: List[Dict[str, Any]],
+    *,
+    tp: Optional[int],
+    instance_type: Optional[str],
+    served_model_name: Optional[str],
+    post_hoc_audit: bool = False,
+) -> Dict[str, Any]:
+    """Return the manifest content of one run; shared by ``_write_manifests`` and ``audit_existing``.
+
+    ``post_hoc_audit`` adds the key ``"post_hoc_audit": True``; it is absent otherwise,
+    so a manifest written at capture time is unchanged.
+    """
+    payload: Dict[str, Any] = {
+        "model": model,
+        "run": {
+            "seed": run.seed, "arm": run.arm, "stamp": run.stamp, "source_file": run.path.name,
+        },
+        "tp": tp,
+        "instance_type": instance_type,
+        "served_model_name": served_model_name,
+        "hf_repo": spec["hf_model_id"],
+        "hf_revision": tokenization._pinned_revision(spec),
+        "capture": attention.CAPTURE_MARKER,
+        "mode": "mass",
+        "jobs": entries,
+        "approximations": list(APPROXIMATIONS),
+        "bedrock_token_counts": None,
+    }
+    if post_hoc_audit:
+        payload["post_hoc_audit"] = True
+    return payload
+
+
 def _write_manifests(
     client: Any,
     bucket: str,
@@ -2904,12 +3050,8 @@ def _write_manifests(
     returned.
     """
     sent = set(result.verified) | set(result.failed)
-    by_run: Dict[Tuple[int, str, str], List[PlannedJob]] = {}
-    for item in planned:
-        by_run.setdefault((item.run.seed, item.run.arm, item.run.stamp), []).append(item)
-    tokenizer_revision = tokenization._pinned_revision(spec)
     keys: List[str] = []
-    for items in by_run.values():
+    for items in _group_by_run(planned):
         if not any(i.job.job_id in sent for i in items):
             continue
         run = items[0].run
@@ -2928,35 +3070,318 @@ def _write_manifests(
                 status = "excluded_over_context"
             else:
                 status = "not_sent"
-            entries.append({
-                "job_id": job_id,
-                "mark_index": item.mark_index,
-                "n_tokens": item.job.n_tokens,
-                "query_start": item.job.query_start,
-                "status": status,
-                "gate_max_rel": result.gates.get(job_id),
-                "notes": list(item.notes),
-            })
-        payload = {
-            "model": model,
-            "run": {
-                "seed": run.seed, "arm": run.arm, "stamp": run.stamp, "source_file": run.path.name,
-            },
-            "tp": tp,
-            "instance_type": report.instance_type,
-            "served_model_name": report.served_model_name,
-            "hf_repo": spec["hf_model_id"],
-            "hf_revision": tokenizer_revision,
-            "capture": attention.CAPTURE_MARKER,
-            "mode": "mass",
-            "jobs": entries,
-            "approximations": list(APPROXIMATIONS),
-            "bedrock_token_counts": None,
-        }
+            entries.append(_manifest_entry(item, status, result.gates.get(job_id)))
+        payload = _manifest_payload(
+            model, spec, run, entries, tp=tp, instance_type=report.instance_type,
+            served_model_name=report.served_model_name,
+        )
         key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
         keys.append(key)
         report.manifests.append(key)
     return keys
+
+
+# ------------------------------------------------------------ audit of stored captures
+
+
+def _is_audit_outcome(status: Any) -> bool:
+    """Return whether a manifest job status records the result of a content audit.
+
+    ``"verified"`` and ``"audit_failed: ..."`` do. The other statuses
+    ``_write_manifests`` writes (``failed:``, ``skipped_existing``, ``not_sent``,
+    ``excluded_over_context``) say the job was NOT audited by that run, so a job that
+    carries one of them still needs ``audit_existing``.
+    """
+    # NOTE: the spec said a job any manifest records, with any status, is skipped. That
+    # would leave a job unaudited for good when a later ``replay_model`` listed it as
+    # ``skipped_existing`` (its keys existed, its audit never ran), so only the two audit
+    # outcomes count as recorded here. To follow the spec literally, return ``True`` for
+    # every string status.
+    return isinstance(status, str) and (status == "verified" or status.startswith("audit_failed"))
+
+
+def _audited_job_ids(client: Any, bucket: str, manifest_keys: Sequence[str]) -> set:
+    """Return the job ids that some manifest in `manifest_keys` records with an audit outcome.
+
+    Raises
+    ------
+    ValueError
+        When a manifest is not valid JSON or lacks the ``jobs`` entries
+        ``_write_manifests`` writes (the audit must not guess what it holds).
+    """
+    audited: set = set()
+    for key in manifest_keys:
+        try:
+            entries = json.loads(client.get_object(Bucket=bucket, Key=key)["Body"].read().decode())["jobs"]
+            for entry in entries:
+                if _is_audit_outcome(entry["status"]):
+                    audited.add(entry["job_id"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f"s3://{bucket}/{key}: unreadable manifest: {exc!r}") from exc
+    return audited
+
+
+def _rank0_tp_and_version(client: Any, bucket: str, job: attention.Job) -> Tuple[int, int]:
+    """Return ``(tp, capture_version)`` from the job's rank-0 meta json.
+
+    A meta without ``capture_version`` is a version-1 capture.
+
+    Raises
+    ------
+    ValueError
+        When the meta is not valid JSON, is not an object, or has no ``tp`` that is an
+        integer of at least 1, or its ``capture_version`` is not an integer.
+    """
+    meta_key = attention.rank_keys(job.key, 0)[1]
+    try:
+        meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
+        tp = meta["tp"]
+        version = meta.get("capture_version", 1)
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"unreadable rank-0 meta {meta_key}: {exc!r}") from exc
+    for name, value, floor in (("tp", tp, 1), ("capture_version", version, 1)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < floor:
+            raise ValueError(f"rank-0 meta {meta_key}: {name} {value!r} is not an integer >= {floor}")
+    return tp, version
+
+
+def audit_existing(
+    model_key: str,
+    results_root: Path = DEFAULT_RESULTS_ROOT,
+    s3_uri: str = DEFAULT_S3_URI,
+    *,
+    seeds: Optional[Sequence[int]] = None,
+    arrays: str = "all",
+    workers: int = 8,
+    tokenizer_for: Optional[Callable[[str], Any]] = None,
+    template_for: Optional[Callable[[str], Any]] = None,
+    config_for: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    s3_client_factory: Optional[Callable[[], Any]] = None,
+) -> ReplayReport:
+    """Audit the captures of one model that are already in the bucket, and manifest them.
+
+    ``replay_model`` audits what it just captured, but an audit that outlives the AWS
+    session dies before any manifest is written, and a later ``replay_model`` skips
+    those jobs because their keys exist. This function audits them afterwards. It reads
+    and writes S3 only: it has no EC2 parameter and starts nothing.
+
+    Steps. (1) Plan the jobs offline as ``replay_model`` does (same job ids and keys).
+    (2) For each stored run, list its keys once and classify every planned job: no key
+    is *not captured* (counted in ``report.not_captured``); some but not all of the
+    expected rank objects is *partial* (``report.partial``, logged, not audited); the
+    rest are candidates. The expected rank count is the ``tp`` in the job's rank-0 meta
+    json; when the plan's ``tp_estimate`` differs, the meta wins and the log says so.
+    (3) A candidate that a manifest already records as audited (``verified`` or
+    ``audit_failed: ...``) is skipped (``report.skipped_existing``). (4) The others are
+    audited with ``audit_captures``, per run directory, and as soon as one directory is
+    done its manifest is written (``write_manifest``, never overwriting) and its key is
+    added to ``report.manifests``, so an interrupted call is resumed by calling it again.
+
+    Parameters
+    ----------
+    model_key : str
+        Roster key; needs a deploy spec.
+    results_root : Path, optional
+        Folder holding ``induction/<model>/...`` (see ``find_runs``); gives the planned jobs.
+    s3_uri : str, optional
+        ``s3://bucket/prefix`` where the captures are.
+    seeds : Sequence[int], optional
+        Only the runs of these seeds (see ``plan_replay``); ``None`` is every seed.
+    arrays : str, optional
+        ``"all"`` (default) or ``"sample"``: which jobs get their arrays downloaded
+        (see ``audit_captures``).
+    workers : int, optional
+        Jobs audited at once (default 8); each worker thread has its own S3 client from
+        `s3_client_factory`. Must be at least 1.
+    tokenizer_for, template_for, config_for : Callable, optional
+        Overrides of the pinned tokenizer, chat template and config (see ``plan_replay``).
+    s3_client_factory : Callable[[], Any], optional
+        Returns a NEW S3 client per call; defaults to a fresh boto3 client in ``REGION``.
+        A new client is taken for the listing, for every run directory's audit and for
+        every manifest write, so rotated credentials are picked up.
+
+    Returns
+    -------
+    ReplayReport
+        ``verified`` and ``audit_failures`` of this call, ``skipped_existing`` (job id ->
+        keys, for the candidates a manifest already records), ``partial``,
+        ``not_captured``, ``manifests`` and ``manifest_error``; ``instance_type`` stays
+        ``None``. A manifest written here holds only the jobs this call audited and carries
+        ``"post_hoc_audit": true``.
+
+    Raises
+    ------
+    ValueError
+        When `arrays` or `workers` is invalid, `s3_uri` is malformed, `seeds` holds a
+        non-integer, or an existing manifest is unreadable (before any audit starts).
+    KeyError
+        When the model has no deploy spec.
+    RuntimeError
+        When the model could not be planned at all, or its ``config.json`` cannot be
+        loaded or has no attention shape.
+
+    Notes
+    -----
+    An exception from an audit propagates; the manifests of the run directories finished
+    before it stay in the bucket. A failure writing a manifest does not: it is recorded in
+    ``manifest_error``, the report is returned and no further directory is audited (the
+    audits could not be recorded). Rerun to resume.
+
+    Cost: one paginated listing per run, one GET per existing manifest, one GET of each
+    candidate's rank-0 meta, then ``audit_captures`` (the arrays dominate: ``"all"``
+    downloads every capture, up to tens of GB; memory grows with `workers`). Read-only
+    except for the manifests.
+    """
+    # NOTE: planning imports the EC2 provider module (``_plan_one`` and the manifest need
+    # its deploy specs). Only the import: nothing here calls provisioning, serving or
+    # shutdown, and the function takes no provider argument.
+    from smolbench.evals.providers import ec2 as real_ec2
+
+    if arrays not in ("sample", "all"):
+        raise ValueError(f"arrays must be 'sample' or 'all', got {arrays!r}")
+    _check_workers(workers, "workers")
+
+    # Phase 1: offline plan and config, exactly as replay_model builds them.
+    bucket, prefix = parse_s3_uri(s3_uri)
+    plan, planned = _plan_one(
+        model_key, Path(results_root), prefix, tokenizer_for, template_for, config_for, seeds
+    )
+    if not planned and plan.errors:
+        raise RuntimeError(f"{model_key}: nothing to audit, the plan failed: {plan.errors[0]}")
+    try:
+        config = config_for(model_key) if config_for is not None else load_model_config(model_key)
+        attention_shape(config)
+    except (TemplateUnavailable, ValueError, OSError) as exc:
+        raise RuntimeError(
+            f"{model_key}: cannot audit captures without the model config: {exc}"
+        ) from exc
+    spec = real_ec2.EC2_DEPLOY_SPECS[model_key]
+    report = ReplayReport(model_key, None, None, None, plan=plan)
+    if not planned:
+        return report
+    make_s3 = s3_client_factory or _default_s3_factory
+
+    # Phase 2: list and classify, per run, before any audit starts. Listing is cheap and
+    # an unreadable manifest should stop the call before hours of downloads, not after.
+    # Design: one listing per run prefix, not one per job. It returns the same keys
+    # ``attention.job_keys_present`` would (every key under ``<stem>.``) in far fewer calls.
+    client = make_s3()
+    # (run, planned jobs to audit, {job id: (tp, capture_version) or the reason it has none})
+    work: List[Tuple[Run, List[PlannedJob], Dict[str, Any]]] = []
+    for items in _group_by_run(planned):
+        run = items[0].run
+        run_keys_prefix = run_prefix(prefix, run)
+        keys = [key for key, _size in _list_objects(client, bucket, run_keys_prefix)]
+        audited = _audited_job_ids(client, bucket, [
+            key for key in keys
+            if key.startswith(run_keys_prefix + "manifest--") and key.endswith(".json")
+        ])
+        candidates: List[PlannedJob] = []
+        formats: Dict[str, Any] = {}
+        tps_seen: set = set()
+        for item in items:
+            job = item.job
+            stem = job.key[: -len(".npz")] + "."
+            present = [key for key in keys if key.startswith(stem)]
+            if not present:
+                report.not_captured += 1
+                continue
+            if job.job_id in audited:
+                report.skipped_existing[job.job_id] = present
+                continue
+            # The rank count the capture was made with: its own meta, not the plan's guess.
+            # With no rank-0 meta there is nothing to read, so the plan's tp (else 1, as
+            # replay_model does) sets the expectation and the missing meta makes it partial.
+            tp: Optional[int] = None
+            version = 1
+            if attention.rank_keys(job.key, 0)[1] in present:
+                try:
+                    tp, version = _rank0_tp_and_version(client, bucket, job)
+                except ValueError as exc:
+                    # Audited as failed, not skipped: the job is stored but cannot be trusted.
+                    candidates.append(item)
+                    formats[job.job_id] = f"audit raised ValueError: {exc}"
+                    continue
+                if isinstance(plan.tp_estimate, int) and plan.tp_estimate != tp:
+                    tps_seen.add(tp)
+            expected_tp = tp if tp is not None else (
+                plan.tp_estimate if isinstance(plan.tp_estimate, int) else 1
+            )
+            present_set = set(present)
+            missing = [
+                key for rank in range(expected_tp) for key in attention.rank_keys(job.key, rank)
+                if key not in present_set
+            ]
+            if missing:
+                report.partial.append(job.job_id)
+                logging.warning(
+                    f"attention_replay: {job.job_id} has {len(present)} key(s) but is missing "
+                    f"{len(missing)} expected object(s) (ranks 0..{expected_tp - 1}); inspect it "
+                    f"by hand. Missing keys: {missing}"
+                )
+                continue
+            candidates.append(item)
+            formats[job.job_id] = (tp, version)
+        for tp_meta in sorted(tps_seen):
+            logging.warning(
+                f"attention_replay: {run_keys_prefix}: capture meta says tp={tp_meta}, the plan "
+                f"estimated tp={plan.tp_estimate}; the meta is trusted"
+            )
+        if candidates:
+            work.append((run, candidates, formats))
+
+    # Phase 3: audit and manifest, one run directory at a time. The manifest goes out as
+    # soon as its directory is audited: a call cut short (an expired session, an interrupt)
+    # keeps everything finished, and a rerun finds those jobs recorded and skips them.
+    for run, candidates, formats in work:
+        run_keys_prefix = run_prefix(prefix, run)
+        outcome: Dict[str, Optional[str]] = {}
+        # audit_captures takes one tp and one capture version per call, so group by them
+        # (a run is normally one group; a re-capture under another plugin would be two).
+        groups: Dict[Tuple[int, int], List[attention.Job]] = {}
+        for item in candidates:
+            fmt = formats[item.job.job_id]
+            if isinstance(fmt, str):
+                outcome[item.job.job_id] = fmt
+            else:
+                groups.setdefault(fmt, []).append(item.job)
+        for (tp, version), jobs in groups.items():
+            outcome.update(audit_captures(
+                make_s3(), bucket, jobs, tp, model=model_key, config=config, arrays=arrays,
+                capture_version=version, workers=workers, client_factory=make_s3,
+            ))
+        entries = []
+        for item in candidates:
+            reason = outcome[item.job.job_id]
+            if reason is None:
+                report.verified.append(item.job.job_id)
+                status = "verified"
+            else:
+                report.audit_failures[item.job.job_id] = reason
+                status = f"audit_failed: {reason}"
+            # The box's gate figure is not known afterwards (the audit only checks that it
+            # is within tolerance), so it is recorded as null.
+            entries.append(_manifest_entry(item, status, None))
+        tps = {fmt[0] for fmt in formats.values() if not isinstance(fmt, str)}
+        payload = _manifest_payload(
+            model_key, spec, run, entries, tp=tps.pop() if len(tps) == 1 else None,
+            instance_type=None, served_model_name=None, post_hoc_audit=True,
+        )
+        try:
+            report.manifests.append(write_manifest(make_s3(), bucket, run_keys_prefix, payload))
+        except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
+            report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
+            logging.error(
+                f"attention_replay: writing the manifest of {run_keys_prefix} failed after "
+                f"{len(report.manifests)} were written; no further run is audited: "
+                f"{report.manifest_error}"
+            )
+            return report
+        print(
+            f"attention_replay: audited {len(candidates)} job(s) of {run_keys_prefix}: "
+            f"{sum(1 for item in candidates if outcome[item.job.job_id] is None)} verified"
+        )
+    return report
 
 
 # --------------------------------------------------------------- offline reader
