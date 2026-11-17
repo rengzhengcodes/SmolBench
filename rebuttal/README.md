@@ -183,15 +183,18 @@ layer by rebuilding per-head keys and values with the layer's own projection, as
 prefill path does. `replay_model` asks for `allow_unverified_serve` for this model, because
 the pinned vLLM image starts it only when the weight mirror holds the repository's metadata
 archive (`meta.tar`, with `tokenizer.json`; added 2026-11-16). For capture it is served with
-a 49,152-token context by default; `capture_max_model_len` raises it, and 98,304 tokens ran
-live. vLLM's flash-attention backend for this layer treats a sequence of 512 tokens or fewer
+a 49,152-token context by default; `capture_max_model_len` raises it. The longest cell
+captured is 82,036 tokens. With a 98,304-token context, cells of 86,900 tokens or more
+stopped the vLLM engine on four instances, so the Horn runs that held such cells were
+repeated with an 84,000-token context, which leaves them out. vLLM's flash-attention backend for this layer treats a sequence of 512 tokens or fewer
 as decode, a path the plugin refuses to capture, so the plugin sets that threshold to 1 when
 it loads; short `intens` marks then take the captured prefill path.
 
-### Captures of 2026-11-16
+### Captures of 2026-11-16 and 2026-11-17
 
-Induction: all 30 seeds, four arms, 9 questions per replicate. Horn: the arms `lem`, `pad`,
-`both` and `tjunk`, seeds 100 to 129, replicate 0. Mean prompt entropy in nats; for Gemma
+Induction: all 30 seeds, four arms, 9 questions per replicate (270 responses per arm). Horn:
+the arms `lem`, `pad`, `both` and `tjunk`, seeds 100 to 189, replicates 0 to 2 (270 responses
+per arm, as for induction). Mean prompt entropy in nats; for Gemma
 4 31B over its 10 global-attention layers, for the others over all attention layers.
 
 | | Gemma 4 31B | Nemotron 3 Super | DeepSeek V3.1 |
@@ -200,15 +203,19 @@ Induction: all 30 seeds, four arms, 9 questions per replicate. Horn: the arms `l
 | induction `noise_intens` | 4.638 | 3.116 | 2.118 |
 | induction `extens` | 5.863 | 3.998 | 2.584 |
 | induction `related_intens` | 6.212 | 4.170 | 2.526 |
-| Horn `lem` | 5.031 | 3.164 | 1.972 |
-| Horn `pad` | 5.855 | 3.828 | 2.245 |
-| Horn `both` | 6.360 | 3.834 | 2.084 |
-| Horn `tjunk` | 6.275 | 3.687 | 2.247 |
+| Horn `lem` | 5.035 | 3.186 | 1.941 |
+| Horn `pad` | 5.858 | 3.822 | 2.233 |
+| Horn `both` | 6.358 | 3.789 | 2.108 |
+| Horn `tjunk` | 6.272 | 3.694 | 2.268 |
 
 Captures missing from these means:
 
 - DeepSeek V3.1 induction: 3 `related_intens` marks longer than the 98,304-token capture
   context.
+- DeepSeek V3.1 Horn: 11 `both` cells and 2 `tjunk` cells, so those means are over 259 and
+  268 responses. Seven are longer than 98,304 tokens; six `both` cells of 85,000 to 87,800
+  tokens are the ones left out after the engine stopped (one of them was stored before the
+  engine stopped, but no manifest records it as verified, so it is not read).
 - Gemma 4 31B: 7 induction marks and 1 Horn cell lost one rank to the plugin's self-check
   (a relative error of 0.031 to 0.040 against a tolerance of 0.03). They are recorded as
   failed and are not read.
@@ -249,7 +256,7 @@ model):
 python rebuttal/run_protocol.py induction --model gemma-4-31b --seeds 0-29
 python rebuttal/run_protocol.py horn --model gemma-4-31b
 python rebuttal/run_attention.py --model gemma-4-31b --study induction --mode summary
-python rebuttal/run_attention.py --model gemma-4-31b --study horn --seeds 100-129 --arms lem pad both tjunk --reps 0
+python rebuttal/run_attention.py --model gemma-4-31b --study horn --seeds 100-189 --arms lem pad both tjunk --reps 0-2
 ```
 
 `run_attention.py` prints the plan and stops; it launches only with `--approved`.
