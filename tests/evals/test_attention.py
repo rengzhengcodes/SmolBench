@@ -493,3 +493,351 @@ def test_run_capture_batches_sends_summary_jobs_and_verifies_their_arrays() -> N
     with pytest.raises(ValueError, match="mode"):
         attention.run_capture_batches(box, {}, "s", [job("z", 3, 2)], 1, lambda: s3, "b",
                                       mode="summary", url_ttl_s=99, batch_timeout_s=10)
+
+
+# ------------------------------------------------------------------ engine death
+
+#: The agent's ``{"error": str(exc)}`` wording for each way a dead vLLM answers (copied from
+#: a real run's log): the in-flight request gets a 500, later ones a reset, a broken pipe or
+#: a refused connection once the server is gone.
+ENGINE_500 = "HTTP Error 500: Internal Server Error"
+ENGINE_RESET = "[Errno 104] Connection reset by peer"
+ENGINE_PIPE = "<urlopen error [Errno 32] Broken pipe>"
+ENGINE_REFUSED = "<urlopen error [Errno 111] Connection refused>"
+
+
+class ScriptedBox(FakeBox):
+    """FakeBox whose jobs can report an agent-level error instead of ranks, plus a full /status.
+
+    ``agent_errors`` maps job id -> the agent's error string. A job without one uploads and
+    reports success like ``FakeBox``. ``full_status`` is what ``attn_full_status`` returns (or
+    raises, when it is an exception); every call is recorded in ``full_status_calls``.
+    """
+
+    def __init__(self, s3: FakeS3, agent_errors: dict, full_status: Any = None) -> None:
+        super().__init__(s3)
+        self.agent_errors = agent_errors
+        self.full_status = full_status if full_status is not None else {
+            "healthy": False, "container": "exited", "log_tail": "EngineDeadError: step timed out"}
+        self.full_status_calls = 0
+
+    def attn_start(self, state: dict, payload: dict) -> dict:
+        erroring = [line for line in payload["jobs"] if line["job_id"] in self.agent_errors]
+        rest = dict(payload, jobs=[line for line in payload["jobs"] if line not in erroring])
+        super().attn_start(state, rest)
+        self.batches[-1] = payload  # record the batch as it was sent
+        final = self._status[-1]
+        # Rebuild results in SEND order, as the agent's dict insertion order is.
+        merged = {}
+        for line in payload["jobs"]:
+            jid = line["job_id"]
+            if jid in self.agent_errors:
+                merged[jid] = {"error": self.agent_errors[jid]}
+            elif jid in final["results"]:
+                merged[jid] = final["results"][jid]
+        final["results"] = merged
+        return {"ok": True}
+
+    def attn_full_status(self, state: dict) -> dict:
+        self.full_status_calls += 1
+        if isinstance(self.full_status, BaseException):
+            raise self.full_status
+        return self.full_status
+
+
+def _sent_ids(box: FakeBox) -> list:
+    return [line["job_id"] for b in box.batches for line in b["jobs"]]
+
+
+def _death_run(box, s3, jobs, *, batch_size, hook=None):
+    return attention.run_capture_batches(
+        box, {"public_ip": "x"}, "served", jobs, 2, lambda: s3, "bucket",
+        batch_size=batch_size, url_ttl_s=99, batch_timeout_s=10, poll_s=0,
+        on_engine_death=hook)
+
+
+def _five_jobs():
+    # Longest first: j1 > j2 > ... > j5, so batches of 3 are [j1, j2, j3], [j4, j5].
+    return [job(f"j{i}", 40 - 5 * i, 3) for i in range(1, 6)]
+
+
+def test_engine_death_stops_further_batches_and_marks_the_rest_not_sent() -> None:
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j2": ENGINE_500, "j3": ENGINE_REFUSED})
+    seen = []
+    result = _death_run(box, s3, _five_jobs(), batch_size=3, hook=seen.append)
+    # One batch only: nothing is sent once the engine is gone.
+    assert len(box.batches) == 1 and _sent_ids(box) == ["j1", "j2", "j3"]
+    assert result.verified == ["j1"]
+    # The job in flight when the engine died, and the job the agent still attempted after it,
+    # were sent: they are failures, each saying which.
+    assert set(result.failed) == {"j2", "j3"}
+    assert "engine died" in result.failed["j2"] and ENGINE_500 in result.failed["j2"]
+    assert "engine" in result.failed["j3"] and ENGINE_REFUSED in result.failed["j3"]
+    # The later batch was never handed to the agent: not sent, not failed, no URL minted.
+    assert result.not_sent == ["j4", "j5"]
+    assert not any(k.startswith("p/run/j4.") or k.startswith("p/run/j5.") for k in s3.presigned)
+    assert result.engine_died is not None and "j2" in result.engine_died
+    # The hook got the full /status reply once, log tail included.
+    assert box.full_status_calls == 1
+    assert seen == [box.full_status] and seen[0]["log_tail"].startswith("EngineDeadError")
+    # Every job id lands in exactly one group.
+    groups = [set(result.verified), set(result.failed), set(result.skipped_existing), set(result.not_sent)]
+    assert sum(len(g) for g in groups) == 5 and set().union(*groups) == {f"j{i}" for i in range(1, 6)}
+
+
+@pytest.mark.parametrize("error", [ENGINE_500, ENGINE_RESET, ENGINE_PIPE, ENGINE_REFUSED])
+def test_each_engine_gone_wording_ending_a_batch_is_a_death(error) -> None:
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": error})
+    result = _death_run(box, s3, _five_jobs(), batch_size=3)
+    assert len(box.batches) == 1 and result.not_sent == ["j4", "j5"]
+    assert result.engine_died is not None and set(result.failed) == {"j3"}
+
+
+def test_one_engine_error_followed_by_a_healthy_job_is_not_a_death() -> None:
+    """A 500 that a later job of the same batch survived cannot be read as a dead engine."""
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j1": ENGINE_500})
+    result = _death_run(box, s3, _five_jobs(), batch_size=3)
+    assert len(box.batches) == 2 and _sent_ids(box) == ["j1", "j2", "j3", "j4", "j5"]
+    assert set(result.failed) == {"j1"} and "engine died" not in result.failed["j1"]
+    assert sorted(result.verified) == ["j2", "j3", "j4", "j5"]
+    assert result.not_sent == [] and result.engine_died is None
+    assert box.full_status_calls == 0  # no trailing engine error: health is not even asked
+
+
+def test_a_batch_ending_in_engine_errors_on_a_healthy_engine_is_not_a_death() -> None:
+    """The pattern alone is not enough: /status must corroborate that vLLM is down."""
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": ENGINE_RESET},
+                      full_status={"healthy": True, "container": "running", "log_tail": ""})
+    seen = []
+    result = _death_run(box, s3, _five_jobs(), batch_size=3, hook=seen.append)
+    assert len(box.batches) == 2 and result.not_sent == [] and result.engine_died is None
+    assert set(result.failed) == {"j3"} and sorted(result.verified) == ["j1", "j2", "j4", "j5"]
+    assert box.full_status_calls == 1 and seen == []
+
+
+@pytest.mark.parametrize("status", [
+    {"healthy": False, "container": "running", "log_tail": "x"},
+    {"healthy": True, "container": "exited", "log_tail": "x"},
+])
+def test_either_unhealthy_signal_corroborates_a_death(status) -> None:
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": ENGINE_REFUSED}, full_status=status)
+    result = _death_run(box, s3, _five_jobs(), batch_size=3)
+    assert len(box.batches) == 1 and result.not_sent == ["j4", "j5"]
+
+
+def test_an_unreadable_status_after_engine_errors_counts_as_a_death() -> None:
+    """Stopping is the cheap mistake (the unsent jobs are recorded and re-runnable)."""
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": ENGINE_REFUSED}, full_status=RuntimeError("agent unreachable"))
+    seen = []
+    result = _death_run(box, s3, _five_jobs(), batch_size=3, hook=seen.append)
+    assert len(box.batches) == 1 and result.not_sent == ["j4", "j5"] and result.engine_died
+    assert len(seen) == 1  # the hook still hears about it
+
+
+def test_a_rank_collection_timeout_is_not_an_engine_death() -> None:
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": "j3: 7/8 ranks done"})
+    result = _death_run(box, s3, _five_jobs(), batch_size=3)
+    assert len(box.batches) == 2 and result.not_sent == [] and result.engine_died is None
+    assert box.full_status_calls == 0
+
+
+def test_a_hook_that_raises_does_not_lose_the_result() -> None:
+    s3 = FakeS3()
+    box = ScriptedBox(s3, {"j3": ENGINE_REFUSED})
+
+    def hook(status):
+        raise OSError("disk full")
+
+    result = _death_run(box, s3, _five_jobs(), batch_size=3, hook=hook)
+    assert result.not_sent == ["j4", "j5"] and result.verified == ["j1", "j2"]
+
+
+def test_without_engine_errors_the_full_status_is_never_asked() -> None:
+    """Fakes without attn_full_status keep working: it is called on the death path only."""
+    s3 = FakeS3()
+    box = FakeBox(s3)
+    box.gate_failures = {"j3"}
+    result = _death_run(box, s3, _five_jobs(), batch_size=3)
+    assert len(box.batches) == 2 and result.not_sent == [] and result.engine_died is None
+
+
+# ------------------------------------------------------------------ fill mode
+
+class FillBox(FakeBox):
+    """Fake box honouring the plugin's fill contract: a key that exists is answered 412 ("exists")
+    and left untouched; a rank whose npz existed uploads its meta with ``npz_put: "existing"``."""
+
+    def attn_start(self, state: dict, payload: dict) -> dict:
+        self.batches.append(payload)
+        results: dict[str, dict] = {}
+        for line in payload["jobs"]:
+            n = len(line["prompt_token_ids"]) + len(line["completion_token_ids"])
+            ranks = {}
+            for rank in range(payload["tp"]):
+                blob = mass_npz(n, line["query_start"], line["classes"])
+                key = line["put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                meta_key = line["meta_put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                npz_existed = key in self.s3.objects
+                if not npz_existed:
+                    self.s3.objects[key] = blob
+                if meta_key not in self.s3.objects:
+                    meta = {"n_tokens": n, "bytes": len(blob), "mode": "mass", "capture_version": 2,
+                            "tp": payload["tp"], "rank": rank}
+                    if npz_existed:
+                        meta["npz_put"] = "existing"
+                    self.s3.objects[meta_key] = json.dumps(meta).encode()
+                ranks[str(rank)] = {"ok": True, "error": None, "gate_max_rel": 0.001}
+            results[line["job_id"]] = ranks
+        self._status = [{"running": False, "results": results, "error": None}]
+        return {"ok": True}
+
+
+def _store_rank(s3: FakeS3, j: attention.Job, rank: int, *, meta: dict | None = None,
+                npz: bool = True, meta_obj: bool = True, tp: int = 2, **kw: Any) -> None:
+    """Store one rank's objects as an earlier run would have (meta bytes match its npz)."""
+    npz_key, meta_key = attention.rank_keys(j.key, rank)
+    blob = mass_npz(j.n_tokens, j.query_start, list(j.classes), **kw)
+    if npz:
+        s3.objects[npz_key] = blob
+    if meta_obj:
+        body = {"n_tokens": j.n_tokens, "bytes": len(blob), "mode": "mass", "capture_version": 2,
+                "tp": tp, "rank": rank}
+        body.update(meta or {})
+        s3.objects[meta_key] = json.dumps(body).encode()
+
+
+def _fill_run(box, s3, jobs, *, fill=True, mode="mass", tp=2):
+    return attention.run_capture_batches(
+        box, {"public_ip": "x"}, "served", jobs, tp, lambda: s3, "bucket", mode=mode,
+        url_ttl_s=99, batch_timeout_s=10, poll_s=0, fill=fill)
+
+
+def test_fill_mode_sends_a_partial_stem_and_skips_a_complete_one() -> None:
+    s3 = FakeS3()
+    part, done, fresh = job("part", 6, 3), job("done", 5, 3), job("fresh", 4, 2)
+    _store_rank(s3, part, 0)                    # rank 0 stored by an earlier run, rank 1 lost
+    for rank in range(2):
+        _store_rank(s3, done, rank)
+    before = dict(s3.objects)
+    box = FillBox(s3)
+    result = _fill_run(box, s3, [part, done, fresh])
+    assert sorted(_sent_ids(box)) == ["fresh", "part"]
+    assert set(result.skipped_existing) == {"done"}
+    sent = {line["job_id"]: line for b in box.batches for line in b["jobs"]}
+    # URLs for EVERY rank, existing ones included: the box answers those with "exists".
+    assert len(sent["part"]["put_urls"]) == len(sent["part"]["meta_put_urls"]) == 2
+    assert sorted(result.verified) == ["fresh", "part"] and result.failed == {}
+    # Nothing that existed was replaced.
+    assert {k: s3.objects[k] for k in before} == before
+    assert attention.rank_keys(part.key, 1)[0] in s3.objects
+
+
+def test_without_fill_a_partial_stem_is_still_never_sent() -> None:
+    s3 = FakeS3()
+    part = job("part", 6, 3)
+    _store_rank(s3, part, 0)
+    box = FillBox(s3)
+    result = _fill_run(box, s3, [part], fill=False)
+    assert box.batches == [] and set(result.skipped_existing) == {"part"}
+
+
+def test_fill_completes_a_rank_whose_npz_exists_and_meta_is_missing() -> None:
+    """The npz of rank 1 landed earlier, its meta did not: the new meta says npz_put existing."""
+    s3 = FakeS3()
+    part = job("part", 6, 3)
+    _store_rank(s3, part, 0)
+    _store_rank(s3, part, 1, meta_obj=False)
+    box = FillBox(s3)
+    result = _fill_run(box, s3, [part])
+    assert result.verified == ["part"]
+    meta = json.loads(s3.objects[attention.rank_keys(part.key, 1)[1]])
+    assert meta["npz_put"] == "existing"
+
+
+@pytest.mark.parametrize("setup, needle", [
+    # Existing meta in the other mode: a mass job must not be completed with summary objects.
+    (lambda s3, j: _store_rank(s3, j, 0, meta={"mode": "summary", "capture_version": 3}), "mode"),
+    # Same mode, but an older capture format.
+    (lambda s3, j: _store_rank(s3, j, 0, meta={"capture_version": 1}), "capture_version"),
+    # A meta without a version is version 1.
+    (lambda s3, j: s3.objects.__setitem__(attention.rank_keys(j.key, 0)[1], b"{}"), "capture_version"),
+    # Captured with another tensor-parallel degree.
+    (lambda s3, j: _store_rank(s3, j, 0, meta={"tp": 4}), "tp"),
+    # Only an npz: there is no meta to read the mode from.
+    (lambda s3, j: _store_rank(s3, j, 0, meta_obj=False), "meta"),
+    # A key outside ranks 0..tp-1.
+    (lambda s3, j: (_store_rank(s3, j, 0), _store_rank(s3, j, 2)), "unexpected"),
+])
+def test_fill_refuses_a_stem_it_cannot_safely_complete(setup, needle) -> None:
+    s3 = FakeS3()
+    part, fresh = job("part", 6, 3), job("fresh", 4, 2)
+    setup(s3, part)
+    box = FillBox(s3)
+    result = _fill_run(box, s3, [part, fresh])
+    assert _sent_ids(box) == ["fresh"]
+    assert "part" in result.failed and needle in result.failed["part"]
+    assert "fill" in result.failed["part"]
+    assert not any(k.startswith("p/run/part.") for k in s3.presigned)
+
+
+def test_fill_accepts_a_meta_without_mode_as_a_mass_capture() -> None:
+    s3 = FakeS3()
+    part = job("part", 6, 3)
+    npz_key, meta_key = attention.rank_keys(part.key, 0)
+    _store_rank(s3, part, 0)
+    meta = json.loads(s3.objects[meta_key])
+    del meta["mode"]
+    s3.objects[meta_key] = json.dumps(meta).encode()
+    result = _fill_run(FillBox(s3), s3, [part])
+    assert result.verified == ["part"]
+
+
+def test_capture_versions_match_the_plugin() -> None:
+    from smolbench.evals import payloads
+
+    source = payloads.attention_capture_plugin_py()
+    assert "\nCAPTURE_VERSION = 2\n" in source and "\nSUMMARY_CAPTURE_VERSION = 3\n" in source
+    assert attention.CAPTURE_VERSIONS == {"rows": 2, "mass": 2, "summary": 3}
+
+
+# ------------------------------------------------------------------ npz_put: existing
+
+def test_verification_skips_only_the_size_check_for_an_existing_npz() -> None:
+    s3 = FakeS3()
+    j = job("q0", 5, 3)
+    _store_rank(s3, j, 0)
+    _store_rank(s3, j, 1)
+    npz0, meta0 = attention.rank_keys(j.key, 0)
+    meta = json.loads(s3.objects[meta0])
+    meta["bytes"] += 17                              # the new run's npz would have been larger
+    s3.objects[meta0] = json.dumps(meta).encode()
+    # Without the marker the size mismatch fails the job ...
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == ([], ["q0"])
+    # ... with it, the stored npz is an earlier run's and only its size is not compared.
+    meta["npz_put"] = "existing"
+    s3.objects[meta0] = json.dumps(meta).encode()
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == (["q0"], [])
+    # Every other check still applies to that rank: n_tokens ...
+    bad = dict(meta, n_tokens=j.n_tokens + 1)
+    s3.objects[meta0] = json.dumps(bad).encode()
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == ([], ["q0"])
+    # ... the array content of the sampled rank ...
+    s3.objects[meta0] = json.dumps(meta).encode()
+    s3.objects[npz0] = mass_npz(j.n_tokens, j.query_start, list(j.classes), broken=True)
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == ([], ["q0"])
+    # ... and the npz must still exist.
+    del s3.objects[npz0]
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == ([], ["q0"])
+    # A different marker value is not the exemption.
+    _store_rank(s3, j, 0, meta={"npz_put": "new"})
+    meta = json.loads(s3.objects[meta0])
+    meta["bytes"] += 1
+    s3.objects[meta0] = json.dumps(meta).encode()
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="mass") == ([], ["q0"])

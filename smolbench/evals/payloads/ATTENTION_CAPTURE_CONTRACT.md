@@ -86,7 +86,8 @@ upload, `ok: false`) above `SMOLBENCH_ATTN_GATE_TOL` (default 3e-2, bf16).
 The tolerance is an env var of the capture serve on purpose: a systematic
 small drift on one family (a kernel that accumulates differently) can be
 assessed by loosening it deliberately and recording the measured
-`gate_max_rel`, instead of failing every job silently-alike.
+`gate_max_rel`, instead of failing every job silently-alike. It can be set per serve; the
+client side caps the tolerance a capture may declare at 0.05 in the audit.
 
 Upload (per rank, via the presigned URLs in the job file):
 * `.npz`: `rows` float16 `[L, P, H_local, T]`, `sink` float16 `[L, P, H_local]`
@@ -101,10 +102,11 @@ Upload (per rank, via the presigned URLs in the job file):
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
   `{"ok": bool, "error": str|null, "gate_max_rel": float, "bytes": int,
   "uploaded": bool, "http_status": [npz_status, json_status]}`; each entry is
-  an int or the string `"412-landed-earlier"`.
+  an int or one of the strings `"412-landed-earlier"` and `"412-exists"` (the
+  latter only in fill mode, see below).
 
 Order: the `.npz` is PUT first, and the `.json` meta only when the npz PUT
-succeeded (a 2xx or `"412-landed-earlier"`). When the npz PUT fails, no meta
+succeeded (a 2xx, `"412-landed-earlier"` or, in fill mode, `"412-exists"`). When the npz PUT fails, no meta
 PUT is attempted, the done file has `ok: false`, `uploaded: false` and
 `http_status` holds the npz status alone (one entry). Reason: a meta without
 its npz would be a permanently partial job in an append-only bucket.
@@ -115,6 +117,41 @@ means the key already existed: a failure, not retried. A 412 on a retry,
 after an attempt that raised or returned >= 500 (the object may have been
 stored without a usable answer), is recorded as `"412-landed-earlier"` and
 counts as uploaded; a 412 after only clear failures (e.g. 403) stays 412.
+These rules hold unless fill mode is on.
+
+### Fill mode: completing a partly stored job
+
+Some jobs are stored only partly (for example 7 of 8 ranks hold both objects
+and the 8th holds nothing, or one rank's npz landed and its meta did not). The
+recapture goes under the SAME keys: the replay is a deterministic teacher-forced
+prefill, so objects that already exist stay as they are and only the missing
+ones are added. The capture serve is started with `SMOLBENCH_ATTN_FILL=1` for
+such a run.
+
+* The variable is read at each PUT. Only the exact string `1` enables fill mode;
+  `0`, empty, `true` and unset keep the behaviour above.
+* In fill mode a 412 on the FIRST attempt means an earlier run stored the
+  object. It is not retried, is recorded as `"412-exists"` in `http_status`, and
+  counts as stored. Existing objects are never replaced (the `If-None-Match: *`
+  condition still applies to every PUT). Every other path is unchanged: a 412
+  after an unclear attempt is still `"412-landed-earlier"`, and a 412 after a
+  clear refusal (e.g. 403) is still 412.
+* The meta of a rank whose npz answered `"412-exists"` carries
+  `npz_put: "existing"`; a fresh npz upload adds no such key. `bytes` stays the
+  size of the blob this run built, while the stored npz comes from an earlier
+  run and its size may differ. A consumer skips only the npz size-equality check
+  for such a rank; every other check, array content included, still applies.
+* The meta PUT may also answer `"412-exists"`, which counts as stored.
+* Why a serve env var and not a job field: the agent copies a fixed set of job
+  keys into `current.json`, so a new job field would need an agent change.
+
+### Serve-time variable `VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS`
+
+vLLM bounds one model step by this variable; its default of 300 s killed the
+engine during a capture of about 300 s on a cell of about 87K tokens. The
+client's capture serve sets it (default 3600, never below 300). The plugin logs
+its value (or `unset`) and the fill mode in the final `registered (...)` line,
+so the server log shows which bound the engine ran under.
 
 S3 keys (beside the marks run, invisible to the marks-log parser):
 `<exp>/<model>/seed=<seed>/attn/<info>--<run_ts>/q<idx>.r<rank>.npz` and

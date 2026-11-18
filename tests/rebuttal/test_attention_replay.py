@@ -2778,3 +2778,38 @@ def test_an_unreadable_store_stops_the_audit_instead_of_failing_the_capture(tmp_
         assert "audit raised ClientError" in result[jobs[1].job_id] and result[jobs[0].job_id] is None
     assert ar._is_access_failure(EndpointConnectionError(endpoint_url="https://s3"))
     assert not ar._is_access_failure(ValueError("bad npz"))
+
+
+# ------------------------------------------------------------------ recapture: job_ids and the reader union
+
+def test_induction_job_ids_select_exactly_those_jobs(tmp_path: Path) -> None:
+    _two_seeds(tmp_path)
+    full = ar.plan_replay(tmp_path, [GEMMA], **_gemma_plan_kwargs())[GEMMA]
+    planned, _ = ar.build_jobs(GEMMA, tmp_path, "bedrock-trio/attention",
+                               tokenizer=CharTokenizer(GEMMA_SPECIALS), template=gemma_template())
+    ids = [p.job.job_id for p in planned]
+    assert full.jobs == len(ids) >= 3
+    picked = [ids[-1], ids[0]]
+    plan = ar.plan_replay(tmp_path, [GEMMA], job_ids=picked, **_gemma_plan_kwargs())[GEMMA]
+    assert plan.jobs == 2 and sorted(i["job_id"] for i in plan.selected) == sorted(picked)
+    text = plan.summary()
+    assert all((i in text) == (i in picked) for i in ids)
+    with pytest.raises(ValueError, match="s9.intens.nope.q0"):
+        ar.plan_replay(tmp_path, [GEMMA], job_ids=["s9.intens.nope.q0"], **_gemma_plan_kwargs())
+    # One allow-list cannot name the jobs of several models.
+    with pytest.raises(ValueError, match="job_ids"):
+        ar.plan_replay(tmp_path, [GEMMA, DSV31], job_ids=picked, **_gemma_plan_kwargs())
+
+
+def test_induction_reader_takes_a_later_verified_entry_over_an_earlier_failure(tmp_path) -> None:
+    """Two manifests of one run: the earlier records q0 failed, the later (a fill run) verified."""
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
+    _mirror_job(run, 0, range(2), status=None)
+    (run / "manifest--2026-11-01T00-00-00.000000Z.json").write_text(json.dumps({"jobs": [
+        {"job_id": "s0.x.q0", "mark_index": 0, "status": "failed: ranks ['1'] of 2 did not report"}]}))
+    assert ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG) == {}
+    (run / "manifest--2026-11-18T00-00-00.000000Z.json").write_text(json.dumps({"jobs": [
+        {"job_id": "s0.x.q0", "mark_index": 0, "status": "verified"}]}))
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)
+    assert out["intens"]["jobs"] == 1 and out["intens"]["skipped_unverified"] == 0

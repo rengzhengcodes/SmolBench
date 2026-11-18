@@ -586,3 +586,321 @@ def test_every_planned_deduction_job_carries_its_cells_system_turn(tmp_path: Pat
         assert prompt.index(SYSTEM) < prompt.index(query.strip()), item.job.job_id
         completion = "".join(tok.decode_tokens(item.job.completion_token_ids))
         assert completion == "<|channel>thought\nI see a(x).<channel|>derive b(x) from a(x)<turn|>"
+
+
+# ------------------------------------------------------------------ recapture: job_ids, fill, engine death
+
+from botocore.exceptions import ClientError  # noqa: E402
+
+ALL_IDS = [f"horn.m20.{a}.s{s}.rep0" for s in (100, 101) for a in ("lem", "pad")]
+
+
+class FillHornBox(HornBox):
+    """HornBox that honours the plugin's fill contract and records every serve keyword.
+
+    An object that exists is answered "exists" (S3's 412 on If-None-Match) and left untouched;
+    a rank whose npz existed uploads its meta with ``npz_put: "existing"`` and a ``bytes`` that
+    differs from the stored npz (the new run built its own blob). ``fail_rank`` maps a job id
+    to a rank that neither uploads nor reports, as a rank that lost its upload. ``agent_errors``
+    maps a job id to the agent's top-level error (the job never reached its ranks) and
+    ``full_status`` is what ``attn_full_status`` answers.
+    """
+
+    def __init__(self, s3, tp=2, *, fail_rank=None, agent_errors=None, full_status=None):
+        super().__init__(s3, tp)
+        self.fail_rank = dict(fail_rank or {})
+        self.agent_errors = dict(agent_errors or {})
+        self.full_status = full_status
+        self.serve_kw: list = []
+
+    def serve_model(self, model, capture=False, **kw):
+        self.serve_kw.append(dict(kw, capture=capture))
+        return super().serve_model(model, capture=capture, **kw)
+
+    def _put(self, key, body):
+        try:
+            self.s3.put_object(Bucket="b", Key=key, Body=body, IfNoneMatch="*")
+            return True
+        except ClientError:
+            return False
+
+    def attn_start(self, state, payload):
+        self.batches.append(payload)
+        results = {}
+        for n_line, line in enumerate(payload["jobs"]):
+            jid = line["job_id"]
+            if jid in self.agent_errors:
+                results[jid] = {"error": self.agent_errors[jid]}
+                continue
+            kind = line["mode"]
+            cap = synthetic_capture(700 + n_line, n_prompt=line["query_start"], classes=line["classes"],
+                                    layers=((0, False), (0, True)), heads=4)
+            ranks = {}
+            for rank in range(payload["tp"]):
+                if self.fail_rank.get(jid) == rank:
+                    continue
+                blob = capture_npz(cap, rank, payload["tp"], kind)
+                key = line["put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                meta_key = line["meta_put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
+                npz_new = self._put(key, blob)
+                n = len(line["prompt_token_ids"]) + len(line["completion_token_ids"])
+                p = n - line["query_start"]
+                meta = {"job_id": jid, "rank": rank, "tp": payload["tp"],
+                        "model": payload["served_model_name"], "n_tokens": n, "bytes": len(blob),
+                        "mode": kind, "capture_version": 3 if kind == "summary" else 2,
+                        "query_start": line["query_start"], "layers": [0, 1], "num_heads_local": 2,
+                        "rows_shape": [2, p, 2, 4], "gate_max_rel": 0.04, "gate_tol": 0.05}
+                if not npz_new:
+                    meta["npz_put"] = "existing"
+                    meta["bytes"] = len(blob) + 7  # this run's blob, not the stored one
+                self._put(meta_key, json.dumps(meta).encode())
+                ranks[str(rank)] = {"ok": True, "gate_max_rel": 0.04}
+            results[jid] = ranks
+        self._status = {"running": False, "results": results, "error": None}
+        return {"ok": True}
+
+    def attn_full_status(self, state):
+        return self.full_status
+
+
+def _planned_by_id(rungs, rows_path):
+    planned, _ = _build(rungs, rows_path)
+    return {p.job.job_id: p.job for p in planned}
+
+
+def _sent(box) -> list:
+    return [line["job_id"] for b in box.batches for line in b["jobs"]]
+
+
+def test_plan_job_ids_select_exactly_those_jobs(tmp_path) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    full = _plan(rungs, rows_path)
+    picked = ["horn.m20.pad.s101.rep0", "horn.m20.lem.s100.rep0"]
+    plan = _plan(rungs, rows_path, job_ids=picked)
+    assert full.jobs == 4 and plan.jobs == 2
+    assert sorted(item["job_id"] for item in plan.selected) == sorted(picked)
+    assert all(set(item) >= {"job_id", "n_tokens", "over_context"} for item in plan.selected)
+    assert full.selected is None
+    # Counts follow the selection.
+    assert sum(stats["marks"] for stats in plan.per_arm.values()) == 2
+    text = plan.summary()
+    for job_id in ALL_IDS:
+        assert (job_id in text) == (job_id in picked), job_id
+
+
+def test_unknown_job_ids_are_an_error_naming_them(tmp_path, monkeypatch) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    with pytest.raises(ValueError, match=r"horn\.m20\.lem\.s999\.rep0") as caught:
+        _plan(rungs, rows_path, job_ids=["horn.m20.lem.s100.rep0", "horn.m20.lem.s999.rep0"])
+    assert "horn.m20.lem.s100.rep0" not in str(caught.value)
+    # An id excluded by another filter is not planned either.
+    with pytest.raises(ValueError, match=r"horn\.m20\.lem\.s100\.rep0"):
+        _plan(rungs, rows_path, job_ids=["horn.m20.lem.s100.rep0"], seeds=[101])
+    with pytest.raises(ValueError, match="job_ids"):
+        _plan(rungs, rows_path, job_ids=[])
+    box = FillHornBox(FakeS3())
+    with pytest.raises(ValueError, match="nope"):
+        _replay(tmp_path, rungs, rows_path, box, FakeS3(), monkeypatch, job_ids=["nope"])
+    assert box.calls == []
+    tok = CharTokenizer()
+    with pytest.raises(ValueError, match="nope"):
+        ar.audit_existing(GEMMA, Path("unused"), S3_URI, study="horn", horn_rows=rows_path, rungs_dir=rungs,
+                          tokenizer_for=lambda m: tok, template_for=lambda m: template(),
+                          config_for=lambda m: CONFIG, s3_client_factory=lambda: FakeS3(), job_ids=["nope"])
+
+
+def test_fill_requires_job_ids_and_refuses_before_anything(tmp_path, monkeypatch) -> None:
+    rungs, rows_path = _basic(tmp_path)
+
+    def never():
+        raise AssertionError("an S3 client was built")
+
+    box = FillHornBox(FakeS3())
+    with pytest.raises(ValueError, match="job_ids"):
+        _replay(tmp_path, rungs, rows_path, box, None, monkeypatch, fill=True, s3_client_factory=never)
+    assert box.calls == []
+
+
+@pytest.mark.parametrize("kw", [
+    {"gate_tol": 0.051}, {"gate_tol": 0}, {"execute_model_timeout_s": 299},
+    {"gpu_memory_utilization": 1.0}, {"fill": 1, "job_ids": ALL_IDS[:1]},
+])
+def test_bad_serve_settings_are_refused_before_any_aws_call(tmp_path, monkeypatch, kw) -> None:
+    rungs, rows_path = _basic(tmp_path)
+
+    def never():
+        raise AssertionError("an S3 client was built")
+
+    box = FillHornBox(FakeS3())
+    with pytest.raises(ValueError):
+        _replay(tmp_path, rungs, rows_path, box, None, monkeypatch, s3_client_factory=never, **kw)
+    assert box.calls == []
+
+
+def test_serve_settings_resolve_the_effective_values(tmp_path) -> None:
+    from smolbench.evals.providers import ec2 as real_ec2
+
+    spec = real_ec2.EC2_DEPLOY_SPECS[GEMMA]
+    args = spec["vllm_args"]
+    spec_share = float(args[args.index("--gpu-memory-utilization") + 1])
+    assert ar.MAX_GATE_TOL == 0.05 and ar.PLUGIN_DEFAULT_GATE_TOL == 0.03
+    assert ar.serve_settings(spec=spec, capture_max_model_len=4096) == {
+        "execute_model_timeout_s": 3600, "gate_tol": 0.03, "fill": False,
+        "gpu_memory_utilization": spec_share, "max_model_len": 4096}
+    assert ar.serve_settings(spec=spec, capture_max_model_len=8192, fill=True, gate_tol=0.05,
+                             execute_model_timeout_s=7200, gpu_memory_utilization=0.95) == {
+        "execute_model_timeout_s": 7200, "gate_tol": 0.05, "fill": True,
+        "gpu_memory_utilization": 0.95, "max_model_len": 8192}
+
+
+def test_the_plugin_default_gate_tolerance_is_the_one_mirrored() -> None:
+    from smolbench.evals import payloads
+
+    assert 'os.environ.get("SMOLBENCH_ATTN_GATE_TOL", "3e-2")' in payloads.attention_capture_plugin_py()
+    assert ar.PLUGIN_DEFAULT_GATE_TOL == 3e-2
+
+
+def _first_run(tmp_path, rungs, rows_path, s3, monkeypatch, **box_kw):
+    """A normal (non-fill) replay of all four jobs; returns the box."""
+    box = FillHornBox(s3, **box_kw)
+    _replay(tmp_path, rungs, rows_path, box, s3, monkeypatch)
+    return box
+
+
+def test_fill_sends_partial_jobs_skips_complete_ones_and_passes_the_settings(tmp_path, monkeypatch) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    jobs = _planned_by_id(rungs, rows_path)
+    s3 = FakeS3()
+    _first_run(tmp_path, rungs, rows_path, s3, monkeypatch)
+    a, b, c = "horn.m20.lem.s100.rep0", "horn.m20.lem.s101.rep0", "horn.m20.pad.s100.rep0"
+    # b lost rank 1 entirely; c lost rank 0's meta (its npz landed).
+    for key in attention.rank_keys(jobs[b].key, 1):
+        del s3.objects[key]
+    del s3.objects[attention.rank_keys(jobs[c].key, 0)[1]]
+    before = dict(s3.objects)
+    box = FillHornBox(s3)
+    report = _replay(tmp_path, rungs, rows_path, box, s3, monkeypatch, job_ids=[a, b, c], fill=True,
+                     gate_tol=0.05, execute_model_timeout_s=3600, gpu_memory_utilization=0.95,
+                     capture_max_model_len=4096)
+    assert sorted(_sent(box)) == sorted([b, c])
+    assert set(report.skipped_existing) == {a} and report.partial == []
+    assert sorted(report.refilled) == sorted([b, c])
+    assert sorted(report.verified) == sorted([b, c]), report.audit_failures
+    # Every rank got URLs, existing ones included.
+    assert all(len(line["put_urls"]) == 2 for bt in box.batches for line in bt["jobs"])
+    # Nothing that existed was replaced.
+    assert {k: s3.objects[k] for k in before} == before
+    # The settings reached the serve (call-site teeth) ...
+    (kw,) = box.serve_kw
+    assert kw["fill"] is True and kw["gate_tol"] == 0.05 and kw["execute_model_timeout_s"] == 3600
+    assert kw["gpu_memory_utilization"] == 0.95 and kw["max_model_len"] == 4096 and kw["capture"] is True
+    # ... and are recorded in every manifest written.
+    manifests = [json.loads(s3.objects[k]) for k in report.manifests]
+    assert manifests and all(m["serve"] == {
+        "execute_model_timeout_s": 3600, "gate_tol": 0.05, "fill": True,
+        "gpu_memory_utilization": 0.95, "max_model_len": 4096} for m in manifests)
+    entries = {e["job_id"]: e["status"] for m in manifests for e in m["jobs"]}
+    assert entries[b] == entries[c] == "verified" and entries[a] == "skipped_existing"
+    assert report.serve_settings == manifests[0]["serve"]
+
+
+def test_without_fill_the_settings_default_and_partial_stays_partial(tmp_path, monkeypatch) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    jobs = _planned_by_id(rungs, rows_path)
+    s3 = FakeS3()
+    b = "horn.m20.lem.s101.rep0"
+    for key in attention.rank_keys(jobs[b].key, 1):
+        s3.objects[key] = b"x"
+    box = FillHornBox(s3)
+    report = _replay(tmp_path, rungs, rows_path, box, s3, monkeypatch)
+    assert b not in _sent(box) and report.partial == [b] and report.refilled == []
+    (kw,) = box.serve_kw
+    assert kw.get("fill", False) is False and kw.get("gate_tol") is None
+    serve = json.loads(s3.objects[report.manifests[0]])["serve"]
+    assert serve["fill"] is False and serve["execute_model_timeout_s"] == 3600 and serve["gate_tol"] == 0.03
+
+
+@pytest.mark.parametrize("meta_over, word", [
+    ({"mode": "mass", "capture_version": 2}, "mode"),
+    ({"capture_version": 2}, "capture_version"),
+    ({"tp": 4}, "tp"),
+])
+def test_fill_refuses_an_incompatible_stem_before_provisioning(tmp_path, monkeypatch, meta_over, word) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    jobs = _planned_by_id(rungs, rows_path)
+    s3 = FakeS3()
+    _first_run(tmp_path, rungs, rows_path, s3, monkeypatch)
+    b = "horn.m20.lem.s101.rep0"
+    for key in attention.rank_keys(jobs[b].key, 1):
+        del s3.objects[key]
+    meta_key = attention.rank_keys(jobs[b].key, 0)[1]
+    meta = json.loads(s3.objects[meta_key])
+    meta.update(meta_over)
+    s3.objects[meta_key] = json.dumps(meta).encode()
+    box = FillHornBox(s3)
+    with pytest.raises(ValueError, match=word) as caught:
+        _replay(tmp_path, rungs, rows_path, box, s3, monkeypatch, job_ids=[b], fill=True)
+    assert b in str(caught.value)
+    assert box.calls == [] and box.batches == []
+
+
+def test_an_earlier_failed_job_completed_by_fill_is_read_as_verified(tmp_path, monkeypatch) -> None:
+    """Run 1 loses a rank of one job (manifest: failed); fill completes it (manifest: verified).
+
+    The reader takes the union of verified entries over every manifest of a folder, so the job
+    counts once the second manifest exists.
+    """
+    rungs, rows_path = _basic(tmp_path)
+    s3 = FakeS3()
+    b = "horn.m20.lem.s101.rep0"
+    first = FillHornBox(s3, fail_rank={b: 1})
+    report1 = _replay(tmp_path, rungs, rows_path, first, s3, monkeypatch)
+    assert b in report1.failed and len(report1.verified) == 3
+    lem_manifest = [k for k in report1.manifests if "/lem/" in k]
+    assert json.loads(s3.objects[lem_manifest[0]])["jobs"][1]["status"].startswith("failed")
+    mirror = tmp_path / "mirror1"
+    ar.pull_captures(S3_URI, mirror, [GEMMA], study="horn", s3_client_factory=lambda: s3)
+    # Before the fill, b is recorded only as failed, so the reader leaves it out.
+    assert ar.read_captures(GEMMA, mirror, study="horn", config=CONFIG)["lem"]["jobs"] == 1
+    second = FillHornBox(s3)
+    report2 = _replay(tmp_path, rungs, rows_path, second, s3, monkeypatch, job_ids=[b], fill=True)
+    assert report2.verified == [b], report2.audit_failures
+    mirror2 = tmp_path / "mirror2"
+    ar.pull_captures(S3_URI, mirror2, [GEMMA], study="horn", s3_client_factory=lambda: s3)
+    out = ar.read_captures(GEMMA, mirror2, study="horn", config=CONFIG)
+    assert out["lem"]["jobs"] == 2 and out["pad"]["jobs"] == 2
+
+
+def test_engine_death_shuts_down_saves_the_log_tail_and_reports_unsent_jobs(tmp_path, monkeypatch) -> None:
+    rungs, rows_path = _basic(tmp_path)
+    s3 = FakeS3()
+    status = {"healthy": False, "container": "exited", "log_tail": "EngineDeadError: step timed out\n",
+              "serve_log_tail": ""}
+    # batch_size 2, longest first: the second job of the first batch kills the engine.
+    probe_s3 = FakeS3()
+    probe = FillHornBox(probe_s3)
+    _replay(tmp_path, rungs, rows_path, probe, probe_s3, monkeypatch, batch_size=2)
+    first_batch = [line["job_id"] for line in probe.batches[0]["jobs"]]
+    second_batch = [line["job_id"] for line in probe.batches[1]["jobs"]]
+    box = FillHornBox(s3, agent_errors={first_batch[1]: "HTTP Error 500: Internal Server Error"},
+                      full_status=status)
+    logs = tmp_path / "reports"
+    report = _replay(tmp_path, rungs, rows_path, box, s3, monkeypatch, batch_size=2, engine_log_dir=logs)
+    assert len(box.batches) == 1
+    assert sorted(report.not_sent) == sorted(second_batch)
+    assert report.engine_died and first_batch[1] in report.engine_died
+    assert first_batch[1] in report.failed and report.verified == [first_batch[0]]
+    assert box.calls[-1] == "shutdown"
+    # The log tail is saved next to the report, named after the run tag.
+    path = Path(report.engine_log)
+    assert path.parent == logs and ar.run_tag(GEMMA, study="horn") in path.name
+    assert path.read_text().startswith("EngineDeadError: step timed out")
+    # Manifests are written for what was verified, and the unsent jobs are recorded as such.
+    entries = {e["job_id"]: e["status"] for k in report.manifests for e in json.loads(s3.objects[k])["jobs"]}
+    assert entries[first_batch[0]] == "verified"
+    for job_id in second_batch:
+        if job_id in entries:
+            assert entries[job_id] == "not_sent"
+    # The report stays JSON-serialisable (the CLI writes it with dataclasses.asdict).
+    import dataclasses
+    json.dumps(dataclasses.asdict(report))

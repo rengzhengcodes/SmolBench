@@ -150,6 +150,25 @@ is unknown only the two rank-0 objects can be checked, and the log line says
 so. Manifests are written once under a microsecond stamp after the key is
 shown to be absent. Nothing here deletes or overwrites.
 
+Recapture: ``job_ids`` and fill mode. The ``job_ids`` keyword of ``plan_replay``,
+``replay_model`` and ``audit_existing`` is an allow-list: only those jobs are planned, sent,
+audited and manifested, and a name that is not among the built jobs is an error. A recapture
+goes under the SAME keys, because the replay is a deterministic teacher-forced prefill: the
+stored objects stay as they are and only the missing ones are added. ``replay_model(fill=True,
+job_ids=[...])`` does that for a job that holds some but not all expected objects (a job that
+lost a rank): after ``attention.fill_refusal`` has shown the stored objects to be of the same
+kind (mode, capture version, tp), the job is sent and the plugin puts only the absent
+objects. A rank whose npz already existed writes its meta with ``"npz_put": "existing"``, and
+the audit then skips only the npz size comparison. The audit also refuses a rank whose meta
+declares a ``gate_tol`` above ``MAX_GATE_TOL``, so no capture certifies itself with a loose
+tolerance. The effective serve settings (``serve_settings``) are recorded in every manifest
+as ``"serve"``. A new manifest that lists a job ``verified`` completes an older manifest that
+listed it as failed: the reader takes the union of the verified entries of a folder.
+
+Engine death. When the serving engine dies mid-run, ``replay_model`` stops sending, saves the
+box's log tail to a new file while the box is still up, shuts the box down, audits and
+manifests the jobs that did verify, and reports the rest as ``not_sent``. It does not raise.
+
 Spending money needs an explicit decision. ``replay_model`` raises
 ``ApprovalRequired`` unless ``approved is True`` (the singleton; ``1`` and
 ``"yes"`` are refused) and does so before any EC2 or S3 client exists. The
@@ -224,6 +243,7 @@ import importlib.util
 import io
 import json
 import logging
+import math
 import numbers
 import os
 import re
@@ -264,6 +284,8 @@ __all__ = [
     "run_tag",
     "HornRun",
     "INSTANCE_TYPES",
+    "MAX_GATE_TOL",
+    "PLUGIN_DEFAULT_GATE_TOL",
     "PlannedJob",
     "REASONING_FORMATS",
     "REGION",
@@ -300,6 +322,7 @@ __all__ = [
     "rebuild_sequence",
     "replay_model",
     "run_prefix",
+    "serve_settings",
     "write_manifest",
 ]
 
@@ -507,6 +530,18 @@ CAPTURE_VERSION: int = 2
 #: 1 and 2 are mass captures (see ``CAPTURE_VERSION``), 3 is a summary capture, so a
 #: version-2 audit can never certify a summary npz or the reverse.
 SUMMARY_CAPTURE_VERSION: int = 3
+#: The loosest self-consistency tolerance a capture may declare in its meta
+#: (``gate_tol``). The audit refuses a rank above it. A recapture of jobs that lost one rank
+#: at a gate figure of 0.031 to 0.040 (against the plugin default, ``PLUGIN_DEFAULT_GATE_TOL``)
+#: needs 0.05, and that figure was approved as the ceiling. Design: the cap lives here, in the
+#: audit, and not only in the serve call, because a capture must not certify itself with a
+#: tolerance as loose as it likes: the audit compares the gate figure with the tolerance the
+#: meta declares, so without a cap any figure would pass.
+MAX_GATE_TOL: float = 0.05
+#: The plugin's tolerance when ``SMOLBENCH_ATTN_GATE_TOL`` is unset (the string ``"3e-2"`` in
+#: the plugin source; a test pins the two together). ``serve_settings`` reports it as the
+#: effective tolerance of a run that passed no ``gate_tol``.
+PLUGIN_DEFAULT_GATE_TOL: float = 0.03
 #: Capture modes of the induction replay, ``mass`` first (the default). A subset of
 #: ``attention.CAPTURE_MODES``: ``rows`` has no key classes, so this replay never uses it.
 MODES: Tuple[str, ...] = ("mass", "summary")
@@ -2413,6 +2448,12 @@ class ReplayPlan:
     mode: str = "mass"
     #: The study planned: ``"induction"`` or ``"horn"``.
     study: str = "induction"
+    #: With a ``job_ids`` allow-list: one dict per selected job, in plan order, ``{"job_id":
+    #: str, "n_tokens": int, "over_context": bool}`` (``over_context`` against
+    #: ``capture_max_model_len``). ``None`` without an allow-list. With one, every count of
+    #: the plan (``jobs``, ``per_arm``, the token totals, ``over_context`` and the storage
+    #: estimate) covers only these jobs; ``runs``, ``marks`` and ``errors`` stay as built.
+    selected: Optional[List[Dict[str, Any]]] = None
 
     def summary(self) -> str:
         """Return a short multi-line description of the plan.
@@ -2421,7 +2462,9 @@ class ReplayPlan:
         -------
         str
             Counts, token sizes, the capture mode, capture support, instance types and
-            the labelled storage estimate.
+            the labelled storage estimate. With a ``job_ids`` allow-list, also the line
+            ``  selected jobs (N):`` and one line per selected job (id, token count, and a
+            note when it is over the capture context).
         """
         horn = self.study == "horn"
         lines = [
@@ -2451,6 +2494,16 @@ class ReplayPlan:
                     "counted by the service"
                 )
             lines.append(line)
+        if self.selected is not None:
+            lines.append(f"  selected jobs ({len(self.selected)}):")
+            for item in self.selected:
+                lines.append(
+                    f"    {item['job_id']}: {item['n_tokens']} tokens"
+                    + (
+                        f", over the {self.capture_max_model_len}-token capture context (excluded)"
+                        if item["over_context"] else ""
+                    )
+                )
         if self.capture_supported:
             lines.append("  capture: supported")
         else:
@@ -2564,6 +2617,158 @@ def _resolve_capture_len(model: str, spec: Mapping[str, Any], override: Optional
     return int(override)
 
 
+def _job_id_set(job_ids: Optional[Sequence[str]]) -> Optional[FrozenSet[str]]:
+    """Validate the ``job_ids`` allow-list and return it as a set (``None`` = no filter).
+
+    Parameters
+    ----------
+    job_ids : Optional[Sequence[str]]
+        ``None`` (no filter), or a non-string sequence (or set) of job id strings.
+
+    Returns
+    -------
+    Optional[FrozenSet[str]]
+        ``None`` for no filter, else the ids with duplicates collapsed.
+
+    Raises
+    ------
+    ValueError
+        When `job_ids` is a single string or bytes, is not a sequence or set, holds a
+        non-string, or is empty. The message names ``job_ids``.
+
+    Notes
+    -----
+    Design: an empty allow-list is refused instead of meaning "nothing". A filter that selects
+    nothing is a mistake, and fill mode (``replay_model(fill=True)``) must never act on a
+    vague selection: an empty list silently read as "no filter" would re-send everything.
+    """
+    if job_ids is None:
+        return None
+    if isinstance(job_ids, (str, bytes)) or not isinstance(job_ids, (Sequence, set, frozenset)):
+        raise ValueError(f"job_ids must be a sequence of job id strings or None, got {job_ids!r}")
+    ids = list(job_ids)
+    if not ids:
+        raise ValueError(
+            "job_ids is empty: an allow-list that selects nothing is a mistake (pass None for "
+            "no filter)"
+        )
+    bad = [item for item in ids if not isinstance(item, str)]
+    if bad:
+        raise ValueError(f"job_ids must hold strings only, got {bad[0]!r}")
+    return frozenset(ids)
+
+
+def serve_settings(
+    *,
+    spec: Mapping[str, Any],
+    capture_max_model_len: int,
+    fill: bool = False,
+    gate_tol: Optional[float] = None,
+    execute_model_timeout_s: Optional[int] = None,
+    gpu_memory_utilization: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Validate the capture serve's settings and return the EFFECTIVE values.
+
+    ``replay_model`` calls this before anything else is touched, so a bad value stops the
+    run before a box is billed, and records the result in every manifest it writes and on the
+    report. A setting left at ``None`` is replaced by the value the serve would use.
+
+    Parameters
+    ----------
+    spec : Mapping[str, Any]
+        The model's deploy spec. Only ``vllm_args`` is read, for the spec's
+        ``--gpu-memory-utilization`` (the value after that flag).
+    capture_max_model_len : int
+        The resolved capture context (see ``_resolve_capture_len``). Reported as
+        ``max_model_len`` unchanged; not validated here.
+    fill : bool, optional
+        Fill mode. Must be exactly a ``bool`` (``1`` is refused).
+    gate_tol : Optional[float], optional
+        Self-consistency tolerance the plugin declares in each rank's meta. A finite real
+        number with ``0 < gate_tol <= MAX_GATE_TOL`` (a ``bool`` is refused). ``None`` means
+        ``PLUGIN_DEFAULT_GATE_TOL``.
+    execute_model_timeout_s : Optional[int], optional
+        Engine step timeout in seconds. An ``int`` (not a ``bool``) of at least
+        ``ec2.MIN_CAPTURE_EXECUTE_TIMEOUT_S``. ``None`` means
+        ``ec2.DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S``.
+    gpu_memory_utilization : Optional[float], optional
+        Share of GPU memory vLLM may take. A finite real number in the open interval (0, 1)
+        (a ``bool`` is refused). ``None`` means the spec's share, or ``None`` when the spec
+        has no ``--gpu-memory-utilization`` flag.
+
+    Returns
+    -------
+    Dict[str, Any]
+        ``{"execute_model_timeout_s": int, "gate_tol": float, "fill": bool,
+        "gpu_memory_utilization": Optional[float], "max_model_len": int}``. JSON-serialisable.
+
+    Raises
+    ------
+    ValueError
+        When a setting is invalid, as listed above. The message names the parameter.
+
+    Examples
+    --------
+    >>> spec = {"vllm_args": ["--gpu-memory-utilization", "0.9"]}
+    >>> serve_settings(spec=spec, capture_max_model_len=4096)["gate_tol"]
+    0.03
+    >>> serve_settings(spec=spec, capture_max_model_len=4096)["gpu_memory_utilization"]
+    0.9
+    >>> serve_settings(spec=spec, capture_max_model_len=4096, gate_tol=0.06)
+    Traceback (most recent call last):
+        ...
+    ValueError: gate_tol must be a finite number with 0 < gate_tol <= 0.05, got 0.06
+    """
+    from smolbench.evals.providers import ec2
+
+    # Phase 1: validate each setting on its own, naming it in the message.
+    if fill is not True and fill is not False:
+        raise ValueError(f"fill must be a bool, got {fill!r}")
+    if gate_tol is not None:
+        if (
+            isinstance(gate_tol, bool) or not isinstance(gate_tol, numbers.Real)
+            or not math.isfinite(gate_tol) or not 0 < gate_tol <= MAX_GATE_TOL
+        ):
+            raise ValueError(
+                f"gate_tol must be a finite number with 0 < gate_tol <= {MAX_GATE_TOL}, got {gate_tol!r}"
+            )
+    if execute_model_timeout_s is not None:
+        if (
+            isinstance(execute_model_timeout_s, bool) or not isinstance(execute_model_timeout_s, numbers.Integral)
+            or execute_model_timeout_s < ec2.MIN_CAPTURE_EXECUTE_TIMEOUT_S
+        ):
+            raise ValueError(
+                f"execute_model_timeout_s must be an int >= {ec2.MIN_CAPTURE_EXECUTE_TIMEOUT_S}, "
+                f"got {execute_model_timeout_s!r}"
+            )
+    if gpu_memory_utilization is not None:
+        if (
+            isinstance(gpu_memory_utilization, bool) or not isinstance(gpu_memory_utilization, numbers.Real)
+            or not math.isfinite(gpu_memory_utilization) or not 0 < gpu_memory_utilization < 1
+        ):
+            raise ValueError(
+                f"gpu_memory_utilization must be a finite number with 0 < value < 1, got {gpu_memory_utilization!r}"
+            )
+
+    # Phase 2: replace each unset setting with the value the serve would use.
+    if gpu_memory_utilization is None:
+        args = list(spec.get("vllm_args") or ())
+        flag = "--gpu-memory-utilization"
+        share: Optional[float] = float(args[args.index(flag) + 1]) if flag in args else None
+    else:
+        share = float(gpu_memory_utilization)
+    return {
+        "execute_model_timeout_s": (
+            ec2.DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S if execute_model_timeout_s is None
+            else int(execute_model_timeout_s)
+        ),
+        "gate_tol": PLUGIN_DEFAULT_GATE_TOL if gate_tol is None else float(gate_tol),
+        "fill": fill,
+        "gpu_memory_utilization": share,
+        "max_model_len": int(capture_max_model_len),
+    }
+
+
 def _usage_total(items: Sequence[PlannedJob], name: str) -> int:
     """Return the sum of the service's ``bedrock_token_counts[name]`` over deduction `items`."""
     return sum((item.bedrock_token_counts or {}).get(name, 0) for item in items)
@@ -2579,6 +2784,7 @@ def _plan_one(
     seeds: Optional[Sequence[int]] = None,
     mode: Optional[str] = None,
     capture_len: Optional[int] = None,
+    job_ids: Optional[Sequence[str]] = None,
 ) -> Tuple[ReplayPlan, List[PlannedJob]]:
     """Build one model's plan and its planned jobs (no AWS access).
 
@@ -2586,19 +2792,26 @@ def _plan_one(
     every count, token total and the storage estimate cover only them. `mode` is the
     capture mode (``None`` means the study's default, see ``_resolve_mode``): it is set on
     every job, recorded on the plan and selects the storage formula. `capture_len` replaces the
-    capture context of the model (``_resolve_capture_len``).
+    capture context of the model (``_resolve_capture_len``). `job_ids` is an allow-list of job
+    ids (``None`` = no filter): after the jobs are built only those are kept, so every count
+    derived from the planned jobs (``jobs``, ``per_arm``, the storage estimate, the token
+    totals, ``over_context``) covers the selection, and ``ReplayPlan.selected`` lists it.
+    ``runs``, ``marks`` and ``errors`` stay as built.
 
     Raises
     ------
     ValueError
-        When `mode` is not ``None`` or one of ``MODES``, `seeds` holds a non-integer, or
-        `capture_len` is not valid for the model's spec.
+        When `mode` is not ``None`` or one of ``MODES``, `seeds` holds a non-integer,
+        `capture_len` is not valid for the model's spec, `job_ids` is invalid (see
+        ``_job_id_set``), or `job_ids` names an id that is not among the built jobs. The
+        message lists every such id, sorted, and no id that was found.
     """
     resolved = _resolve_mode(mode, source.study)
     from smolbench.evals.providers import ec2
 
     horn = source.study == "horn"
     wanted = _seed_set(seeds)
+    wanted_ids = _job_id_set(job_ids)
     spec = ec2.EC2_DEPLOY_SPECS[model]
     max_len = _resolve_capture_len(model, spec, capture_len)
     get_tokenizer = (lambda: tokenizer_for(model)) if tokenizer_for else (lambda: _default_tokenizer(model))
@@ -2621,11 +2834,32 @@ def _plan_one(
                 errors=[message],
             )
 
-    capturable = [p for p in built.planned if p.job.n_tokens <= max_len]
+    # The allow-list applies AFTER the build, to the jobs that exist: an id that was excluded by
+    # another filter, never existed or failed to rebuild is an error, because a recapture of
+    # the wrong job is worse than none. Design: filter the built list, not the sources, so the
+    # job ids are the ones every other entry point derives and the filters compose.
+    all_planned = built.planned
+    selected: Optional[List[Dict[str, Any]]] = None
+    if wanted_ids is not None:
+        built_ids = {p.job.job_id for p in all_planned}
+        unknown = sorted(wanted_ids - built_ids)
+        if unknown:
+            first_error = f" First plan error: {built.errors[0]}" if built.errors else ""
+            raise ValueError(
+                f"{model}: job_ids names {len(unknown)} job(s) that are unknown, excluded by the "
+                f"seeds/arms/reps filters, or failed to rebuild: {', '.join(unknown)}.{first_error}"
+            )
+        all_planned = [p for p in all_planned if p.job.job_id in wanted_ids]
+        selected = [
+            {"job_id": p.job.job_id, "n_tokens": p.job.n_tokens, "over_context": p.job.n_tokens > max_len}
+            for p in all_planned
+        ]
+
+    capturable = [p for p in all_planned if p.job.n_tokens <= max_len]
     per_arm: Dict[str, Dict[str, Any]] = {}
     arms = built.arm_order if horn else list(ARMS)
     for arm in arms:
-        jobs_of_arm = [p for p in built.planned if p.run.arm == arm]
+        jobs_of_arm = [p for p in all_planned if p.run.arm == arm]
         sizes = [p.job.n_tokens for p in jobs_of_arm]
         per_arm[arm] = {
             "marks": len(sizes), "total_tokens": sum(sizes), "max_tokens": max(sizes, default=0),
@@ -2660,18 +2894,18 @@ def _plan_one(
                 _job_capture_bytes(p.job, layers, heads, tp, resolved) for p in capturable if p.run.arm == arm
             )
 
-    sizes_all = [p.job.n_tokens for p in built.planned]
+    sizes_all = [p.job.n_tokens for p in all_planned]
     plan = ReplayPlan(
         model=model,
         runs=len(built.runs),
         marks=built.marks,
-        jobs=len(built.planned),
+        jobs=len(all_planned),
         unreasoned_marks=built.unreasoned,
         errors=list(built.errors),
         per_arm=per_arm,
         total_tokens=sum(sizes_all),
         max_tokens=max(sizes_all, default=0),
-        over_context=len(built.planned) - len(capturable),
+        over_context=len(all_planned) - len(capturable),
         instance_types=instance_types,
         tp_estimate=tp,
         capture_supported=model not in CAPTURE_UNSUPPORTED,
@@ -2684,8 +2918,9 @@ def _plan_one(
         mode=resolved,
         study=source.study,
         bedrock_token_counts=_HORN_BEDROCK_COUNTS_NOTE if horn else _BEDROCK_COUNTS_NOTE,
+        selected=selected,
     )
-    return plan, built.planned
+    return plan, all_planned
 
 
 def plan_replay(
@@ -2704,6 +2939,7 @@ def plan_replay(
     arms: Optional[Sequence[str]] = None,
     reps: Optional[Sequence[int]] = None,
     capture_max_model_len: Optional[int] = None,
+    job_ids: Optional[Sequence[str]] = None,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
@@ -2745,6 +2981,12 @@ def plan_replay(
         Plan against this capture context instead of ``capture_max_model_len(model, spec)``
         (both studies): an integer with ``0 < value <= spec["max_model_len"]``. It decides
         which jobs are over-context and is reported as ``ReplayPlan.capture_max_model_len``.
+    job_ids : Optional[Sequence[str]], optional
+        Allow-list of job ids (both studies); ``None`` (default) keeps every job. Only the
+        listed jobs are planned: every count, token total, per-arm number and the storage
+        estimate cover them, and ``ReplayPlan.selected`` lists them (see ``ReplayPlan``).
+        Duplicates collapse. One list cannot name the jobs of several models, so it is
+        accepted for ONE model only.
 
     Returns
     -------
@@ -2761,12 +3003,20 @@ def plan_replay(
         When `s3_uri` is malformed, `seeds` or `reps` holds a non-integer, `mode` or `study` is
         invalid, `capture_max_model_len` is not valid for a model's spec, `horn_rows` does not fit
         the models (see above), or a deduction-only argument is given for the induction study.
+        Also when `job_ids` is invalid (empty, or not a sequence of strings), is given with more
+        than one model, or names a job that is not among the model's built jobs (unknown,
+        excluded by `seeds`, `arms` or `reps`, or failed to rebuild; the message lists them).
     KeyError
         When a model has no deploy spec.
     """
     _bucket, prefix = parse_s3_uri(s3_uri)
     _check_study(study)
     model_list = list(models) if models is not None else list(bt.TRIO)
+    if _job_id_set(job_ids) is not None and len(model_list) > 1:
+        raise ValueError(
+            f"job_ids selects the jobs of one model, but {len(model_list)} models were given: "
+            "plan each model with its own list"
+        )
     # Every source is built before any model is planned, so a bad argument fails the call whole.
     sources = {
         model: _make_source(
@@ -2780,7 +3030,7 @@ def plan_replay(
     return {
         model: _plan_one(
             model, sources[model], prefix, tokenizer_for, template_for, config_for, seeds, resolved,
-            capture_max_model_len,
+            capture_max_model_len, job_ids,
         )[0]
         for model in model_list
     }
@@ -3309,7 +3559,9 @@ def _audit_job(
     once; an array failure is held until every rank's arrays have been read. With
     `mode` ``None`` each rank is audited by its own meta mode (``mass`` or
     ``summary``); otherwise every rank's meta mode must equal `mode`. The ranks of
-    one job must agree on the mode.
+    one job must agree on the mode. A rank's ``gate_tol`` above ``MAX_GATE_TOL`` is refused
+    (the message names ``rank <r>``, ``gate_tol`` and the cap). A rank whose meta has
+    ``"npz_put": "existing"`` skips the npz size comparison only.
     """
     if n_heads % tp != 0:
         return f"config has {n_heads} heads, not divisible by tp={tp}; local heads are undefined"
@@ -3382,8 +3634,23 @@ def _audit_job(
         gate, tol = meta.get("gate_max_rel"), meta.get("gate_tol")
         if gate is None or tol is None or not float(gate) <= float(tol):
             return f"rank {rank}: self-consistency gate {gate} exceeds tolerance {tol}"
+        # The gate compares the figure with the tolerance the meta itself declares, so a capture
+        # could certify itself by declaring a loose one. The cap closes that. Ranks of one job may
+        # declare different tolerances (a fill run mixes the plugin default and the cap), so the
+        # ranks are not required to agree.
+        if float(tol) > MAX_GATE_TOL:
+            return (
+                f"rank {rank}: meta gate_tol {tol} exceeds the cap {MAX_GATE_TOL} "
+                "(no capture may certify itself with a looser tolerance)"
+            )
         size = _object_size(client, bucket, npz_key)
-        if size != int(meta["bytes"]):
+        # Design: a rank whose meta says ``npz_put: "existing"`` was uploaded by a fill run whose
+        # npz put was refused because the object already existed (the append-only store keeps
+        # the first one). Its meta ``bytes`` is the size of the blob THAT run built, which can
+        # differ from the stored npz of the earlier run. Only this size comparison is skipped:
+        # the object must still exist (``_object_size`` fails on a missing one), and every other
+        # meta check and, when sampled, the array content checks still apply.
+        if meta.get("npz_put") != "existing" and size != int(meta["bytes"]):
             return f"rank {rank}: npz size {size} != meta bytes {meta['bytes']}"
         if sampled:
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
@@ -3484,8 +3751,13 @@ def audit_captures(
     `capture_version` argument, when that is not ``None``; ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
     [L, P, H_local, 4]`` with ``P = n_tokens - query_start`` (for both modes: it is the
     shape of the per-row statistics, which a summary has summed away); ``gate_max_rel <=
-    gate_tol``; and ``bytes`` equals the npz object's real size (``head_object``
-    when the client has it, else the listing's ``Size``). A missing meta key is a
+    gate_tol``; ``gate_tol`` itself is at most ``MAX_GATE_TOL`` (each rank is judged on
+    its own meta, so the ranks of a job may declare different tolerances; the failure says
+    ``gate_tol`` and the cap); and ``bytes`` equals the npz object's real size
+    (``head_object`` when the client has it, else the listing's ``Size``). The size
+    comparison alone is skipped for a rank whose meta says ``"npz_put": "existing"``: a fill
+    run wrote that meta, its ``bytes`` is the blob that run built, and the stored npz is from an
+    earlier run. The npz must still exist and every other check still applies. A missing meta key is a
     failure reason, never a crash of the audit (a mismatch against ``None`` for
     the identity, layer and shape keys, ``audit raised KeyError`` for the others).
     When ``H`` is
@@ -3817,6 +4089,20 @@ class ReplayReport:
     #: results above are still valid, and the report is returned instead of lost.
     manifest_error: Optional[str] = None
     plan: Optional[ReplayPlan] = None
+    #: Jobs of the batches that were never sent because the engine died (``replay_model``
+    #: only); they hold no object and can be sent again as they are.
+    not_sent: List[str] = field(default_factory=list)
+    #: ``"<job id>: <error>"`` of the job in flight when the serving engine died, else ``None``.
+    #: Not an exception: the box is still shut down and the verified jobs are audited.
+    engine_died: Optional[str] = None
+    #: Path of the file holding the box's log tail, written when the engine died; else ``None``.
+    engine_log: Optional[str] = None
+    #: Fill mode only: the jobs that held some but not all expected objects and were sent
+    #: to be completed. A job that was complete is in ``skipped_existing`` instead.
+    refilled: List[str] = field(default_factory=list)
+    #: The effective serve settings of the run (``serve_settings``), set by ``replay_model``;
+    #: ``None`` for ``audit_existing``. The same dict is written to every manifest as ``"serve"``.
+    serve_settings: Optional[Dict[str, Any]] = None
 
 
 def run_tag(model_key: str, run_label: Optional[str] = None, study: str = "induction") -> str:
@@ -3920,20 +4206,30 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     reps: Optional[Sequence[int]] = None,
     capture_max_model_len: Optional[int] = None,
     allow_horn_mass: bool = False,
+    job_ids: Optional[Sequence[str]] = None,
+    fill: bool = False,
+    gate_tol: Optional[float] = None,
+    execute_model_timeout_s: Optional[int] = None,
+    gpu_memory_utilization: Optional[float] = None,
+    engine_log_dir: Optional[Path] = None,
 ) -> ReplayReport:
     """Capture one model's stored transcripts (induction marks or deduction cells) on one spot box. BILLED.
 
-    Order of events. (1) Build the plan and jobs offline and print the launch
-    summary. (2) Refuse unless ``approved is True``; right after it, refuse a deduction run
-    in mass mode unless `allow_horn_mass` says otherwise. (3) Refuse a model in
-    ``CAPTURE_UNSUPPORTED`` unless overridden, then one in ``SERVE_UNVERIFIED``
-    unless overridden. (4) Skip every job that already has
-    a key in the bucket (never re-sent, never overwritten); when nothing remains,
-    return without provisioning. (5) Provision one box, serve the checkpoint in
-    capture mode and run the batches. (6) Terminate the box, however the batches
-    ended. (7) Only after the shutdown call, and only when the batches returned,
-    audit the uploads by content and write one manifest per run that had jobs
-    sent: both need only S3, and the audit downloads every array to this machine
+    Order of events. (0) Refuse fill mode without `job_ids`, and validate the serve
+    settings (``serve_settings``); both before the plan is built. (1) Build the plan and
+    jobs offline and print the launch summary. (2) Refuse unless ``approved is True``; right
+    after it, refuse a deduction run in mass mode unless `allow_horn_mass` says otherwise.
+    (3) Refuse a model in ``CAPTURE_UNSUPPORTED`` unless overridden, then one in
+    ``SERVE_UNVERIFIED`` unless overridden. (4) Resume: skip every job that already has
+    a key in the bucket (never re-sent, never overwritten); in fill mode a job with some but
+    not all expected objects is sent instead, to be completed (see `fill`); when nothing
+    remains, return without provisioning. (5) Provision one box, serve the checkpoint in
+    capture mode and run the batches. If the serving engine dies, the batches stop there: the
+    box's log tail is saved to a new file while the box is still up, and the jobs of the later
+    batches are recorded as not sent. (6) Terminate the box, however the batches
+    ended (an engine death included). (7) Only after the shutdown call, and only when the
+    batches returned, audit the uploads by content and write one manifest per run that had
+    jobs sent: both need only S3, and the audit downloads every array to this machine
     (about 3.5 minutes per GB in a pilot), so running it before the shutdown
     would leave the box idle and billed. (8) When the shutdown call failed on the
     success path, raise ``ShutdownFailed`` carrying the finished report.
@@ -4013,12 +4309,44 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         A deduction run in mass mode is refused (``ValueError``) unless this is the singleton
         ``True``: a mass capture grows with the response length, which for deduction is up to
         131072 tokens. Has no effect on induction or on summary mode.
+    job_ids : Optional[Sequence[str]], optional
+        Allow-list of job ids (see ``plan_replay``): only those jobs are planned, sent, audited
+        and manifested. ``None`` (default) means every planned job. Required when `fill` is
+        ``True``.
+    fill : bool, optional
+        Fill mode, a ``bool`` (default ``False``), needs `job_ids`. The replay is a
+        deterministic teacher-forced prefill and the store is append-only with
+        ``If-None-Match: *``, so a recapture goes under the SAME keys: objects that exist stay
+        as they are and only the missing ones are added. In the resume phase a job with every
+        expected object (both objects of ranks ``0..tp-1``, ``tp`` from the plan) is skipped as
+        complete (``skipped_existing``); a job with some but not all of them is checked with
+        ``attention.fill_refusal`` and, when the objects present come from a compatible capture
+        (same mode, capture version and tp), sent and listed in ``ReplayReport.refilled``. When
+        ANY job is refused the call raises before provisioning and names every refused job.
+        Jobs with no object are sent as usual. With ``fill=False`` a job with some objects is
+        reported as ``partial`` and never sent. Passed to ``ec2.serve_model`` (when ``True``)
+        and ``attention.run_capture_batches``.
+    gate_tol : Optional[float], optional
+        The plugin's self-consistency tolerance for this run, ``0 < value <= MAX_GATE_TOL``;
+        ``None`` keeps the plugin's own default (``PLUGIN_DEFAULT_GATE_TOL``). Passed to
+        ``ec2.serve_model`` as given when set; left out when ``None``.
+    execute_model_timeout_s : Optional[int], optional
+        Engine step timeout in seconds, at least ``ec2.MIN_CAPTURE_EXECUTE_TIMEOUT_S``;
+        ``None`` keeps ``ec2.DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S``. Passed to ``ec2.serve_model``
+        as given when set; left out when ``None``.
+    gpu_memory_utilization : Optional[float], optional
+        Share of GPU memory for vLLM, strictly between 0 and 1; ``None`` keeps the spec's.
+        Passed to ``ec2.serve_model`` as given when set; left out when ``None``.
+    engine_log_dir : Optional[Path], optional
+        Folder for the engine log file written when the serving engine dies; default
+        ``STATE_DIR``. Created if absent.
 
     Returns
     -------
     ReplayReport
         Verified, failed, skipped and audit-failed job ids, manifests written and the plan
-        (``plan.mode`` is the mode run).
+        (``plan.mode`` is the mode run); ``refilled``, ``not_sent``, ``engine_died``,
+        ``engine_log`` and ``serve_settings`` as described on ``ReplayReport``.
 
     Raises
     ------
@@ -4044,7 +4372,14 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         for `mode`, `study` and the context before even the plan is built or printed). Also
         when ``study="horn"`` and the mode is ``"mass"`` without ``allow_horn_mass=True``: raised
         right after the approval gate, before any EC2 or S3 client or factory is touched, with
-        the plan's mass estimate in bytes and GB.
+        the plan's mass estimate in bytes and GB. Also, all before the plan is built (and so
+        before the approval gate): `fill` is ``True`` without `job_ids`; `job_ids` is empty or
+        malformed; `fill` is not a ``bool``; `gate_tol`, `execute_model_timeout_s` or
+        `gpu_memory_utilization` is out of range (``serve_settings``). `job_ids` naming a job
+        that is not planned raises when the plan is built. In fill mode, also before
+        provisioning: the plan's tp is unknown (completeness cannot be judged), or
+        ``attention.fill_refusal`` refuses one or more jobs (the message lists each job id with
+        its reason).
     RuntimeError
         When the model could not be planned at all (template or tokenizer
         unavailable), when its ``config.json`` cannot be loaded or has no
@@ -4069,6 +4404,15 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     A capture that raised is never audited and writes no manifest: its jobs have no
     result to check.
 
+    A dead serving engine is not an exception. ``run_capture_batches`` stops sending and
+    calls a hook while the box is still up; the hook writes the box's log tail (``log_tail``,
+    then ``serve_log_tail`` when it is not empty) to a NEW file
+    ``attention_engine_log--<tag>--<utc stamp>.log`` in `engine_log_dir` (or ``STATE_DIR``) and
+    sets ``ReplayReport.engine_log``; the log tail is gone once the box is terminated. The box
+    is shut down in the ``finally`` as always, the jobs that did verify are audited and
+    manifested, ``engine_died`` names the job in flight and ``not_sent`` lists the jobs of the
+    later batches (they hold no object and can be sent again). Both are logged at WARNING.
+
     A failure while writing the manifests does not lose the report: it is recorded
     in ``ReplayReport.manifest_error``, logged at ERROR, the manifests written so
     far stay in ``ReplayReport.manifests`` and the report is returned. An
@@ -4076,22 +4420,41 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     box is already down; with a failed shutdown it is logged and ``ShutdownFailed``
     is raised instead.
     """
-    # Phase 0: an unknown study or mode is refused before anything is read or built.
+    # Phase 0: an unknown study or mode, fill mode without an allow-list and a bad serve setting
+    # are refused before anything is read or built (and so before the gate and every client).
+    from smolbench.evals.providers import ec2 as real_ec2
+
     _check_study(study)
     run_mode = _resolve_mode(mode, study)
     run_version = SUMMARY_CAPTURE_VERSION if run_mode == "summary" else CAPTURE_VERSION
+    # Design: fill needs an explicit allow-list. Fill adds objects under existing keys, so it
+    # must never act on a whole seed range picked by omission.
+    if fill is True and _job_id_set(job_ids) is None:
+        raise ValueError(
+            "fill=True needs job_ids: fill mode completes the named jobs only and must never "
+            "re-send a whole seed range"
+        )
+    # The REAL deploy spec, not the injected provider's: the settings are validated against the
+    # spec the serve will use, and the check must not depend on a fake. A KeyError for an unknown
+    # model surfaces here exactly as it does when the plan is built.
+    serve = serve_settings(
+        spec=real_ec2.EC2_DEPLOY_SPECS[model_key],
+        capture_max_model_len=_resolve_capture_len(
+            model_key, real_ec2.EC2_DEPLOY_SPECS[model_key], capture_max_model_len
+        ),
+        fill=fill, gate_tol=gate_tol, execute_model_timeout_s=execute_model_timeout_s,
+        gpu_memory_utilization=gpu_memory_utilization,
+    )
     source = _make_source(
         study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
         rungs_dir, arms, reps,
     )
 
     # Phase 1: offline plan and the launch summary, shown before the gate.
-    from smolbench.evals.providers import ec2 as real_ec2
-
     _bucket_for_plan, plan_prefix = parse_s3_uri(s3_uri)
     plan, planned = _plan_one(
         model_key, source, plan_prefix, tokenizer_for, template_for, config_for, seeds,
-        run_mode, capture_max_model_len,
+        run_mode, capture_max_model_len, job_ids,
     )
     types = tuple(instance_types or INSTANCE_TYPES.get(model_key, ()))
     regions = tuple(getattr(ec2, "EC2_REGIONS", real_ec2.EC2_REGIONS))
@@ -4164,7 +4527,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     bucket, prefix = parse_s3_uri(s3_uri)
     spec = (getattr(ec2, "EC2_DEPLOY_SPECS", None) or real_ec2.EC2_DEPLOY_SPECS)[model_key]
     max_len = _resolve_capture_len(model_key, spec, capture_max_model_len)
-    report = ReplayReport(model_key, None, None, None, plan=plan)
+    report = ReplayReport(model_key, None, None, None, plan=plan, serve_settings=dict(serve))
     by_id = {p.job.job_id: p for p in planned}
     report.over_context = [p.job.job_id for p in planned if p.job.n_tokens > max_len]
     candidates = [p.job for p in planned if p.job.n_tokens <= max_len]
@@ -4176,13 +4539,43 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     # completed by re-sending. Every rank uploads its own two objects, so the
     # complete set is both keys of every rank 0..tp-1. The plan's tp is the one
     # known before the box exists; when it is unknown only rank 0 can be checked.
+    # Fill mode (job_ids required, checked in Phase 0) is the one exception to "never send a
+    # job with a key": it sends a stem that is INCOMPLETE and compatible, and the plugin puts
+    # only the objects that are absent. Completeness needs the rank count, so an unknown tp is
+    # refused here, before any client exists, instead of guessing "rank 0 only".
     expected_tp = plan.tp_estimate
+    if fill and not isinstance(expected_tp, int):
+        raise ValueError(
+            f"{model_key}: fill needs the plan's tensor-parallel degree to judge which jobs are "
+            f"complete, but it is unknown (tp_estimate={expected_tp!r}); pass instance_types= "
+            "that the provider can derive a tp for"
+        )
     client = make_s3()
     remaining: List[attention.Job] = []
+    refusals: Dict[str, str] = {}
     for job in candidates:
         present = attention.job_keys_present(client, bucket, job)
         if not present:
             remaining.append(job)
+            continue
+        if fill:
+            present_set = set(present)
+            complete = all(
+                key in present_set
+                for rank in range(expected_tp)  # type: ignore[arg-type]  # int, checked above
+                for key in attention.rank_keys(job.key, rank)
+            )
+            if complete:
+                report.skipped_existing[job.job_id] = present
+                continue
+            reason = attention.fill_refusal(
+                client, bucket, job, expected_tp, run_mode, present  # type: ignore[arg-type]
+            )
+            if reason is not None:
+                refusals[job.job_id] = reason
+                continue
+            remaining.append(job)
+            report.refilled.append(job.job_id)
             continue
         report.skipped_existing[job.job_id] = present
         expected = [
@@ -4204,6 +4597,13 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                 f"{len(missing)} expected object(s) ({scope}); inspect it by hand. "
                 f"Missing keys: {missing}"
             )
+    # Every refusal is collected first so one call names them all, and raised before the box
+    # exists: a refused stem would otherwise be found out on billed hardware.
+    if refusals:
+        raise ValueError(
+            f"{model_key}: fill refused {len(refusals)} job(s), nothing was provisioned:\n"
+            + "\n".join(f"  {job_id}: {reason}" for job_id, reason in refusals.items())
+        )
     if not remaining:
         return report
 
@@ -4217,6 +4617,41 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     result: Optional[attention.CaptureResult] = None
     tp: Optional[int] = None
     tag = run_tag(model_key, run_label, study)
+    # The caller's raw settings, and only those the caller set: an unset one (``None``, or
+    # ``fill`` False) is left out, which is what ``None`` means to the serve (its own default;
+    # ``serve_settings`` already worked out the effective value for the record). Design: omit
+    # instead of passing ``None`` so a provider or fake that predates a setting is not handed a
+    # keyword it does not know when the run does not use it.
+    serve_kwargs: Dict[str, Any] = {
+        name: value
+        for name, value in (
+            ("execute_model_timeout_s", execute_model_timeout_s), ("gate_tol", gate_tol),
+            ("gpu_memory_utilization", gpu_memory_utilization),
+        )
+        if value is not None
+    }
+    if fill:
+        serve_kwargs["fill"] = True
+
+    def save_engine_log(status: Mapping[str, Any]) -> None:
+        """Write the box's log tail to a new file while the box is still up (see Notes)."""
+        directory = Path(engine_log_dir) if engine_log_dir is not None else STATE_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"attention_engine_log--{tag}--{format_run_ts(datetime.now(timezone.utc))}.log"
+        tail, serve_tail = status.get("log_tail"), status.get("serve_log_tail")
+        if isinstance(tail, str):
+            text = tail
+            if isinstance(serve_tail, str) and serve_tail:
+                text += "\n--- serve_log_tail ---\n" + serve_tail
+        else:
+            # An unreadable or partial reply (for example the agent was unreachable): keep the
+            # whole reply, it is the only evidence there will be once the box is terminated.
+            text = json.dumps(status, indent=2, sort_keys=True, default=str)
+        # Mode "x": a log is never overwritten, like every other artefact of this driver.
+        with open(path, "x", encoding="utf-8") as handle:
+            handle.write(text)
+        report.engine_log = str(path)
+
     with _scoped_env(
         EC2_EXPERIMENT_TAG=tag, EC2_STATE_FILE=str(STATE_DIR / f".ec2_state--{tag}.json")
     ):
@@ -4231,12 +4666,13 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                     max_len if capture_max_model_len is not None
                     else CAPTURE_MAX_MODEL_LEN.get(model_key)
                 ),
+                **serve_kwargs,
             ) as served:
                 report.served_model_name = served
                 result = attention.run_capture_batches(
                     ec2, state, served, remaining, tp, make_s3, bucket, mode=run_mode,
                     batch_size=batch_size, url_ttl_s=url_ttl_s, poll_s=poll_s,
-                    batch_timeout_s=batch_timeout_s,
+                    batch_timeout_s=batch_timeout_s, fill=fill, on_engine_death=save_engine_log,
                 )
         except BaseException as exc:
             primary = exc
@@ -4270,6 +4706,16 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     # batches returned: any exception above has already propagated, and the audit
     # of a capture that raised would have no result to check.
     assert result is not None and tp is not None  # set whenever the batches returned
+    # An engine death is not an error of this call: the box is down, the batches that did
+    # finish are audited below, and the unsent jobs are reported so they can be sent again.
+    report.not_sent = list(result.not_sent)
+    report.engine_died = result.engine_died
+    if result.engine_died is not None:
+        logging.warning(
+            f"attention_replay: the serving engine died ({result.engine_died}); "
+            f"{len(result.not_sent)} job(s) were not sent"
+            + (f"; the log tail is in {report.engine_log}" if report.engine_log else "")
+        )
     try:
         report.failed.update(result.failed)
         for job_id, keys in result.skipped_existing.items():
@@ -4292,7 +4738,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         try:
             _write_manifests(
                 make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp,
-                mode=run_mode,
+                mode=run_mode, serve=report.serve_settings,
             )
         except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
             report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
@@ -4447,11 +4893,14 @@ def _manifest_payload(
     served_model_name: Optional[str],
     post_hoc_audit: bool = False,
     mode: str = "mass",
+    serve: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Return the manifest content of one run; shared by ``_write_manifests`` and ``audit_existing``.
 
     ``post_hoc_audit`` adds the key ``"post_hoc_audit": True``; it is absent otherwise,
-    so a manifest written at capture time is unchanged. `mode` is written as the
+    so a manifest written at capture time is unchanged. `serve` (the run's effective
+    ``serve_settings``) is written as ``"serve"``; ``None`` leaves the key out, which is what
+    ``audit_existing`` does because the settings of the original run are unknown to it. `mode` is written as the
     manifest's ``"mode"``: the capture mode of the run's jobs (``"mass"``, ``"summary"``,
     or ``"mixed"`` from ``audit_existing`` when one run directory holds both). For a
     ``HornRun`` the ``"run"`` field is ``{"study": "horn", "rung", "arm", "source_file":
@@ -4479,6 +4928,8 @@ def _manifest_payload(
     }
     if post_hoc_audit:
         payload["post_hoc_audit"] = True
+    if serve is not None:
+        payload["serve"] = dict(serve)
     return payload
 
 
@@ -4493,10 +4944,14 @@ def _write_manifests(
     result: attention.CaptureResult,
     tp: int,
     mode: str = "mass",
+    serve: Optional[Mapping[str, Any]] = None,
 ) -> List[str]:
     """Write one manifest per run that had at least one job sent in this invocation.
 
-    `mode` is the run's capture mode, recorded in every manifest.
+    `mode` is the run's capture mode, recorded in every manifest. `serve` is the run's
+    effective ``serve_settings``, recorded as ``"serve"``. A job that an earlier manifest
+    recorded as failed and that this run verified is plainly ``"verified"`` here: the reader
+    takes the union of the verified entries of all manifests of a folder.
 
     Each key is appended to ``report.manifests`` as soon as it is written, so the
     manifests written before a later failure stay on the report. The same keys are
@@ -4526,7 +4981,7 @@ def _write_manifests(
             entries.append(_manifest_entry(item, status, result.gates.get(job_id)))
         payload = _manifest_payload(
             model, spec, run, entries, tp=tp, instance_type=report.instance_type,
-            served_model_name=report.served_model_name, mode=mode,
+            served_model_name=report.served_model_name, mode=mode, serve=serve,
         )
         key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
         keys.append(key)
@@ -4623,6 +5078,7 @@ def audit_existing(
     arms: Optional[Sequence[str]] = None,
     reps: Optional[Sequence[int]] = None,
     capture_max_model_len: Optional[int] = None,
+    job_ids: Optional[Sequence[str]] = None,
 ) -> ReplayReport:
     """Audit the captures of one model that are already in the bucket, and manifest them.
 
@@ -4678,6 +5134,12 @@ def audit_existing(
     capture_max_model_len : Optional[int], optional
         Capture context to plan against (see ``replay_model``); it only sets the plan's
         ``capture_max_model_len``, since stored captures are audited whatever their length.
+    job_ids : Optional[Sequence[str]], optional
+        Allow-list of job ids (see ``plan_replay``): only those jobs are planned, listed,
+        audited and manifested. ``None`` (default) means every planned job. A job that an
+        earlier manifest recorded as ``failed: ...`` (not an audit outcome) is audited once all
+        its objects exist, as without the list. There is no fill handling here: this function
+        never sends anything.
 
     Returns
     -------
@@ -4687,15 +5149,17 @@ def audit_existing(
         ``not_captured``, ``manifests`` and ``manifest_error``; ``instance_type`` stays
         ``None``. A manifest written here holds only the jobs this call audited and carries
         ``"post_hoc_audit": true`` and ``"mode"``: the audited jobs' mode when they share
-        one, else ``"mixed"``.
+        one, else ``"mixed"``. It has no ``"serve"`` key: the serve
+        settings of the original run are unknown here.
 
     Raises
     ------
     ValueError
         When `arrays` or `workers` is invalid, `s3_uri` is malformed, `seeds` or `reps` holds a
         non-integer, `study` is unknown, a deduction-only argument is given for the induction
-        study, `capture_max_model_len` is not valid for the spec, or an existing manifest is
-        unreadable (before any audit starts).
+        study, `capture_max_model_len` is not valid for the spec, `job_ids` is invalid or names
+        a job that is not planned (see ``plan_replay``), or an existing manifest is unreadable
+        (before any audit starts).
     KeyError
         When the model has no deploy spec.
     RuntimeError
@@ -4732,7 +5196,7 @@ def audit_existing(
     )
     plan, planned = _plan_one(
         model_key, source, prefix, tokenizer_for, template_for, config_for, seeds, None,
-        capture_max_model_len,
+        capture_max_model_len, job_ids,
     )
     if not planned and plan.errors:
         raise RuntimeError(f"{model_key}: nothing to audit, the plan failed: {plan.errors[0]}")

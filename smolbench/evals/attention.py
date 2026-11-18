@@ -23,6 +23,17 @@ job's keys first and never sends a job that already has one (see
 ``job_keys_present``). This module never writes to the bucket itself (the box
 uploads) and never deletes.
 
+One opt-in exception to the skip, ``fill=True``: a run that was cut short (the
+engine died, a rank lost its upload) leaves stems with SOME of their objects.
+Fill mode completes such a stem instead of skipping it, but only when
+``fill_refusal`` finds the existing objects compatible with this run (same mode,
+same capture version, same tensor-parallel degree, no rank outside
+``0 .. tp - 1``). The box then answers a PUT for an object that exists with
+"already stored" (S3's 412 on ``If-None-Match: *``), so nothing is replaced; a
+complete stem is still skipped and nothing here ever overwrites. Mixing a
+refused stem would hand analysis a capture with ranks of two different
+formats, which is a wrong dataset and not a smaller one.
+
 Two capture modes exist, matching the plugin's. ``mode="rows"`` stores full
 softmax rows at chosen positions. ``mode="mass"`` answers the noise-arm
 question (does a RESPONSE token put less mass on the whitespace padding than
@@ -66,17 +77,20 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 __all__ = [
     "CAPTURE_MARKER",
     "CAPTURE_MODES",
+    "CAPTURE_VERSIONS",
     "CaptureResult",
     "DEFAULT_BATCH_SIZE",
     "DEFAULT_BATCH_TIMEOUT_S",
     "DEFAULT_POLL_S",
     "DEFAULT_URL_TTL_S",
+    "ENGINE_GONE_MARKERS",
     "Job",
     "MASS_GATE_FRACTIONS",
     "MIN_PAD_RUN_CHARS",
     "N_TOKEN_CLASSES",
     "SUMMARY_ARRAYS",
     "capture_job_failure",
+    "fill_refusal",
     "job_keys_present",
     "mass_gate_positions",
     "mass_job",
@@ -142,6 +156,27 @@ MASS_GATE_FRACTIONS: Tuple[Tuple[int, int], ...] = ((1, 3), (2, 3))
 #: came from the vLLM-prefill plugin and not from an HF-transformers replay
 #: (which stores different layouts under the same sort of key).
 CAPTURE_MARKER: str = "vllm-prefill-plugin"
+
+#: Substrings of the agent's per-job ``{"error": str(exc)}`` that mean the vLLM
+#: server did not answer as a live engine. When the engine dies (a model step
+#: outlasted vLLM's step timeout) the in-flight request gets ``HTTP Error 500``
+#: and every later request of the batch gets a reset, a broken pipe or a refused
+#: connection. A rank-collection timeout (``<job>: 3/8 ranks done``) matches
+#: none of these on purpose: the engine was alive, only a rank was slow.
+ENGINE_GONE_MARKERS: Tuple[str, ...] = (
+    "HTTP Error 500",
+    "Errno 104",
+    "Connection reset",
+    "Errno 111",
+    "Connection refused",
+    "Errno 32",
+    "Broken pipe",
+)
+#: Capture-format version each mode's plugin writes into its metas, mirrored
+#: from the plugin's ``CAPTURE_VERSION`` (rows, mass) and
+#: ``SUMMARY_CAPTURE_VERSION`` (summary). Fill mode completes a stem only when
+#: the stored meta carries the version this run's plugin would write.
+CAPTURE_VERSIONS: Dict[str, int] = {"rows": 2, "mass": 2, "summary": 3}
 
 #: A job id doubles as the box's done-file stem (``<job_id>.r<rank>.json``) and
 #: as the agent's results key, so it is restricted to characters that are safe
@@ -861,6 +896,14 @@ def verify_capture_uploads(
     `sample` downloads of a (large) array. Nothing is mutated. A missing array
     inside the npz raises ``KeyError`` from ``np.load``'s mapping, which the
     per-job handler turns into an ordinary logged failure.
+
+    A rank whose meta says ``npz_put == "existing"`` was completed by a fill
+    run: its ``.npz`` was stored by an EARLIER run and the new run's upload was
+    refused, so ``meta["bytes"]`` is the size of the npz the new run built, not
+    of the stored one. For such a rank, and only for it, the
+    ``ContentLength == meta["bytes"]`` comparison is skipped; the HEAD itself
+    (the npz must exist), the ``n_tokens`` check and the sampled array check
+    still run. Any other ``npz_put`` value gets the normal size check.
     """
     import numpy as np
 
@@ -878,7 +921,10 @@ def verify_capture_uploads(
                 )
                 # ``bytes`` / ``n_tokens`` are the PLUGIN's meta key names; the
                 # HF replay path writes ``npz_bytes`` / ``shape`` instead.
-                if int(head["ContentLength"]) != int(meta["bytes"]):
+                # Design: skip ONLY the size comparison for a stored-earlier
+                # npz (see the docstring); skipping the whole rank would also
+                # drop the n_tokens check, which is still meaningful.
+                if meta.get("npz_put") != "existing" and int(head["ContentLength"]) != int(meta["bytes"]):
                     raise ValueError(
                         f"rank {rank} size {head['ContentLength']} != meta bytes {meta['bytes']}"
                     )
@@ -1058,16 +1104,189 @@ def job_keys_present(client: Any, bucket: str, job: Job) -> List[str]:
         token = listing["NextContinuationToken"]
 
 
+def fill_refusal(
+    client: Any,
+    bucket: str,
+    job: Job,
+    tp: int,
+    mode: str,
+    present: Sequence[str],
+) -> Optional[str]:
+    """Return why a stem holding the keys `present` must NOT be completed, else ``None``.
+
+    Fill mode (``run_capture_batches(fill=True)``) completes a stem that an
+    earlier run left partly uploaded. That is only sound when the objects that
+    already exist were written by the same kind of capture as the ones this run
+    will add, because analysis concatenates the ranks of a job along the head
+    axis. Checked in this order:
+
+    1. a present key outside the expected set (both objects of ranks
+       ``0 .. tp - 1``): a leftover rank from a run with another tensor-parallel
+       degree (message contains ``unexpected``);
+    2. no ``.json`` meta among the expected present keys, so the mode cannot be
+       read (``meta``);
+    3. the lowest-rank present meta is not a JSON object (``meta``);
+    4. that meta's mode differs from `mode` (``mode``), its ``capture_version``
+       differs from ``CAPTURE_VERSIONS[mode]`` (``capture_version``), or its
+       ``tp`` differs from `tp` (``tp``).
+
+    A meta without ``mode`` is a mass capture and one without
+    ``capture_version`` is version 1: both fields were added after the first
+    captures were written, so their absence dates the object. Every refusal
+    message starts ``"fill refused: "``.
+
+    Parameters
+    ----------
+    client : Any
+        boto3 S3 client; only ``get_object`` is used.
+    bucket : str
+        Bucket holding the stem.
+    job : Job
+        The job about to be completed; ``job.key`` names the stem.
+    tp : int
+        Tensor-parallel degree of this run. At least 1.
+    mode : str
+        The run's capture mode, one of ``CAPTURE_MODES``.
+    present : Sequence[str]
+        Keys that exist under the stem (``job_keys_present``). Non-empty in
+        practice; an empty sequence is refused as having no meta.
+
+    Returns
+    -------
+    Optional[str]
+        The refusal reason, or ``None`` when the stem may be completed.
+
+    Raises
+    ------
+    ValueError
+        When `mode` is not one of ``CAPTURE_MODES``.
+
+    Notes
+    -----
+    Reads exactly one meta object (the lowest-rank one present); one meta is
+    enough because the box writes every rank of a run with the same mode,
+    version and ``tp``, and rank-mixing across runs is what check 1 and the
+    per-run version pin are for. A meta that lacks ``tp`` is refused like a
+    differing one: it cannot be shown compatible. Read-only.
+    """
+    _check_mode(mode)
+    # Design: the expected set is built from rank_keys, the one place that
+    # knows the object names, so this check cannot drift from the uploader.
+    expected = {rank: rank_keys(job.key, rank) for rank in range(tp)}
+    expected_keys = {key for pair in expected.values() for key in pair}
+    unexpected = sorted(k for k in present if k not in expected_keys)
+    if unexpected:
+        return (
+            f"fill refused: unexpected key(s) {unexpected} outside ranks 0..{tp - 1} "
+            "(a capture with another tensor-parallel degree)"
+        )
+    present_set = set(present)
+    meta_key = next(
+        (expected[rank][1] for rank in range(tp) if expected[rank][1] in present_set), None
+    )
+    if meta_key is None:
+        return "fill refused: no meta (.json) among the existing objects, so the capture mode cannot be read"
+    try:
+        meta = json.loads(client.get_object(Bucket=bucket, Key=meta_key)["Body"].read().decode())
+    except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError are both ValueErrors
+        return f"fill refused: meta {meta_key} is not valid JSON ({exc})"
+    if not isinstance(meta, dict):
+        return f"fill refused: meta {meta_key} is not a JSON object"
+    stored_mode = meta.get("mode", "mass")
+    if stored_mode != mode:
+        return f"fill refused: mode of the existing capture is {stored_mode!r}, this run is {mode!r}"
+    stored_version = meta.get("capture_version", 1)
+    if stored_version != CAPTURE_VERSIONS[mode]:
+        return (
+            f"fill refused: capture_version of the existing capture is {stored_version!r}, "
+            f"this run writes {CAPTURE_VERSIONS[mode]}"
+        )
+    if meta.get("tp") != tp:
+        return f"fill refused: tp of the existing capture is {meta.get('tp')!r}, this run is {tp}"
+    return None
+
+
+def _engine_gone_error(entry: Any) -> Optional[str]:
+    """Return the agent's error string when `entry` carries an engine-gone error, else ``None``.
+
+    Parameters
+    ----------
+    entry : Any
+        One ``status["attn"]["results"]`` value, or ``None`` for a job the
+        agent never reported.
+
+    Returns
+    -------
+    Optional[str]
+        The top-level ``"error"`` string when `entry` is a mapping whose error
+        contains any of ``ENGINE_GONE_MARKERS``; ``None`` otherwise. A per-rank
+        error inside the rank records is not looked at: the agent puts the
+        server's answer at the top level, and a rank's own failure is not the
+        server's.
+    """
+    if not isinstance(entry, Mapping):
+        return None
+    error = entry.get("error")
+    if isinstance(error, str) and any(marker in error for marker in ENGINE_GONE_MARKERS):
+        return error
+    return None
+
+
+def _trailing_engine_errors(
+    sent: Mapping[str, Job], results: Mapping[str, Any]
+) -> List[Tuple[str, str]]:
+    """Return ``(job_id, error)`` for the longest suffix of `sent` where every job has an engine-gone error.
+
+    Parameters
+    ----------
+    sent : Mapping[str, Job]
+        The batch's jobs in SEND order (the order of the ``/attn`` lines).
+    results : Mapping[str, Any]
+        The agent's results; jobs it did not report are simply absent.
+
+    Returns
+    -------
+    List[Tuple[str, str]]
+        The run in send order; empty when the last sent job does not carry an
+        engine-gone error (including when it was never reported).
+
+    Notes
+    -----
+    Walked over `sent`, not over `results`: the results dict omits unreported
+    jobs, so its order cannot say which jobs came last.
+    """
+    run: List[Tuple[str, str]] = []
+    for job_id in reversed(list(sent)):
+        error = _engine_gone_error(results.get(job_id))
+        if error is None:
+            break
+        run.append((job_id, error))
+    run.reverse()
+    return run
+
+
 @dataclass
 class CaptureResult:
-    """What ``run_capture_batches`` produced, keyed by ``Job.job_id``."""
+    """What ``run_capture_batches`` produced, keyed by ``Job.job_id``.
+
+    Every job id lands in exactly one of ``verified``, ``failed``,
+    ``skipped_existing`` and ``not_sent``.
+    """
 
     #: Jobs that passed both gates (the box's report and the upload check).
     verified: List[str] = field(default_factory=list)
-    #: job_id -> why the job failed. A job is in at most one of the three groups.
+    #: job_id -> why the job failed. Includes jobs that fill mode refused to
+    #: complete (never sent) and jobs the agent attempted while the engine died.
     failed: Dict[str, str] = field(default_factory=dict)
     #: job_id -> the keys already in the bucket; such a job was NOT sent.
     skipped_existing: Dict[str, List[str]] = field(default_factory=dict)
+    #: Jobs never handed to the agent because the engine had died in an earlier
+    #: batch, in run order. Nothing was listed or presigned for them, so they
+    #: can be sent again unchanged on a fresh box.
+    not_sent: List[str] = field(default_factory=list)
+    #: ``"<job_id>: <error>"`` for the job in flight when the engine died, or
+    #: ``None`` when it did not die during this run.
+    engine_died: Optional[str] = None
     #: job_id -> rank string -> the box's ``gate_max_rel`` (``None`` if the rank
     #: reported none). Recorded for failed jobs too: a near-miss is told from a
     #: broken capture by this number.
@@ -1088,6 +1307,8 @@ def run_capture_batches(
     url_ttl_s: int = DEFAULT_URL_TTL_S,
     poll_s: int = DEFAULT_POLL_S,
     batch_timeout_s: int = DEFAULT_BATCH_TIMEOUT_S,
+    fill: bool = False,
+    on_engine_death: Optional[Callable[[Mapping[str, Any]], None]] = None,
 ) -> CaptureResult:
     """Send `jobs` to a serving capture box in batches and verify what lands in `bucket`.
 
@@ -1095,9 +1316,11 @@ def run_capture_batches(
     and each batch is one ``/attn`` call. Jobs are ordered LONGEST SEQUENCE
     FIRST so a prefill too big for the box's memory fails before the cheap work.
     Per batch, one fresh S3 client mints the presigned URLs; a job that already
-    has ANY key under its stem is skipped, never sent. After each batch every
-    job is gated on the box's per-rank report (``capture_job_failure``) and then
-    on the bucket (``verify_capture_uploads``).
+    has ANY key under its stem is skipped, never sent (unless `fill` is set).
+    After each batch every job is gated on the box's per-rank report
+    (``capture_job_failure``) and then on the bucket
+    (``verify_capture_uploads``). When a batch shows that the vLLM engine died,
+    no further batch is started (see Notes).
 
     Parameters
     ----------
@@ -1132,12 +1355,31 @@ def run_capture_batches(
         ``/status`` cadence in seconds.
     batch_timeout_s : int, optional
         Per-batch ceiling in seconds.
+    fill : bool, optional
+        Complete stems that an earlier run left partly uploaded, by default
+        ``False`` (any existing key skips the job, as before). When ``True`` a
+        job with existing keys is first checked by ``fill_refusal``; a refused
+        stem goes to ``failed`` with the refusal and is not sent. Otherwise a
+        stem holding every expected object (both objects of ranks
+        ``0 .. tp - 1``) goes to ``skipped_existing`` and an incomplete one is
+        sent with presigned URLs for EVERY rank: the box answers the objects
+        that exist with "already stored" and uploads the rest. The serve must
+        have been started with fill enabled (``SMOLBENCH_ATTN_FILL=1``),
+        otherwise the box reports the existing objects as failed uploads.
+    on_engine_death : Callable[[Mapping[str, Any]], None], optional
+        Called once, when the engine is declared dead, with the full
+        ``ec2.attn_full_status(state)`` reply (log tail included), or with
+        ``{"error": "<ExceptionType>: <message>"}`` when that call raised. It
+        runs before the batch's upload verification. An ``Exception`` it raises
+        is logged and swallowed: a hook must never lose the result.
 
     Returns
     -------
     CaptureResult
-        Every job id lands in exactly one of ``verified``, ``failed`` and
-        ``skipped_existing``; ``gates`` carries the reported gate numbers.
+        Every job id lands in exactly one of ``verified``, ``failed``,
+        ``skipped_existing`` and ``not_sent``; ``gates`` carries the reported
+        gate numbers and ``engine_died`` names the job in flight when the
+        engine died (``None`` otherwise).
 
     Raises
     ------
@@ -1153,6 +1395,29 @@ def run_capture_batches(
     Writes nothing to S3 itself (the box uploads through the presigned URLs;
     the caller writes any manifest) and never deletes. Memory is O(batch) token
     ids on top of the caller's `jobs`.
+
+    Engine death. The agent runs EVERY job of a batch and never abandons it, so
+    after vLLM's engine dies (a step of a ~87K-token cell outlasting vLLM's step
+    timeout) the rest of the batch is attempted against a dead server: the job
+    in flight reports ``HTTP Error 500`` and each later job a reset, broken pipe
+    or refused connection (``ENGINE_GONE_MARKERS``). The driver sees none of it
+    until the batch ends, so the batch's results are inspected afterwards: the
+    sent jobs are walked in SEND order (not ``results`` order, which omits
+    unreported jobs) and the TRAILING RUN, the longest suffix in which every
+    job carries an engine-gone error, is taken. An engine error followed by a
+    job that did not carry one is never a death, because a dead engine cannot
+    serve the later job; a suffix is the only shape a death can leave. A
+    non-empty run is then corroborated with one ``ec2.attn_full_status(state)``
+    call, since a live engine can also end a batch on a transient connection
+    error. The engine is declared dead when that call raises (stopping is the
+    cheap mistake: the unsent jobs are recorded in ``not_sent`` and can be sent
+    again) or when ``healthy`` is not ``True`` or ``container`` is not
+    ``"running"``. The status is asked ONLY when the run is non-empty. When
+    dead, the first job of the run is failed ``"engine died during this job: "``
+    and the others ``"engine already dead: "`` (the agent attempted them, so
+    they are failures, not ``not_sent``); every job of every later batch goes to
+    ``not_sent`` without listing keys or minting a URL, and the result is
+    returned normally. When not dead, those jobs are gated like any other.
     """
     # Phase 1: argument checks, before anything touches the box or the bucket.
     _check_mode(mode)
@@ -1184,12 +1449,31 @@ def run_capture_batches(
         # Phase 3: append-only skip, then mint URLs for the rest. The skip is
         # decided BEFORE any URL exists: each URL carries If-None-Match: *, so S3
         # answers 412 for a key that already exists, and the pre-check avoids
-        # sending a job with any key present at all.
+        # sending a job with any key present at all. Fill mode relaxes this for
+        # a stem that is compatible but incomplete: it is sent, and the
+        # If-None-Match on every URL still guarantees nothing is replaced.
         sent: Dict[str, Job] = {}
         lines: List[Dict[str, Any]] = []
         for job in batch:
             present = job_keys_present(client, bucket, job)
-            if present:
+            if present and fill:
+                # Refusals come first: a stem with a stray rank is refused even
+                # when every expected object is also there.
+                refusal = fill_refusal(client, bucket, job, tp, mode, present)
+                if refusal is not None:
+                    logging.warning(f"attention: {job.job_id} not sent: {refusal}")
+                    result.failed[job.job_id] = refusal
+                    continue
+                expected_keys = {k for rank in range(tp) for k in rank_keys(job.key, rank)}
+                if expected_keys.issubset(present):
+                    logging.warning(f"attention: {job.job_id} not sent, all {len(present)} object(s) already exist")
+                    result.skipped_existing[job.job_id] = present
+                    continue
+                logging.warning(
+                    f"attention: {job.job_id} has {len(present)} of {len(expected_keys)} "
+                    "object(s); sending it to complete the stem"
+                )
+            elif present:
                 logging.warning(f"attention: {job.job_id} not sent, {len(present)} key(s) already exist")
                 result.skipped_existing[job.job_id] = present
                 continue
@@ -1228,9 +1512,44 @@ def run_capture_batches(
             logging.warning(f"attention: capture batch ({label}) reported: {status['error']!r}")
         results = status.get("results") or {}
 
+        # Phase 5a: engine death. Only a non-empty trailing run of engine-gone
+        # errors makes ``attn_full_status`` worth asking about (and fakes
+        # without it keep working); see the Notes for why a suffix and why the
+        # corroboration.
+        dead_run: List[Tuple[str, str]] = []
+        trailing = _trailing_engine_errors(sent, results)
+        if trailing:
+            full_status: Mapping[str, Any]
+            try:
+                reply = ec2.attn_full_status(state)
+                full_status = reply if isinstance(reply, Mapping) else {"error": f"unreadable status: {reply!r}"}
+                dead = full_status.get("healthy") is not True or full_status.get("container") != "running"
+            except Exception as exc:  # noqa: BLE001 -- an unreadable box is treated as a dead one
+                full_status = {"error": f"{type(exc).__name__}: {exc}"}
+                dead = True
+            if dead:
+                dead_run = trailing
+                first_id, first_error = trailing[0]
+                result.engine_died = f"{first_id}: {first_error}"
+                logging.warning(f"attention: engine died ({result.engine_died}); no further batch is sent")
+                if on_engine_death is not None:
+                    try:
+                        on_engine_death(full_status)
+                    except Exception as exc:  # noqa: BLE001 -- a hook must never lose the result
+                        logging.warning(f"attention: on_engine_death hook raised {exc!r}; ignored")
+        dead_ids = {job_id for job_id, _ in dead_run}
+
         # Phase 5, gate 1: what the box itself reported, per rank.
         ok_jobs: List[Job] = []
         for job_id, job in sent.items():
+            if job_id in dead_ids:
+                # The agent attempted these jobs, so they failed (they are not
+                # "not sent"); the first one is the job in flight at the death.
+                error = results[job_id]["error"]
+                prefix = "engine died during this job: " if job_id == dead_run[0][0] else "engine already dead: "
+                result.failed[job_id] = f"{prefix}{error!r}"
+                logging.warning(f"attention: {job.key} ({job_id}) failed: {result.failed[job_id]}")
+                continue
             entry = results.get(job_id)
             reported = _capture_rank_records(entry)
             if reported:
@@ -1252,4 +1571,15 @@ def run_capture_batches(
             result.verified.extend(verified)
             for job_id in failed:
                 result.failed[job_id] = "upload verification failed"
+
+        # Phase 7: a dead engine ends the run. Later batches are recorded, not
+        # sent: no key listing, no presigned URL, so they can be re-sent as is.
+        if dead_run:
+            remaining = [j.job_id for j in ordered[start + batch_size:]]
+            result.not_sent.extend(remaining)
+            logging.warning(
+                f"attention: engine dead: {len(dead_run)} job(s) failed in this batch, "
+                f"{len(remaining)} job(s) not sent"
+            )
+            break
     return result

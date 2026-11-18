@@ -1250,3 +1250,117 @@ def test_summary_mode_rejects_malformed_class_vectors(monkeypatch, tmp_path: Pat
     _reduced_job(tmp_path, "bad", 2, 10, 5, [0] * 9, [9], "summary")   # one class short
     _run_forward([layer], 10, 8)
     assert not uploads and not (tmp_path / "done").exists()
+
+
+# --------------------------------------------------------------------------- fill mode
+def _recording_put(monkeypatch, plugin, script):
+    """Like ``_scripted_put`` but records ``(url, body)`` of every attempt."""
+    import time as real_time
+
+    sent = []
+
+    def put(url, data=None, headers=None, timeout=None):
+        sent.append((url, bytes(data)))
+        step = script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return types.SimpleNamespace(status_code=step)
+
+    monkeypatch.setattr(sys.modules["requests"], "put", put)
+    monkeypatch.setattr(plugin, "time", types.SimpleNamespace(sleep=lambda s: None,
+                                                               time=real_time.time))
+    return sent
+
+
+def _fill_job(monkeypatch, plugin, tmp_path, script, job_id):
+    sent = _recording_put(monkeypatch, plugin, script)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    _arm(tmp_path, job_id, 1, 12, [11])
+    _run_forward([layer], 12, 8)
+    done = json.loads((tmp_path / "done" / f"{job_id}.r0.json").read_text())
+    metas = [json.loads(body) for url, body in sent if url.endswith(".json")]
+    return done, sent, metas
+
+
+def test_fill_mode_counts_a_first_attempt_412_as_stored(monkeypatch, tmp_path: Path) -> None:
+    """With SMOLBENCH_ATTN_FILL=1 the key existed from an earlier run: stored, not failed."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    # Read at call time, not at import or register: set after the plugin is loaded.
+    monkeypatch.setenv("SMOLBENCH_ATTN_FILL", "1")
+    sent = _scripted_put(monkeypatch, plugin, [412, 200, 200])
+    status = plugin._put("put://x", b"blob", "application/octet-stream")
+    assert status != 412 and plugin._landed(status)
+    assert len(sent) == 1, "an existing object is never retried"
+    assert sent[0]["If-None-Match"] == "*"
+
+
+@pytest.mark.parametrize("value", [None, "0", "", "true"])
+def test_only_fill_equal_to_one_changes_the_412_rule(monkeypatch, tmp_path: Path, value) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    if value is None:
+        monkeypatch.delenv("SMOLBENCH_ATTN_FILL", raising=False)
+    else:
+        monkeypatch.setenv("SMOLBENCH_ATTN_FILL", value)
+    _scripted_put(monkeypatch, plugin, [412, 200])
+    assert plugin._put("put://x", b"blob", "application/json") == 412
+
+
+def test_fill_mode_keeps_the_other_412_rules(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setenv("SMOLBENCH_ATTN_FILL", "1")
+    _scripted_put(monkeypatch, plugin, [ConnectionError("reset"), 412])
+    assert plugin._put("put://x", b"b", "application/json") == plugin.PUT_LANDED_EARLIER
+    _scripted_put(monkeypatch, plugin, [403, 412])
+    assert plugin._put("put://x", b"b", "application/json") == 412
+
+
+def test_fill_mode_meta_says_the_npz_existed(monkeypatch, tmp_path: Path) -> None:
+    """npz answered "exists", meta new: the meta carries npz_put existing and the job is stored."""
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setenv("SMOLBENCH_ATTN_FILL", "1")
+    done, sent, metas = _fill_job(monkeypatch, plugin, tmp_path, [412, 200], "half")
+    assert done["ok"] is True and done["uploaded"] is True, done
+    assert len(sent) == 2 and len(metas) == 1
+    assert metas[0]["npz_put"] == "existing"
+    assert metas[0]["bytes"] == len(sent[0][1])  # still the size of the npz THIS run built
+
+
+def test_fill_mode_both_objects_existing_is_a_stored_rank(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setenv("SMOLBENCH_ATTN_FILL", "1")
+    done, sent, _metas = _fill_job(monkeypatch, plugin, tmp_path, [412, 412], "both")
+    assert done["ok"] is True and done["uploaded"] is True, done
+    assert len(sent) == 2
+
+
+@pytest.mark.parametrize("script, fill", [([200, 200], "1"), ([200, 412], "1"), ([200, 200], None)])
+def test_npz_put_marker_only_when_the_npz_existed_in_fill_mode(
+    monkeypatch, tmp_path: Path, script, fill
+) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    if fill:
+        monkeypatch.setenv("SMOLBENCH_ATTN_FILL", fill)
+    done, _sent, metas = _fill_job(monkeypatch, plugin, tmp_path, list(script), "fresh")
+    assert done["ok"] is True, done
+    assert len(metas) == 1 and "npz_put" not in metas[0]
+
+
+def test_without_fill_a_first_attempt_412_still_fails_the_job(monkeypatch, tmp_path: Path) -> None:
+    plugin, _uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.delenv("SMOLBENCH_ATTN_FILL", raising=False)
+    done, sent, metas = _fill_job(monkeypatch, plugin, tmp_path, [412, 200], "nofill")
+    assert done["ok"] is False and done["http_status"] == [412] and metas == []
+
+
+def test_register_logs_the_execute_model_timeout(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.setenv("VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", "3600")
+    _load_plugin(monkeypatch, tmp_path)
+    lines = [l for l in capsys.readouterr().out.splitlines() if "registered" in l]
+    assert lines and "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS" in lines[-1] and "3600" in lines[-1]
+
+
+def test_register_logs_an_unset_execute_model_timeout(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.delenv("VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", raising=False)
+    _load_plugin(monkeypatch, tmp_path)
+    lines = [l for l in capsys.readouterr().out.splitlines() if "registered" in l]
+    assert lines and "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS" in lines[-1]

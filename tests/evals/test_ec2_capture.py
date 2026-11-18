@@ -24,6 +24,9 @@ _CAPTURE_ENV = {
     "VLLM_PLUGINS": "smolbench_attn",
     "SMOLBENCH_ATTN_DIR": "/root/.cache/huggingface/attn",
     "SMOLBENCH_ATTN_MODEL": "ministral-3-14b",
+    # Always set for a capture serve: one prefill of a long cell can outlast vLLM's default
+    # 300 s bound on a model step, which kills the engine.
+    "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS": "3600",
 }
 _DIST = "attn_plugin/smolbench_attn-0.1.dist-info"
 def _capture_harness(monkeypatch, state):
@@ -257,3 +260,140 @@ def test_an_override_conflicting_with_a_spec_batched_token_flag_is_refused(monke
         with ec2.serve_model("ministral-3-14b", capture=True, max_model_len=49152):
             pass
     assert "/serve" not in [path for _, path, _ in calls]
+
+
+# ------------------------------------------------------------------ capture serve settings
+def _served_payload(monkeypatch, **kw):
+    """Serve ministral-3-14b in capture mode with `kw` and return the /serve payload."""
+    calls = _capture_harness(monkeypatch, dict(_S5_STATE))
+    with ec2.serve_model("ministral-3-14b", capture=True, **kw):
+        pass
+    (payload,) = [p for _m, path, p in calls if path == "/serve"]
+    return payload
+
+
+def _gmu(args):
+    """Return every value that follows --gpu-memory-utilization in an argv list."""
+    return [args[i + 1] for i, a in enumerate(args) if a == "--gpu-memory-utilization"]
+
+
+def test_a_capture_serve_sets_the_execute_timeout_by_default_and_nothing_optional(monkeypatch):
+    payload = _served_payload(monkeypatch)
+    assert payload["env"]["VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"] == "3600"
+    assert ec2.DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S == 3600
+    assert "SMOLBENCH_ATTN_GATE_TOL" not in payload["env"]
+    assert "SMOLBENCH_ATTN_FILL" not in payload["env"]
+    # The spec's own share (appended at import) is the only one, unchanged.
+    spec = ec2.EC2_DEPLOY_SPECS["ministral-3-14b"]["vllm_args"]
+    assert _gmu(payload["vllm_args"]) == _gmu(spec) == ["0.92"]
+
+
+def test_a_capture_serve_carries_the_optional_settings_when_given(monkeypatch):
+    spec_before = copy.deepcopy(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    payload = _served_payload(
+        monkeypatch, execute_model_timeout_s=7200, gate_tol=0.05, fill=True,
+        gpu_memory_utilization=0.95)
+    env = payload["env"]
+    assert env["VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"] == "7200"
+    assert float(env["SMOLBENCH_ATTN_GATE_TOL"]) == 0.05
+    assert env["SMOLBENCH_ATTN_FILL"] == "1"
+    # Replaced in the payload copy, never appended a second time; the global spec is untouched.
+    assert _gmu(payload["vllm_args"]) == ["0.95"]
+    assert payload["vllm_args"].count("--gpu-memory-utilization") == 1
+    assert ec2.EC2_DEPLOY_SPECS["ministral-3-14b"] == spec_before
+    # Every other key of the default capture env is still there.
+    for key, value in _CAPTURE_ENV.items():
+        if key != "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS":
+            assert env[key] == value
+
+
+def test_fill_false_adds_no_fill_variable(monkeypatch):
+    payload = _served_payload(monkeypatch, fill=False)
+    assert "SMOLBENCH_ATTN_FILL" not in payload["env"]
+
+
+def test_a_gpu_share_is_appended_when_the_spec_carries_none(monkeypatch):
+    spec = copy.deepcopy(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    args = spec["vllm_args"]
+    at = args.index("--gpu-memory-utilization")
+    del args[at:at + 2]
+    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "ministral-3-14b", spec)
+    payload = _served_payload(monkeypatch, gpu_memory_utilization=0.9)
+    assert _gmu(payload["vllm_args"]) == ["0.9"]
+
+
+@pytest.mark.parametrize("kw", [
+    {"execute_model_timeout_s": 299},
+    {"execute_model_timeout_s": 0},
+    {"execute_model_timeout_s": True},
+    {"execute_model_timeout_s": 600.5},
+    {"execute_model_timeout_s": "3600"},
+    {"gpu_memory_utilization": 0},
+    {"gpu_memory_utilization": 1},
+    {"gpu_memory_utilization": 1.2},
+    {"gpu_memory_utilization": -0.1},
+    {"gpu_memory_utilization": True},
+    {"gpu_memory_utilization": float("nan")},
+    {"gate_tol": 0},
+    {"gate_tol": -0.01},
+    {"gate_tol": 1.0},
+    {"gate_tol": float("nan")},
+    {"gate_tol": float("inf")},
+    {"gate_tol": True},
+    {"fill": 1},
+    {"fill": "yes"},
+])
+def test_bad_capture_settings_are_refused_before_serving(monkeypatch, kw):
+    calls = _capture_harness(monkeypatch, dict(_S5_STATE))
+    with pytest.raises(ValueError):
+        with ec2.serve_model("ministral-3-14b", capture=True, **kw):
+            pass
+    assert "/serve" not in [path for _, path, _ in calls]
+
+
+def test_the_lowest_execute_timeout_accepted_is_300(monkeypatch):
+    payload = _served_payload(monkeypatch, execute_model_timeout_s=300)
+    assert payload["env"]["VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS"] == "300"
+
+
+@pytest.mark.parametrize("kw", [
+    {"execute_model_timeout_s": 3600},
+    {"gate_tol": 0.05},
+    {"fill": True},
+    {"gpu_memory_utilization": 0.95},
+])
+def test_capture_only_settings_are_refused_on_a_generation_serve(monkeypatch, kw):
+    calls = _capture_harness(monkeypatch, dict(_S5_STATE))
+    with pytest.raises(ValueError):
+        with ec2.serve_model("ministral-3-14b", **kw):
+            pass
+    assert "/serve" not in [path for _, path, _ in calls]
+
+
+def test_the_guards_still_hold_with_the_new_settings(monkeypatch):
+    """Prefix caching and the batched-token ceiling are still checked when settings are given."""
+    _capture_harness(monkeypatch, dict(_S5_STATE))
+    spec = dict(ec2.EC2_DEPLOY_SPECS["ministral-3-14b"])
+    spec["vllm_args"] = [a for a in spec["vllm_args"] if a != "--no-enable-prefix-caching"]
+    monkeypatch.setitem(ec2.EC2_DEPLOY_SPECS, "ministral-3-14b", spec)
+    with pytest.raises(ValueError, match="prefix-caching"):
+        with ec2.serve_model("ministral-3-14b", capture=True, fill=True, gate_tol=0.05,
+                             gpu_memory_utilization=0.95, execute_model_timeout_s=3600):
+            pass
+
+
+def test_attn_full_status_returns_the_whole_reply_with_its_log_tail(monkeypatch):
+    calls = []
+    reply = {"healthy": False, "container": "exited", "log_tail": "EngineDeadError ...",
+             "serve_log_tail": "", "attn": {"running": False}}
+
+    def fake_agent(state_arg, method, path, payload=None, timeout=120, connect_retries=40):
+        calls.append((state_arg, method, path))
+        return dict(reply)
+
+    monkeypatch.setattr(ec2, "_agent", fake_agent)
+    # It takes the state explicitly, like attn_status: it must never re-read the state file.
+    monkeypatch.setattr(ec2, "_require_state", lambda: pytest.fail("state file re-read"))
+    state = dict(_S5_STATE)
+    assert ec2.attn_full_status(state) == reply
+    assert calls == [(state, "GET", "/status")]

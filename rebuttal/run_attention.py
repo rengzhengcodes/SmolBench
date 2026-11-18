@@ -6,6 +6,8 @@
     python rebuttal/run_attention.py --model gemma-4-31b --study horn --arms lem pad --reps 0-1
     python rebuttal/run_attention.py --model gemma-4-31b --study horn --reps 0-1 --approved
     python rebuttal/run_attention.py --model gemma-4-31b --study horn --audit-only
+    python rebuttal/run_attention.py --model <model> --job-ids ID ID --fill --exec-timeout-s 3600
+    python rebuttal/run_attention.py --model <model> --job-ids @ids.txt --approved
 
 Without ``--approved`` it prints the plan of ``attention_replay.plan_replay`` (sizes,
 errors, storage estimate) and exits 0; it builds no AWS client. With ``--approved`` it
@@ -33,13 +35,27 @@ driver's choice, mass for induction and summary for horn) and ``--capture-max-mo
 overrides the capture context length, in both studies. All of them work with ``--audit-only``
 (``--mode`` is not needed there: the stored objects say which mode they hold).
 
+Recapture. ``--job-ids ID [ID ...]`` narrows the plan, the run or the audit to the jobs with
+those ids (the driver rejects an id that no planned job has). An argument that starts with
+``@`` names a file with one id per line; blank lines are skipped, and an unreadable file or
+a selection with no id at all is an error (exit 2). ``--fill`` completes the stems that
+hold some but not all of their objects; it needs ``--job-ids``, so that it can never re-send
+a whole seed range (exit 2 without it). ``--exec-timeout-s`` (vLLM's step timeout of the
+capture serve), ``--gate-tol`` and ``--gpu-memory-utilization`` override the serve
+settings; the driver validates them and a bad value exits 1 before anything launches. With
+``--audit-only`` the audit launches nothing, so ``--fill``, ``--exec-timeout-s``,
+``--gate-tol`` and ``--gpu-memory-utilization`` are errors there (a silently ignored serve
+flag could hide a typo); ``--job-ids`` is allowed. The plan prints the selected jobs and a
+``serve settings`` block with the values that ``--approved`` would launch with.
+
 Defaults follow the notebook's attention cells: the results root is the induction mirror
 (``bedrock_trio.RESULTS_DIR / "induction"``, or the same under the smoke folder with
 ``--smoke``) and the destination is ``<RESULTS_S3>[/<smoke prefix>]/attention-v2``.
 
 Exit codes: 0 every job that was sent passed the capture and the audit; 1 an exception
 (also a refusal such as an unverified serve); 2 a bad command line; 3 some job failed
-the capture or the content audit; 4 the box could not be shut down (it may still be
+the capture or the content audit, or some job was not sent (a dead engine stops the
+sending of the rest; the report names them); 4 the box could not be shut down (it may still be
 billing; the report is written first). With ``--audit-only``: 0 every audited job was
 verified (also when there was nothing to audit), 3 some job failed the audit, 1 an
 exception; the report file is ``attention_audit--<model>--<stamp>.json``. For ``--study horn`` the
@@ -233,21 +249,91 @@ def build_parser() -> argparse.ArgumentParser:
                         help="horn only: the model's rows file (default: <results folder>/horn/<model>.jsonl)")
     parser.add_argument("--rungs-dir", type=Path, default=None,
                         help="horn only: folder of the stored rung prompts (default: bedrock_trio.RUNGS_DIR)")
+    parser.add_argument("--job-ids", nargs="+", default=None, metavar="ID",
+                        help="only these job ids; an argument starting with @ is a file with one id per "
+                             "line (default: every planned job)")
+    parser.add_argument("--fill", action="store_true",
+                        help="complete the stems that hold some but not all objects; needs --job-ids")
+    parser.add_argument("--gate-tol", type=float, default=None, metavar="X",
+                        help="tolerance of the capture gate, overriding the driver's default")
+    parser.add_argument("--exec-timeout-s", type=int, default=None, metavar="N",
+                        help="vLLM's step timeout in seconds for the capture serve "
+                             "(default: the driver's, 3600)")
+    parser.add_argument("--gpu-memory-utilization", type=float, default=None, metavar="X",
+                        help="share of GPU memory vLLM may use, overriding the driver's default")
     return parser
 
 
-def _print_plan(model: str, results_root: Path, s3_uri: str, **kwargs: object) -> int:
-    """Print the offline plan and its errors; builds no AWS client. Returns the exit code.
+def expand_job_ids(parser: argparse.ArgumentParser, raw: Optional[Sequence[str]]) -> Optional[List[str]]:
+    """Expand ``@file`` arguments of ``--job-ids`` into the ids they list.
 
-    `kwargs` are the planning keywords of ``attention_replay.plan_replay`` (seeds, mode,
-    capture length and, for the horn study, the study keywords).
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser
+        Used to report a bad selection as a command-line error (exit 2).
+    raw : Sequence[str], optional
+        The ``--job-ids`` values; ``None`` when the flag was not given.
+
+    Returns
+    -------
+    Optional[List[str]]
+        ``None`` for ``None``; otherwise the ids in order, duplicates kept (the driver
+        collapses them). A ``@file`` holds one id per line; each line is stripped and
+        blank lines are skipped.
+
+    Raises
+    ------
+    SystemExit
+        Through ``parser.error`` (code 2) when a ``@file`` cannot be read or the
+        selection yields no id.
     """
+    if raw is None:
+        return None
+    ids: List[str] = []
+    for item in raw:
+        if not item.startswith("@"):
+            ids.append(item)
+            continue
+        try:
+            text = Path(item[1:]).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            parser.error(f"--job-ids: cannot read {item[1:]!r}: {exc}")
+        ids.extend(line.strip() for line in text.splitlines() if line.strip())
+    if not ids:
+        parser.error("--job-ids: the selection holds no job id")
+    return ids
+
+
+def _print_plan(model: str, results_root: Path, s3_uri: str, serve: Dict[str, object],
+                **kwargs: object) -> int:
+    """Print the offline plan, its errors and the serve settings; builds no AWS client.
+
+    `serve` holds the ``fill``, ``gate_tol``, ``execute_model_timeout_s`` and
+    ``gpu_memory_utilization`` keywords of ``attention_replay.serve_settings``; the block
+    printed is what a ``--approved`` run would launch the capture serve with. A setting
+    the driver rejects raises ``ValueError`` before the plan-only line, so nothing is
+    presented as ready. `kwargs` are the planning keywords of
+    ``attention_replay.plan_replay`` (seeds, mode, capture length, job ids and, for the
+    horn study, the study keywords). Returns the exit code.
+    """
+    # Imported here: the module sets the provider's environment defaults at import time.
+    from smolbench.evals.providers import ec2
+
     plan = ar.plan_replay(results_root, [model], s3_uri=s3_uri, **kwargs)[model]
     print(plan.summary())
     for err in plan.errors[:_LIST_LIMIT]:
         print("  error:", err)
     if len(plan.errors) > _LIST_LIMIT:
         print(f"  ... and {len(plan.errors) - _LIST_LIMIT} more errors")
+    settings = ar.serve_settings(
+        spec=ec2.EC2_DEPLOY_SPECS[model], capture_max_model_len=plan.capture_max_model_len, **serve,
+    )
+    print("serve settings (what --approved would launch with):")
+    print(f"  capture context (max_model_len): {settings['max_model_len']} tokens")
+    print(f"  execute timeout: {settings['execute_model_timeout_s']} s")
+    print(f"  gate tolerance: {settings['gate_tol']}")
+    print(f"  fill: {settings['fill']}")
+    print(f"  GPU memory share: {settings['gpu_memory_utilization']}")
     print("plan only: nothing was launched (pass --approved to run it)")
     return EXIT_OK
 
@@ -257,8 +343,15 @@ def _print_report(model: str, report: "ar.ReplayReport") -> None:
     print(
         f"{model}: {len(report.verified)} verified, {len(report.failed)} failed, "
         f"{len(report.audit_failures)} failed the audit, {len(report.skipped_existing)} already stored, "
-        f"{len(report.partial)} partial, {len(report.manifests)} manifests"
+        f"{len(report.partial)} partial, {len(report.manifests)} manifests, "
+        f"{len(report.not_sent)} not sent"
     )
+    if report.engine_died:
+        print(f"  engine died: {report.engine_died}")
+        if report.engine_log:
+            print(f"  engine log: {report.engine_log}")
+    if report.refilled:
+        print(f"  {len(report.refilled)} job(s) completed by --fill")
     if report.plan is not None:
         for arm, stats in report.plan.per_arm.items():
             print(f"  arm {arm}: {stats['over_context']} over the "
@@ -326,6 +419,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                             ("--rows", args.rows), ("--rungs-dir", args.rungs_dir)):
             if value is not None:
                 parser.error(f"{flag} is only valid with --study horn")
+    job_ids = expand_job_ids(parser, args.job_ids)
+    if args.fill and job_ids is None:
+        parser.error("--fill requires --job-ids (fill must never re-send a whole seed range)")
+    if args.audit_only:
+        # The audit launches nothing, so a serve flag would be ignored; name it instead.
+        for flag, value in (("--fill", args.fill or None), ("--gate-tol", args.gate_tol),
+                            ("--exec-timeout-s", args.exec_timeout_s),
+                            ("--gpu-memory-utilization", args.gpu_memory_utilization)):
+            if value is not None:
+                parser.error(f"{flag} has no effect with --audit-only (the audit launches nothing)")
     default_root, default_s3 = default_locations(args.smoke)
     results_root = args.results_root if args.results_root is not None else default_root
     s3_uri = args.s3_uri if args.s3_uri is not None else default_s3
@@ -350,7 +453,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report = ar.audit_existing(
                 args.model, results_root, s3_uri,
                 seeds=args.seeds, arrays=args.audit_arrays, workers=args.audit_workers,
-                capture_max_model_len=args.capture_max_model_len, **study_kwargs,
+                capture_max_model_len=args.capture_max_model_len, job_ids=job_ids, **study_kwargs,
             )
             _print_report(args.model, report)
             print(f"  {report.not_captured} planned job(s) have no capture in the bucket")
@@ -361,8 +464,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return EXIT_JOBS_FAILED if report.audit_failures else EXIT_OK
         if not args.approved:
             return _print_plan(
-                args.model, results_root, s3_uri, seeds=args.seeds, mode=args.mode,
-                capture_max_model_len=args.capture_max_model_len, **study_kwargs,
+                args.model, results_root, s3_uri,
+                {"fill": args.fill, "gate_tol": args.gate_tol,
+                 "execute_model_timeout_s": args.exec_timeout_s,
+                 "gpu_memory_utilization": args.gpu_memory_utilization},
+                seeds=args.seeds, mode=args.mode,
+                capture_max_model_len=args.capture_max_model_len, job_ids=job_ids, **study_kwargs,
             )
         try:
             report = ar.replay_model(
@@ -378,6 +485,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 run_label=args.run_label,
                 mode=args.mode,
                 capture_max_model_len=args.capture_max_model_len,
+                job_ids=job_ids,
+                fill=args.fill,
+                gate_tol=args.gate_tol,
+                execute_model_timeout_s=args.exec_timeout_s,
+                gpu_memory_utilization=args.gpu_memory_utilization,
+                # The server log tail of a dead engine is saved next to the report.
+                engine_log_dir=report_dir,
                 **study_kwargs,
             )
         except ar.ShutdownFailed as exc:
@@ -393,10 +507,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return EXIT_SHUTDOWN_FAILED
         _print_report(args.model, report)
         print(f"report: {_write_report(report, report_dir, study=study)}")
-        # NOTE: the exit rule counts failed and audit-failed jobs only. A manifest error or
-        # a partial job (a stored job missing a rank object) still exits 0; both are printed
-        # above and held in the report file.
-        return EXIT_JOBS_FAILED if report.failed or report.audit_failures else EXIT_OK
+        # NOTE: the exit rule counts failed, audit-failed and not-sent jobs (a dead engine
+        # leaves the rest unsent, so they were not captured). A manifest error or a partial
+        # job (a stored job missing a rank object) still exits 0; both are printed above and
+        # held in the report file.
+        return EXIT_JOBS_FAILED if report.failed or report.audit_failures or report.not_sent else EXIT_OK
     except Exception as exc:  # noqa: BLE001 -- any failure is an exit code, with its message
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return EXIT_EXCEPTION

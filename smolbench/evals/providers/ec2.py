@@ -13,6 +13,7 @@ import gzip
 import json
 import logging
 import math
+import numbers
 import os
 import secrets
 import time
@@ -2579,6 +2580,16 @@ def _wait_model_ready(
     )
 
 
+#: Step bound (seconds) a capture serve sets through
+#: ``VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS`` when the caller gives none. One
+#: capture prefill of a ~87K-token cell takes about 300 s inside a single
+#: forward, so vLLM's own bound would kill the engine.
+DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S: int = 3600
+#: Lowest step bound a capture serve accepts: vLLM's own default with tensor
+#: parallelism. A capture serve never runs with less.
+MIN_CAPTURE_EXECUTE_TIMEOUT_S: int = 300
+
+
 @contextlib.contextmanager
 def serve_model(
     model: str,
@@ -2586,6 +2597,11 @@ def serve_model(
     force: bool = False,
     capture: bool = False,
     max_model_len: Optional[int] = None,
+    *,
+    execute_model_timeout_s: Optional[int] = None,
+    gate_tol: Optional[float] = None,
+    fill: bool = False,
+    gpu_memory_utilization: Optional[float] = None,
 ) -> Iterator[str]:
     """Point the provisioned instance's vLLM at ``model`` for a ``with`` body.
 
@@ -2625,6 +2641,23 @@ def serve_model(
         appended ``--max-num-batched-tokens`` equals it. The already-serving fast
         path compares the whole payload, so a different context swaps the
         container.
+    execute_model_timeout_s : Optional[int]
+        Keyword-only, capture-only. Value of ``VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS``
+        (seconds vLLM allows one model step). ``None`` means
+        ``DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S``. Must be an ``int`` (not ``bool``)
+        ``>= MIN_CAPTURE_EXECUTE_TIMEOUT_S``.
+    gate_tol : Optional[float]
+        Keyword-only, capture-only. Sets ``SMOLBENCH_ATTN_GATE_TOL``, the
+        plugin's gate tolerance. ``None`` leaves the plugin's own default. Must
+        be a finite real number (not ``bool``) in the open interval (0, 1).
+    fill : bool
+        Keyword-only, capture-only. ``True`` sets ``SMOLBENCH_ATTN_FILL=1``, which
+        puts the plugin in fill mode (completes partially stored captures).
+        Must be exactly a ``bool``.
+    gpu_memory_utilization : Optional[float]
+        Keyword-only, capture-only. Replaces the value of the spec's
+        ``--gpu-memory-utilization`` in this payload copy (appended when the
+        spec has no such flag). Same range rules as ``gate_tol``.
 
     Yields
     ------
@@ -2647,6 +2680,10 @@ def serve_model(
         ``max_model_len`` is not an int in ``(0, spec max_model_len]``, or
         (with ``capture=True``) the spec carries a ``--max-num-batched-tokens``
         different from it.
+        Any of ``execute_model_timeout_s``, ``gate_tol``, ``fill`` or
+        ``gpu_memory_utilization`` is given with ``capture=False``, or has an
+        invalid type or value (see Parameters). Raised before any state or
+        agent access.
     RuntimeError
         The instance became healthy serving something else.
     """
@@ -2667,6 +2704,41 @@ def serve_model(
             raise ValueError(
                 f"{model!r}: max_model_len must be an int with 0 < max_model_len <= "
                 f"{ceiling}, got {max_model_len!r}"
+            )
+    # Capture-only settings: validated here too, so a bad value posts nothing.
+    given = {
+        "execute_model_timeout_s": execute_model_timeout_s is not None,
+        "gate_tol": gate_tol is not None,
+        "fill": fill is not False,
+        "gpu_memory_utilization": gpu_memory_utilization is not None,
+    }
+    if not capture:
+        for name, is_given in given.items():
+            if is_given:
+                raise ValueError(f"{model!r}: {name} is capture-only; pass capture=True")
+    if execute_model_timeout_s is not None and (
+        isinstance(execute_model_timeout_s, bool)
+        or not isinstance(execute_model_timeout_s, int)
+        or execute_model_timeout_s < MIN_CAPTURE_EXECUTE_TIMEOUT_S
+    ):
+        raise ValueError(
+            f"{model!r}: execute_model_timeout_s must be an int >= "
+            f"{MIN_CAPTURE_EXECUTE_TIMEOUT_S}, got {execute_model_timeout_s!r}"
+        )
+    if not isinstance(fill, bool):
+        raise ValueError(f"{model!r}: fill must be a bool, got {fill!r}")
+    for name, value in (
+        ("gate_tol", gate_tol),
+        ("gpu_memory_utilization", gpu_memory_utilization),
+    ):
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, numbers.Real)
+            or not math.isfinite(value)
+            or not 0 < value < 1
+        ):
+            raise ValueError(
+                f"{model!r}: {name} must be a finite number in (0, 1), got {value!r}"
             )
     state = _require_state()
     # BEFORE the swap: a mismatched box must not generate one row.
@@ -2751,7 +2823,33 @@ def serve_model(
             # capture names its own checkpoint instead of relying on the
             # reader to trust the S3 key it was filed under.
             "SMOLBENCH_ATTN_MODEL": model,
+            # Design: one long prefill (a ~87K-token cell takes about 300 s
+            # inside a single forward) outlasts vLLM's default step bound with
+            # tensor parallelism, and vLLM then kills the engine. Always set,
+            # so no capture serve runs on the default.
+            "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS": str(
+                DEFAULT_CAPTURE_EXECUTE_TIMEOUT_S
+                if execute_model_timeout_s is None
+                else execute_model_timeout_s
+            ),
         }
+        if gate_tol is not None:
+            # repr(float) round-trips exactly (0.05 -> "0.05").
+            serve_payload["env"]["SMOLBENCH_ATTN_GATE_TOL"] = repr(float(gate_tol))
+        if fill is True:
+            # Design: fill is a serve-wide env var, not a per-job field. The
+            # agent copies only a fixed set of job keys into the plugin's
+            # current.json, and the agent ships in user-data, which is at its
+            # size budget, so a new job key is not possible.
+            serve_payload["env"]["SMOLBENCH_ATTN_FILL"] = "1"
+        if gpu_memory_utilization is not None:
+            # Every spec carries the flag already (appended at import); replace
+            # its value in this payload copy so the flag never appears twice.
+            share = str(float(gpu_memory_utilization))
+            if "--gpu-memory-utilization" in vllm_args:
+                vllm_args[vllm_args.index("--gpu-memory-utilization") + 1] = share
+            else:
+                vllm_args += ["--gpu-memory-utilization", share]
         serve_payload["files"] = {
             # Read HERE, at serve time, not at import.
             "attn_plugin/smolbench_attn/__init__.py": attention_capture_plugin_py(),
@@ -2938,6 +3036,41 @@ def attn_status(state: Dict[str, Any]) -> Dict[str, Any]:
     # ``or {}`` rather than ``.get("attn", {})``: an agent that reports an
     # explicit null must read the same as one that omits the key.
     return status.get("attn") or {}
+
+
+def attn_full_status(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the agent's complete ``/status`` reply, not only its ``attn`` block.
+
+    Parameters
+    ----------
+    state : Dict[str, Any]
+        Instance state, passed explicitly for the same reason as in
+        :func:`attn_start`: the caller holds the state of the box it
+        provisioned, and re-reading the state file could retarget a
+        replacement instance.
+
+    Returns
+    -------
+    Dict[str, Any]
+        The reply unchanged: ``healthy``, ``container``, ``attn``,
+        ``log_tail`` and ``serve_log_tail``. After a capture batch the caller
+        reads ``healthy`` and ``container`` to confirm that the engine died,
+        and saves ``log_tail`` as the evidence.
+
+    Raises
+    ------
+    RuntimeError
+        The agent answered non-2xx (``_agent`` includes the body).
+    requests.exceptions.RequestException
+        The box stayed unreachable through ``_agent``'s connect retries.
+
+    Notes
+    -----
+    Every authenticated agent request touches the box's ``last_active``, so
+    this call also feeds the idle watchdog, like :func:`attn_status`. It does
+    not call ``_require_state``.
+    """
+    return _agent(state, "GET", "/status", timeout=60, connect_retries=4)
 
 
 def shutdown_instance(wait: bool = True) -> None:

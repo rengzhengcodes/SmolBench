@@ -566,3 +566,163 @@ def test_bad_or_misplaced_flags_exit_with_the_argparse_code(cli, capsys, argv, w
     with pytest.raises(SystemExit) as caught:
         cli.main(["--model", GEMMA, *argv])
     assert caught.value.code == 2 and word in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ recapture flags
+
+HORN_IDS = [f"horn.m20.{a}.s{s}.rep{r}" for s in (100, 101) for a in ("lem", "pad") for r in (0, 1)]
+
+
+def _horn_argv(root, rungs, *extra):
+    return ["--model", GEMMA, "--study", "horn", "--results-root", str(root), "--rungs-dir", str(rungs),
+            *extra]
+
+
+def test_the_plan_with_job_ids_shows_exactly_those_jobs_and_the_serve_settings(
+    cli, tmp_path, monkeypatch, capsys
+) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    monkeypatch.setattr(cli.ar, "replay_model", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    picked = ["horn.m20.pad.s101.rep1", "horn.m20.lem.s100.rep0"]
+    code = cli.main(_horn_argv(root, rungs, "--job-ids", *picked, "--fill", "--exec-timeout-s", "7200",
+                               "--gate-tol", "0.05", "--gpu-memory-utilization", "0.95",
+                               "--capture-max-model-len", "5000"))
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert sorted(seen["plan_kwargs"]["job_ids"]) == sorted(picked)
+    for job_id in HORN_IDS:
+        assert (job_id in out) == (job_id in picked), job_id
+    assert "selected jobs (2)" in out and "plan only" in out
+    # The serve settings of the run that --approved would launch.
+    settings = out[out.index("serve settings"):]
+    for needle in ("7200", "0.05", "0.95", "5000"):
+        assert needle in settings, needle
+    assert "fill" in settings
+
+
+def test_the_plan_without_the_new_flags_shows_the_default_serve_settings(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    assert cli.main(_horn_argv(root, rungs)) == 0
+    out = capsys.readouterr().out
+    assert seen["plan_kwargs"].get("job_ids") is None and "selected jobs" not in out
+    settings = out[out.index("serve settings"):]
+    assert "3600" in settings and "0.03" in settings
+
+
+def test_job_ids_from_a_file(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    seen = _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    listing = tmp_path / "ids.txt"
+    listing.write_text("horn.m20.lem.s100.rep0\n\n  horn.m20.pad.s100.rep1  \n")
+    assert cli.main(_horn_argv(root, rungs, "--job-ids", f"@{listing}", "horn.m20.lem.s101.rep0")) == 0
+    assert sorted(seen["plan_kwargs"]["job_ids"]) == sorted(
+        ["horn.m20.lem.s100.rep0", "horn.m20.pad.s100.rep1", "horn.m20.lem.s101.rep0"])
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize("make", [
+    lambda d: (d / "empty.txt").write_text("\n \n") and f"@{d / 'empty.txt'}",
+    lambda d: f"@{d / 'missing.txt'}",
+])
+def test_an_empty_or_missing_job_ids_file_exits_2(cli, tmp_path, capsys, make) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--model", GEMMA, "--job-ids", make(tmp_path)])
+    # The error line itself (the usage above it names every flag).
+    assert caught.value.code == 2 and "--job-ids" in capsys.readouterr().err.strip().splitlines()[-1]
+
+
+def test_fill_without_job_ids_exits_2(cli, capsys) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--model", GEMMA, "--fill"])
+    err = capsys.readouterr().err.strip().splitlines()[-1]
+    assert caught.value.code == 2 and "--fill" in err and "--job-ids" in err
+
+
+@pytest.mark.parametrize("argv, word", [
+    (["--gate-tol", "x"], "--gate-tol"),
+    (["--exec-timeout-s", "1.5"], "--exec-timeout-s"),
+    (["--gpu-memory-utilization", "high"], "--gpu-memory-utilization"),
+    (["--audit-only", "--fill", "--job-ids", "a"], "--fill"),
+    (["--audit-only", "--gate-tol", "0.05"], "--gate-tol"),
+    (["--audit-only", "--exec-timeout-s", "3600"], "--exec-timeout-s"),
+    (["--audit-only", "--gpu-memory-utilization", "0.9"], "--gpu-memory-utilization"),
+])
+def test_bad_or_misplaced_recapture_flags_exit_2(cli, capsys, argv, word) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--model", GEMMA, *argv])
+    assert caught.value.code == 2 and word in capsys.readouterr().err.strip().splitlines()[-1]
+
+
+def test_an_out_of_range_setting_in_the_plan_exits_1(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    assert cli.main(_horn_argv(root, rungs, "--gate-tol", "0.2")) == 1
+    assert "gate_tol" in capsys.readouterr().err
+
+
+def test_an_unknown_job_id_in_the_plan_exits_1_naming_it(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    _inject(monkeypatch, cli, helpers.AuditedBox(helpers.FakeS3()), helpers.FakeS3())
+    assert cli.main(_horn_argv(root, rungs, "--job-ids", "horn.m20.lem.s999.rep0")) == 1
+    assert "horn.m20.lem.s999.rep0" in capsys.readouterr().err
+
+
+def test_an_approved_run_passes_the_recapture_settings(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    seen = _record(monkeypatch, cli, "replay_model", ar.ReplayReport(GEMMA))
+    code = cli.main(_horn_argv(root, rungs, "--approved", "--job-ids", HORN_IDS[0], HORN_IDS[3], "--fill",
+                               "--gate-tol", "0.05", "--exec-timeout-s", "3600",
+                               "--gpu-memory-utilization", "0.95", "--report-dir", str(tmp_path / "out")))
+    assert code == 0
+    assert sorted(seen["job_ids"]) == sorted([HORN_IDS[0], HORN_IDS[3]]) and seen["fill"] is True
+    assert seen["gate_tol"] == 0.05 and seen["execute_model_timeout_s"] == 3600
+    assert seen["gpu_memory_utilization"] == 0.95
+    # The engine log goes next to the report.
+    assert Path(seen["engine_log_dir"]) == tmp_path / "out"
+    capsys.readouterr()
+
+
+def test_an_approved_run_without_the_new_flags_passes_the_defaults(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    seen = _record(monkeypatch, cli, "replay_model", ar.ReplayReport(GEMMA))
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved"]) == 0
+    assert seen.get("job_ids") is None and seen.get("fill", False) is False
+    assert seen.get("gate_tol") is None and seen.get("execute_model_timeout_s") is None
+    assert seen.get("gpu_memory_utilization") is None
+    capsys.readouterr()
+
+
+def test_audit_only_passes_job_ids(cli, tmp_path, monkeypatch, capsys) -> None:
+    root, rungs, _rows = _horn_fixture(tmp_path)
+    seen = _record(monkeypatch, cli, "audit_existing", ar.ReplayReport(GEMMA))
+    monkeypatch.setattr(cli.ar, "replay_model", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ran")))
+    assert cli.main(_horn_argv(root, rungs, "--audit-only", "--job-ids", HORN_IDS[1])) == 0
+    assert list(seen["job_ids"]) == [HORN_IDS[1]]
+    capsys.readouterr()
+
+
+def test_an_engine_death_is_printed_and_exits_3(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    report = ar.ReplayReport(GEMMA)
+    report.failed = {"a": "engine died during this job: 'HTTP Error 500: Internal Server Error'"}
+    report.not_sent = ["b", "c"]
+    report.engine_died = "a: HTTP Error 500: Internal Server Error"
+    report.engine_log = str(tmp_path / "attention_engine_log--x.log")
+    _record(monkeypatch, cli, "replay_model", report)
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved"]) == 3
+    out = capsys.readouterr().out
+    assert "2 not sent" in out and "engine died" in out and report.engine_log in out
+    (path,) = _reports(tmp_path / "results")
+    saved = json.loads(path.read_text())
+    assert saved["not_sent"] == ["b", "c"] and saved["engine_died"].startswith("a:")
+
+
+def test_unsent_jobs_alone_exit_3(cli, tmp_path, monkeypatch, capsys) -> None:
+    root = _root(tmp_path)
+    report = ar.ReplayReport(GEMMA)
+    report.not_sent = ["b"]
+    _record(monkeypatch, cli, "replay_model", report)
+    assert cli.main(["--model", GEMMA, "--results-root", str(root), "--approved"]) == 3
+    capsys.readouterr()

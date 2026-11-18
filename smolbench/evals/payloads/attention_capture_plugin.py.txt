@@ -71,6 +71,16 @@ of the grouping audit are stored per layer and head. Mass and summary modes
 share one row reduction (``_row_chunks``), so a summary is the sum of the very
 rows mass mode would have stored (before its float16 rounding).
 
+Fill mode (``SMOLBENCH_ATTN_FILL=1``, read at each upload): the buckets are
+append-only and the replay is a deterministic teacher-forced prefill, so a
+recapture of a partly stored job goes under the same keys. A 412 on the first
+attempt of a PUT then means an earlier run stored that object: it counts as
+stored (``"412-exists"``), is not replaced, and an existing npz is marked in the
+meta as ``npz_put: "existing"``. Only the exact string "1" enables it.
+
+``register()`` logs ``VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS`` (vLLM's bound on one
+model step, which a capture of a very long sequence can exceed) and the fill mode.
+
 Never raises into vLLM: every failure is recorded in the job's done file and
 serving continues.
 """
@@ -246,6 +256,9 @@ SUMMARY_CAPTURE_VERSION = 3
 SUMMARY_FIELDS = ("sum_entropy", "sum_prompt_entropy", "n_prompt_entropy", "sum_mass", "sum_sink",
                   "sum_pad_ratio", "n_pad_ratio", "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
 PUT_LANDED_EARLIER = "412-landed-earlier"  # 412 after an unclear try: it stored
+# In fill mode (SMOLBENCH_ATTN_FILL=1) a 412 on the FIRST attempt means an earlier
+# run stored this object; it counts as stored and is never replaced.
+PUT_EXISTS = "412-exists"
 
 
 def _logits_for(layer, q3, k3, pos):
@@ -942,7 +955,14 @@ def _finalize(view, session):
     # without its npz is a permanently partial job in an append-only bucket
     # (the key exists, so it can never be re-sent), whereas an npz without a
     # meta fails the audit and is reported.
+    # Design: when fill mode finds the npz already stored, the meta says so
+    # (`npz_put: "existing"`). That npz came from an earlier replay of the same
+    # deterministic prefill, so its size can differ from `bytes` (the blob built
+    # now); a consumer skips only the size-equality check for such a rank. A fresh
+    # upload adds no key, so ordinary metas are unchanged.
     statuses = [_put(put_url, blob, "application/octet-stream")]
+    if statuses[0] == PUT_EXISTS:
+        meta["npz_put"] = "existing"
     if _landed(statuses[0]):
         statuses.append(_put(meta_url, json.dumps(meta).encode(), "application/json"))
     ok = len(statuses) == 2 and all(_landed(s) for s in statuses)
@@ -955,8 +975,18 @@ def _finalize(view, session):
 
 
 def _landed(status):
-    """True when a PUT status means the object is stored (2xx or landed earlier)."""
-    return status == PUT_LANDED_EARLIER or 200 <= status < 300
+    """True when a PUT status means the object is stored (2xx, landed earlier, or existing)."""
+    return status in (PUT_LANDED_EARLIER, PUT_EXISTS) or 200 <= status < 300
+
+
+def _fill_mode():
+    """True when ``SMOLBENCH_ATTN_FILL`` is exactly "1" (read at call time, not at import).
+
+    Fill mode completes a partly stored capture: a first-attempt 412 means the
+    object came from an earlier run and counts as stored. Only the string "1"
+    enables it; "0", "", "true" and unset keep the strict behaviour.
+    """
+    return os.environ.get("SMOLBENCH_ATTN_FILL") == "1"
 
 
 def _put(url, data, content_type):
@@ -970,6 +1000,9 @@ def _put(url, data, content_type):
             last = resp.status_code
             if 200 <= last < 300:
                 return last
+            if last == 412 and not attempt and _fill_mode():
+                _log("PUT: the object exists from an earlier run (fill mode)")
+                return PUT_EXISTS
             if last == 412 and attempt:
                 if not shaky:
                     return last
@@ -1060,8 +1093,13 @@ def register():
         MLAAttention.forward = mla_forward
         _mla_prefill_short_sequences()
     _STATE["patched"] = True
-    _log("registered (attn dir %s, gate tol %g, classes %s)"
-         % (_attn_dir(), _gate_tol(), [c.__name__ for c in classes]))
+    # vLLM bounds one model step by this variable; logging it shows from the
+    # server log which bound the engine ran under.
+    _log("registered (attn dir %s, gate tol %g, classes %s, "
+         "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=%s, fill mode %s)"
+         % (_attn_dir(), _gate_tol(), [c.__name__ for c in classes],
+            os.environ.get("VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", "unset"),
+            "on" if _fill_mode() else "off"))
 
 
 def _capture_error(layer, exc):

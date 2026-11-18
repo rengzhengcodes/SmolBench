@@ -518,3 +518,64 @@ def test_read_captures_weights_every_summary_job_equally(tmp_path: Path) -> None
     assert out["entropy_mean"] == pytest.approx(np.mean(ent_per_job), rel=1e-12)
     assert out["prompt_entropy_jobs"] == 2
     assert out["prompt_entropy_sd"] == pytest.approx(np.std(per_job, ddof=1), rel=1e-9)
+
+
+# ------------------------------------------------------------------ gate cap and npz_put (recapture)
+
+def _set_meta(s3: FakeS3, job: attention.Job, rank: int, **changes) -> None:
+    key = attention.rank_keys(job.key, rank)[1]
+    meta = json.loads(s3.objects[key])
+    meta.update(changes)
+    s3.objects[key] = json.dumps(meta).encode()
+
+
+@pytest.mark.parametrize("kind", ["summary", "mass"])
+def test_the_audit_caps_the_tolerance_a_capture_may_declare(kind) -> None:
+    cap = synthetic_capture(21, layers=LAYERS)
+    job = _job_for(cap, mode=kind)
+    s3 = FakeS3()
+    _store(s3, job, cap, kind=kind)
+    assert ar.MAX_GATE_TOL == 0.05
+    # Ranks at 0.03 and 0.05 both pass the cap (a fill run mixes them), also with a gate
+    # figure that only the looser tolerance admits.
+    _set_meta(s3, job, 0, gate_tol=0.03, gate_max_rel=0.02)
+    _set_meta(s3, job, 1, gate_tol=0.05, gate_max_rel=0.04)
+    assert _audit(s3, [job]) == {"q0": None}
+    # A rank declaring more than the cap is refused, even with a gate figure inside it.
+    _set_meta(s3, job, 1, gate_tol=0.051, gate_max_rel=0.001)
+    reason = _audit(s3, [job])["q0"]
+    assert reason and "rank 1" in reason and "gate_tol" in reason
+    # The ordinary gate check still applies under the cap.
+    _set_meta(s3, job, 1, gate_tol=0.05, gate_max_rel=0.06)
+    assert _audit(s3, [job])["q0"]
+
+
+@pytest.mark.parametrize("kind", ["summary", "mass"])
+def test_the_audit_skips_only_the_size_check_for_an_existing_npz(kind) -> None:
+    cap = synthetic_capture(22, layers=LAYERS)
+    job = _job_for(cap, mode=kind)
+    s3 = FakeS3()
+    _store(s3, job, cap, kind=kind)
+    meta_key = attention.rank_keys(job.key, 1)[1]
+    size = json.loads(s3.objects[meta_key])["bytes"]
+    # Without the marker a size mismatch fails the job ...
+    _set_meta(s3, job, 1, bytes=size + 7)
+    assert "size" in (_audit(s3, [job])["q0"] or "")
+    # ... with it (the stored npz came from an earlier run) it does not.
+    _set_meta(s3, job, 1, npz_put="existing")
+    assert _audit(s3, [job]) == {"q0": None}
+    # The array content of that rank is still checked.
+    npz_key = attention.rank_keys(job.key, 1)[0]
+    good = s3.objects[npz_key]
+    name = "sum_mass" if kind == "summary" else "mass"
+    s3.objects[npz_key] = _edit(good, **{name: lambda a: a * 0 - 1})
+    assert _audit(s3, [job])["q0"]
+    # And every other meta check, e.g. n_tokens.
+    s3.objects[npz_key] = good
+    _set_meta(s3, job, 1, n_tokens=job.n_tokens + 1)
+    assert "n_tokens" in (_audit(s3, [job])["q0"] or "")
+    # The npz must still exist.
+    _set_meta(s3, job, 1, n_tokens=job.n_tokens)
+    assert _audit(s3, [job]) == {"q0": None}
+    del s3.objects[npz_key]
+    assert _audit(s3, [job])["q0"]
