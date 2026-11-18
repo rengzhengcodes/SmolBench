@@ -67,13 +67,17 @@ ISO-8859-1; the stream reader is fixed since). Nothing reads that prefix.
 
 ### Protocol runs of 2026-11-16
 
-Seeded, on bedrock-mantle. Induction: 30 seeds per arm, accuracy over 270 questions.
+Seeded, on bedrock-mantle. Induction: 30 seeds per arm, accuracy over 270 questions, with
+95% bootstrap intervals that resample seeds (10,000 draws).
 
-| | `intens` | `noise_intens` | `extens` | `related_intens` |
+| | high density (`intens`) | with whitespace (`noise_intens`) | with related rules (`related_intens`) | low density (`extens`) |
 |---|---|---|---|---|
-| Gemma 4 31B | 1.000 | 0.996 | 1.000 | 0.981 |
-| Nemotron 3 Super | 0.993 | 0.993 | 0.956 | 0.919 |
-| DeepSeek V3.1 | 1.000 | 1.000 | 1.000 | 0.967 |
+| Gemma 4 31B | 1.000 [1.000, 1.000] | 0.996 [0.989, 1.000] | 0.981 [0.959, 1.000] | 1.000 [1.000, 1.000] |
+| Nemotron 3 Super | 0.993 [0.981, 1.000] | 0.993 [0.981, 1.000] | 0.919 [0.874, 0.956] | 0.956 [0.911, 0.989] |
+| DeepSeek V3.1 | 1.000 [1.000, 1.000] | 1.000 [1.000, 1.000] | 0.967 [0.941, 0.989] | 1.000 [1.000, 1.000] |
+
+An arm with 270 of 270 correct has no variance over seeds, so its bootstrap interval is a
+point; the exact binomial interval for 270 of 270 is 0.986 to 1.000.
 
 Horn: 100 seeds × 3 replicates per arm (300 cells), pass rate in percent.
 
