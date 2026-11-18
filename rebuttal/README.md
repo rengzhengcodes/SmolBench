@@ -199,14 +199,18 @@ per arm, as for induction). Mean prompt entropy in nats; for Gemma
 
 | | Gemma 4 31B | Nemotron 3 Super | DeepSeek V3.1 |
 |---|---|---|---|
-| induction `intens` | 2.466 | 2.418 | 1.309 |
-| induction `noise_intens` | 4.638 | 3.116 | 2.118 |
-| induction `extens` | 5.863 | 3.998 | 2.584 |
-| induction `related_intens` | 6.212 | 4.170 | 2.526 |
-| Horn `lem` | 5.035 | 3.186 | 1.941 |
-| Horn `pad` | 5.858 | 3.822 | 2.233 |
-| Horn `both` | 6.358 | 3.789 | 2.108 |
-| Horn `tjunk` | 6.272 | 3.694 | 2.268 |
+| induction `intens` | 2.466 [2.462, 2.471] | 2.418 [2.395, 2.439] | 1.309 [1.299, 1.320] |
+| induction `noise_intens` | 4.638 [4.625, 4.652] | 3.116 [3.107, 3.124] | 2.118 [2.105, 2.130] |
+| induction `extens` | 5.863 [5.851, 5.876] | 3.998 [3.981, 4.015] | 2.584 [2.572, 2.595] |
+| induction `related_intens` | 6.212 [6.174, 6.251] | 4.170 [4.064, 4.275] | 2.526 [2.517, 2.536] |
+| Horn `lem` | 5.035 [5.030, 5.039] | 3.186 [3.165, 3.207] | 1.941 [1.928, 1.953] |
+| Horn `pad` | 5.858 [5.854, 5.862] | 3.822 [3.798, 3.844] | 2.233 [2.216, 2.249] |
+| Horn `both` | 6.358 [6.350, 6.367] | 3.789 [3.765, 3.814] | 2.108 [2.083, 2.134] |
+| Horn `tjunk` | 6.272 [6.265, 6.279] | 3.694 [3.670, 3.717] | 2.268 [2.244, 2.291] |
+
+The brackets are 95% bootstrap intervals (`attention_replay.entropy_ci`, 10,000 draws).
+Responses of one seed share their context, so a draw resamples whole seeds (30 for induction, 90
+for Horn) and takes the mean over the responses of the drawn seeds.
 
 Captures missing from these means:
 

@@ -295,6 +295,8 @@ __all__ = [
     "pull_captures",
     "read_captures",
     "read_entropy_table",
+    "entropy_ci",
+    "job_seed",
     "rebuild_sequence",
     "replay_model",
     "run_prefix",
@@ -5151,6 +5153,8 @@ class _ArmStats:
         }
         self.n_v1 = 0
         self.n_summary = 0
+        #: ``<folder>/<stem>`` of every job, in the order of the ``per_job`` entries.
+        self.labels: List[str] = []
 
     def add(self, job: Mapping[str, Any], label: str, expected_heads: int, tp: int) -> None:
         """Fold one loaded job into the arm.
@@ -5218,6 +5222,7 @@ class _ArmStats:
         elif job.get("prompt_entropy") is None:
             self.n_v1 += 1
         self.n_jobs += 1
+        self.labels.append(label)
         self.pad_total += int((np.asarray(job["classes"]) == attention_analysis.PAD_CLASS).sum())
 
     def result(self) -> Optional[Dict[str, Any]]:
@@ -5237,6 +5242,8 @@ class _ArmStats:
             "skipped_unverified": self.n_skipped,
             "prompt_entropy_v1_jobs": self.n_v1,
             "summary_jobs": self.n_summary,
+            # One label per job, in the order of the ``<stat>_per_job`` lists below.
+            "job_labels": list(self.labels),
         }
         # Every job counts once: mean over a job's positions, heads and layers first,
         # then over jobs (the footnote's "mean per response"), not over pooled rows.
@@ -5256,7 +5263,108 @@ class _ArmStats:
             out[f"{stat}_layer"] = layer_mean
             out[f"{stat}_jobs"] = n_defined
             out[f"{stat}_sd"] = sd
+            # The per-job means behind the two means above (NaN where undefined), for
+            # resampling (see ``entropy_ci``).
+            out[f"{stat}_per_job"] = [float(v) for v in jobs_stat["all"]]
+            out[f"{stat}_global_per_job"] = [float(v) for v in jobs_stat["global"]]
         return out
+
+
+#: The seed in a job label: ``.../seed=<s>/<arm>--<stamp>/q<i>`` (induction) or
+#: ``.../<arm>/s<seed>.rep<rep>`` (deduction).
+_LABEL_SEED = re.compile(r"/seed=(\d+)/[^/]+/[^/]+$|/s(\d+)\.rep\d+$")
+
+
+def job_seed(label: str) -> int:
+    """Return the seed of a job from its ``job_labels`` entry.
+
+    Parameters
+    ----------
+    label : str
+        ``<folder>/<stem>`` as ``read_captures`` reports it.
+
+    Returns
+    -------
+    int
+        The induction seed, or the deduction theory seed.
+
+    Raises
+    ------
+    ValueError
+        When `label` has neither form.
+    """
+    match = _LABEL_SEED.search(label)
+    if match is None:
+        raise ValueError(f"no seed in job label {label!r}")
+    return int(match.group(1) if match.group(1) is not None else match.group(2))
+
+
+def entropy_ci(
+    stats: Mapping[str, Any],
+    *,
+    stat: str = "prompt_entropy",
+    layers: str = "all",
+    n_boot: int = 10_000,
+    level: float = 0.95,
+    seed: int = 0,
+) -> Tuple[float, float, float, int, int]:
+    """Bootstrap a confidence interval for one arm's mean entropy, resampling seeds.
+
+    The point estimate is the mean over responses (``<stat>_mean`` of ``read_captures``).
+    Responses of one seed share their context (induction: the 9 questions of a replicate;
+    deduction: the replicates of a theory), so they are not independent. Each bootstrap
+    draw therefore resamples whole seeds with replacement and takes the mean over the
+    responses of the drawn seeds. The interval is the percentile interval of the draws.
+
+    Parameters
+    ----------
+    stats : Mapping[str, Any]
+        One arm's value from ``read_captures`` or ``read_entropy_table``.
+    stat : str, optional
+        ``"prompt_entropy"`` or ``"entropy"``.
+    layers : str, optional
+        ``"all"`` for every attention layer, ``"global"`` for global-attention layers only.
+    n_boot : int, optional
+        Number of bootstrap draws.
+    level : float, optional
+        Coverage of the interval, between 0 and 1.
+    seed : int, optional
+        Seed of the resampling generator, so that the interval is reproducible.
+
+    Returns
+    -------
+    Tuple[float, float, float, int, int]
+        ``(mean, lower, upper, number of responses, number of seeds)``. The three numbers
+        are NaN when no response has a defined value.
+
+    Raises
+    ------
+    ValueError
+        When `stat` or `layers` is unknown, `n_boot` is below 1, or `level` is not
+        strictly between 0 and 1.
+    """
+    if stat not in _ENTROPY_STATS:
+        raise ValueError(f"stat={stat!r}: expected one of {_ENTROPY_STATS}")
+    if layers not in ("all", "global"):
+        raise ValueError(f"layers={layers!r}: expected 'all' or 'global'")
+    if n_boot < 1 or not 0.0 < level < 1.0:
+        raise ValueError(f"n_boot={n_boot}, level={level}: need n_boot >= 1 and 0 < level < 1")
+    values = np.asarray(stats[f"{stat}_per_job" if layers == "all" else f"{stat}_global_per_job"], dtype=np.float64)
+    seeds = np.asarray([job_seed(label) for label in stats["job_labels"]], dtype=np.int64)
+    keep = ~np.isnan(values)
+    values, seeds = values[keep], seeds[keep]
+    if values.size == 0:
+        return float("nan"), float("nan"), float("nan"), 0, 0
+    # Per seed: the sum and the number of its responses. A draw of seeds then has the
+    # mean sum(sums) / sum(counts), the mean over the responses it holds.
+    _unique, index = np.unique(seeds, return_inverse=True)
+    sums = np.bincount(index, weights=values)
+    counts = np.bincount(index).astype(np.float64)
+    draws = np.random.default_rng(seed).integers(0, sums.size, size=(n_boot, sums.size))
+    means = sums[draws].sum(axis=1) / counts[draws].sum(axis=1)
+    tail = (1.0 - level) / 2.0
+    lower, upper = np.quantile(means, [tail, 1.0 - tail])
+    return float(values.mean()), float(lower), float(upper), int(values.size), int(sums.size)
 
 
 #: One folder to read: ``(folder, [(file stem, ranks present)], verified stems or None for all)``.

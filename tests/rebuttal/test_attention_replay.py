@@ -1578,6 +1578,58 @@ def test_read_captures_weights_every_job_equally_in_the_entropy_means(tmp_path) 
     assert out["prompt_entropy_v1_jobs"] == 0
 
 
+def test_read_captures_reports_every_job_mean_with_its_label(tmp_path) -> None:
+    root = tmp_path / "mirror"
+    run = root / "induction" / GEMMA / "seed=7" / f"intens--{STAMP_A}"
+    _mirror_entropy_job(run, 0, p=8, pe_layers=[1.0] * 3, ent_layers=[2.0] * 3)
+    _mirror_entropy_job(run, 1, p=2, pe_layers=[3.0] * 3, ent_layers=[4.0] * 3)
+    out = ar.read_captures(GEMMA, root, config=_MIRROR_CONFIG)["intens"]
+    assert out["prompt_entropy_per_job"] == pytest.approx([1.0, 3.0])
+    assert out["entropy_global_per_job"] == pytest.approx([2.0, 4.0])
+    assert [ar.job_seed(label) for label in out["job_labels"]] == [7, 7]
+    assert [label.rsplit("/", 1)[1] for label in out["job_labels"]] == ["q0", "q1"]
+
+
+def test_job_seed_reads_both_label_forms_and_refuses_others() -> None:
+    assert ar.job_seed(f"/m/induction/{GEMMA}/seed=12/extens--{STAMP_A}/q3") == 12
+    assert ar.job_seed(f"/m/deduction/horn/{GEMMA}/m64/tjunk/s187.rep2") == 187
+    with pytest.raises(ValueError, match="no seed"):
+        ar.job_seed("/m/somewhere/q3")
+
+
+def _ci_stats(values, seeds):
+    return {"prompt_entropy_per_job": list(values), "prompt_entropy_global_per_job": list(values),
+            "job_labels": [f"/m/deduction/horn/x/m64/lem/s{s}.rep{i}" for i, s in enumerate(seeds)]}
+
+
+def test_entropy_ci_resamples_seeds_not_responses() -> None:
+    """Two seeds of 100 responses, all 0 and all 1: a draw of seeds has mean 0, 0.5 or 1."""
+    stats = _ci_stats([0.0] * 100 + [1.0] * 100, [1] * 100 + [2] * 100)
+    mean, lower, upper, n, n_seeds = ar.entropy_ci(stats, n_boot=2000)
+    assert (mean, n, n_seeds) == (0.5, 200, 2)
+    # Resampling the 200 responses would give about [0.43, 0.57].
+    assert (lower, upper) == (0.0, 1.0)
+
+
+def test_entropy_ci_is_reproducible_skips_undefined_jobs_and_weights_responses() -> None:
+    stats = _ci_stats([1.0, 1.0, 1.0, 4.0, float("nan")], [1, 1, 1, 2, 3])
+    first, again = ar.entropy_ci(stats, n_boot=500), ar.entropy_ci(stats, n_boot=500)
+    assert first == again
+    mean, lower, upper, n, n_seeds = first
+    # The mean over the four defined responses, not over the two seed means (2.5).
+    assert mean == pytest.approx(1.75) and (n, n_seeds) == (4, 2)
+    assert 1.0 <= lower <= mean <= upper <= 4.0
+    assert all(math.isnan(v) for v in ar.entropy_ci(_ci_stats([float("nan")], [1]))[:3])
+
+
+def test_entropy_ci_of_identical_responses_is_a_point_and_bad_arguments_are_refused() -> None:
+    stats = _ci_stats([2.5] * 6, [1, 1, 2, 2, 3, 3])
+    assert ar.entropy_ci(stats, layers="global", n_boot=200)[:3] == (2.5, 2.5, 2.5)
+    for bad in ({"stat": "mass"}, {"layers": "window"}, {"n_boot": 0}, {"level": 1.0}):
+        with pytest.raises(ValueError):
+            ar.entropy_ci(stats, **bad)
+
+
 def test_read_captures_splits_global_and_sliding_window_layers(tmp_path) -> None:
     root = tmp_path / "mirror"
     run = root / "induction" / GEMMA / "seed=0" / f"intens--{STAMP_A}"
