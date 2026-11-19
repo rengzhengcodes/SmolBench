@@ -34,6 +34,11 @@ with ``--study induction``. ``--mode {mass,summary}`` picks the capture mode (de
 driver's choice, mass for induction and summary for horn) and ``--capture-max-model-len N``
 overrides the capture context length, in both studies. All of them work with ``--audit-only``
 (``--mode`` is not needed there: the stored objects say which mode they hold).
+``--label-added-lines`` (horn only, exit 2 with ``--study induction``) labels the added lines
+of every padded arm as class 1, so the pad ratio is defined for deduction; the plan says so
+and counts the class-1 tokens per arm, and every manifest records it. Without it no deduction
+token is class 1, as in the captures stored so far. Stored jobs are skipped whatever their
+classes, so give a labelled run its own ``--s3-uri``.
 
 Recapture. ``--job-ids ID [ID ...]`` narrows the plan, the run or the audit to the jobs with
 those ids (the driver rejects an id that no planned job has). An argument that starts with
@@ -249,6 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="horn only: the model's rows file (default: <results folder>/horn/<model>.jsonl)")
     parser.add_argument("--rungs-dir", type=Path, default=None,
                         help="horn only: folder of the stored rung prompts (default: bedrock_trio.RUNGS_DIR)")
+    parser.add_argument("--label-added-lines", action="store_true",
+                        help="horn only: label the added lines of the padded arms as class 1, the pad class; "
+                             "use a new --s3-uri, stored jobs are skipped")
     parser.add_argument("--job-ids", nargs="+", default=None, metavar="ID",
                         help="only these job ids; an argument starting with @ is a file with one id per "
                              "line (default: every planned job)")
@@ -416,7 +424,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # These flags only mean something for the horn study; a silent ignore would let a
         # typo launch the wrong (billed) replay, so name the flag and exit 2.
         for flag, value in (("--arms", args.arms), ("--reps", args.reps),
-                            ("--rows", args.rows), ("--rungs-dir", args.rungs_dir)):
+                            ("--rows", args.rows), ("--rungs-dir", args.rungs_dir),
+                            ("--label-added-lines", args.label_added_lines or None)):
             if value is not None:
                 parser.error(f"{flag} is only valid with --study horn")
     job_ids = expand_job_ids(parser, args.job_ids)
@@ -446,6 +455,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "arms": args.arms,
             "reps": args.reps,
         }
+        if args.label_added_lines:
+            # Only when given, so that a default horn call keeps its earlier keywords.
+            study_kwargs["label_added_lines"] = True
     try:
         if args.audit_only:
             # Design: checked before --approved so that the two flags together can never

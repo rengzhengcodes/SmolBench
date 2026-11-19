@@ -319,6 +319,7 @@ def token_classes(
     decode_tokens: Callable[[Sequence[int]], Sequence[str]],
     *,
     pad_span: Optional[Tuple[int, int]] = None,
+    pad_spans: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> List[int]:
     """Label every token of ``prompt + completion`` with its mass-mode key class.
 
@@ -335,6 +336,8 @@ def token_classes(
       newline between chat turns, or a blank line out of the pad class. With
       `pad_span`: a non-empty piece (whitespace or not) whose character range
       lies entirely inside `pad_span`, and the whitespace rule is not applied.
+      With `pad_spans`: the same, inside the UNION of the spans (a pad made of
+      many separate pieces, such as lines interleaved with other lines).
     * ``2`` -- other prompt whitespace or template token: a whitespace-only
       piece outside the pad (short structural whitespace, or a second
       whitespace run), and an EMPTY piece -- chat-template specials decode to
@@ -370,6 +373,14 @@ def token_classes(
         entirely, so a long whitespace run elsewhere in the prompt is not
         class 1. An empty span (``start == end``) is valid and labels nothing.
         Must satisfy ``0 <= start <= end <= len(prompt text)``.
+    pad_spans : Optional[Sequence[Tuple[int, int]]], optional
+        Several half-open ranges in the same coordinates as `pad_span`, in any
+        order; they may touch or overlap. Default ``None``. Given, it replaces the
+        rule like `pad_span`, and a token is class 1 when its range lies inside
+        their union, so a token that crosses from one span into an adjacent one
+        is class 1 and one that crosses into text outside every span is not. An
+        empty sequence labels nothing. Each span must satisfy the bounds of
+        `pad_span`. Mutually exclusive with `pad_span`.
 
     Returns
     -------
@@ -382,13 +393,15 @@ def token_classes(
     ValueError
         When `decode_tokens` does not return exactly one piece per prompt id
         (the spans, and hence every prompt class, would be misaligned, and the
-        plugin rejects a ``classes`` array that does not cover every token), or
-        when `pad_span` is not ``0 <= start <= end <= len(prompt text)``.
+        plugin rejects a ``classes`` array that does not cover every token), when
+        `pad_span` or an element of `pad_spans` is not ``0 <= start <= end <=
+        len(prompt text)``, or when both `pad_span` and `pad_spans` are given.
 
     Notes
     -----
     Pure: no I/O, no globals, no mutation of its arguments. One decoder call.
-    Time O(len(prompt text)); space O(len(prompt)).
+    Time O(len(prompt text)), plus O(S log S + len(prompt) log S) for `S` spans in
+    `pad_spans`; space O(len(prompt) + S).
 
     Examples
     --------
@@ -398,7 +411,12 @@ def token_classes(
     >>> pieces = {1: "ab", 2: " ", 3: "cd"}
     >>> token_classes([1, 2, 3], [], lambda ids: [pieces[i] for i in ids], pad_span=(2, 3))
     [0, 1, 0]
+    >>> lines = {1: "a\\n", 2: "pad\\n", 3: "b\\n", 4: "pad\\n"}
+    >>> token_classes([1, 2, 3, 4], [], lambda ids: [lines[i] for i in ids], pad_spans=[(2, 6), (8, 12)])
+    [0, 1, 0, 1]
     """
+    if pad_span is not None and pad_spans is not None:
+        raise ValueError("pass pad_span or pad_spans, not both")
     prompt_ids = list(prompt_token_ids)
     pieces = list(decode_tokens(prompt_ids))
     if len(pieces) != len(prompt_ids):
@@ -427,17 +445,24 @@ def token_classes(
                 "(the length of the prompt text)"
             )
         span: Optional[Tuple[int, int]] = (int(pad_span[0]), int(pad_span[1]))
+    elif pad_spans is not None:
+        span = None
+        union = _union_of_spans(pad_spans, len(text))
     else:
         run_start, run_len = _longest_whitespace_run(text)
         span = (run_start, run_start + run_len) if run_len >= MIN_PAD_RUN_CHARS else None
 
     # Phase 3: classify the prompt, then append the completion wholesale. By rule
     # only whitespace-only pieces may be pad; by construction the span decides.
+    by_construction = pad_span is not None or pad_spans is not None
     classes: List[int] = []
     for piece, (start, end) in zip(pieces, spans):
         whitespace_only = bool(piece) and all(ch.isspace() for ch in piece)
-        in_span = span is not None and start >= span[0] and end <= span[1]
-        if piece and in_span and (whitespace_only or pad_span is not None):
+        if pad_spans is not None:
+            in_span = _inside_union(union, start, end)
+        else:
+            in_span = span is not None and start >= span[0] and end <= span[1]
+        if piece and in_span and (whitespace_only or by_construction):
             classes.append(1)
         elif whitespace_only or not piece:
             classes.append(2)
@@ -445,6 +470,53 @@ def token_classes(
             classes.append(0)
     classes.extend([3] * len(completion_token_ids))
     return classes
+
+
+def _union_of_spans(pad_spans: Sequence[Tuple[int, int]], text_len: int) -> List[Tuple[int, int]]:
+    """Return the union of `pad_spans` as sorted, disjoint, non-touching ``[start, end)`` ranges.
+
+    Empty spans are dropped (they label nothing). Spans that touch (``a_end == b_start``)
+    are joined, so a token that crosses their common edge lies inside one range.
+
+    Raises
+    ------
+    ValueError
+        When a span is not ``0 <= start <= end <= text_len``.
+    """
+    ordered: List[Tuple[int, int]] = []
+    for item in pad_spans:
+        start, end = int(item[0]), int(item[1])
+        if not 0 <= start <= end <= text_len:
+            raise ValueError(
+                f"pad_spans element {tuple(item)} must satisfy 0 <= start <= end <= {text_len} "
+                "(the length of the prompt text)"
+            )
+        if start < end:
+            ordered.append((start, end))
+    ordered.sort()
+    union: List[Tuple[int, int]] = []
+    for start, end in ordered:
+        if union and start <= union[-1][1]:
+            union[-1] = (union[-1][0], max(union[-1][1], end))
+        else:
+            union.append((start, end))
+    return union
+
+
+def _inside_union(union: Sequence[Tuple[int, int]], start: int, end: int) -> bool:
+    """Return whether ``[start, end)`` lies inside one range of the sorted disjoint `union`.
+
+    Binary search on the range starts: only the last range starting at or before
+    `start` can contain the token, because the ranges neither overlap nor touch.
+    """
+    lo, hi = 0, len(union)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if union[mid][0] <= start:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo > 0 and end <= union[lo - 1][1]
 
 
 def mass_gate_positions(query_start: int, n_completion: int) -> Tuple[int, ...]:

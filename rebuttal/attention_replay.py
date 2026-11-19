@@ -121,9 +121,18 @@ the same list, one line each, and every plan and manifest carries it.
     tokens are class 2 (they are not query text, like the template's own tokens).
     The template may trim or move that text (the Gemma-4 template puts it after the
     thinking marker inside its own system turn); the rebuild only checks that the
-    text, or its stripped form, occurs in the rendered prompt. No token is class 1:
-    the deduction study has no whitespace pad (its ``pad`` arm adds lorem-ipsum lines
-    and is not marked), so the pad-ratio fields of a deduction arm are undefined.
+    text, or its stripped form, occurs in the rendered prompt. The class-1 tokens depend
+    on ``label_added_lines``. By default (``False``, how the stored captures were made) no
+    token is class 1: the deduction study has no whitespace pad, so the pad-ratio fields
+    of a deduction arm are undefined. With ``label_added_lines=True`` the ADDED lines of a
+    padded arm are class 1: the lines that fill a derivation-tree slot of the library
+    (lorem-ipsum filler in ``pad``, renamed tree rules in ``tjunk``, ``disc`` and ``fwd``,
+    lemma copies in ``rep``, the real tree rules in ``both`` and ``marked-lemma``). They are
+    located by rule key from the rung's ``theory.json`` (``_horn_added_line_spans``) and
+    checked against the ``lem`` arm of the same seed; ``lem`` has none. Each added line
+    counts with its own terminating newline, and a token is class 1 only when it lies
+    entirely inside the added lines, so a token that straddles into a lemma line, a heading
+    or the blank line after the library keeps its class (0 or 2).
 
 S3 layout, append-only rule and approval gate
 ---------------------------------------------
@@ -474,7 +483,10 @@ APPROXIMATIONS: Tuple[str, ...] = (
     "deduction: the row's prompt_tokens and completion_tokens as the service counted them",
     "11. deduction: the cell's system.md is rendered as a system turn before the user turn, as "
     "the collection sent it; its tokens are class 2; the template may trim or move it (Gemma-4 "
-    "puts it after the thinking marker inside its system turn); no class-1 token exists",
+    "puts it after the thinking marker inside its system turn); by default no class-1 token "
+    "exists; with label_added_lines the added lines of a padded arm (the derivation-tree slots, "
+    "located from theory.json, each with its own newline) are class 1, a token straddling into "
+    "another line is not, and lem has none",
 )
 
 #: Message when the plan cannot say how big the capture is.
@@ -1202,6 +1214,88 @@ def _pad_span_in_pieces(
     return (low - origin, high - origin), straddling
 
 
+def _pad_spans_in_pieces(
+    offsets: Sequence[Tuple[int, int]],
+    pieces: Sequence[str],
+    pad_query_spans: Sequence[Tuple[int, int]],
+    query: str,
+    located: str,
+    q_start: int,
+) -> Tuple[List[Tuple[int, int]], FrozenSet[int], int]:
+    """Map several pad ranges of the query to ``token_classes`` coordinates.
+
+    The many-span counterpart of ``_pad_span_in_pieces``, built so that it needs no
+    tiling: membership is decided per token in PROMPT coordinates (a token with a
+    non-empty piece whose ``[start, end)`` lies inside the union of the ranges), and
+    each run of consecutive member tokens is then expressed in piece coordinates from
+    the cumulative piece lengths, the same sums ``token_classes`` computes.
+
+    Design: a byte-level tokenizer can split one character into tokens whose offsets
+    overlap (``(538, 540)`` then ``(539, 540)``), so the pieces then repeat a character
+    and no single shift relates the two coordinate systems; ``_pad_span_in_pieces``
+    refuses such a prompt. Working from the member tokens sidesteps that, and the caller
+    checks the classes ``token_classes`` returns against the member set returned here.
+
+    Parameters
+    ----------
+    offsets, pieces, query, located, q_start
+        As for ``_pad_span_in_pieces``.
+    pad_query_spans : Sequence[Tuple[int, int]]
+        Pad ranges in `query` coordinates, already validated; they may touch.
+
+    Returns
+    -------
+    Tuple[List[Tuple[int, int]], FrozenSet[int], int]
+        The spans in piece-concatenation coordinates (one per run of member tokens), the
+        indexes of the member tokens, and the number of tokens with a non-empty piece that
+        overlap the union without lying inside it (they straddle an edge, are not members).
+    """
+    lead = len(query) - len(query.lstrip()) if located != query else 0
+    # Prompt coordinates, clipped to the located text, then joined where they touch, so a
+    # token crossing the shared edge of two adjacent ranges lies inside the union.
+    ranges = sorted(
+        (q_start + min(max(lo - lead, 0), len(located)), q_start + min(max(hi - lead, 0), len(located)))
+        for lo, hi in pad_query_spans
+    )
+    union: List[Tuple[int, int]] = []
+    for lo, hi in ranges:
+        if lo >= hi:
+            continue
+        if union and lo <= union[-1][1]:
+            union[-1] = (union[-1][0], max(union[-1][1], hi))
+        else:
+            union.append((lo, hi))
+
+    members: List[int] = []
+    straddling = 0
+    cursor = 0  # first range that can still hold a token (tokens come in text order)
+    for index, ((start, end), piece) in enumerate(zip(offsets, pieces)):
+        if not piece:
+            continue
+        while cursor < len(union) and union[cursor][1] <= start:
+            cursor += 1
+        # Ranges are disjoint and do not touch, so only the current one can contain the token;
+        # the next one may still overlap it (a token that spans a gap between two ranges).
+        if cursor < len(union) and union[cursor][0] <= start and end <= union[cursor][1]:
+            members.append(index)
+        elif any(lo < end and start < hi for lo, hi in union[cursor:cursor + 2]):
+            straddling += 1
+
+    # Piece coordinates: cumulative piece lengths, one span per run of consecutive members.
+    cum = [0]
+    for piece in pieces:
+        cum.append(cum[-1] + len(piece))
+    piece_spans: List[Tuple[int, int]] = []
+    run_start: Optional[int] = None
+    for pos, index in enumerate(members):
+        if run_start is None:
+            run_start = index
+        if pos + 1 == len(members) or members[pos + 1] != index + 1:
+            piece_spans.append((cum[run_start], cum[index + 1]))
+            run_start = None
+    return piece_spans, frozenset(members), straddling
+
+
 def rebuild_sequence(
     query: str,
     reasoning: Optional[str],
@@ -1212,6 +1306,7 @@ def rebuild_sequence(
     fmt: ReasoningFormat,
     pad_query_span: Optional[Tuple[int, int]] = None,
     system: Optional[str] = None,
+    pad_query_spans: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> Rebuilt:
     """Rebuild one mark's prompt ids, completion ids and key classes from its stored text.
 
@@ -1239,6 +1334,15 @@ def rebuild_sequence(
     ``(0, 0)``) marks no token: no token is class 1, the note says "no pad class
     (deduction)" instead of the by-construction wording, and the span is not mapped to
     piece coordinates (so byte-split characters with overlapping offsets cannot fail it).
+
+    With `pad_query_spans` the pad is several ranges of the query (the deduction rebuild
+    passes the added lines of a padded arm). The query must occur exactly once, as for
+    `pad_query_span`; a prompt token is class 1 when its piece is non-empty and its
+    character range lies inside the union of the ranges (``_pad_spans_in_pieces``, which
+    needs no tiling, so overlapping byte-split offsets are fine). The classes
+    ``token_classes`` returns are then checked against that membership. An empty
+    sequence marks no token. The notes say how many tokens are class 1, in how many
+    ranges, and how many straddle an edge.
 
     With `system` the conversation is ``[system, user]``. The template may trim the
     system text (Gemma-4 does) or move it (Gemma-4 puts it after the thinking marker
@@ -1269,6 +1373,10 @@ def rebuild_sequence(
     system : Optional[str], optional
         Text of a system message to render before the user turn. Default ``None``: no system
         message (the induction rebuild, byte-identical to before this parameter existed).
+    pad_query_spans : Optional[Sequence[Tuple[int, int]]], optional
+        Half-open character ranges of the pad inside `query`, each ``0 <= start <= end <=
+        len(query)``; they may touch. Default ``None``. Mutually exclusive with
+        `pad_query_span`.
 
     Returns
     -------
@@ -1285,7 +1393,9 @@ def rebuild_sequence(
     ValueError
         When `pad_query_span` is not ``0 <= start <= end <= len(query)``, or when
         the tokens that overlap the query do not tile it without gaps or overlaps,
-        so the span cannot be mapped to piece coordinates.
+        so the span cannot be mapped to piece coordinates. Also when both
+        `pad_query_span` and `pad_query_spans` are given, an element of `pad_query_spans`
+        is out of bounds, or the class-1 tokens differ from the tokens inside its union.
     AssertionError
         When the tokenizer returns a different number of offsets than ids.
 
@@ -1299,6 +1409,16 @@ def rebuild_sequence(
             f"pad_query_span {tuple(pad_query_span)} must satisfy 0 <= start <= end <= "
             f"{len(query)} (the length of the query)"
         )
+    if pad_query_spans is not None:
+        if pad_query_span is not None:
+            raise ValueError("pass pad_query_span or pad_query_spans, not both")
+        for item in pad_query_spans:
+            if not 0 <= item[0] <= item[1] <= len(query):
+                raise ValueError(
+                    f"pad_query_spans element {tuple(item)} must satisfy 0 <= start <= end <= "
+                    f"{len(query)} (the length of the query)"
+                )
+    by_construction = pad_query_span is not None or pad_query_spans is not None
 
     # Phase 1: render the prompt and locate the query in it.
     messages: List[Dict[str, str]] = [{"role": "user", "content": query}]
@@ -1327,7 +1447,7 @@ def rebuild_sequence(
             raise TemplateMismatch("the rendered prompt does not contain the stored query")
         notes.append("template stripped the query")
     q_end = q_start + len(located)
-    if pad_query_span is not None and prompt_text.count(located) != 1:
+    if by_construction and prompt_text.count(located) != 1:
         # A second copy (say, in a system turn) would make the span's position ambiguous.
         raise TemplateMismatch(
             f"the stored query occurs {prompt_text.count(located)} times in the rendered prompt; "
@@ -1365,6 +1485,34 @@ def rebuild_sequence(
     ]
     pad_span: Optional[Tuple[int, int]] = None
     n_straddle = 0
+    if pad_query_spans is not None:
+        piece_spans, members, n_straddle = _pad_spans_in_pieces(
+            offsets, pieces, pad_query_spans, query, located, q_start
+        )
+        classes = attention.token_classes(
+            prompt_ids, completion_ids, lambda ids: pieces, pad_spans=piece_spans
+        )
+        # The member set was decided in prompt coordinates; the classes come from piece
+        # coordinates. They must name the same tokens, or the mapping went wrong somewhere
+        # (non-monotone offsets, say), and the job would carry a pad it does not have.
+        labelled = frozenset(i for i, c in enumerate(classes[: len(prompt_ids)]) if c == 1)
+        if labelled != members:
+            raise ValueError(
+                f"the class-1 tokens ({len(labelled)}) differ from the tokens inside the pad "
+                f"ranges ({len(members)}); the ranges cannot be mapped to piece coordinates"
+            )
+        notes.append(
+            f"pad ranges by construction: {len(members)} tokens class 1 in "
+            f"{len(pad_query_spans)} ranges, {n_straddle} straddle an edge of a range"
+        )
+        return Rebuilt(
+            prompt_ids=prompt_ids,
+            completion_ids=completion_ids,
+            classes=tuple(classes),
+            prompt_text=prompt_text,
+            completion_text=completion_text,
+            notes=tuple(notes),
+        )
     if pad_query_span is not None and pad_query_span[0] == pad_query_span[1]:
         # An empty span labels nothing, so the piece-coordinate mapping is not needed, and it
         # must be skipped: a tokenizer that splits one character into byte tokens (U+2227 in
@@ -1943,6 +2091,8 @@ class _Source:
     arms: Optional[Tuple[str, ...]] = None
     #: Deduction: replicate filter, ``None`` = all.
     reps: Optional[FrozenSet[int]] = None
+    #: Deduction: label the added lines of a padded arm as class 1 (``_horn_added_line_spans``).
+    label_added_lines: bool = False
 
 
 def _horn_rows_file(model: str, horn_rows: Any, n_models: int = 1) -> Path:
@@ -1983,6 +2133,7 @@ def _make_source(
     rungs_dir: Optional[Path],
     arms: Optional[Sequence[str]],
     reps: Optional[Sequence[int]],
+    label_added_lines: bool = False,
 ) -> _Source:
     """Validate the study arguments and return the ``_Source`` the internals take.
 
@@ -1990,14 +2141,18 @@ def _make_source(
     ------
     ValueError
         When `study` is unknown; when a deduction-only argument (`rows_path`, `rungs_dir`,
-        `arms`, `reps`) is given for the induction study, where it would be silently
-        ignored; when `arms` is a string or holds a non-string; or `reps` holds a non-integer.
+        `arms`, `reps`, a true `label_added_lines`) is given for the induction study, where it
+        would be silently ignored; when `arms` is a string or holds a non-string; `reps` holds
+        a non-integer; or `label_added_lines` is not a ``bool``.
     """
     _check_study(study)
+    if not isinstance(label_added_lines, bool):
+        raise ValueError(f"label_added_lines must be a bool, got {label_added_lines!r}")
     if study == "induction":
         extras = [
             name for name, value in (
-                ("horn_rows", rows_path), ("rungs_dir", rungs_dir), ("arms", arms), ("reps", reps)
+                ("horn_rows", rows_path), ("rungs_dir", rungs_dir), ("arms", arms), ("reps", reps),
+                ("label_added_lines", label_added_lines or None),
             ) if value is not None
         ]
         if extras:
@@ -2013,6 +2168,7 @@ def _make_source(
     return _Source(
         "horn", Path(results_root), Path(rows_path),
         None if rungs_dir is None else Path(rungs_dir), arm_filter, _int_set(reps, "reps"),
+        label_added_lines,
     )
 
 
@@ -2195,6 +2351,143 @@ def _horn_cell_inputs(
     )
 
 
+#: The heading line that opens the rule list of a rendered deduction prompt.
+_HORN_LIBRARY_HEADING = "## Library"
+
+
+def _library_lines(text: str, where: Path) -> Tuple[int, List[Tuple[int, str]]]:
+    """Return the index of the library heading line and every line of `text` with its offset.
+
+    Lines are split on ``\\n`` only (``str.splitlines`` also splits on U+2028); each entry
+    is ``(character offset of the line's first character, line text without the newline)``.
+
+    Raises
+    ------
+    _HornRowError
+        When the heading occurs on no line or on more than one (`where` names the file).
+    """
+    lines: List[Tuple[int, str]] = []
+    offset = 0
+    for line in text.split("\n"):
+        lines.append((offset, line))
+        offset += len(line) + 1
+    heads = [i for i, (_o, line) in enumerate(lines) if line == _HORN_LIBRARY_HEADING]
+    if len(heads) != 1:
+        raise _HornRowError(
+            f"{where}: {len(heads)} '{_HORN_LIBRARY_HEADING}' lines, expected exactly one; "
+            "the added lines cannot be located"
+        )
+    return heads[0], lines
+
+
+def _horn_added_line_spans(
+    rungs_dir: Path, rung: str, seed: int, arm: str, query: str, cache: Dict[Tuple[str, int], Any]
+) -> List[Tuple[int, int]]:
+    """Return the character ranges of the ADDED lines of one deduction prompt (empty for ``lem``).
+
+    Which lines are added comes from the theory, not from the text: ``arm_keys`` of the
+    rung's renderer gives the rule keys an arm shows, in line order, and a line is added
+    exactly when its key is not a lemma key (a derivation-tree slot, whatever the arm puts
+    there: filler, a renamed tree rule, a lemma copy or the real tree rule). Design: the
+    theory, not a text comparison with the ``lem`` arm, decides, because the ``rep`` arm
+    fills a slot with a copy of a lemma line, so a text alignment would be ambiguous. The
+    text is used to CHECK the result: (1) the library heading occurs once in `query` and
+    is followed by exactly ``len(shown)`` library lines, a blank line and the next heading;
+    (2) the arm's lemma lines (with the ``[lemma]`` tag removed where the arm adds it)
+    equal the ``lem`` arm's library lines of the same seed, position by position; (3) the
+    number of added lines is the theory's number of tree slots for every arm but ``lem``.
+
+    Each range covers the line and its own terminating newline, ``[line start, line end +
+    1)``: the newline after an added line belongs to it, the newline before it to the line
+    above. Two consecutive added lines therefore form one contiguous range.
+
+    Parameters
+    ----------
+    rungs_dir : Path
+        The rendered rungs (``<rungs_dir>/<rung>/s<seed:04d>/{theory.json,<arm>/prompt.md}``).
+    rung, seed, arm : str, int, str
+        The cell.
+    query : str
+        The cell's ``prompt.md`` text, as the rebuild reads it.
+    cache : Dict[Tuple[str, int], Any]
+        ``(rung, seed) -> (theory, lem library lines)``, filled on first use, so the replicates
+        and arms of one theory read its files once.
+
+    Returns
+    -------
+    List[Tuple[int, int]]
+        Ranges in `query` coordinates, in line order; empty for ``lem``.
+
+    Raises
+    ------
+    _HornRowError
+        When ``theory.json`` or the ``lem`` arm's ``prompt.md`` is missing or unreadable, the
+        arm is unknown to the renderer, or any check above fails.
+    """
+    from smolbench.deduction.horn import render as horn_render
+    from smolbench.deduction.horn.theory import Theory
+
+    seed_dir = rungs_dir / rung / f"s{seed:04d}"
+    key = (rung, seed)
+    if key not in cache:
+        theory_path, lem_path = seed_dir / "theory.json", seed_dir / "lem" / "prompt.md"
+        for path in (theory_path, lem_path):
+            if not path.is_file():
+                raise _HornRowError(f"{path.name} not found at {path}; the added lines cannot be located")
+        try:
+            theory = Theory.from_json(theory_path.read_text(encoding="utf-8"))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise _HornRowError(f"{theory_path}: cannot read the theory: {type(exc).__name__}: {exc}") from exc
+        lem_text = lem_path.read_text(encoding="utf-8")
+        head, lines = _library_lines(lem_text, lem_path)
+        n_lemmas = len(theory.lemmas())
+        if len(lines) <= head + 1 + n_lemmas or lines[head + 1 + n_lemmas][1] != "":
+            raise _HornRowError(
+                f"{lem_path}: the theory has {n_lemmas} lemmas, but the lem arm's library is not "
+                f"{n_lemmas} lines followed by a blank line; the prompt and the theory disagree"
+            )
+        cache[key] = (theory, [line for _o, line in lines[head + 1:head + 1 + n_lemmas]])
+    theory, lem_lines = cache[key]
+    try:
+        shown, _padded = horn_render.arm_keys(theory, arm)
+    except ValueError as exc:
+        raise _HornRowError(f"arm {arm!r}: {exc}") from exc
+    lemma_keys = {rule.key for rule in theory.lemmas()}
+
+    where = seed_dir / arm / "prompt.md"
+    head, lines = _library_lines(query, where)
+    first, after = head + 1, head + 1 + len(shown)
+    tail = [line for _o, line in lines[after:after + 2]]
+    if len(lines) < after + 2 or tail[0] != "" or not tail[1].startswith("## "):
+        raise _HornRowError(
+            f"{where}: the theory shows {len(shown)} library lines for arm {arm!r}, but line "
+            f"{after + 1} of the prompt is not the blank line before the next heading; the "
+            "prompt and the theory disagree"
+        )
+    tag = horn_render.LEMMA_TAG if arm == "marked-lemma" else ""
+    kept = [line for (_o, line), k in zip(lines[first:after], shown) if k in lemma_keys]
+    stripped = [line[len(tag):] if tag and line.startswith(tag) else line for line in kept]
+    if len(stripped) != len(lem_lines) or stripped != lem_lines:
+        mismatch = next(
+            (i for i, (a, b) in enumerate(zip(stripped, lem_lines)) if a != b), min(len(stripped), len(lem_lines))
+        )
+        raise _HornRowError(
+            f"{where}: {len(stripped)} lemma lines, the lem arm has {len(lem_lines)}; first "
+            f"difference at lemma line {mismatch + 1}; the lemma lines are not where the theory "
+            "puts them"
+        )
+    spans = [
+        (offset, offset + len(line) + 1)
+        for (offset, line), k in zip(lines[first:after], shown) if k not in lemma_keys
+    ]
+    expected = 0 if arm == "lem" else len(theory.tree_keys())
+    if len(spans) != expected:
+        raise _HornRowError(
+            f"{where}: {len(spans)} added lines, the theory has {expected} tree slots for arm {arm!r}"
+        )
+    return spans
+
+
 def _build_horn(
     model: str,
     source: _Source,
@@ -2209,10 +2502,13 @@ def _build_horn(
 
     Selection is ``_horn_select``. Each selected row is checked and rebuilt in
     ``_horn_cell_inputs`` order and then through ``rebuild_sequence`` with the cell's system
-    turn and an empty pad span (the deduction study has no whitespace pad). A failure of one
-    cell is a plan error for its arm and the other cells still plan; a
-    ``ReasoningFormatError`` stops the model, as for induction. Tokenizer and template are
-    fetched only when there is a cell to rebuild.
+    turn and an empty pad span (the deduction study has no whitespace pad). With
+    ``source.label_added_lines`` the pad is instead the cell's added lines
+    (``_horn_added_line_spans``, passed as ``pad_query_spans``; none for ``lem``), and an arm
+    other than ``lem`` whose rebuild has no class-1 token is a plan error for that cell, never
+    an unlabelled job. A failure of one cell is a plan error for its arm and the other cells
+    still plan; a ``ReasoningFormatError`` stops the model, as for induction. Tokenizer and
+    template are fetched only when there is a cell to rebuild.
     """
     import jinja2.exceptions
 
@@ -2237,6 +2533,7 @@ def _build_horn(
 
     run_of = {(run.rung, run.arm): run for run in runs}
     checked = False
+    theories: Dict[Tuple[str, int], Any] = {}  # (rung, seed) -> theory and lem lines, read once
     for cell in sel.cells:
         run = run_of[(cell.rung, cell.arm)]
         where = (
@@ -2245,11 +2542,26 @@ def _build_horn(
         )
         try:
             query, system, digest, reasoning, content, counts = _horn_cell_inputs(cell, model, rungs_dir)
-            # An empty pad span: the deduction study has no whitespace pad, so no token is class 1.
-            rebuilt = rebuild_sequence(
-                query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
-                pad_query_span=(0, 0), system=system,
-            )
+            if source.label_added_lines:
+                spans = _horn_added_line_spans(rungs_dir, cell.rung, cell.seed, cell.arm, query, theories)
+                rebuilt = rebuild_sequence(
+                    query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
+                    system=system, pad_query_spans=spans,
+                )
+                n_pad = rebuilt.classes[: len(rebuilt.prompt_ids)].count(1)
+                if cell.arm != "lem" and n_pad == 0:
+                    # A padded arm that labels nothing would read as an arm without a pad.
+                    raise _HornRowError(
+                        f"{len(spans)} added lines but no class-1 token after the rebuild; not "
+                        "planned unlabelled"
+                    )
+            else:
+                # An empty pad span: the deduction study has no whitespace pad, so no token is
+                # class 1 (the default; the stored captures were made this way).
+                rebuilt = rebuild_sequence(
+                    query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
+                    pad_query_span=(0, 0), system=system,
+                )
             if not checked:
                 # Once per model, as for induction: a wrong delimiter table is wrong for every cell.
                 check_reasoning_format(model, tokenizer, rebuilt.prompt_text, fmt=fmt)
@@ -2309,6 +2621,7 @@ def build_jobs(
     rungs_dir: Optional[Path] = None,
     arms: Optional[Sequence[str]] = None,
     reps: Optional[Sequence[int]] = None,
+    label_added_lines: bool = False,
 ) -> Tuple[List[PlannedJob], List[str]]:
     """Rebuild every stored mark or cell of `model` into a capture job, offline.
 
@@ -2346,6 +2659,9 @@ def build_jobs(
         Deduction: the rendered rungs; default ``bt.RUNGS_DIR``.
     arms, reps : Optional[Sequence], optional
         Deduction: keep only these arms / replicate numbers (``None`` = all).
+    label_added_lines : bool, optional
+        Deduction only: label the added lines of every padded arm class 1 (see
+        ``plan_replay``). Default ``False``: no token is class 1.
 
     Returns
     -------
@@ -2362,8 +2678,8 @@ def build_jobs(
     ------
     ValueError
         When `mode` or `study` is invalid, `seeds` or `reps` holds a non-integer, `arms` is
-        not a sequence of names, or a deduction-only argument is given for the induction
-        study (before any file is read).
+        not a sequence of names, or a deduction-only argument (also a true
+        `label_added_lines`) is given for the induction study (before any file is read).
     TemplateUnavailable
         When the template or tokenizer cannot be loaded (only when there is something to
         rebuild).
@@ -2375,6 +2691,7 @@ def build_jobs(
     source = _make_source(
         study, results_root,
         _horn_rows_file(model, horn_rows) if study == "horn" else horn_rows, rungs_dir, arms, reps,
+        label_added_lines,
     )
     built = _build(
         model, source, s3_prefix,
@@ -2454,6 +2771,10 @@ class ReplayPlan:
     #: the plan (``jobs``, ``per_arm``, the token totals, ``over_context`` and the storage
     #: estimate) covers only these jobs; ``runs``, ``marks`` and ``errors`` stay as built.
     selected: Optional[List[Dict[str, Any]]] = None
+    #: Deduction: whether the added lines of the padded arms are labelled class 1. When true,
+    #: ``per_arm`` also holds ``class1_tokens`` (class-1 tokens summed over the arm's planned
+    #: jobs) and ``class1_tokens_mean`` (per job; 0.0 for an arm without jobs).
+    label_added_lines: bool = False
 
     def summary(self) -> str:
         """Return a short multi-line description of the plan.
@@ -2464,7 +2785,9 @@ class ReplayPlan:
             Counts, token sizes, the capture mode, capture support, instance types and
             the labelled storage estimate. With a ``job_ids`` allow-list, also the line
             ``  selected jobs (N):`` and one line per selected job (id, token count, and a
-            note when it is over the capture context).
+            note when it is over the capture context). With ``label_added_lines``, a line
+            saying the added lines are class 1, and per arm the class-1 tokens (total and
+            mean per job).
         """
         horn = self.study == "horn"
         lines = [
@@ -2480,6 +2803,11 @@ class ReplayPlan:
             f"{self.over_context} job(s) over the {self.capture_max_model_len}-token capture "
             "context (excluded)",
         ]
+        if self.label_added_lines:
+            lines.append(
+                "  label_added_lines: the added lines of every padded arm are class 1 "
+                "(lem has none); the pad ratio is defined for those arms"
+            )
         for arm, stats in self.per_arm.items():
             line = (
                 f"  arm {arm}: {stats['marks']} jobs, {stats['total_tokens']} tokens, "
@@ -2492,6 +2820,11 @@ class ReplayPlan:
                     f"prompt tokens {stats['prompt_tokens']} rebuilt vs {stats['bedrock_prompt_tokens']} "
                     f"counted by the service, completion tokens {stats['bedrock_completion_tokens']} "
                     "counted by the service"
+                )
+            if "class1_tokens" in stats:
+                line += (
+                    f"; class-1 tokens {stats['class1_tokens']} total, "
+                    f"{stats['class1_tokens_mean']:.1f} per job"
                 )
             lines.append(line)
         if self.selected is not None:
@@ -2874,6 +3207,13 @@ def _plan_one(
                 "bedrock_completion_tokens": _usage_total(jobs_of_arm, "completion_tokens"),
                 "est_capture_bytes": None,  # filled below once the total is known
             })
+            if source.label_added_lines:
+                # Only with the labels: the per-arm dict of a default plan keeps its keys.
+                pad_counts = [(p.job.classes or ()).count(1) for p in jobs_of_arm]
+                per_arm[arm]["class1_tokens"] = sum(pad_counts)
+                per_arm[arm]["class1_tokens_mean"] = (
+                    sum(pad_counts) / len(pad_counts) if pad_counts else 0.0
+                )
 
     instance_types = tuple(INSTANCE_TYPES.get(model, ()))
     tp = ec2.derive_tp(model, instance_types[0], spec) if instance_types else None
@@ -2919,6 +3259,7 @@ def _plan_one(
         study=source.study,
         bedrock_token_counts=_HORN_BEDROCK_COUNTS_NOTE if horn else _BEDROCK_COUNTS_NOTE,
         selected=selected,
+        label_added_lines=source.label_added_lines,
     )
     return plan, all_planned
 
@@ -2940,6 +3281,7 @@ def plan_replay(
     reps: Optional[Sequence[int]] = None,
     capture_max_model_len: Optional[int] = None,
     job_ids: Optional[Sequence[str]] = None,
+    label_added_lines: bool = False,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
@@ -2987,6 +3329,16 @@ def plan_replay(
         estimate cover them, and ``ReplayPlan.selected`` lists them (see ``ReplayPlan``).
         Duplicates collapse. One list cannot name the jobs of several models, so it is
         accepted for ONE model only.
+    label_added_lines : bool, optional
+        Deduction only (a ``ValueError`` for induction). Default ``False``: no deduction token
+        is class 1, the classes the stored captures were made with. ``True``: the added lines
+        of every padded arm (each derivation-tree slot of the rendered library, whatever the
+        arm fills it with) are class 1, located from the rung's ``theory.json`` and checked
+        against the ``lem`` arm (``_horn_added_line_spans``); ``lem`` has no class-1 token. A
+        cell whose added lines cannot be located, or a padded cell with no class-1 token after
+        the rebuild, is a plan error. The plan records the flag and counts the class-1 tokens
+        per arm (``ReplayPlan.label_added_lines``). The job keys do not depend on the flag:
+        capture under a new ``s3_uri`` prefix, since a stored job is never re-sent.
 
     Returns
     -------
@@ -3022,7 +3374,7 @@ def plan_replay(
         model: _make_source(
             study, Path(results_root),
             _horn_rows_file(model, horn_rows, len(model_list)) if study == "horn" else horn_rows,
-            rungs_dir, arms, reps,
+            rungs_dir, arms, reps, label_added_lines,
         )
         for model in model_list
     }
@@ -4212,6 +4564,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     execute_model_timeout_s: Optional[int] = None,
     gpu_memory_utilization: Optional[float] = None,
     engine_log_dir: Optional[Path] = None,
+    label_added_lines: bool = False,
 ) -> ReplayReport:
     """Capture one model's stored transcripts (induction marks or deduction cells) on one spot box. BILLED.
 
@@ -4340,6 +4693,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     engine_log_dir : Optional[Path], optional
         Folder for the engine log file written when the serving engine dies; default
         ``STATE_DIR``. Created if absent.
+    label_added_lines : bool, optional
+        Deduction only: label the added lines of the padded arms class 1 (see
+        ``plan_replay``). Every manifest written then carries ``"label_added_lines": true``.
+        The keys do not depend on the flag and stored jobs are skipped, so point `s3_uri` at a
+        prefix that holds no unlabelled capture.
 
     Returns
     -------
@@ -4447,7 +4805,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     )
     source = _make_source(
         study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
-        rungs_dir, arms, reps,
+        rungs_dir, arms, reps, label_added_lines,
     )
 
     # Phase 1: offline plan and the launch summary, shown before the gate.
@@ -4739,6 +5097,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
             _write_manifests(
                 make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp,
                 mode=run_mode, serve=report.serve_settings,
+                label_added_lines=source.label_added_lines,
             )
         except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
             report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
@@ -4894,6 +5253,7 @@ def _manifest_payload(
     post_hoc_audit: bool = False,
     mode: str = "mass",
     serve: Optional[Mapping[str, Any]] = None,
+    label_added_lines: bool = False,
 ) -> Dict[str, Any]:
     """Return the manifest content of one run; shared by ``_write_manifests`` and ``audit_existing``.
 
@@ -4904,7 +5264,9 @@ def _manifest_payload(
     manifest's ``"mode"``: the capture mode of the run's jobs (``"mass"``, ``"summary"``,
     or ``"mixed"`` from ``audit_existing`` when one run directory holds both). For a
     ``HornRun`` the ``"run"`` field is ``{"study": "horn", "rung", "arm", "source_file":
-    <rows file name>}``; every other key is the same for both studies.
+    <rows file name>}``; every other key is the same for both studies. `label_added_lines` adds
+    ``"label_added_lines": True`` (the jobs' added lines are class 1); it is absent otherwise,
+    so a manifest of the default classes is unchanged.
     """
     run_field: Dict[str, Any] = (
         {"study": "horn", "rung": run.rung, "arm": run.arm, "source_file": run.rows_path.name}
@@ -4928,6 +5290,8 @@ def _manifest_payload(
     }
     if post_hoc_audit:
         payload["post_hoc_audit"] = True
+    if label_added_lines:
+        payload["label_added_lines"] = True
     if serve is not None:
         payload["serve"] = dict(serve)
     return payload
@@ -4945,11 +5309,13 @@ def _write_manifests(
     tp: int,
     mode: str = "mass",
     serve: Optional[Mapping[str, Any]] = None,
+    label_added_lines: bool = False,
 ) -> List[str]:
     """Write one manifest per run that had at least one job sent in this invocation.
 
     `mode` is the run's capture mode, recorded in every manifest. `serve` is the run's
-    effective ``serve_settings``, recorded as ``"serve"``. A job that an earlier manifest
+    effective ``serve_settings``, recorded as ``"serve"``. `label_added_lines` is recorded as
+    ``"label_added_lines": true`` when set (see ``_manifest_payload``). A job that an earlier manifest
     recorded as failed and that this run verified is plainly ``"verified"`` here: the reader
     takes the union of the verified entries of all manifests of a folder.
 
@@ -4982,6 +5348,7 @@ def _write_manifests(
         payload = _manifest_payload(
             model, spec, run, entries, tp=tp, instance_type=report.instance_type,
             served_model_name=report.served_model_name, mode=mode, serve=serve,
+            label_added_lines=label_added_lines,
         )
         key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
         keys.append(key)
@@ -5079,6 +5446,7 @@ def audit_existing(
     reps: Optional[Sequence[int]] = None,
     capture_max_model_len: Optional[int] = None,
     job_ids: Optional[Sequence[str]] = None,
+    label_added_lines: bool = False,
 ) -> ReplayReport:
     """Audit the captures of one model that are already in the bucket, and manifest them.
 
@@ -5140,6 +5508,11 @@ def audit_existing(
         earlier manifest recorded as ``failed: ...`` (not an audit outcome) is audited once all
         its objects exist, as without the list. There is no fill handling here: this function
         never sends anything.
+    label_added_lines : bool, optional
+        Deduction only: plan the jobs with the added lines labelled class 1 (see
+        ``plan_replay``), as the run that captured them did; the audit compares the stored
+        classes with the planned ones. Every manifest written then carries
+        ``"label_added_lines": true``.
 
     Returns
     -------
@@ -5192,7 +5565,7 @@ def audit_existing(
     _check_study(study)
     source = _make_source(
         study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
-        rungs_dir, arms, reps,
+        rungs_dir, arms, reps, label_added_lines,
     )
     plan, planned = _plan_one(
         model_key, source, prefix, tokenizer_for, template_for, config_for, seeds, None,
@@ -5327,6 +5700,7 @@ def audit_existing(
             model_key, spec, run, entries, tp=tps.pop() if len(tps) == 1 else None,
             instance_type=None, served_model_name=None, post_hoc_audit=True,
             mode=modes.pop() if len(modes) == 1 else "mixed",
+            label_added_lines=source.label_added_lines,
         )
         try:
             report.manifests.append(write_manifest(make_s3(), bucket, run_keys_prefix, payload))
@@ -5619,6 +5993,10 @@ class _ArmStats:
         self.n_summary = 0
         #: ``<folder>/<stem>`` of every job, in the order of the ``per_job`` entries.
         self.labels: List[str] = []
+        # Per job, same order: the [4] mean attention mass by class over all layers and over
+        # the global layers, and the pad ratio pooled over the job's own defined rows.
+        self.mass_per_job: Dict[str, List[np.ndarray]] = {"all": [], "global": []}
+        self.ratio_per_job: Dict[str, List[float]] = {"all": [], "global": []}
 
     def add(self, job: Mapping[str, Any], label: str, expected_heads: int, tp: int) -> None:
         """Fold one loaded job into the arm.
@@ -5681,6 +6059,19 @@ class _ArmStats:
                 float("nan") if is_window is None else _pool_layers(mean_l, count_l, is_window)
             )
             self.per_job[stat]["layer"].append(mean_l)
+        # Mass by class and pad ratio per job. Design: a missing sliding_window array means no
+        # windowed layer, so every layer is global here (unlike the entropy's global mean,
+        # which stays NaN without the array, as it always has).
+        layer_global = np.ones(layers, dtype=bool) if is_global is None else is_global
+        layer_mass = _job_layer_mass(job)
+        for name, select in (("all", None), ("global", layer_global)):
+            chosen = layer_mass if select is None else layer_mass[select]
+            self.mass_per_job[name].append(
+                chosen.mean(axis=0) if chosen.shape[0] else np.full(4, np.nan)
+            )
+            rows_sum = job_sums if select is None else job_sums[select]
+            rows_n = int((job_counts if select is None else job_counts[select]).sum())
+            self.ratio_per_job[name].append(float(rows_sum.sum() / rows_n) if rows_n else float("nan"))
         if is_summary:
             self.n_summary += 1
         elif job.get("prompt_entropy") is None:
@@ -5731,7 +6122,42 @@ class _ArmStats:
             # resampling (see ``entropy_ci``).
             out[f"{stat}_per_job"] = [float(v) for v in jobs_stat["all"]]
             out[f"{stat}_global_per_job"] = [float(v) for v in jobs_stat["global"]]
+        # Mass by class: each job's own mean first, then the mean over jobs (NaN jobs skipped
+        # per class), like the entropy means.
+        for name, key in (("all", "mass_mean"), ("global", "mass_global_mean")):
+            stacked = np.vstack(self.mass_per_job[name])  # [jobs, 4]
+            defined = ~np.isnan(stacked)
+            mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
+            np.divide(
+                np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
+                out=mean, where=defined.any(axis=0),
+            )
+            out[key] = mean
+        out["ratio_per_job"] = list(self.ratio_per_job["all"])
+        out["ratio_global_per_job"] = list(self.ratio_per_job["global"])
         return out
+
+
+def _job_layer_mass(job: Mapping[str, Any]) -> np.ndarray:
+    """Return one job's mean attention mass per key class and layer, ``[L, 4]`` float64.
+
+    A mass job averages ``mass`` (``[L, P, H, 4]``, cast to float64 first) over its rows and
+    heads (accumulated in float64); a summary job divides ``sum_mass`` (``[L, H, 4]``, summed over the rows) by
+    ``rows`` and averages over heads. Both give the mean over the job's (row, head) pairs per
+    layer, and every layer has the same number of them, so a plain mean over layers is the
+    job's pooled mean. NaN (``[L, 4]``) for a job with no response row.
+    """
+    if job.get("kind") == "summary":
+        sum_mass = np.asarray(job["sum_mass"], dtype=np.float64)
+        rows = int(job["rows"])
+        if rows == 0:
+            return np.full((sum_mass.shape[0], sum_mass.shape[-1]), np.nan)
+        return (sum_mass / rows).mean(axis=1)
+    mass = np.asarray(job["mass"])
+    if mass.shape[1] == 0 or mass.shape[2] == 0:
+        return np.full((mass.shape[0], mass.shape[-1]), np.nan)
+    # float64 accumulation without a float64 copy of the whole array.
+    return mass.mean(axis=(1, 2), dtype=np.float64)
 
 
 #: The seed in a job label: ``.../seed=<s>/<arm>--<stamp>/q<i>`` (induction) or
@@ -6007,8 +6433,10 @@ def read_captures(
         (``[L, H]`` array, mean over queries and jobs). Queries are pooled, so
         longer completions weigh more (a summary job contributes its summed ratios and
         its defined-row counts, which pools exactly the same rows). An arm without any pad token has an
-        undefined ratio: ``nan``, not 0; every deduction arm is such an arm (no class-1 token,
-        ``pad_tokens_mean`` 0). ``skipped_unverified`` counts the jobs of
+        undefined ratio: ``nan``, not 0; a deduction arm captured with the default classes is
+        such an arm (no class-1 token, ``pad_tokens_mean`` 0), while a padded deduction arm
+        captured with ``label_added_lines`` has its added lines as class 1 and so a defined
+        ratio. ``skipped_unverified`` counts the jobs of
         the arm left unread because no manifest records them as verified (always 0
         with ``require_verified=False``). An arm whose every job was skipped has no
         entry, as an arm without captures has none; its skips are in the WARNINGs.
@@ -6051,6 +6479,28 @@ def read_captures(
         (sums divided by counts, then pooled over layers as above) and only then
         averaged over jobs: rows are never pooled across jobs, so a long response does
         not outweigh a short one in either mode.
+
+        The attention mass by key class (0 informative prompt, 1 pad, 2 template and
+        other whitespace, 3 response), also mean per response first:
+
+        ``mass_mean``
+            ``[4]`` float64. Per job, the mean class mass over its response rows, heads
+            and layers (mass: ``mass`` averaged; summary: ``sum_mass / rows`` averaged
+            over heads and layers); then the mean over jobs, per class, NaN jobs skipped.
+        ``mass_global_mean``
+            ``[4]`` float64. The same over the global-attention layers only
+            (``sliding_window == 0``; a job without a ``sliding_window`` array has no
+            windowed layer, so every layer counts). Equal to ``mass_mean`` for a model
+            without sliding-window layers; NaN for a class when no job has a global layer.
+
+        For resampling (as ``entropy_ci`` resamples the entropies), in the order of
+        ``job_labels``:
+
+        ``ratio_per_job``, ``ratio_global_per_job``
+            List of floats. Per job, the pad ratio pooled over its own defined (row,
+            head, layer) values (summary: ``sum_pad_ratio`` over ``n_pad_ratio``), over
+            all layers and over the global layers (same rule as ``mass_global_mean``);
+            NaN where the job has no defined value (no class-1 token).
 
     Raises
     ------
