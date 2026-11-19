@@ -188,9 +188,7 @@ prefill path does. `replay_model` asks for `allow_unverified_serve` for this mod
 the pinned vLLM image starts it only when the weight mirror holds the repository's metadata
 archive (`meta.tar`, with `tokenizer.json`; added 2026-11-16). For capture it is served with
 a 49,152-token context by default; `capture_max_model_len` raises it. The longest cell
-captured is 82,036 tokens. With a 98,304-token context, cells of 86,900 tokens or more
-stopped the vLLM engine on four instances, so the Horn runs that held such cells were
-repeated with an 84,000-token context, which leaves them out. vLLM's flash-attention backend for this layer treats a sequence of 512 tokens or fewer
+captured is 121,265 tokens, with a 122,880-token context. vLLM's flash-attention backend for this layer treats a sequence of 512 tokens or fewer
 as decode, a path the plugin refuses to capture, so the plugin sets that threshold to 1 when
 it loads; short `intens` marks then take the captured prefill path.
 
@@ -205,29 +203,33 @@ per arm, as for induction). Mean prompt entropy in nats; for Gemma
 |---|---|---|---|
 | induction `intens` | 2.466 [2.462, 2.471] | 2.418 [2.395, 2.439] | 1.309 [1.299, 1.320] |
 | induction `noise_intens` | 4.638 [4.625, 4.652] | 3.116 [3.107, 3.124] | 2.118 [2.105, 2.130] |
-| induction `extens` | 5.863 [5.851, 5.876] | 3.998 [3.981, 4.015] | 2.584 [2.572, 2.595] |
-| induction `related_intens` | 6.212 [6.174, 6.251] | 4.170 [4.064, 4.275] | 2.526 [2.517, 2.536] |
+| induction `extens` | 5.863 [5.852, 5.876] | 3.998 [3.981, 4.015] | 2.584 [2.572, 2.595] |
+| induction `related_intens` | 6.212 [6.174, 6.251] | 4.170 [4.064, 4.275] | 2.517 [2.505, 2.529] |
 | Horn `lem` | 5.035 [5.030, 5.039] | 3.186 [3.165, 3.207] | 1.941 [1.928, 1.953] |
 | Horn `pad` | 5.858 [5.854, 5.862] | 3.822 [3.798, 3.844] | 2.233 [2.216, 2.249] |
-| Horn `both` | 6.358 [6.350, 6.367] | 3.789 [3.765, 3.814] | 2.108 [2.083, 2.134] |
-| Horn `tjunk` | 6.272 [6.265, 6.279] | 3.694 [3.670, 3.717] | 2.268 [2.244, 2.291] |
+| Horn `both` | 6.358 [6.350, 6.367] | 3.789 [3.765, 3.814] | 2.088 [2.060, 2.117] |
+| Horn `tjunk` | 6.272 [6.265, 6.279] | 3.694 [3.670, 3.717] | 2.262 [2.237, 2.287] |
 
 The brackets are 95% bootstrap intervals (`attention_replay.entropy_ci`, 10,000 draws).
 Responses of one seed share their context, so a draw resamples whole seeds (30 for induction, 90
 for Horn) and takes the mean over the responses of the drawn seeds.
 
-Captures missing from these means:
+Every cell has all 270 responses. Twenty-four of them were captured in a second pass on
+2026-11-18 (`run_attention.py --job-ids ... --fill`):
 
-- DeepSeek V3.1 induction: 3 `related_intens` marks longer than the 98,304-token capture
-  context.
-- DeepSeek V3.1 Horn: 11 `both` cells and 2 `tjunk` cells, so those means are over 259 and
-  268 responses. Seven are longer than 98,304 tokens; six `both` cells of 85,000 to 87,800
-  tokens are the ones left out after the engine stopped (one of them was stored before the
-  engine stopped, but no manifest records it as verified, so it is not read).
-- Gemma 4 31B: 7 induction marks and 1 Horn cell lost one rank to the plugin's self-check
-  (a relative error of 0.031 to 0.040 against a tolerance of 0.03). They are recorded as
-  failed and are not read.
-- Nemotron 3 Super: none.
+- DeepSeek V3.1, 6 Horn cells of about 87,000 tokens: the first attempt stopped the engine,
+  because vLLM bounds one model step at 300 s. The capture serve now sets
+  `VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS` to 3600.
+- DeepSeek V3.1, 7 Horn cells and 3 induction marks of 101,000 to 121,000 tokens: captured
+  with a 122,880-token context and `--gpu-memory-utilization 0.98`. A 131,072-token context
+  does not start on 8 x H200 (no memory is left for the cache).
+- Gemma 4 31B, 7 induction marks and 1 Horn cell: one rank had failed the self-check with a
+  relative error of 0.031 to 0.040. They were recaptured with `--gate-tol 0.05`; the failing
+  layers are sliding-window layers with small outputs, where the relative error is large for
+  an ordinary absolute error. Their metas record the tolerance, and the audit refuses any
+  tolerance above 0.05.
+
+`plot_entropy.py` draws this table as `figures/entropy_ci.pdf`.
 
 `bedrock-trio/smoke-2/attention/` holds the Gemma pilot on the second smoke (54 jobs). It
 predates the prompt entropy and the `related_intens` arm and is not read.
