@@ -803,8 +803,91 @@ def test_capture_versions_match_the_plugin() -> None:
     from smolbench.evals import payloads
 
     source = payloads.attention_capture_plugin_py()
-    assert "\nCAPTURE_VERSION = 2\n" in source and "\nSUMMARY_CAPTURE_VERSION = 3\n" in source
-    assert attention.CAPTURE_VERSIONS == {"rows": 2, "mass": 2, "summary": 3}
+    assert "\nCAPTURE_VERSION = 2\n" in source and "\nSUMMARY_CAPTURE_VERSION = 4\n" in source
+    assert "\nANSWER_CLASS = 4\n" in source and attention.ANSWER_CLASS == 4
+    assert attention.CAPTURE_VERSIONS == {"rows": 2, "mass": 2, "summary": 4}
+    # Every array the client requires of a version-4 summary is one the plugin stacks.
+    for name in attention.SUMMARY_V4_ARRAYS:
+        assert f'"{name}"' in source, name
+
+
+# ------------------------------------------------------------------ version 4 (class split, answer rows)
+def _summary_v4_npz(j: attention.Job, *, drop: tuple = (), by_class_heads: int | None = None,
+                    rows_answer: int | None = None) -> bytes:
+    """A version-4 summary upload of `j`: the version-3 arrays plus the class split and answer sums."""
+    arrays = dict(np.load(io.BytesIO(summary_npz(j.n_tokens, j.query_start, list(j.classes)))))
+    arrays["capture_version"] = np.asarray(4, np.int32)
+    layers, heads = arrays["sum_entropy"].shape
+    for name, tail in attention.SUMMARY_V4_ARRAYS.items():
+        h = by_class_heads if (by_class_heads and name == attention.SUMMARY_BY_CLASS_ARRAY) else heads
+        dtype = np.int64 if name.startswith("n_") else np.float64
+        arrays[name] = np.zeros((layers, h) + tail, dtype)
+    arrays["rows_answer"] = np.asarray(0 if rows_answer is None else rows_answer, np.int64)
+    for name in drop:
+        arrays.pop(name)
+    buf = io.BytesIO()
+    np.savez(buf, **arrays)
+    return buf.getvalue()
+
+
+def _put_v4(s3: FakeS3, j: attention.Job, tp: int = 2, **kw: Any) -> None:
+    for rank in range(tp):
+        npz, meta = attention.rank_keys(j.key, rank)
+        blob = _summary_v4_npz(j, **kw)
+        s3.objects[npz] = blob
+        s3.objects[meta] = json.dumps({"n_tokens": j.n_tokens, "bytes": len(blob)}).encode()
+
+
+def test_verify_requires_the_version_4_arrays_of_a_version_4_summary() -> None:
+    s3 = FakeS3()
+    j = summary_job("v4", 5, 3)
+    _put_v4(s3, j)
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="summary") == (["v4"], [])
+    for kw in ({"drop": (attention.SUMMARY_BY_CLASS_ARRAY,)}, {"drop": ("sum_mass_answer",)},
+               {"drop": ("rows_answer",)}, {"by_class_heads": 3}, {"rows_answer": 4}):
+        _put_v4(s3, j, **kw)
+        assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="summary") == ([], ["v4"]), kw
+    # A version-3 upload (no class split) still verifies: the stored captures are of that kind.
+    _upload_summary(s3, j)
+    assert attention.verify_capture_uploads(s3, "b", [j], 2, mode="summary") == (["v4"], [])
+
+
+@pytest.mark.parametrize("stored_version, refused", [(3, True), (4, False)])
+def test_fill_never_completes_a_version_3_summary_stem_with_version_4_objects(stored_version, refused) -> None:
+    s3 = FakeS3()
+    j = summary_job("s7", 6, 3)
+    npz_key, meta_key = attention.rank_keys(j.key, 0)
+    s3.objects[npz_key] = b"npz"
+    s3.objects[meta_key] = json.dumps({"mode": "summary", "capture_version": stored_version, "tp": 2}).encode()
+    reason = attention.fill_refusal(s3, "b", j, 2, "summary", [npz_key, meta_key])
+    if refused:
+        assert reason is not None and "capture_version" in reason and "this run writes 4" in reason, reason
+    else:
+        assert reason is None
+
+
+def test_token_classes_marks_the_answer_tokens_class_4_only_when_asked() -> None:
+    table = {0: "", 1: "Hi", 2: " " * 40}
+    decode = lambda ids: [table[i] for i in ids]  # noqa: E731
+    plain = attention.token_classes([0, 1, 2], [7, 8, 9], decode)
+    assert plain == [2, 0, 1, 3, 3, 3]
+    assert attention.token_classes([0, 1, 2], [7, 8, 9], decode, answer_start=None) == plain
+    assert attention.token_classes([0, 1, 2], [7, 8, 9], decode, answer_start=1) == [2, 0, 1, 3, 4, 4]
+    assert attention.token_classes([0, 1, 2], [7, 8, 9], decode, answer_start=0)[3:] == [4, 4, 4]
+    assert attention.token_classes([0, 1, 2], [7, 8, 9], decode, answer_start=3) == plain
+    for bad in (-1, 4):
+        with pytest.raises(ValueError, match="answer_start"):
+            attention.token_classes([0, 1, 2], [7, 8, 9], decode, answer_start=bad)
+
+
+def test_mass_job_accepts_an_answer_suffix_and_refuses_misplaced_class_4() -> None:
+    ok = attention.mass_job("q0", (1, 2), (3, 4, 5), [0, 2, 3, 4, 4], "p/q0.npz", mode="summary")
+    assert ok.classes == (0, 2, 3, 4, 4)
+    assert attention.mass_job("q0", (1,), (3, 4), [0, 4, 4], "p/q0.npz").classes == (0, 4, 4)
+    for classes, needle in (([4, 3, 3], "prompt token"), ([0, 4, 3], "follows"),
+                            ([0, 3, 5], "outside"), ([0, 3, 2], "other than 3 or 4")):
+        with pytest.raises(ValueError, match=needle):
+            attention.mass_job("q0", (1,), (3, 4), classes, "p/q0.npz")
 
 
 # ------------------------------------------------------------------ npz_put: existing

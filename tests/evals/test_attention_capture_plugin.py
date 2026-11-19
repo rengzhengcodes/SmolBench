@@ -1197,15 +1197,23 @@ def test_summary_npz_holds_sums_not_rows_and_the_meta_names_the_mode(monkeypatch
     assert done["ok"] is True and done["gate_max_rel"] < 3e-2, done
     npz = np.load(io.BytesIO(uploads["put://s/r0.npz"]))
     meta = json.loads(uploads["put://s/r0.json"])
-    assert meta["mode"] == "summary" and meta["capture_version"] == 3
+    assert meta["mode"] == "summary" and meta["capture_version"] == 4
     assert meta["rows_shape"] == [2, t - query_start, 4, 4] and meta["query_start"] == query_start
     assert meta["n_classes"] == 4 and meta["bytes"] == len(uploads["put://s/r0.npz"])
     assert not {"mass", "entropy", "prompt_entropy", "sink"} & set(npz.files)
     assert int(npz["rows"]) == t - query_start and npz["rows"].shape == ()
-    assert int(npz["capture_version"]) == 3
+    assert int(npz["capture_version"]) == 4
     for name in _SUMMARY_SUMS:
         assert npz[name].dtype == np.float64, name
         assert npz[name].shape == ((2, 4, 4) if name == "sum_mass" else (2, 4)), name
+    # Version 4: the class split and the answer sums (zeros: this job labels no answer token).
+    from smolbench.evals import attention as client_v4
+    for name, tail in client_v4.SUMMARY_V4_ARRAYS.items():
+        assert npz[name].shape == (2, 4) + tail, name
+        want = np.int64 if name.startswith("n_") else np.float64
+        assert npz[name].dtype == want, name
+    assert npz["rows_answer"].shape == () and int(npz["rows_answer"]) == 0
+    assert (npz["sum_entropy_answer"] == 0).all() and (npz["n_prompt_entropy_answer"] == 0).all()
     for name in _SUMMARY_COUNTS:
         assert np.issubdtype(npz[name].dtype, np.integer) and npz[name].shape == (2, 4), name
     for name in ("classes", "query_start", "layers", "positions", "has_sink", "sliding_window",
@@ -1364,3 +1372,237 @@ def test_register_logs_an_unset_execute_model_timeout(monkeypatch, tmp_path: Pat
     _load_plugin(monkeypatch, tmp_path)
     lines = [l for l in capsys.readouterr().out.splitlines() if "registered" in l]
     assert lines and "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS" in lines[-1]
+
+
+# --------------------------------------------------------------------------- version 4: class split
+def _eager_row_stats(layer, q, k3, query_start, classes):
+    """Per response row, from first principles in float64: the prompt entropy, its class split,
+    the whole-row entropy and the per-class mass (class 4 counted as 3).
+
+    Independent of the plugin's route: the reference softmax rows over tokens (sink split off)
+    are renormalised over the prompt keys, so a class split equal to the plugin's proves both
+    the selection of keys and the per-class reduction. Returns ``pe [P, H]`` (NaN where no
+    prompt key is attendable), ``pe_c [P, H, 3]`` (0 there), ``ent [P, H]``, ``mass [P, H, 4]``.
+    """
+    t = q.shape[0]
+    rows, sink = _reference_rows(layer, q, k3, list(range(query_start, t)))
+    rows = rows.double()
+    cls = torch.tensor(classes)
+    prompt = rows[..., :query_start]
+    total = prompt.sum(-1, keepdim=True)
+    renorm = torch.where(total > 0, prompt / torch.where(total > 0, total, torch.ones_like(total)),
+                         torch.zeros_like(prompt))
+    terms = -torch.where(renorm > 0, renorm * torch.log(renorm), torch.zeros_like(renorm))
+    pe_c = torch.stack([terms[..., cls[:query_start] == c].sum(-1) for c in range(3)], dim=-1)
+    pe = torch.where(total[..., 0] > 0, terms.sum(-1), torch.full_like(total[..., 0], float("nan")))
+    full = rows if sink is None else torch.cat([rows, sink.double()[..., None]], dim=-1)
+    ent = -torch.where(full > 0, full * torch.log(full), torch.zeros_like(full)).sum(-1)
+    onehot = torch.zeros(t, 4, dtype=torch.float64)
+    onehot[torch.arange(t), cls.clamp(max=3)] = 1.0
+    mass = torch.einsum("phn,nc->phc", rows, onehot)
+    return pe, pe_c, ent, mass
+
+
+def _assert_by_class_matches_eager(npz, li, layer, q, k3, query_start, classes):
+    pe, pe_c, ent, mass = _eager_row_stats(layer, q, k3, query_start, classes)
+    defined = ~torch.isnan(pe)
+    want = torch.where(defined[..., None], pe_c, torch.zeros_like(pe_c)).sum(0).numpy()
+    got = npz["sum_prompt_entropy_by_class"][li]
+    n = defined.sum(0).numpy()
+    np.testing.assert_array_equal(npz["n_prompt_entropy"][li], n)
+    np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-5 * max(int(n.max()), 1), err_msg=layer.layer_name)
+    # The identity, from the stored arrays alone: both sides come from the same float32 p ln p
+    # values, so they agree to float32 summation order (bound asserted: 1e-6 relative + 1e-7/row).
+    total = npz["sum_prompt_entropy"][li]
+    assert (np.abs(got.sum(-1) - total) <= 1e-6 * np.abs(total) + 1e-7 * n).all(), layer.layer_name
+    assert (got >= 0).all() and ((n > 0) | (got.sum(-1) == 0)).all()
+    return pe, pe_c, ent, mass
+
+
+@pytest.mark.parametrize("query_start", [1, 9, 24, 33])
+def test_summary_class_split_equals_a_direct_eager_computation(monkeypatch, tmp_path: Path, query_start) -> None:
+    """Global, GQA, sink, soft cap and sliding-window layers (the window leaves rows with no
+    attendable prompt key once it has slid past the prompt); several query chunks."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d = 40, 16
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 8 * 40 * 3)   # chunks of 3 rows
+    sinks = torch.full((8,), 2.0)
+    layers = [
+        StubAttention("model.layers.0.self_attn.attn", 8, 4, d),
+        StubAttention("model.layers.1.self_attn.attn", 8, 8, d, sinks=sinks),
+        StubAttention("model.layers.2.self_attn.attn", 8, 4, d, soft_cap=4.0),
+        StubAttention("model.layers.3.self_attn.attn", 8, 4, d, window=6),
+    ]
+    prompt = ([0, 1, 1, 2] * 10)[:query_start]
+    classes = prompt + [3] * (t - query_start)
+    _reduced_job(tmp_path, "bc", 1, t, query_start, classes, [t - 1], "summary")
+    tensors = _run_forward(layers, t, d, seed=query_start)
+    assert json.loads((tmp_path / "done" / "bc.r0.json").read_text())["ok"] is True
+    npz = np.load(io.BytesIO(uploads["put://bc/r0.npz"]))
+    assert npz["sum_prompt_entropy_by_class"].shape == (4, 8, 3)
+    for li, layer in enumerate(layers):
+        _, q, k, _ = tensors[layer.layer_name]
+        _assert_by_class_matches_eager(npz, li, layer, q, k.view(t, layer.num_kv_heads, d), query_start, classes)
+    # Window 6: only rows i < 5 see a prompt key; the rest add exactly 0 to the split.
+    assert (npz["n_prompt_entropy"][3] == min(5, t - query_start)).all()
+
+
+def test_summary_class_split_of_a_job_with_no_class_1_token_has_a_zero_class_1_column(
+    monkeypatch, tmp_path: Path
+) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, qs = 24, 8, 14
+    layers = [StubAttention("model.layers.0.self_attn.attn", 4, 2, d),
+              StubAttention("model.layers.1.self_attn.attn", 4, 2, d, window=4)]
+    classes = [0] * 12 + [2] * 2 + [3] * 10
+    _reduced_job(tmp_path, "n1", 1, t, qs, classes, [t - 1], "summary")
+    tensors = _run_forward(layers, t, d, seed=4)
+    npz = np.load(io.BytesIO(uploads["put://n1/r0.npz"]))
+    assert (npz["sum_prompt_entropy_by_class"][..., 1] == 0.0).all()
+    assert (npz["sum_prompt_entropy_by_class"][..., 0] > 0).all()
+    for li, layer in enumerate(layers):
+        _, q, k, _ = tensors[layer.layer_name]
+        _assert_by_class_matches_eager(npz, li, layer, q, k.view(t, 2, d), qs, classes)
+
+
+def test_summary_class_split_of_latent_attention_layers(monkeypatch, tmp_path: Path) -> None:
+    """MLA goes through the same row reduction: the split equals the eager one of the rebuilt keys."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 2 * 30 * 4)
+    t, qs = 30, 18
+    layers = [StubMLAAttention(f"model.layers.{i}.self_attn.attn", heads=2, seed=i) for i in range(2)]
+    classes = [0] * 8 + [1] * 8 + [2] * 2 + [3] * 12
+    _reduced_job(tmp_path, "mbc", 1, t, qs, classes, [t - 1], "summary")
+    tensors = _run_mla_forward(layers, t, seed=8)
+    npz = np.load(io.BytesIO(uploads["put://mbc/r0.npz"]))
+    assert json.loads(uploads["put://mbc/r0.json"])["attention"] == "mla"
+    for li, layer in enumerate(layers):
+        _, q, kv_c, k_pe = tensors[layer.layer_name]
+        rows = _mla_reference_rows(layer, q, kv_c, k_pe, list(range(qs, t))).double()
+        prompt = rows[..., :qs]
+        renorm = prompt / prompt.sum(-1, keepdim=True)
+        terms = -renorm * torch.log(renorm)
+        cls = torch.tensor(classes[:qs])
+        want = torch.stack([terms[..., cls == c].sum(-1) for c in range(3)], -1).sum(0).numpy()
+        got = npz["sum_prompt_entropy_by_class"][li]
+        np.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-4)
+        total = npz["sum_prompt_entropy"][li]
+        assert (np.abs(got.sum(-1) - total) <= 1e-6 * np.abs(total) + 1e-7 * (t - qs)).all()
+
+
+def test_summary_class_split_of_two_ranks_concatenates_to_the_full_model(monkeypatch, tmp_path: Path) -> None:
+    """Each rank holds 2 of 4 heads; the ranks' splits, joined in rank order, are the full model's."""
+    t, d, qs, heads = 26, 8, 15, 4
+    gen = torch.Generator().manual_seed(31)
+    q = torch.randn(t, heads * d, generator=gen).to(torch.bfloat16)
+    k = torch.randn(t, heads * d, generator=gen).to(torch.bfloat16)
+    v = torch.randn(t, heads * d, generator=gen).to(torch.bfloat16)
+    classes = [0] * 6 + [1] * 7 + [2] * 2 + [3] * 11
+    per_rank = []
+    for rank in range(2):
+        rank_dir = tmp_path / f"r{rank}"
+        rank_dir.mkdir()
+        plugin, uploads = _load_plugin(monkeypatch, rank_dir)
+        monkeypatch.setattr(plugin, "_rank", lambda rank=rank: rank)
+        layer = StubAttention("model.layers.0.self_attn.attn", 2, 2, d)
+        job = _arm(rank_dir, "tp2s", 1, t, [t - 1], tp=2)
+        job.update({"mode": "summary", "query_start": qs, "classes": classes})
+        (rank_dir / "current.json").write_text(json.dumps(job))
+        cols = slice(rank * 2 * d, (rank + 1) * 2 * d)
+        layer.forward(q[:, cols].contiguous(), k[:, cols].contiguous(), v[:, cols].contiguous())
+        assert json.loads((rank_dir / "done" / f"tp2s.r{rank}.json").read_text())["ok"] is True
+        per_rank.append(np.load(io.BytesIO(uploads[f"put://tp2s/r{rank}.npz"]))["sum_prompt_entropy_by_class"][0])
+    got = np.concatenate(per_rank, axis=0)                                 # [4, 3]
+    full = StubAttention.__new__(StubAttention)                            # reference only
+    full.num_heads, full.num_kv_heads, full.head_size, full.sliding_window = heads, heads, d, None
+    full.impl = _Impl(d ** -0.5)
+    _, pe_c, _, _ = _eager_row_stats(full, q, k.view(t, heads, d), qs, classes)
+    np.testing.assert_allclose(got, pe_c.sum(0).numpy(), rtol=1e-4, atol=1e-4)
+
+
+# --------------------------------------------------------------------------- answer rows (class 4)
+def test_class_4_labels_leave_every_existing_array_identical(monkeypatch, tmp_path: Path) -> None:
+    """Mass and summary: the same forward with and without class-4 labels; only `classes` and the
+    *_answer arrays may differ."""
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, qs = 30, 8, 16
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 4 * 30 * 4)
+    layers = [StubAttention("model.layers.0.self_attn.attn", 4, 2, d, window=7),
+              StubAttention("model.layers.1.self_attn.attn", 4, 4, d, sinks=torch.full((4,), 1.0))]
+    plain = [0] * 8 + [1] * 6 + [2] * 2 + [3] * 14
+    labelled = plain[:qs + 9] + [4] * 5
+    run = lambda: _run_forward(layers, t, d, seed=12)  # noqa: E731
+    for seq, (job_id, mode, classes) in enumerate([("m3", "mass", plain), ("m4", "mass", labelled),
+                                                    ("s3", "summary", plain), ("s4", "summary", labelled)]):
+        _reduced_job(tmp_path, job_id, seq + 1, t, qs, classes, [t - 1], mode)
+        run()
+        assert json.loads((tmp_path / "done" / f"{job_id}.r0.json").read_text())["ok"] is True
+    for a, b in (("m3", "m4"), ("s3", "s4")):
+        x = np.load(io.BytesIO(uploads[f"put://{a}/r0.npz"]))
+        y = np.load(io.BytesIO(uploads[f"put://{b}/r0.npz"]))
+        assert set(x.files) == set(y.files)
+        for name in x.files:
+            if name == "classes" or name.endswith("_answer"):
+                continue
+            np.testing.assert_array_equal(x[name], y[name], err_msg=f"{a}/{b} {name}")
+        assert list(y["classes"]) == labelled
+        ma, mb = (json.loads(uploads[f"put://{j}/r0.json"]) for j in (a, b))
+        assert ma["n_classes"] == mb["n_classes"] == 4
+        assert ma["capture_version"] == mb["capture_version"] == (2 if a == "m3" else 4)
+    m = np.load(io.BytesIO(uploads["put://m4/r0.npz"]))
+    assert m["mass"].shape[-1] == 4 and not {f for f in m.files if "answer" in f or "by_class" in f}
+    s = np.load(io.BytesIO(uploads["put://s3/r0.npz"]))
+    assert int(s["rows_answer"]) == 0 and all((s[n] == 0).all() for n in s.files if n.endswith("_answer"))
+
+
+def test_answer_sums_equal_the_all_rows_computation_restricted_to_class_4_rows(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    t, d, qs = 36, 8, 18
+    monkeypatch.setattr(plugin, "MASS_CHUNK_ELEMENTS", 4 * 36 * 5)   # chunks of 5 rows, answer straddles
+    sinks = torch.full((4,), 1.5)
+    layers = [StubAttention("model.layers.0.self_attn.attn", 4, 2, d),
+              StubAttention("model.layers.1.self_attn.attn", 4, 4, d, sinks=sinks),
+              StubAttention("model.layers.2.self_attn.attn", 4, 2, d, window=12)]
+    n_answer = 7
+    classes = [0] * 9 + [1] * 7 + [2] * 2 + [3] * (t - qs - n_answer) + [4] * n_answer
+    _reduced_job(tmp_path, "ans", 1, t, qs, classes, [t - 1, 25], "summary")
+    tensors = _run_forward(layers, t, d, seed=21)
+    assert json.loads((tmp_path / "done" / "ans.r0.json").read_text())["ok"] is True
+    npz = np.load(io.BytesIO(uploads["put://ans/r0.npz"]))
+    assert int(npz["rows_answer"]) == n_answer and int(npz["rows"]) == t - qs
+    answer = torch.tensor(classes[qs:]) == 4
+    for li, layer in enumerate(layers):
+        _, q, k, _ = tensors[layer.layer_name]
+        pe, pe_c, ent, mass = _assert_by_class_matches_eager(
+            npz, li, layer, q, k.view(t, layer.num_kv_heads, d), qs, classes)
+        ad = (~torch.isnan(pe)) & answer[:, None]
+        np.testing.assert_array_equal(npz["n_prompt_entropy_answer"][li], ad.sum(0).numpy())
+        checks = {
+            "sum_prompt_entropy_answer": torch.where(ad, pe, torch.zeros_like(pe)).sum(0),
+            "sum_prompt_entropy_by_class_answer": torch.where(ad[..., None], pe_c, torch.zeros_like(pe_c)).sum(0),
+            "sum_entropy_answer": ent[answer].sum(0),
+            "sum_mass_answer": mass[answer].sum(0),
+        }
+        for name, want in checks.items():
+            np.testing.assert_allclose(npz[name][li], want.numpy(), rtol=1e-4, atol=1e-4, err_msg=name)
+        for name, whole in (("sum_prompt_entropy_answer", "sum_prompt_entropy"),
+                            ("sum_prompt_entropy_by_class_answer", "sum_prompt_entropy_by_class"),
+                            ("sum_entropy_answer", "sum_entropy"), ("sum_mass_answer", "sum_mass")):
+            assert (npz[name][li] <= npz[whole][li]).all(), name
+        a = npz["sum_prompt_entropy_answer"][li]
+        assert (np.abs(npz["sum_prompt_entropy_by_class_answer"][li].sum(-1) - a) <= 1e-6 * np.abs(a) + 1e-7 * n_answer).all()
+    # Window 12: rows i < 11 see a prompt key, and the answer rows (i >= 11) none of them.
+    assert (npz["n_prompt_entropy_answer"][2] == 0).all() and (npz["sum_prompt_entropy_answer"][2] == 0).all()
+    assert (npz["n_prompt_entropy_answer"][:2] == n_answer).all()
+
+
+def test_a_class_above_4_is_still_refused(monkeypatch, tmp_path: Path) -> None:
+    plugin, uploads = _load_plugin(monkeypatch, tmp_path)
+    layer = StubAttention("model.layers.0.self_attn.attn", 4, 4, 8)
+    for seq, mode in enumerate(("summary", "mass")):
+        _reduced_job(tmp_path, f"c5{mode}", seq + 1, 10, 5, [0] * 5 + [3, 3, 4, 4, 5], [9], mode)
+        _run_forward([layer], 10, 8)
+    assert not uploads and not (tmp_path / "done").exists()
+    _reduced_job(tmp_path, "c4", 3, 10, 5, [0] * 5 + [3, 3, 4, 4, 4], [9], "summary")
+    _run_forward([layer], 10, 8)
+    assert json.loads((tmp_path / "done" / "c4.r0.json").read_text())["ok"] is True

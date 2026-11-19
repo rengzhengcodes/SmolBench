@@ -96,7 +96,7 @@ Upload (per rank, via the presigned URLs in the job file):
   `sliding_window` int32 `[L]` (0 = full), `kv_shared_from` int32 `[L]`
   (-1 = own KV).
 * `.json` meta: `job_id, rank, tp, n_tokens, positions, layers, num_heads_local,
-  num_kv_heads_local, head_size, capture_version (2; 3 for summary mode; absent = 1), attention ("mha" | "mla" | "mixed"; see
+  num_kv_heads_local, head_size, capture_version (2; 4 for summary mode, 3 for earlier summary captures; absent = 1), attention ("mha" | "mla" | "mixed"; see
   the last section), dtype ("float16"), gate: {layer: {max_abs,
   max_rel}}, gate_tol, vllm_commit, model, bytes, wall_s`.
 * then `<SMOLBENCH_ATTN_DIR>/done/<job_id>.r<rank>.json`:
@@ -198,7 +198,8 @@ Job file additions (the agent copies them from the `/attn` job verbatim):
   token inside the prompt's longest whitespace run of >= 32 characters),
   `2` other prompt whitespace / template token (short structural
   whitespace, chat-template specials), `3` completion token (reasoning +
-  response). The client derives them from the stored token ids with the
+  response), and optionally `4` answer token (a completion token of the stored
+  response after the reasoning; see "Answer tokens" below). The client derives them from the stored token ids with the
   served tokenizer's per-token decode; they are stored in the npz so the
   uniform baseline `n_c(p) / (p + 1)` (class counts over the causal prefix)
   is computable offline for every query.
@@ -276,6 +277,13 @@ npz layout (stacked over layers in layer order; `P = n_tokens - query_start`):
   holding 3.
 * `classes` uint8 `[T]`, `query_start` int32, `positions` int32, `layers`,
   `has_sink`, `sliding_window`, `kv_shared_from` as in mass mode.
+* Version 4 (added 2026-11-19, what the plugin writes): float64
+  `[L, H_local, 3]` `sum_prompt_entropy_by_class`, and the answer-row arrays
+  `sum_prompt_entropy_answer`, `sum_entropy_answer` (float64 `[L, H_local]`),
+  `n_prompt_entropy_answer` (int64 `[L, H_local]`),
+  `sum_prompt_entropy_by_class_answer` (float64 `[L, H_local, 3]`),
+  `sum_mass_answer` (float64 `[L, H_local, 4]`) and `rows_answer` (int64, 0-d).
+  `capture_version` holds 4.
 * It holds no `mass`, `entropy`, `prompt_entropy` or `sink` array.
 
 Definitions. Row `i` (`i = 0 .. P-1`) is the query at absolute position
@@ -299,6 +307,32 @@ undefined) and `plogp(x) = x ln x` with `plogp(0) = 0`, so that no row gives
   `H - G - r * ln(i + 1)`. An offline audit can check the grouping rule
   `sum_chain_lo <= sum_m_hp <= sum_chain_hi` from these three sums without the
   rows.
+* `sum_prompt_entropy_by_class` `[H_local, 3]` (version 4): over the same rows
+  as `sum_prompt_entropy`, the sum of `Hp_c = - sum over prompt keys j of class c
+  of p_j ln p_j`, c = 0, 1, 2, where `p_j` is the row's attention renormalized
+  over the attendable prompt keys (`0 ln 0 = 0`; masked keys contribute 0). A row
+  where `Hp` is NaN adds exactly 0. Since `Hp_0 + Hp_1 + Hp_2 = Hp`,
+  `sum_prompt_entropy_by_class.sum(-1) == sum_prompt_entropy` up to float32
+  summation order: both come from the same float32 `p ln p` values of each row
+  (the prompt entropy as a `torch.sum` over the keys, the split as a matmul with
+  the `[query_start, 3]` class one-hot), cast to float64 and summed over rows.
+  Measured on the CPU (1000 response rows, 3000 and 11000 prompt keys) the stored
+  sums agree to 1.5e-9 and 5.4e-9 relative; the offline audit
+  allows `1e-3 * |sum_prompt_entropy| + 1e-6 * n_prompt_entropy`, which also
+  covers TF32 matmuls (`VLLM_FLOAT32_MATMUL_PRECISION` other than its default
+  `highest`). Every value is >= 0 exactly (each term is `-p ln p` with
+  `0 < p <= 1`). The prompt keys must be classes 0..2 (the client's
+  `token_classes` guarantees it); a class-3 or class-4 prompt key would be left
+  out of the split and fail that identity.
+* Answer rows (version 4): rows whose own token (`classes[query_start + i]`) is
+  class 4. `sum_prompt_entropy_answer` / `n_prompt_entropy_answer` and
+  `sum_prompt_entropy_by_class_answer` are the sums above over the answer rows
+  where `Hp` is finite; `sum_entropy_answer` and `sum_mass_answer` sum `H` and
+  the per-class mass over every answer row; `rows_answer` counts the answer rows.
+  All zero when the job has no class-4 token. Each `_answer` sum is the sum of a
+  subset of the non-negative terms of its all-rows counterpart (same order, the
+  other terms replaced by 0), so it never exceeds it; `n_prompt_entropy_answer
+  <= n_prompt_entropy` and `rows_answer <= rows`.
 * Every chunk of rows contributes; none is skipped.
 
 Precision: the sums are float64 and are accumulated from the float32 chunk
@@ -312,7 +346,7 @@ One reduction: summary and mass mode both consume the same row reduction in the
 plugin (`_row_chunks`). A summary is the sum of the rows that mass mode would
 have stored, taken before mass mode's float16 rounding.
 
-Meta json: as for mass mode except `mode: "summary"`, `capture_version: 3`,
+Meta json: as for mass mode except `mode: "summary"`, `capture_version: 4` (3 for captures made before 2026-11-19),
 `dtype: "float64"` and `rows_shape: [L, P, H_local, 4]`. `rows_shape` is the
 shape of the per-row statistics that were summed (what mass mode would have
 stored), not the shape of any stored array; it keeps the shape check of the
@@ -326,6 +360,29 @@ job's.
 | 1 (field absent) | mass without `prompt_entropy` |
 | 2 | mass with `prompt_entropy` (and rows mode) |
 | 3 | summary |
+| 4 | summary with `sum_prompt_entropy_by_class` and the answer-row arrays |
+
+Memory (version 4): the class split reuses the `p ln p` tensor
+`[rows in chunk, H_local, query_start]` the prompt entropy is summed from and
+reduces it with the `[query_start, 3]` one-hot, so no further chunk-sized tensor
+exists; `logp` and `pp` are freed before that reduction and the `p ln p` tensor
+before the softmax, so the chunk's peak is the one of version 3 (set while the
+`p ln p` tensor is built) and the softmax stage holds two prompt-sized tensors
+fewer than before. The answer sums select rows of the already-reduced `[rows in
+chunk, H_local]` values with a `[rows in chunk]` mask.
+
+## Answer tokens: class 4 (added 2026-11-19)
+
+A job may label completion tokens class 4: the answer, i.e. the tokens of the
+stored response after the reasoning block and its closing delimiter (the
+client's `token_classes(answer_start=...)`; completion classes are a run of 3s
+followed by a run of 4s). The plugin accepts class values 0..4 and refuses
+anything above 4 (the job is ignored, as for any malformed class vector). Class
+4 is a label of rows, not a key class: every statistic counts it as class 3, so
+`mass` keeps 4 columns, `n_classes` stays 4, and a capture with class-4 labels
+holds exactly the arrays of one without them, except the stored `classes` and
+(summary mode) the `_answer` arrays. Mass mode adds nothing: its per-row arrays
+and `classes` already allow the answer rows to be selected offline.
 
 ## Multi-head latent attention (DeepSeek-V3.1)
 

@@ -53,8 +53,10 @@ arrays: it sums the mass-mode per-row statistics over the ``P`` response rows
 on the box and uploads only those sums, each ``[L, H_local]`` (``sum_mass`` is
 ``[L, H_local, 4]``), plus the counts of rows where the prompt entropy and the
 pad ratio are defined (``SUMMARY_ARRAYS`` names them all) and the same
-geometry arrays as mass mode. The upload is small enough to keep for every
-mark, at the price that per-row values cannot be recovered afterwards.
+geometry arrays as mass mode. From capture version 4 it also holds
+``SUMMARY_BY_CLASS_ARRAY``, the prompt entropy split by prompt key class
+(``[L, H_local, 3]``). The upload is small enough to keep for every mark, at
+the price that per-row values cannot be recovered afterwards.
 
 Left out on purpose: the HF-transformers replay path, building jobs from
 stored marks (``answer_positions``, ``build_jobs``), and any index or resume
@@ -88,7 +90,12 @@ __all__ = [
     "MASS_GATE_FRACTIONS",
     "MIN_PAD_RUN_CHARS",
     "N_TOKEN_CLASSES",
+    "ANSWER_CLASS",
+    "N_PROMPT_CLASSES",
+    "SUMMARY_ANSWER_ARRAYS",
     "SUMMARY_ARRAYS",
+    "SUMMARY_BY_CLASS_ARRAY",
+    "SUMMARY_V4_ARRAYS",
     "capture_job_failure",
     "fill_refusal",
     "job_keys_present",
@@ -138,10 +145,39 @@ SUMMARY_ARRAYS: Tuple[str, ...] = (
     "sum_chain_hi",
     "sum_chain_lo",
 )
+#: The summary array a version-4 capture adds: per layer and local head, the sum
+#: over the rows of the prompt entropy's contribution from each prompt key class
+#: (0, 1, 2), ``[L, H_local, N_PROMPT_CLASSES]`` float64. Kept out of
+#: ``SUMMARY_ARRAYS`` on purpose: version-3 captures (stored, still valid) lack it,
+#: and the consumers of ``SUMMARY_ARRAYS`` treat every name there as required.
+SUMMARY_BY_CLASS_ARRAY: str = "sum_prompt_entropy_by_class"
+#: The other arrays a version-4 summary capture adds: the same sums over the ANSWER rows
+#: only (rows whose own token is class ``ANSWER_CLASS``), with their trailing shape after
+#: ``[L, H_local]``, and ``rows_answer`` (0-d int64, the number of answer rows). All zero for
+#: a job without an answer token. Kept out of ``SUMMARY_ARRAYS`` for the same reason.
+SUMMARY_ANSWER_ARRAYS: Dict[str, Tuple[int, ...]] = {
+    "sum_prompt_entropy_answer": (),
+    "n_prompt_entropy_answer": (),
+    "sum_prompt_entropy_by_class_answer": (3,),
+    "sum_entropy_answer": (),
+    "sum_mass_answer": (4,),
+}
+#: Every per-(layer, head) array a version-4 summary npz must hold beyond
+#: ``SUMMARY_ARRAYS``, with its trailing shape after ``[L, H_local]``; plus the 0-d
+#: ``rows_answer``.
+SUMMARY_V4_ARRAYS: Dict[str, Tuple[int, ...]] = {SUMMARY_BY_CLASS_ARRAY: (3,), **SUMMARY_ANSWER_ARRAYS}
 #: Number of key classes in mass mode; the plugin's ``N_CLASSES`` and the last
 #: axis of its ``mass`` array. Kept as a name so the verification check reads
 #: as "the contract's class count", not as a bare 4.
 N_TOKEN_CLASSES: int = 4
+#: Number of prompt key classes (0, 1, 2; class 3 is the response): the last
+#: axis of ``SUMMARY_BY_CLASS_ARRAY`` and the plugin's ``N_PROMPT_CLASSES``.
+N_PROMPT_CLASSES: int = 3
+#: Label of an answer token: a completion token from the stored response (after the
+#: reasoning block). Not a key class: the plugin counts it as class 3 in every key
+#: statistic (``mass`` keeps ``N_TOKEN_CLASSES`` columns) and sums the answer rows apart
+#: in summary mode (``SUMMARY_ANSWER_ARRAYS``).
+ANSWER_CLASS: int = 4
 #: Shortest whitespace run (in CHARACTERS) that can be the noise arm's pad.
 #: The arm appends ``pad_unit * n`` to the prompt, which is always far longer
 #: than this; the floor is what keeps an ordinary indent or a blank line out of
@@ -174,9 +210,11 @@ ENGINE_GONE_MARKERS: Tuple[str, ...] = (
 )
 #: Capture-format version each mode's plugin writes into its metas, mirrored
 #: from the plugin's ``CAPTURE_VERSION`` (rows, mass) and
-#: ``SUMMARY_CAPTURE_VERSION`` (summary). Fill mode completes a stem only when
-#: the stored meta carries the version this run's plugin would write.
-CAPTURE_VERSIONS: Dict[str, int] = {"rows": 2, "mass": 2, "summary": 3}
+#: ``SUMMARY_CAPTURE_VERSION`` (summary; 4 since the prompt entropy is also split
+#: by class, 3 before). Fill mode completes a stem only when the stored meta
+#: carries the version this run's plugin would write, so a version-3 stem is never
+#: completed with version-4 objects.
+CAPTURE_VERSIONS: Dict[str, int] = {"rows": 2, "mass": 2, "summary": 4}
 
 #: A job id doubles as the box's done-file stem (``<job_id>.r<rank>.json``) and
 #: as the agent's results key, so it is restricted to characters that are safe
@@ -320,6 +358,7 @@ def token_classes(
     *,
     pad_span: Optional[Tuple[int, int]] = None,
     pad_spans: Optional[Sequence[Tuple[int, int]]] = None,
+    answer_start: Optional[int] = None,
 ) -> List[int]:
     """Label every token of ``prompt + completion`` with its mass-mode key class.
 
@@ -344,6 +383,9 @@ def token_classes(
       ``""`` and are structure, not information.
     * ``3`` -- completion token, reasoning and response alike. No completion id
       is decoded: its class does not depend on its text.
+    * ``4`` (``ANSWER_CLASS``), only with `answer_start` -- a completion token at
+      index ``answer_start`` or later (the answer after the reasoning). The plugin
+      counts it as class 3 in every key statistic and sums its rows apart.
 
     Without `pad_span` only whitespace-only tokens can be class 1, and a
     whitespace-only token can never straddle the boundary of a MAXIMAL
@@ -381,11 +423,17 @@ def token_classes(
         is class 1 and one that crosses into text outside every span is not. An
         empty sequence labels nothing. Each span must satisfy the bounds of
         `pad_span`. Mutually exclusive with `pad_span`.
+    answer_start : Optional[int], optional
+        Index INTO THE COMPLETION of its first answer token: completion tokens
+        ``answer_start ..`` are class 4, the ones before stay class 3. Default
+        ``None``: every completion token is class 3 (the output is exactly the one of
+        before this parameter existed). ``len(completion_token_ids)`` labels nothing.
+        Must satisfy ``0 <= answer_start <= len(completion_token_ids)``.
 
     Returns
     -------
     List[int]
-        One class in ``0..3`` per token, of length
+        One class in ``0..3`` per token (``0..4`` with `answer_start`), of length
         ``len(prompt_token_ids) + len(completion_token_ids)``.
 
     Raises
@@ -395,7 +443,8 @@ def token_classes(
         (the spans, and hence every prompt class, would be misaligned, and the
         plugin rejects a ``classes`` array that does not cover every token), when
         `pad_span` or an element of `pad_spans` is not ``0 <= start <= end <=
-        len(prompt text)``, or when both `pad_span` and `pad_spans` are given.
+        len(prompt text)``, when both `pad_span` and `pad_spans` are given, or when
+        `answer_start` is outside ``0..len(completion_token_ids)``.
 
     Notes
     -----
@@ -417,6 +466,12 @@ def token_classes(
     """
     if pad_span is not None and pad_spans is not None:
         raise ValueError("pass pad_span or pad_spans, not both")
+    n_completion = len(completion_token_ids)
+    if answer_start is not None and not 0 <= answer_start <= n_completion:
+        raise ValueError(
+            f"answer_start {answer_start} must satisfy 0 <= answer_start <= {n_completion} "
+            "(the number of completion tokens)"
+        )
     prompt_ids = list(prompt_token_ids)
     pieces = list(decode_tokens(prompt_ids))
     if len(pieces) != len(prompt_ids):
@@ -468,7 +523,10 @@ def token_classes(
             classes.append(2)
         else:
             classes.append(0)
-    classes.extend([3] * len(completion_token_ids))
+    if answer_start is None:
+        classes.extend([3] * n_completion)
+    else:
+        classes.extend([3] * answer_start + [ANSWER_CLASS] * (n_completion - answer_start))
     return classes
 
 
@@ -597,7 +655,8 @@ def mass_job(
         The exact completion ids. Must be non-empty.
     classes : Sequence[int]
         One key class per token of ``prompt + completion`` (see
-        ``token_classes``): prompt tokens in 0..2, completion tokens all 3.
+        ``token_classes``): prompt tokens in 0..2, completion tokens 3, optionally
+        followed by answer tokens 4 (a run of 3s, then a run of 4s; either may be empty).
     key : str
         Bucket key stem of the job's ``.npz``; must end in ``.npz``.
     mode : str, optional
@@ -616,9 +675,9 @@ def mass_job(
         When `mode` is not ``"mass"`` or ``"summary"``, `job_id` has a
         character outside the allowed set, `key` does not
         end in ``.npz``, the completion is empty, ``len(classes)`` differs from
-        the sequence length, a class lies outside ``0..N_TOKEN_CLASSES - 1``, a
-        prompt token has class 3, or a completion token has a class other
-        than 3.
+        the sequence length, a class lies outside ``0..ANSWER_CLASS``, a
+        prompt token has class 3 or 4, a completion token has a class other
+        than 3 or 4, or a class-3 completion token follows a class-4 one.
 
     Examples
     --------
@@ -640,16 +699,20 @@ def mass_job(
     n_tokens = len(prompt) + len(completion)
     if len(cls) != n_tokens:
         raise ValueError(f"job {job_id}: {len(cls)} classes for {n_tokens} tokens")
-    bad = sorted({c for c in cls if not 0 <= c < N_TOKEN_CLASSES})
+    bad = sorted({c for c in cls if not 0 <= c <= ANSWER_CLASS})
     if bad:
-        raise ValueError(f"job {job_id}: classes {bad} outside 0..{N_TOKEN_CLASSES - 1}")
-    # Class 3 is exactly "completion token" in the contract: a prompt token
-    # carrying it would be reduced as a response key, and a completion token
-    # without it would be mislabelled in the uniform baseline.
-    if any(c == 3 for c in cls[: len(prompt)]):
-        raise ValueError(f"job {job_id}: a prompt token has class 3 (reserved for completion tokens)")
-    if any(c != 3 for c in cls[len(prompt):]):
-        raise ValueError(f"job {job_id}: a completion token has a class other than 3")
+        raise ValueError(f"job {job_id}: classes {bad} outside 0..{ANSWER_CLASS}")
+    # Classes 3 and 4 are exactly "completion token" in the contract: a prompt token
+    # carrying one would be reduced as a response key, and a completion token
+    # without one would be mislabelled in the uniform baseline.
+    if any(c in (3, ANSWER_CLASS) for c in cls[: len(prompt)]):
+        raise ValueError(f"job {job_id}: a prompt token has class 3 or 4 (reserved for completion tokens)")
+    tail = cls[len(prompt):]
+    if any(c not in (3, ANSWER_CLASS) for c in tail):
+        raise ValueError(f"job {job_id}: a completion token has a class other than 3 or 4")
+    # The answer is the end of the completion: once a token is class 4, every later one is.
+    if ANSWER_CLASS in tail and 3 in tail[tail.index(ANSWER_CLASS):]:
+        raise ValueError(f"job {job_id}: a class-3 completion token follows a class-4 one")
     return Job(
         job_id=job_id,
         prompt_token_ids=prompt,
@@ -860,8 +923,11 @@ def _check_summary_arrays(arrays: Any, job: Job) -> None:
     ``rows`` must equal ``n_tokens - query_start``; ``sum_entropy`` fixes the
     ``[L, H_local]`` shape and every other per-(layer, head) entry of
     ``SUMMARY_ARRAYS`` must share it (``sum_mass`` adds a trailing class axis
-    of ``N_TOKEN_CLASSES``); ``classes`` covers every token. As in mass mode,
-    ``positions`` is not checked.
+    of ``N_TOKEN_CLASSES``); ``classes`` covers every token. An npz whose 0-d
+    ``capture_version`` is 4 or more must also hold every ``SUMMARY_V4_ARRAYS`` entry
+    with the shape ``[L, H_local] + tail`` and a 0-d ``rows_answer`` in ``0..rows``; an
+    older one is checked for those only when it holds them. As in mass mode, ``positions`` is not
+    checked.
 
     Parameters
     ----------
@@ -874,7 +940,7 @@ def _check_summary_arrays(arrays: Any, job: Job) -> None:
     ------
     ValueError
         When the job carries no ``query_start``, or a shape or ``rows`` check
-        fails.
+        fails, or a version-4 npz lacks a ``SUMMARY_V4_ARRAYS`` entry or ``rows_answer``.
     KeyError
         When any ``SUMMARY_ARRAYS`` entry or ``classes`` is absent -- e.g. a
         mass-mode upload checked as summary.
@@ -898,6 +964,21 @@ def _check_summary_arrays(arrays: Any, job: Job) -> None:
         want = shape + (N_TOKEN_CLASSES,) if name == "sum_mass" else shape
         if got != want:
             raise ValueError(f"{name} shape {got} != {want}")
+    files = set(getattr(arrays, "files", None) or arrays)
+    version = int(arrays["capture_version"]) if "capture_version" in files else 3
+    for name, tail in SUMMARY_V4_ARRAYS.items():
+        if name in files:
+            got = arrays[name].shape
+            if got != shape + tail:
+                raise ValueError(f"{name} shape {got} != {shape + tail}")
+        elif version >= 4:
+            raise ValueError(f"capture_version {version} npz has no {name}")
+    if "rows_answer" in files:
+        rows_answer = arrays["rows_answer"]
+        if rows_answer.shape != () or not 0 <= int(rows_answer) <= rows:
+            raise ValueError(f"rows_answer {rows_answer.tolist()!r} is not a count in 0..rows={rows}")
+    elif version >= 4:
+        raise ValueError(f"capture_version {version} npz has no rows_answer")
     classes = arrays["classes"]
     if len(classes) != job.n_tokens:
         raise ValueError(f"classes covers {len(classes)} of {job.n_tokens} tokens")

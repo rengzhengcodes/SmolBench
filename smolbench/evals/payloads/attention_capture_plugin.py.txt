@@ -67,9 +67,13 @@ float64 and from the unrounded float32 chunk values, so the upload is
 independent of P (deduction responses run to 10k-120k tokens, where mass mode's
 ``[L, P, H, ...]`` arrays grow past what a bucket should hold). The sums, the
 exact integer counts of the rows each one covers and the three chain-rule sums
-of the grouping audit are stored per layer and head. Mass and summary modes
-share one row reduction (``_row_chunks``), so a summary is the sum of the very
-rows mass mode would have stored (before its float16 rounding).
+of the grouping audit are stored per layer and head, and the prompt entropy is
+also stored split by prompt key class (``sum_prompt_entropy_by_class``, capture
+version 4). A job may label the answer tokens (the response after the reasoning)
+class 4: every statistic counts class 4 as class 3, and summary mode adds the sums
+over the answer rows (``*_answer``, and ``rows_answer``). Mass and summary modes share one row reduction (``_row_chunks``), so
+a summary is the sum of the very rows mass mode would have stored (before its
+float16 rounding).
 
 Fill mode (``SMOLBENCH_ATTN_FILL=1``, read at each upload): the buckets are
 append-only and the replay is a deterministic teacher-forced prefill, so a
@@ -150,6 +154,11 @@ def _read_job():
                 if len(job["classes"]) != job["n_tokens"]:
                     raise ValueError("classes has %d entries for %d tokens"
                                      % (len(job["classes"]), job["n_tokens"]))
+                # 0..3 are the key classes; 4 marks an answer token (a response token
+                # after the reasoning), counted as 3 by every key statistic.
+                bad = sorted({c for c in job["classes"] if not 0 <= c <= ANSWER_CLASS})
+                if bad:
+                    raise ValueError("classes %r outside 0..%d" % (bad, ANSWER_CLASS))
                 if not (0 <= job["query_start"] < job["n_tokens"]):
                     raise ValueError("query_start %d outside sequence" % job["query_start"])
             elif job["mode"] != "rows":
@@ -246,15 +255,26 @@ def _rows_for(layer, q3, k3, positions):
 #: Float32 logits elements per query chunk (~1 GB); chunks keep P x T off the GPU.
 MASS_CHUNK_ELEMENTS = 1 << 28
 N_CLASSES = 4
+#: Class label of an answer token: a response token after the reasoning block. It is a
+#: label of the job's rows, not a key class: every key statistic counts it as class 3
+#: (``mass`` keeps 4 columns, ``n_classes`` stays 4), and summary mode adds the sums over
+#: the rows whose own token is class 4 (the ``*_answer`` arrays).
+ANSWER_CLASS = 4
 #: Capture format version written to every meta json. Version 2 added the
 #: mass-mode `prompt_entropy` array; a meta without the field is version 1.
 CAPTURE_VERSION = 2
 #: Capture format version of summary mode. The kinds are told apart by version
-#: alone: 1 = mass without `prompt_entropy`, 2 = mass with it (and rows), 3 = summary.
-SUMMARY_CAPTURE_VERSION = 3
+#: alone: 1 = mass without `prompt_entropy`, 2 = mass with it (and rows), 3 = summary,
+#: 4 = summary with `sum_prompt_entropy_by_class` (what this plugin writes).
+SUMMARY_CAPTURE_VERSION = 4
+#: Prompt key classes the prompt entropy is split into (0 informative, 1 pad or added
+#: lines, 2 template); class 3 (response) never lies before `query_start`.
+N_PROMPT_CLASSES = 3
 #: Arrays of a summary npz that are stacked over layers (float64 sums, int64 counts).
 SUMMARY_FIELDS = ("sum_entropy", "sum_prompt_entropy", "n_prompt_entropy", "sum_mass", "sum_sink",
-                  "sum_pad_ratio", "n_pad_ratio", "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
+                  "sum_pad_ratio", "n_pad_ratio", "sum_m_hp", "sum_chain_hi", "sum_chain_lo",
+                  "sum_prompt_entropy_by_class", "sum_prompt_entropy_answer", "n_prompt_entropy_answer",
+                  "sum_prompt_entropy_by_class_answer", "sum_entropy_answer", "sum_mass_answer")
 PUT_LANDED_EARLIER = "412-landed-earlier"  # 412 after an unclear try: it stored
 # In fill mode (SMOLBENCH_ATTN_FILL=1) a 412 on the FIRST attempt means an earlier
 # run stored this object; it counts as stored and is never replaced.
@@ -285,7 +305,7 @@ def _logits_for(layer, q3, k3, pos):
     return logits.masked_fill(mask[:, None, :], float("-inf"))
 
 
-def _row_chunks(layer, q3, k3, query_start, classes):
+def _row_chunks(layer, q3, k3, query_start, classes, by_class=False):
     """Reduce every completion row to its statistics, one query chunk at a time.
 
     The single row reduction behind mass and summary modes. For the queries
@@ -293,13 +313,22 @@ def _row_chunks(layer, q3, k3, query_start, classes):
     under ``MASS_CHUNK_ELEMENTS`` elements, the masked logits, the prompt entropy
     (a log-softmax over the prompt keys' logits, taken before the sink column
     joins: the sink is not a prompt key), the softmax over tokens (+ the sink
-    column), its entropy, and the per-class mass.
+    column), its entropy, and the per-class mass. With `by_class` it also splits
+    the prompt entropy by prompt key class: with ``p_j`` the renormalised prompt
+    attention of the row, class ``c`` contributes ``-sum_{j in c} p_j ln p_j``.
 
     Design: one generator, not two copies of the arithmetic, so the two modes can
     never drift apart; it yields the float32 values BEFORE any float16 cast, so
     mass mode rounds exactly as it always did and summary mode sums unrounded
     values. Row indices are relative to ``query_start`` (row ``i`` is the query
     at absolute position ``query_start + i``).
+
+    Memory: the class split reuses the ``p ln p`` tensor the prompt entropy is
+    summed from and reduces it with the ``[query_start, 3]`` class one-hot, so it
+    adds no tensor of the chunk's size; ``logp`` and ``pp`` are freed before the
+    reduction (and the ``p ln p`` tensor before the softmax), so the chunk's peak
+    is unchanged and the softmax stage holds two fewer prompt-sized tensors than
+    before. Mass mode passes ``by_class=False`` and does no extra work.
 
     Parameters
     ----------
@@ -311,23 +340,38 @@ def _row_chunks(layer, q3, k3, query_start, classes):
     query_start : int
         First completion index, ``0 <= query_start < T``.
     classes : torch.Tensor
-        ``[T]`` int64 class label (0..3) of every token.
+        ``[T]`` int64 class label (0..4) of every token; class 4 (an answer token)
+        counts as class 3 here, so the statistics do not depend on it. Contract: the prompt
+        keys ``[0, query_start)`` are classes 0..2 (the client's ``token_classes``
+        gives class 3 to completion tokens only); a class-3 prompt key would be
+        left out of the class split, and the offline audit of the identity below
+        refuses such a capture.
+    by_class : bool, optional
+        Also compute the prompt entropy by prompt key class (default False).
 
     Yields
     ------
-    (int, int, torch.Tensor, torch.Tensor, torch.Tensor or None, torch.Tensor)
-        ``(lo, hi, mass, entropy, sink, prompt_entropy)`` for rows ``lo <= i < hi``,
-        all float32: ``mass [p, H, 4]``, ``entropy [p, H]`` (nats), ``sink [p, H]``
-        (None when the layer has no sink), ``prompt_entropy [p, H]`` (nats; NaN
-        where the row has no attendable prompt key). The chunks cover every row
-        once, in order.
+    (int, int, torch.Tensor, torch.Tensor, torch.Tensor or None, torch.Tensor, torch.Tensor or None)
+        ``(lo, hi, mass, entropy, sink, prompt_entropy, prompt_entropy_by_class)``
+        for rows ``lo <= i < hi``, all float32: ``mass [p, H, 4]``, ``entropy [p, H]``
+        (nats), ``sink [p, H]`` (None when the layer has no sink), ``prompt_entropy
+        [p, H]`` (nats; NaN where the row has no attendable prompt key),
+        ``prompt_entropy_by_class [p, H, 3]`` (nats, the contribution of prompt
+        classes 0, 1, 2; exactly 0 on a row with no attendable prompt key and for a
+        class without an attendable key; None unless `by_class`). Up to float32
+        summation order, ``prompt_entropy_by_class.sum(-1) == prompt_entropy`` on
+        the rows where the latter is finite. The chunks cover every row once, in order.
     """
     import torch
 
     n = q3.shape[0]
     heads = layer.num_heads
     onehot = torch.zeros(n, N_CLASSES, device=q3.device, dtype=torch.float32)
-    onehot[torch.arange(n, device=q3.device), classes] = 1.0
+    # Class 4 (answer) is a response key like class 3: the key masses are unchanged by it.
+    onehot[torch.arange(n, device=q3.device), classes.clamp(max=N_CLASSES - 1)] = 1.0
+    # The prompt keys' class one-hot, [query_start, 3]: the class split's only reduce matrix.
+    # Built once per layer (it is small), contiguous so the einsum reads it without a copy.
+    prompt_onehot = onehot[:query_start, :N_PROMPT_CLASSES].contiguous() if by_class else None
     sinks = getattr(layer.impl, "sinks", None) if getattr(layer, "has_sink", False) else None
     s = sinks.detach().float().view(1, heads, 1) if sinks is not None else None
     chunk = max(1, MASS_CHUNK_ELEMENTS // (heads * n))
@@ -341,15 +385,32 @@ def _row_chunks(layer, q3, k3, query_start, classes):
         # whose subset logsumexp is not finite (empty subset, or every prompt
         # key masked by the window) has no defined value: NaN.
         pl = logits[..., :query_start]
+        pe_c = None
         if query_start > 0:
             lse = torch.logsumexp(pl, dim=-1, keepdim=True)             # [p, H, 1]
             ok = torch.isfinite(lse)
             logp = pl - torch.where(ok, lse, torch.zeros_like(lse))
             pp = torch.exp(logp)
-            pe = -torch.where(pp > 0, pp * logp, torch.zeros_like(pp)).sum(-1)
+            # p ln p of every prompt key, [p, H, query_start]: the same tensor the
+            # prompt entropy was always summed from (so its values are unchanged),
+            # now bound to a name so the class split can reuse it. Peak memory of
+            # the chunk is set here (logits, logp, pp, the product, the zeros and
+            # this result), exactly as before.
+            plogp = torch.where(pp > 0, pp * logp, torch.zeros_like(pp))
+            del logp, pp
+            pe = -plogp.sum(-1)
             pe = torch.where(ok[..., 0], pe, torch.full_like(pe, float("nan")))
+            if by_class:
+                # [p, H, 3]: a reduction against the one-hot, no chunk-sized temporary.
+                # A row with no attendable prompt key has p ln p = 0 on every key (pp
+                # is exp(-inf) = 0 there), so its class split is exactly 0. Each term is
+                # <= 0 and the weights are 0 or 1, so every value is >= 0 exactly.
+                pe_c = -torch.einsum("phn,nc->phc", plogp, prompt_onehot)
+            del plogp
         else:
             pe = torch.full(logits.shape[:2], float("nan"), device=q3.device)
+            if by_class:
+                pe_c = torch.zeros(len(pos), heads, N_PROMPT_CLASSES, device=q3.device)
         del pl
         if s is not None:
             logits = torch.cat([logits, s.expand(len(pos), heads, 1)], dim=-1)
@@ -361,8 +422,8 @@ def _row_chunks(layer, q3, k3, query_start, classes):
         # alive while the consumer works on the yielded values.
         sink = probs[..., n].clone() if s is not None else None
         del logits, probs, tok
-        yield start - query_start, start - query_start + len(pos), m, ent, sink, pe
-        del m, ent, sink, pe
+        yield start - query_start, start - query_start + len(pos), m, ent, sink, pe, pe_c
+        del m, ent, sink, pe, pe_c
 
 
 def _mass_for(layer, q3, k3, query_start, classes):
@@ -386,7 +447,7 @@ def _mass_for(layer, q3, k3, query_start, classes):
     entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
     prompt_entropy = torch.empty(total, heads, dtype=torch.float16, device=q3.device)
     sink = torch.empty(total, heads, dtype=torch.float16, device=q3.device) if has_sink else None
-    for lo, hi, m, ent, sk, pe in _row_chunks(layer, q3, k3, query_start, classes):
+    for lo, hi, m, ent, sk, pe, _pe_c in _row_chunks(layer, q3, k3, query_start, classes):
         mass[lo:hi] = m.to(torch.float16)
         entropy[lo:hi] = ent.to(torch.float16)
         prompt_entropy[lo:hi] = pe.to(torch.float16)
@@ -416,6 +477,12 @@ def _summary_for(layer, q3, k3, query_start, classes):
     * ``sum_entropy``: sum of ``H`` over all rows.
     * ``sum_prompt_entropy`` / ``n_prompt_entropy``: sum and count of ``Hp`` over
       the rows where it is finite; an undefined row adds 0 to both.
+    * ``sum_prompt_entropy_by_class`` ``[H, 3]``: over the same rows, the sum of
+      ``Hp_c = -sum over prompt keys j of class c of p_j ln p_j`` (``p_j`` the
+      renormalised prompt attention), c = 0, 1, 2; an undefined row adds exactly 0.
+      ``Hp_0 + Hp_1 + Hp_2 = Hp``, so the three sums add up to ``sum_prompt_entropy``
+      up to float32 summation order (both come from the same float32 ``p ln p``
+      values, summed per row in a different order).
     * ``sum_mass`` ``[H, 4]``, ``sum_sink``: sums of the per-class and sink mass.
     * ``sum_pad_ratio`` / ``n_pad_ratio``: class-1 mass over the uniform baseline
       ``(class-1 count in classes[:p+1]) / (p + 1)``, summed and counted over the
@@ -424,6 +491,13 @@ def _summary_for(layer, q3, k3, query_start, classes):
       ``sum_chain_hi`` = sum of ``H - G``, ``sum_chain_lo`` = sum of
       ``H - G - r ln(i + 1)``; an audit checks
       ``sum_chain_lo <= sum_m_hp <= sum_chain_hi`` without the rows.
+    * Over the answer rows only (the rows whose own token, at ``query_start + i``,
+      is class 4): ``sum_prompt_entropy_answer`` / ``n_prompt_entropy_answer`` and
+      ``sum_prompt_entropy_by_class_answer`` ``[H, 3]`` (the rows where ``Hp`` is also
+      finite), ``sum_entropy_answer`` (``H``) and ``sum_mass_answer`` ``[H, 4]``. All
+      zero for a job without a class-4 token. Each is the sum of a subset of the
+      non-negative terms of its all-rows counterpart, summed in the same order with
+      the other terms replaced by 0, so it never exceeds that counterpart.
 
     Design: float64 sums so that ~1e5 rows of float32 values accumulate without
     visible rounding error; int64 counts because they are compared exactly with
@@ -440,7 +514,11 @@ def _summary_for(layer, q3, k3, query_start, classes):
     dict of str to numpy.ndarray
         Keys ``sum_entropy, sum_prompt_entropy, sum_sink, sum_pad_ratio,
         sum_m_hp, sum_chain_hi, sum_chain_lo`` float64 ``[H]``; ``sum_mass``
-        float64 ``[H, 4]``; ``n_prompt_entropy, n_pad_ratio`` int64 ``[H]``.
+        float64 ``[H, 4]``; ``sum_prompt_entropy_by_class`` float64 ``[H, 3]``;
+        ``n_prompt_entropy, n_pad_ratio`` int64 ``[H]``; ``sum_prompt_entropy_answer,
+        sum_entropy_answer`` float64 ``[H]``, ``n_prompt_entropy_answer`` int64 ``[H]``,
+        ``sum_prompt_entropy_by_class_answer`` float64 ``[H, 3]``, ``sum_mass_answer``
+        float64 ``[H, 4]``.
     """
     import torch
 
@@ -449,14 +527,23 @@ def _summary_for(layer, q3, k3, query_start, classes):
     dev = q3.device
     f64 = torch.float64
     names = ("sum_entropy", "sum_prompt_entropy", "sum_sink", "sum_pad_ratio",
-             "sum_m_hp", "sum_chain_hi", "sum_chain_lo")
+             "sum_m_hp", "sum_chain_hi", "sum_chain_lo", "sum_prompt_entropy_answer",
+             "sum_entropy_answer")
     acc = {nm: torch.zeros(heads, dtype=f64, device=dev) for nm in names}
     acc["sum_mass"] = torch.zeros(heads, N_CLASSES, dtype=f64, device=dev)
+    acc["sum_mass_answer"] = torch.zeros(heads, N_CLASSES, dtype=f64, device=dev)
+    acc["sum_prompt_entropy_by_class"] = torch.zeros(heads, N_PROMPT_CLASSES, dtype=f64, device=dev)
+    acc["sum_prompt_entropy_by_class_answer"] = torch.zeros(heads, N_PROMPT_CLASSES, dtype=f64, device=dev)
     acc["n_prompt_entropy"] = torch.zeros(heads, dtype=torch.int64, device=dev)
+    acc["n_prompt_entropy_answer"] = torch.zeros(heads, dtype=torch.int64, device=dev)
     acc["n_pad_ratio"] = torch.zeros(heads, dtype=torch.int64, device=dev)
     # Class-1 count of every causal prefix; exact in float64 (integers below 2**53).
     pad_prefix = torch.cumsum((classes == 1).to(f64), dim=0)
-    for lo, hi, m32, ent32, sink32, pe32 in _row_chunks(layer, q3, k3, query_start, classes):
+    # Answer rows: the row's own token is class 4. A [T] mask, sliced per chunk to [p]:
+    # the answer sums select rows of the already-reduced [p, H] values, never a key axis.
+    is_answer = classes == ANSWER_CLASS
+    for lo, hi, m32, ent32, sink32, pe32, pec32 in _row_chunks(
+            layer, q3, k3, query_start, classes, by_class=True):
         m, ent, pe = m32.to(f64), ent32.to(f64), pe32.to(f64)
         s = sink32.to(f64) if sink32 is not None else torch.zeros_like(ent)
         defined = torch.isfinite(pe)                                  # [p, H]
@@ -465,6 +552,11 @@ def _summary_for(layer, q3, k3, query_start, classes):
         acc["sum_entropy"] += ent.sum(0)
         acc["sum_prompt_entropy"] += pe0.sum(0)
         acc["n_prompt_entropy"] += defined.sum(0)
+        # The same rows as sum_prompt_entropy: an undefined row adds exactly 0 (its
+        # split is already 0; the mask states the rule rather than relying on that).
+        pec = pec32.to(f64)
+        acc["sum_prompt_entropy_by_class"] += torch.where(
+            defined[..., None], pec, torch.zeros_like(pec)).sum(0)
         acc["sum_mass"] += m.sum(0)
         acc["sum_sink"] += s.sum(0)
         # Pad ratio: baseline of row i is n_pad(p) / (p + 1) with p = query_start + i.
@@ -482,7 +574,16 @@ def _summary_for(layer, q3, k3, query_start, classes):
         acc["sum_m_hp"] += torch.where(defined, mp * pe0, zero).sum(0)
         acc["sum_chain_hi"] += torch.where(defined, hi_term, zero).sum(0)
         acc["sum_chain_lo"] += torch.where(defined, hi_term - r * ln_resp, zero).sum(0)
-        del m32, ent32, sink32, pe32, m, ent, pe, s
+        # Answer rows of this chunk: a [p] mask on the reduced per-row values.
+        ans = is_answer[query_start + lo:query_start + hi]           # [p]
+        ans_defined = defined & ans[:, None]                          # [p, H]
+        acc["sum_prompt_entropy_answer"] += torch.where(ans_defined, pe0, zero).sum(0)
+        acc["n_prompt_entropy_answer"] += ans_defined.sum(0)
+        acc["sum_prompt_entropy_by_class_answer"] += torch.where(
+            ans_defined[..., None], pec, torch.zeros_like(pec)).sum(0)
+        acc["sum_entropy_answer"] += torch.where(ans[:, None], ent, zero).sum(0)
+        acc["sum_mass_answer"] += torch.where(ans[:, None, None], m, torch.zeros_like(m)).sum(0)
+        del m32, ent32, sink32, pe32, pec32, m, ent, pe, s, pec
     return {nm: v.cpu().numpy() for nm, v in acc.items()}
 
 
@@ -876,12 +977,16 @@ def _finalize(view, session):
     mode = job["mode"]
     arrays = {}
     if mode == "summary":
-        # [L, H] sums and counts; sum_mass is [L, H, 4]. No per-row array exists.
+        # [L, H] sums and counts; sum_mass and sum_mass_answer are [L, H, 4],
+        # sum_prompt_entropy_by_class and its _answer form [L, H, 3]. No per-row array exists.
         for name in SUMMARY_FIELDS:
             arrays[name] = np.stack([e["summary"][name] for e in order])
         heads_local = arrays["sum_entropy"].shape[1]
         rows = job["n_tokens"] - job["query_start"]
         arrays["rows"] = np.asarray(rows, dtype=np.int64)
+        # The answer rows the *_answer sums cover: class-4 tokens among the response rows.
+        arrays["rows_answer"] = np.asarray(
+            sum(1 for c in job["classes"][job["query_start"]:] if c == ANSWER_CLASS), dtype=np.int64)
         arrays["capture_version"] = np.asarray(SUMMARY_CAPTURE_VERSION, dtype=np.int32)
         arrays["classes"] = np.asarray(job["classes"], dtype=np.uint8)
         arrays["query_start"] = np.asarray(job["query_start"], dtype=np.int32)

@@ -295,7 +295,7 @@ def test_horn_jobs_default_to_summary_and_the_plan_estimates_both_modes(tmp_path
     assert summary.mode == "summary" and mass.mode == "mass"
     tp = summary.tp_estimate
     planned, _ = _build(rungs, rows_path)
-    assert summary.est_capture_bytes == sum(2 * 4 * 13 * 8 + tp * p.job.n_tokens for p in planned)
+    assert summary.est_capture_bytes == sum(2 * 4 * 26 * 8 + tp * p.job.n_tokens for p in planned)
     assert mass.est_capture_bytes == sum(
         2 * (p.job.n_tokens - p.job.query_start) * 4 * 7 * 2 + tp * p.job.n_tokens for p in planned)
     assert summary.per_arm["lem"]["est_capture_bytes"] + summary.per_arm["pad"]["est_capture_bytes"] == \
@@ -374,7 +374,7 @@ class HornBox:
                 p = n - line["query_start"]
                 meta = {"job_id": line["job_id"], "rank": rank, "tp": payload["tp"],
                         "model": payload["served_model_name"], "n_tokens": n, "bytes": len(blob), "mode": kind,
-                        "capture_version": 3 if kind == "summary" else 2, "query_start": line["query_start"],
+                        "capture_version": 4 if kind == "summary" else 2, "query_start": line["query_start"],
                         "layers": [0, 1], "num_heads_local": 2, "rows_shape": [2, p, 2, 4],
                         "gate_max_rel": 0.001, "gate_tol": 0.03}
                 self.s3.put_object(Bucket="b", Key=meta_key, Body=json.dumps(meta).encode())
@@ -503,7 +503,7 @@ def test_audit_existing_works_for_the_deduction_layout(tmp_path) -> None:
                                 layers=((0, False), (0, True)), heads=4)
         for rank in range(2):
             npz_key, meta_key = attention.rank_keys(job.key, rank)
-            blob = capture_npz(cap, rank, 2, "summary")
+            blob = capture_npz(cap, rank, 2, "summary", version=3)   # a stored version-3 capture
             s3.objects[npz_key] = blob
             p = job.n_tokens - job.query_start
             s3.objects[meta_key] = json.dumps({
@@ -647,7 +647,7 @@ class FillHornBox(HornBox):
                 p = n - line["query_start"]
                 meta = {"job_id": jid, "rank": rank, "tp": payload["tp"],
                         "model": payload["served_model_name"], "n_tokens": n, "bytes": len(blob),
-                        "mode": kind, "capture_version": 3 if kind == "summary" else 2,
+                        "mode": kind, "capture_version": 4 if kind == "summary" else 2,
                         "query_start": line["query_start"], "layers": [0, 1], "num_heads_local": 2,
                         "rows_shape": [2, p, 2, 4], "gate_max_rel": 0.04, "gate_tol": 0.05}
                 if not npz_new:

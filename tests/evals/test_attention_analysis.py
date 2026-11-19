@@ -234,20 +234,29 @@ SUMMARY_FIELDS = {
     "sum_chain_lo": (),
 }
 COUNT_FIELDS = ("n_prompt_entropy", "n_pad_ratio")
+#: The arrays a version-4 summary adds (trailing shape after [L, H]); plus the 0-d rows_answer.
+V4_FIELDS = {
+    "sum_prompt_entropy_by_class": (3,), "sum_prompt_entropy_answer": (), "n_prompt_entropy_answer": (),
+    "sum_prompt_entropy_by_class_answer": (3,), "sum_entropy_answer": (), "sum_mass_answer": (4,),
+}
+V4_COUNT_FIELDS = ("n_prompt_entropy_answer",)
 
 
 def _plogp(p: np.ndarray) -> np.ndarray:
     return np.where(p > 0.0, p * np.log(np.where(p > 0.0, p, 1.0)), 0.0)
 
 
-def summarize_rows(mass, entropy, sink, prompt_entropy, classes, query_start) -> dict:
+def summarize_rows(mass, entropy, sink, prompt_entropy, classes, query_start,
+                   prompt_entropy_by_class=None) -> dict:
     """The summary-mode definition, applied to per-row arrays ``[L, P, H(, 4)]`` in float64.
 
     This is the reference the plugin's summary must match: the sums over the response rows of
     the mass-mode per-row statistics, with ``prompt_entropy`` summed and counted where it is
     defined (not NaN), the pad ratio (``whitespace_ratio``'s per-row quantity) summed and
     counted where its baseline is positive, and the three chain-rule sums over the rows where
-    ``prompt_entropy`` is defined.
+    ``prompt_entropy`` is defined. Version 4: the same sums restricted to the answer rows (row
+    token class 4) and ``rows_answer``; with ``prompt_entropy_by_class`` (``[L, P, H, 3]``, NaN
+    where ``prompt_entropy`` is) also the class split, over all rows and over the answer rows.
     """
     mass = np.asarray(mass, np.float64)
     entropy = np.asarray(entropy, np.float64)
@@ -265,7 +274,22 @@ def summarize_rows(mass, entropy, sink, prompt_entropy, classes, query_start) ->
     group = -(_plogp(m) + _plogp(r) + _plogp(sink))
     ln_resp = np.log(np.arange(1, p + 1, dtype=np.float64))[None, :, None]
     zero = np.zeros_like(entropy)
+    answer = np.broadcast_to((classes[query_start:query_start + p] == 4)[None, :, None], entropy.shape)
+    a_defined = defined & answer
+    pe0 = np.where(defined, pe, 0.0)
+    v4 = {
+        "rows_answer": int(answer[0, :, 0].sum()) if entropy.size else 0,
+        "sum_prompt_entropy_answer": np.where(a_defined, pe0, 0.0).sum(1),
+        "n_prompt_entropy_answer": a_defined.sum(1).astype(np.int64),
+        "sum_entropy_answer": np.where(answer, entropy, 0.0).sum(1),
+        "sum_mass_answer": np.where(answer[..., None], mass, 0.0).sum(1),
+    }
+    if prompt_entropy_by_class is not None:
+        bc = np.where(defined[..., None], np.asarray(prompt_entropy_by_class, np.float64), 0.0)
+        v4["sum_prompt_entropy_by_class"] = bc.sum(1)
+        v4["sum_prompt_entropy_by_class_answer"] = np.where(answer[..., None], bc, 0.0).sum(1)
     return {
+        **v4,
         "rows": p,
         "sum_entropy": entropy.sum(1),
         "sum_prompt_entropy": np.where(defined, pe, 0.0).sum(1),
@@ -310,6 +334,8 @@ def synthetic_capture(seed: int, *, n_prompt: int = 14, n_completion: int = 11,
     ent = np.zeros((n_layers, p, heads))
     sink = np.zeros((n_layers, p, heads))
     pe = np.full((n_layers, p, heads), np.nan)
+    pe_bc = np.full((n_layers, p, heads, 3), np.nan)
+    key_classes = np.minimum(classes, 3)  # an answer token (4) is a response key like 3
     j = np.arange(t)
     for li, (window, has_sink) in enumerate(layers):
         for h in range(heads):
@@ -324,7 +350,7 @@ def synthetic_capture(seed: int, *, n_prompt: int = 14, n_completion: int = 11,
                     full = np.append(full, sink_logit)
                 probs = np.exp(full - full.max())
                 probs /= probs.sum()
-                mass[li, i, h] = np.bincount(classes, weights=probs[:t], minlength=4)
+                mass[li, i, h] = np.bincount(key_classes, weights=probs[:t], minlength=4)
                 ent[li, i, h] = -_plogp(probs).sum()
                 sink[li, i, h] = probs[t] if has_sink else 0.0
                 keys = allowed & (j < qs)
@@ -332,26 +358,32 @@ def synthetic_capture(seed: int, *, n_prompt: int = 14, n_completion: int = 11,
                     sub = logits[keys]
                     logp = sub - (sub.max() + np.log(np.exp(sub - sub.max()).sum()))
                     pe[li, i, h] = -(np.exp(logp) * logp).sum()
+                    pe_bc[li, i, h] = np.bincount(classes[keys], weights=-(np.exp(logp) * logp),
+                                                  minlength=3)[:3]
     f16 = {name: arr.astype(np.float16) for name, arr in
            (("mass", mass), ("entropy", ent), ("sink", sink), ("prompt_entropy", pe))}
+    bc16 = pe_bc.astype(np.float16)
     return {
         "classes": classes, "query_start": qs, "n_tokens": t,
         "sliding_window": np.asarray([w for w, _s in layers], np.int32),
         "has_sink": np.asarray([s for _w, s in layers], bool),
-        "rows64": {"mass": mass, "entropy": ent, "sink": sink, "prompt_entropy": pe},
+        "rows64": {"mass": mass, "entropy": ent, "sink": sink, "prompt_entropy": pe,
+                   "prompt_entropy_by_class": pe_bc},
         **f16,
-        "summary": summarize_rows(mass, ent, sink, pe, classes, qs),
+        "summary": summarize_rows(mass, ent, sink, pe, classes, qs, pe_bc),
         "summary_f16": summarize_rows(f16["mass"], f16["entropy"], f16["sink"], f16["prompt_entropy"],
-                                      classes, qs),
+                                      classes, qs, bc16),
     }
 
 
 def capture_npz(cap: dict, rank: int, tp: int, kind: str, *, summary: str = "summary",
-                drop: tuple[str, ...] = ()) -> bytes:
+                drop: tuple[str, ...] = (), version: int = 4) -> bytes:
     """One rank's upload of ``cap`` in the plugin's layout: ``kind`` is "mass" or "summary".
 
     ``summary`` picks which summary goes in ("summary" from the unrounded rows, "summary_f16"
-    from the float16 rows); ``drop`` leaves arrays out.
+    from the float16 rows); ``drop`` leaves arrays out. ``version`` is the summary capture
+    version: 4 (default, what the plugin writes) adds the class split and the answer sums, 3
+    is the layout of the stored earlier captures.
     """
     heads = cap["entropy"].shape[2]
     local = heads // tp
@@ -370,10 +402,13 @@ def capture_npz(cap: dict, rank: int, tp: int, kind: str, *, summary: str = "sum
     else:
         source = cap[summary]
         arrays["rows"] = np.asarray(source["rows"], np.int64)
-        arrays["capture_version"] = np.asarray(3, np.int32)
-        for name in SUMMARY_FIELDS:
-            dtype = np.int64 if name in COUNT_FIELDS else np.float64
+        arrays["capture_version"] = np.asarray(version, np.int32)
+        fields = {**SUMMARY_FIELDS, **(V4_FIELDS if version >= 4 else {})}
+        for name in fields:
+            dtype = np.int64 if name in COUNT_FIELDS + V4_COUNT_FIELDS else np.float64
             arrays[name] = np.ascontiguousarray(source[name][:, sl], dtype=dtype)
+        if version >= 4:
+            arrays["rows_answer"] = np.asarray(source["rows_answer"], np.int64)
     for name in drop:
         arrays.pop(name, None)
     buf = io.BytesIO()
@@ -470,7 +505,7 @@ def test_entropy_by_layer_gives_the_same_means_and_counts_for_both_kinds(seed) -
     cap = synthetic_capture(seed, boost=1.0)
     store = TinyStore()
     _store_capture(store, "m/", "q0", cap, "mass")
-    _store_capture(store, "s/", "q0", cap, "summary", summary="summary_f16")
+    _store_capture(store, "s/", "q0", cap, "summary", summary="summary_f16", version=3)
     mass_job = attention_analysis.load_capture(store, "m/", "q0", 2)
     summary_job = attention_analysis.load_capture(store, "s/", "q0", 2)
     a = attention_analysis.entropy_by_layer(mass_job)

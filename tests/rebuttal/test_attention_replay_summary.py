@@ -63,13 +63,14 @@ def _store(s3: FakeS3, job: attention.Job, cap: dict, *, tp: int = 2, kind: str 
     layers, heads = cap["entropy"].shape[0], cap["entropy"].shape[2]
     for rank in range(tp):
         npz_key, meta_key = attention.rank_keys(job.key, rank)
-        blob = capture_npz(cap, rank, tp, kind)
+        meta_version = version if version is not None else (4 if kind == "summary" else 2)
+        blob = capture_npz(cap, rank, tp, kind, version=3 if meta_version == 3 else 4)
         if corrupt is not None:
             blob = corrupt(rank, blob)
         s3.objects[npz_key] = blob
         s3.objects[meta_key] = json.dumps(_meta(
             job, rank, tp, blob, mode=meta_mode or kind,
-            version=version if version is not None else (3 if kind == "summary" else 2),
+            version=meta_version,
             layers=layers, heads_local=heads // tp)).encode()
 
 
@@ -90,7 +91,8 @@ def test_the_audit_passes_a_consistent_summary_capture(seed, boost) -> None:
 
 
 def test_the_versions_tell_the_three_kinds_apart() -> None:
-    assert ar.CAPTURE_VERSION == 2 and ar.SUMMARY_CAPTURE_VERSION == 3
+    assert ar.CAPTURE_VERSION == 2 and ar.SUMMARY_CAPTURE_VERSION == 4
+    assert ar.SUMMARY_CAPTURE_VERSIONS == (3, 4)
 
 
 def test_summary_and_mass_captures_never_certify_each_other() -> None:
@@ -332,7 +334,7 @@ class SummaryBox:
                 key = line["put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
                 meta_key = line["meta_put_urls"][rank].split("signed/", 1)[1].split("?", 1)[0]
                 self.s3.put_object(Bucket="b", Key=key, Body=blob)
-                version = self.meta_version or (3 if kind == "summary" else 2)
+                version = self.meta_version or (4 if kind == "summary" else 2)
                 meta = _meta(job, rank, payload["tp"], blob, mode=kind, version=version, layers=2,
                              heads_local=4 // payload["tp"], model=payload["served_model_name"])
                 self.s3.put_object(Bucket="b", Key=meta_key, Body=json.dumps(meta).encode())
@@ -372,10 +374,12 @@ def test_replay_in_summary_mode_sends_summary_jobs_audits_them_and_records_the_m
     assert box.calls[0] == "provision" and box.calls[-1] == "shutdown"
 
 
-def test_a_summary_run_requires_version_3_metas(tmp_path: Path) -> None:
+@pytest.mark.parametrize("meta_version", [2, 3])
+def test_a_summary_run_requires_version_4_metas(tmp_path: Path, meta_version) -> None:
+    """The plugin writes version 4, so a fresh summary run refuses a version-3 meta too."""
     _write_results(tmp_path)
     s3 = FakeS3()
-    report = _replay(tmp_path, SummaryBox(s3, meta_version=2), s3, mode="summary")
+    report = _replay(tmp_path, SummaryBox(s3, meta_version=meta_version), s3, mode="summary")
     assert report.verified == [] and len(report.audit_failures) == 2
     assert all("capture_version" in why for why in report.audit_failures.values())
 
@@ -416,7 +420,7 @@ def test_the_plan_estimates_summary_storage_from_the_summed_arrays(tmp_path: Pat
     sizes = [stats for stats in [summary.per_arm["intens"]]][0]
     assert sizes["marks"] == 2
     lengths = [summary.max_tokens, summary.total_tokens - summary.max_tokens]
-    assert summary.est_capture_bytes == sum(60 * 32 * 13 * 8 + tp * n for n in lengths)
+    assert summary.est_capture_bytes == sum(60 * 32 * 26 * 8 + tp * n for n in lengths)
     assert summary.est_basis.startswith("ESTIMATE:") and "summary" in summary.est_basis
     assert mass.est_capture_bytes == sum(60 * (n - q) * 32 * 7 * 2 + tp * n
                                          for n, q in zip(lengths, _prompt_lengths(tmp_path, tok)))

@@ -437,18 +437,17 @@ def test_cells_without_locatable_lines_or_without_class1_tokens_are_plan_errors(
     assert plan.jobs == 3 and len(plan.errors) == 1 and "no class-1 token" in plan.errors[0]
 
 
-def test_the_labels_are_refused_for_the_induction_study(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="label_added_lines apply only to study='horn'"):
-        ar.plan_replay(tmp_path, [GEMMA], s3_uri=S3_URI, label_added_lines=True)
-    with pytest.raises(ValueError, match="label_added_lines"):
-        ar.build_jobs(GEMMA, tmp_path, "p", label_added_lines=True)
-    with pytest.raises(ValueError, match="label_added_lines"):
-        ar.replay_model(GEMMA, tmp_path, S3_URI, approved=True, label_added_lines=True)
-    with pytest.raises(ValueError, match="label_added_lines"):
-        ar.audit_existing(GEMMA, tmp_path, S3_URI, label_added_lines=True)
-    with pytest.raises(ValueError, match="must be a bool"):
-        ar.plan_replay(tmp_path, [GEMMA], s3_uri=S3_URI, study="horn", horn_rows=tmp_path / "x.jsonl",
-                       label_added_lines="yes")
+def test_the_labels_are_accepted_for_the_induction_study_and_must_be_bools(tmp_path: Path) -> None:
+    """The flag labels the extens listing for induction (``test_attention_replay_extens_labels``)."""
+    plan = ar.plan_replay(tmp_path, [GEMMA], s3_uri=S3_URI, label_added_lines=True)[GEMMA]
+    assert plan.label_added_lines is True and plan.jobs == 0 and plan.errors == []
+    assert ar.build_jobs(GEMMA, tmp_path, "p", label_added_lines=True) == ([], [])
+    for name in ("label_added_lines", "label_answer_tokens"):
+        with pytest.raises(ValueError, match="must be a bool"):
+            ar.plan_replay(tmp_path, [GEMMA], s3_uri=S3_URI, study="horn", horn_rows=tmp_path / "x.jsonl",
+                           **{name: "yes"})
+        with pytest.raises(ValueError, match="must be a bool"):
+            ar.plan_replay(tmp_path, [GEMMA], s3_uri=S3_URI, **{name: 1})
 
 
 # ------------------------------------------------------------------ replay, audit and manifests
@@ -506,7 +505,7 @@ def cli(monkeypatch):
     return load_by_path(REPO_ROOT / "rebuttal" / "run_attention.py", "run_attention_added_lines", snapshot_env=True)
 
 
-def test_the_cli_flag_reaches_the_plan_and_is_refused_for_induction(cli, tmp_path, monkeypatch, capsys) -> None:
+def test_the_cli_flag_reaches_the_plan_for_both_studies(cli, tmp_path, monkeypatch, capsys) -> None:
     rows = _real_rows(tmp_path, cells=CELLS[:1])
     seen: dict = {}
     real_plan = ar.plan_replay
@@ -529,10 +528,12 @@ def test_the_cli_flag_reaches_the_plan_and_is_refused_for_induction(cli, tmp_pat
     seen.clear()
     assert cli.main(base) == 0
     assert "label_added_lines" not in seen and "class-1 tokens" not in capsys.readouterr().out
-    with pytest.raises(SystemExit) as info:
-        cli.main(["--model", GEMMA, "--label-added-lines"])
-    assert info.value.code == 2
-    assert "--label-added-lines is only valid with --study horn" in capsys.readouterr().err
+    # Induction: the flag is valid and reaches the plan (the extens listing becomes class 1).
+    seen.clear()
+    assert cli.main(["--model", GEMMA, "--results-root", str(tmp_path / "results" / "induction"),
+                     "--s3-uri", S3_URI, "--label-added-lines", "--label-answer-tokens"]) == 0
+    assert seen["label_added_lines"] is True and seen["label_answer_tokens"] is True
+    assert "study" not in seen
 
 
 # ------------------------------------------------------------------ reader

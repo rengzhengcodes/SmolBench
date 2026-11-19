@@ -48,11 +48,14 @@ keyword of ``plan_replay``, ``replay_model`` and ``build_jobs`` (default
   and local head (``attention.SUMMARY_ARRAYS``). Size does not depend on ``P``,
   which is what makes long responses storable.
 
-The ``capture_version`` field of a rank's meta json tells the three kinds of
-object apart: 1 is mass without ``prompt_entropy`` (the meta has no field), 2
-is mass with it (``CAPTURE_VERSION``, what a mass run requires), 3 is summary
-(``SUMMARY_CAPTURE_VERSION``). The audit refuses a meta whose mode and version
-disagree, so a summary capture never passes as a mass capture or the reverse.
+The ``capture_version`` field of a rank's meta json tells the kinds of object
+apart: 1 is mass without ``prompt_entropy`` (the meta has no field), 2 is mass
+with it (``CAPTURE_VERSION``, what a mass run requires), 3 is summary, 4 is
+summary that also splits the prompt entropy by prompt key class
+(``sum_prompt_entropy_by_class``; ``SUMMARY_CAPTURE_VERSION``, what a summary run
+requires; the stored version-3 captures stay valid). The audit refuses a meta whose
+mode and version disagree, so a summary capture never passes as a mass capture or
+the reverse.
 The reader accepts both kinds, also mixed within one arm, and computes the same
 statistics from either.
 
@@ -85,7 +88,10 @@ the same list, one line each, and every plan and manifest carries it.
 4. The stored reasoning and response were split by the hosted service. A mark
    with no stored reasoning is rebuilt with an empty reasoning block. A
    generation that was cut at the output cap is rebuilt with a closing
-   end-of-turn token it never emitted.
+   end-of-turn token it never emitted. With ``label_answer_tokens=True`` the answer
+   tokens (class 4) are the completion tokens of the stored response and that
+   end-of-turn token, so the answer/reasoning boundary is the hosted service's split;
+   a token straddling it is class 3, and a mark without stored reasoning is all answer.
 5. The conversation matches what the collection harness sent. Induction: one
    user turn, no system message. Deduction: one system turn holding the cell's
    ``system.md`` and one user turn holding its ``prompt.md``. Server-side
@@ -102,7 +108,14 @@ the same list, one line each, and every plan and manifest carries it.
    rule lines and the whitespace after them, located from the ``intens`` query of
    the same seed and question (``_related_pad_span``); a mark whose ``intens``
    query is missing or does not match is not planned. A mark without a pad has an
-   undefined ratio (reported as nan).
+   undefined ratio (reported as nan). With ``label_added_lines=True`` the ``extens``
+   listing (what that arm adds after the ``intens`` rules: every position line with
+   its own newline, up to the newline that opens the question) is class 1, located
+   the same way (``_extens_listing_span``, which also requires the question text to
+   equal the ``intens`` query's); a mark where it cannot be located, or whose rebuild
+   has no class-1 token, is not planned. ``intens``, ``noise_intens`` and
+   ``related_intens`` keep their classes with or without the flag, and without it
+   ``extens`` is labelled by rule, as before.
 8. Tokens that straddle the edge of the query (template text merged into the
    query's first or last token) take the full token text as their piece. The
    template tokens next to the query are class 2, never class 0.
@@ -286,6 +299,7 @@ __all__ = [
     "CaptureUnsupported",
     "MODES",
     "SUMMARY_CAPTURE_VERSION",
+    "SUMMARY_CAPTURE_VERSIONS",
     "ChatTemplate",
     "DEFAULT_RESULTS_ROOT",
     "DEFAULT_S3_URI",
@@ -468,14 +482,17 @@ APPROXIMATIONS: Tuple[str, ...] = (
     "3. thinking delimiters are a hand-written table, checked only for vocabulary and prompt "
     "presence; whitespace around them is not restored",
     "4. reasoning/response were split by the hosted service; missing reasoning is rebuilt empty "
-    "and capped generations get an end-of-turn token they never emitted",
+    "and capped generations get an end-of-turn token they never emitted; with label_answer_tokens "
+    "the answer (class 4) is the rebuilt response plus that token, from the service's split",
     "5. induction: one user turn, no system message; deduction: one system turn (the cell's "
     "system.md) and one user turn (its prompt.md); server-side defaults are not represented",
     "6. the capture runs the pinned open-weights checkpoint on EC2, teacher-forced on the stored "
     "completion, not the hosted service's computation",
     "7. the pad class is found by rule for noise_intens (longest whitespace run of at least "
     f"{attention.MIN_PAD_RUN_CHARS} characters in the query) and by construction for "
-    "related_intens (added rule lines and trailing whitespace, located from the intens query)",
+    "related_intens (added rule lines and trailing whitespace, located from the intens query); "
+    "with label_added_lines the extens listing (every position line with its newline, located "
+    "from the intens query) is class 1, intens has none",
     "8. tokens straddling the query edge take their full token text as their piece",
     "9. induction: only the earliest stored run per seed and arm is replayed; deduction: only "
     "the earliest non-exception row per (rung, arm, seed, rep) cell",
@@ -538,10 +555,14 @@ _PE_CHAIN_REL_TOL: float = 2e-3
 #: mass captures come from the plugin in this repository, so the audit requires it.
 #: Version 1 (mass without ``prompt_entropy``, no field in the meta) is still readable.
 CAPTURE_VERSION: int = 2
-#: Capture format of summary mode. The three versions tell the kinds of object apart:
-#: 1 and 2 are mass captures (see ``CAPTURE_VERSION``), 3 is a summary capture, so a
-#: version-2 audit can never certify a summary npz or the reverse.
-SUMMARY_CAPTURE_VERSION: int = 3
+#: Capture format the shipped plugin writes in summary mode, so what a summary run requires.
+#: The versions tell the kinds of object apart: 1 and 2 are mass captures (see
+#: ``CAPTURE_VERSION``), 3 and 4 summary captures, so a version-2 audit can never certify a
+#: summary npz or the reverse. Version 4 adds ``sum_prompt_entropy_by_class``.
+SUMMARY_CAPTURE_VERSION: int = 4
+#: Every summary capture version the audit accepts: 3 (stored in the bucket, no class split)
+#: and 4. Version 4 is audited further (the class split; see ``_audit_summary_arrays``).
+SUMMARY_CAPTURE_VERSIONS: Tuple[int, ...] = (3, 4)
 #: The loosest self-consistency tolerance a capture may declare in its meta
 #: (``gate_tol``). The audit refuses a rank above it. A recapture of jobs that lost one rank
 #: at a gate figure of 0.031 to 0.040 (against the plugin default, ``PLUGIN_DEFAULT_GATE_TOL``)
@@ -559,9 +580,27 @@ PLUGIN_DEFAULT_GATE_TOL: float = 0.03
 MODES: Tuple[str, ...] = ("mass", "summary")
 #: Number of eight-byte values a summary npz holds per (layer, head): ``sum_entropy``,
 #: ``sum_prompt_entropy``, ``n_prompt_entropy``, ``sum_mass`` (4 classes), ``sum_sink``,
-#: ``sum_pad_ratio``, ``n_pad_ratio``, ``sum_m_hp``, ``sum_chain_hi``, ``sum_chain_lo``.
-#: All are float64 or int64.
-_SUMMARY_VALUES_PER_HEAD: int = 13
+#: ``sum_pad_ratio``, ``n_pad_ratio``, ``sum_m_hp``, ``sum_chain_hi``, ``sum_chain_lo`` and
+#: version 4 (what the plugin writes): ``sum_prompt_entropy_by_class`` (3 classes) and the answer
+#: sums ``sum_prompt_entropy_answer``, ``n_prompt_entropy_answer``,
+#: ``sum_prompt_entropy_by_class_answer`` (3), ``sum_entropy_answer`` and ``sum_mass_answer`` (4).
+#: 13 + 3 + 10 = 26. All are float64 or int64.
+_SUMMARY_VALUES_PER_HEAD: int = 26
+#: Relative part of the tolerance of the version-4 identity
+#: ``sum_prompt_entropy_by_class.sum(-1) == sum_prompt_entropy``. Both sides are float64 sums
+#: of float32 values the box derived from the SAME float32 ``p ln p`` terms of each row,
+#: summed in two orders (a ``torch.sum`` over the prompt keys; a matmul with the class one-hot
+#: for the split). Every term has the same sign, so each row's float32 sum has a relative
+#: error of at most about ``k * 2**-24`` for ``k`` serial additions; the stored sums were measured
+#: to agree to 5.4e-9 relative on the CPU (1000 rows, 11000 prompt keys), and the GPU's blocked
+#: reductions at 1.2e5 keys are expected well below 1e-5. The matmul may
+#: run in TF32 when ``VLLM_FLOAT32_MATMUL_PRECISION`` is not ``highest`` (the default is), which
+#: rounds each term to a relative 2**-11 (4.9e-4); 1e-3 covers that with a margin of 2, as the
+#: mass audit's TF32 allowance does, and is still far below any difference between classes.
+_BY_CLASS_IDENTITY_RTOL: float = 1e-3
+#: Absolute part of that tolerance, per row with a defined prompt entropy (nats): it covers a
+#: cell whose prompt entropy is near 0 (every row a point mass), where the relative part vanishes.
+_BY_CLASS_IDENTITY_ATOL_PER_ROW: float = 1e-6
 
 
 #: The two studies this driver replays; ``"induction"`` is the default of every entry point.
@@ -1307,6 +1346,7 @@ def rebuild_sequence(
     pad_query_span: Optional[Tuple[int, int]] = None,
     system: Optional[str] = None,
     pad_query_spans: Optional[Sequence[Tuple[int, int]]] = None,
+    label_answer: bool = False,
 ) -> Rebuilt:
     """Rebuild one mark's prompt ids, completion ids and key classes from its stored text.
 
@@ -1344,6 +1384,17 @@ def rebuild_sequence(
     sequence marks no token. The notes say how many tokens are class 1, in how many
     ranges, and how many straddle an edge.
 
+    With `label_answer` the answer tokens are class 4 (``attention.ANSWER_CLASS``): the
+    completion tokens whose character range starts at or after the start of the stored
+    `response` in the completion text (so the response and the end-of-turn token appended
+    after it). Reasoning tokens and the thinking delimiters stay class 3, and a token that
+    straddles the boundary (part delimiter, part response) is class 3. Without stored
+    reasoning every completion token is class 4. The boundary is found from the
+    tokenizer's character offsets of the completion text, encoded as one string (the
+    same encoding the ids come from). The notes say how many tokens are class 4 and how
+    many straddle the boundary. Without `label_answer` the classes are the ones of before
+    the parameter existed.
+
     With `system` the conversation is ``[system, user]``. The template may trim the
     system text (Gemma-4 does) or move it (Gemma-4 puts it after the thinking marker
     inside its own system turn), so the check is only that `system` or its stripped
@@ -1377,6 +1428,8 @@ def rebuild_sequence(
         Half-open character ranges of the pad inside `query`, each ``0 <= start <= end <=
         len(query)``; they may touch. Default ``None``. Mutually exclusive with
         `pad_query_span`.
+    label_answer : bool, optional
+        Label the answer tokens class 4 (see above). Default ``False``.
 
     Returns
     -------
@@ -1472,6 +1525,29 @@ def rebuild_sequence(
     prompt_ids = tuple(int(t) for t in tokenizer.encode_ids(prompt_text))
     completion_ids = tuple(int(t) for t in tokenizer.encode_ids(completion_text))
 
+    # Phase 3b: the first answer token, with `label_answer`. The response starts right after
+    # the closer (nothing is inserted), so its offset in the completion text is known exactly.
+    answer_start: Optional[int] = None
+    if label_answer:
+        if not reasoning:
+            answer_start = 0  # no stored reasoning: the whole completion is the answer
+            notes.append(f"answer tokens: all {len(completion_ids)} completion tokens class 4 (no reasoning)")
+        else:
+            boundary = len(completion_text) - len(fmt.end_of_turn) - len(response)
+            c_offsets = tokenizer.encode_offsets(completion_text)
+            if len(c_offsets) != len(completion_ids):
+                raise AssertionError(
+                    f"tokenizer returned {len(c_offsets)} offsets for {len(completion_ids)} completion ids"
+                )
+            answer_start = next(
+                (i for i, (start, _end) in enumerate(c_offsets) if start >= boundary), len(c_offsets)
+            )
+            straddle = sum(1 for start, end in c_offsets if start < boundary < end)
+            notes.append(
+                f"answer tokens: {len(completion_ids) - answer_start} class 4, "
+                f"{straddle} straddle the reasoning/answer boundary"
+            )
+
     # Phase 4: key classes from character offsets. Offsets, not per-token decode,
     # on purpose: decoding one byte-level BPE token can split a UTF-8 character.
     offsets = tokenizer.encode_offsets(prompt_text)
@@ -1490,7 +1566,8 @@ def rebuild_sequence(
             offsets, pieces, pad_query_spans, query, located, q_start
         )
         classes = attention.token_classes(
-            prompt_ids, completion_ids, lambda ids: pieces, pad_spans=piece_spans
+            prompt_ids, completion_ids, lambda ids: pieces, pad_spans=piece_spans,
+            answer_start=answer_start,
         )
         # The member set was decided in prompt coordinates; the classes come from piece
         # coordinates. They must name the same tokens, or the mapping went wrong somewhere
@@ -1524,7 +1601,7 @@ def rebuild_sequence(
             offsets, pieces, pad_query_span, query, located, q_start
         )
     classes = attention.token_classes(
-        prompt_ids, completion_ids, lambda ids: pieces, pad_span=pad_span
+        prompt_ids, completion_ids, lambda ids: pieces, pad_span=pad_span, answer_start=answer_start
     )
     if pad_query_span is not None:
         if pad_query_span[0] == pad_query_span[1]:
@@ -1809,23 +1886,32 @@ def looks_misdecoded(text: Optional[str]) -> bool:
 RELATED_ARM: str = "related_intens"
 #: The arm whose query the ``related_intens`` query extends; the pad is located against it.
 RELATED_BASE_ARM: str = "intens"
+#: The arm whose added lines (the position listing after the rules) are class 1 with
+#: ``label_added_lines``; located against the ``intens`` query like the related pad.
+EXTENS_ARM: str = "extens"
 
 
-def _related_pad_span(intens_query: str, related_query: str) -> Tuple[int, int]:
-    """Return the pad range of a ``related_intens`` query, by comparison with its ``intens`` query.
+def _related_pad_span(intens_query: str, related_query: str, arm: str = RELATED_ARM) -> Tuple[int, int]:
+    """Return the range a query adds after the rules, by comparison with its ``intens`` query.
 
-    The related query is the intens query up to the end of the real rule lines
-    (its ``head``, everything before ``bt.QUESTION_START``), then added rule
-    lines and a few whitespace characters, then the question. The pad is
-    everything between the head and the LAST ``QUESTION_START`` of the related
-    query (the same split ``bedrock_trio.check_related_prompts`` uses).
+    Both arms located this way are the intens query up to the end of the real rule
+    lines (its ``head``, everything before ``bt.QUESTION_START``), then lines the arm
+    adds, then the question. ``related_intens`` adds irrelevant rule lines and a few
+    whitespace characters (its pad); ``extens`` adds the position listing, one line
+    per position, each with its newline. The range is everything between the head and
+    the LAST ``QUESTION_START`` of the query (the same split
+    ``bedrock_trio.check_related_prompts`` uses), so the newline that opens
+    ``QUESTION_START`` stays outside it.
 
     Parameters
     ----------
     intens_query : str
         The ``intens`` query of the same seed and question.
     related_query : str
-        The ``related_intens`` query.
+        The query of `arm`.
+    arm : str, optional
+        The arm of `related_query`, named in the error messages; default ``RELATED_ARM``
+        (the messages of that arm are unchanged).
 
     Returns
     -------
@@ -1844,13 +1930,50 @@ def _related_pad_span(intens_query: str, related_query: str) -> Tuple[int, int]:
         raise ValueError(f"the intens query has no {bt.QUESTION_START!r}; cannot find the head")
     head = intens_query[:cut]
     if not related_query.startswith(head):
-        raise ValueError("the related_intens query does not start with the intens query's rules")
+        raise ValueError(f"the {arm} query does not start with the intens query's rules")
     end = related_query.rfind(bt.QUESTION_START)
     if end < len(head):
-        raise ValueError(f"the related_intens query has no {bt.QUESTION_START!r} after the rules")
+        raise ValueError(f"the {arm} query has no {bt.QUESTION_START!r} after the rules")
     if end == len(head):
-        raise ValueError("the related_intens query has an empty pad (nothing between rules and question)")
+        raise ValueError(f"the {arm} query has an empty pad (nothing between rules and question)")
     return len(head), end
+
+
+def _extens_listing_span(intens_query: str, extens_query: str) -> Tuple[int, int]:
+    """Return the range of the position listing in an ``extens`` query (the class-1 lines).
+
+    An ``extens`` prompt is the ``intens`` rules followed by the listing
+    (``smolbench.induction.periodic``: its context is ``intensional + extensional``), so
+    the listing is what ``_related_pad_span`` finds between the intens head and the last
+    ``QUESTION_START``. One check more than for ``related_intens``: the text from
+    ``QUESTION_START`` on must equal the ``intens`` query's, so the two marks are the same
+    question of the same seed and nothing but the listing lies between head and question.
+
+    Parameters
+    ----------
+    intens_query : str
+        The ``intens`` query of the same seed and question.
+    extens_query : str
+        The ``extens`` query.
+
+    Returns
+    -------
+    Tuple[int, int]
+        ``[start, end)`` in `extens_query`: every listing line with its own newline;
+        ``0 < start < end``.
+
+    Raises
+    ------
+    ValueError
+        As ``_related_pad_span`` (naming ``extens``), or when the question text after the
+        listing differs from the intens query's.
+    """
+    start, end = _related_pad_span(intens_query, extens_query, EXTENS_ARM)
+    if extens_query[end:] != intens_query[intens_query.find(bt.QUESTION_START):]:
+        raise ValueError(
+            "the extens query's question differs from the intens query's; cannot locate the listing"
+        )
+    return start, end
 
 
 @dataclass
@@ -2091,8 +2214,12 @@ class _Source:
     arms: Optional[Tuple[str, ...]] = None
     #: Deduction: replicate filter, ``None`` = all.
     reps: Optional[FrozenSet[int]] = None
-    #: Deduction: label the added lines of a padded arm as class 1 (``_horn_added_line_spans``).
+    #: Label the added lines as class 1: deduction, the padded arms' added lines
+    #: (``_horn_added_line_spans``); induction, the ``extens`` listing (``_extens_listing_span``).
     label_added_lines: bool = False
+    #: Label the answer tokens (the completion tokens of the stored response, after the
+    #: reasoning block) as class 4, both studies (``rebuild_sequence(label_answer=True)``).
+    label_answer_tokens: bool = False
 
 
 def _horn_rows_file(model: str, horn_rows: Any, n_models: int = 1) -> Path:
@@ -2134,6 +2261,7 @@ def _make_source(
     arms: Optional[Sequence[str]],
     reps: Optional[Sequence[int]],
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> _Source:
     """Validate the study arguments and return the ``_Source`` the internals take.
 
@@ -2141,23 +2269,28 @@ def _make_source(
     ------
     ValueError
         When `study` is unknown; when a deduction-only argument (`rows_path`, `rungs_dir`,
-        `arms`, `reps`, a true `label_added_lines`) is given for the induction study, where it
-        would be silently ignored; when `arms` is a string or holds a non-string; `reps` holds
-        a non-integer; or `label_added_lines` is not a ``bool``.
+        `arms`, `reps`) is given for the induction study, where it would be silently ignored;
+        when `arms` is a string or holds a non-string; `reps` holds a non-integer; or
+        `label_added_lines` or `label_answer_tokens` is not a ``bool``. Both flags apply to both
+        studies.
     """
     _check_study(study)
     if not isinstance(label_added_lines, bool):
         raise ValueError(f"label_added_lines must be a bool, got {label_added_lines!r}")
+    if not isinstance(label_answer_tokens, bool):
+        raise ValueError(f"label_answer_tokens must be a bool, got {label_answer_tokens!r}")
     if study == "induction":
         extras = [
             name for name, value in (
                 ("horn_rows", rows_path), ("rungs_dir", rungs_dir), ("arms", arms), ("reps", reps),
-                ("label_added_lines", label_added_lines or None),
             ) if value is not None
         ]
         if extras:
             raise ValueError(f"{', '.join(extras)} apply only to study='horn'")
-        return _Source("induction", Path(results_root))
+        return _Source(
+            "induction", Path(results_root), label_added_lines=label_added_lines,
+            label_answer_tokens=label_answer_tokens,
+        )
     if rows_path is None:
         raise ValueError("study='horn' needs the rows file (callers resolve it with _horn_rows_file)")
     arm_filter: Optional[Tuple[str, ...]] = None
@@ -2168,7 +2301,7 @@ def _make_source(
     return _Source(
         "horn", Path(results_root), Path(rows_path),
         None if rungs_dir is None else Path(rungs_dir), arm_filter, _int_set(reps, "reps"),
-        label_added_lines,
+        label_added_lines, label_answer_tokens,
     )
 
 
@@ -2181,6 +2314,8 @@ def _build_induction(
     fmt: Optional[ReasoningFormat],
     seeds: Optional[FrozenSet[int]] = None,
     mode: str = "mass",
+    label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> _Built:
     """Read the induction runs of `model` and rebuild every mark (see ``_build``).
 
@@ -2191,6 +2326,16 @@ def _build_induction(
     pairing survives the filter. `mode` (an element of ``MODES``, already resolved by
     the caller) is recorded on every job: the sequence is the same in both modes, only
     what the box stores differs.
+
+    With `label_added_lines` an ``extens`` mark's position listing is class 1, located
+    by construction from the ``intens`` query of the same seed and question
+    (``_extens_listing_span``), as a ``related_intens`` pad is. A mark whose listing
+    cannot be located, or whose rebuild then has no class-1 token, is a plan error and
+    is not planned unlabelled. Every other arm keeps its classes, and without the flag
+    the rebuild is the one of before the flag existed.
+
+    With `label_answer_tokens` the answer tokens of every mark are class 4
+    (``rebuild_sequence(label_answer=True)``); a mark with no class-4 token is a plan error.
     """
     import jinja2.exceptions
 
@@ -2245,23 +2390,39 @@ def _build_induction(
                 # By construction for related_intens: the pad range comes from the intens
                 # query of the same seed and question. Any failure here is this mark's error.
                 pad_span: Optional[Tuple[int, int]] = None
-                if run.arm == RELATED_ARM:
+                # extens is located only with the flag: without it the mark is rebuilt with
+                # the by-rule pad exactly as before, so a default plan is unchanged.
+                listing = run.arm == EXTENS_ARM and label_added_lines
+                if run.arm == RELATED_ARM or listing:
+                    what = "the listing of an extens" if listing else "the pad of a related_intens"
                     base = base_queries(run.seed)
                     if base is None:
                         raise ValueError(
                             f"no {RELATED_BASE_ARM} run for seed {run.seed}; "
-                            "cannot locate the pad of a related_intens mark"
+                            f"cannot locate {what} mark"
                         )
                     if idx >= len(base):
                         raise ValueError(
                             f"question {idx} is missing from the {RELATED_BASE_ARM} run "
-                            f"({len(base)} questions); cannot locate the pad"
+                            f"({len(base)} questions); cannot locate the "
+                            + ("listing" if listing else "pad")
                         )
-                    pad_span = _related_pad_span(base[idx], mark.query)
+                    pad_span = (
+                        _extens_listing_span(base[idx], mark.query) if listing
+                        else _related_pad_span(base[idx], mark.query)
+                    )
                 rebuilt = rebuild_sequence(
                     mark.query, mark.reasoning, mark.response,
                     tokenizer=tokenizer, template=template, fmt=fmt, pad_query_span=pad_span,
+                    label_answer=label_answer_tokens,
                 )
+                _check_answer_labelled(rebuilt, label_answer_tokens)
+                if listing and rebuilt.classes[: len(rebuilt.prompt_ids)].count(1) == 0:
+                    # A labelled extens job without a class-1 token would read as unpadded.
+                    raise ValueError(
+                        "the extens listing was located but no token is class 1 after the "
+                        "rebuild; not planned unlabelled"
+                    )
                 if not checked:
                     # Once per model: a wrong delimiter table is wrong for every
                     # mark, so it must stop the model, not fill the error list.
@@ -2278,6 +2439,19 @@ def _build_induction(
                 continue
             built.planned.append(PlannedJob(job, run, idx, rebuilt.notes))
     return built
+
+
+def _check_answer_labelled(rebuilt: Rebuilt, label_answer_tokens: bool) -> None:
+    """Refuse a rebuild that was asked to label answer tokens and labelled none.
+
+    Raises
+    ------
+    ValueError
+        When `label_answer_tokens` is true and no completion token is class 4: such a job would
+        read as one without an answer, so it is a plan error, never an unlabelled job.
+    """
+    if label_answer_tokens and attention.ANSWER_CLASS not in rebuilt.classes[len(rebuilt.prompt_ids):]:
+        raise ValueError("label_answer_tokens: no completion token is class 4 after the rebuild; not planned")
 
 
 class _HornRowError(ValueError):
@@ -2506,7 +2680,8 @@ def _build_horn(
     ``source.label_added_lines`` the pad is instead the cell's added lines
     (``_horn_added_line_spans``, passed as ``pad_query_spans``; none for ``lem``), and an arm
     other than ``lem`` whose rebuild has no class-1 token is a plan error for that cell, never
-    an unlabelled job. A failure of one cell is a plan error for its arm and the other cells
+    an unlabelled job. With ``source.label_answer_tokens`` the answer tokens are class 4 and a
+    cell without one is a plan error. A failure of one cell is a plan error for its arm and the other cells
     still plan; a ``ReasoningFormatError`` stops the model, as for induction. Tokenizer and
     template are fetched only when there is a cell to rebuild.
     """
@@ -2546,7 +2721,7 @@ def _build_horn(
                 spans = _horn_added_line_spans(rungs_dir, cell.rung, cell.seed, cell.arm, query, theories)
                 rebuilt = rebuild_sequence(
                     query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
-                    system=system, pad_query_spans=spans,
+                    system=system, pad_query_spans=spans, label_answer=source.label_answer_tokens,
                 )
                 n_pad = rebuilt.classes[: len(rebuilt.prompt_ids)].count(1)
                 if cell.arm != "lem" and n_pad == 0:
@@ -2560,8 +2735,9 @@ def _build_horn(
                 # class 1 (the default; the stored captures were made this way).
                 rebuilt = rebuild_sequence(
                     query, reasoning, content, tokenizer=tokenizer, template=template, fmt=fmt,
-                    pad_query_span=(0, 0), system=system,
+                    pad_query_span=(0, 0), system=system, label_answer=source.label_answer_tokens,
                 )
+            _check_answer_labelled(rebuilt, source.label_answer_tokens)
             if not checked:
                 # Once per model, as for induction: a wrong delimiter table is wrong for every cell.
                 check_reasoning_format(model, tokenizer, rebuilt.prompt_text, fmt=fmt)
@@ -2603,7 +2779,10 @@ def _build(
     """
     if source.study == "horn":
         return _build_horn(model, source, s3_prefix, get_tokenizer, get_template, fmt, seeds, mode)
-    return _build_induction(model, source.results_root, s3_prefix, get_tokenizer, get_template, fmt, seeds, mode)
+    return _build_induction(
+        model, source.results_root, s3_prefix, get_tokenizer, get_template, fmt, seeds, mode,
+        source.label_added_lines, source.label_answer_tokens,
+    )
 
 
 def build_jobs(
@@ -2622,6 +2801,7 @@ def build_jobs(
     arms: Optional[Sequence[str]] = None,
     reps: Optional[Sequence[int]] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> Tuple[List[PlannedJob], List[str]]:
     """Rebuild every stored mark or cell of `model` into a capture job, offline.
 
@@ -2660,8 +2840,10 @@ def build_jobs(
     arms, reps : Optional[Sequence], optional
         Deduction: keep only these arms / replicate numbers (``None`` = all).
     label_added_lines : bool, optional
-        Deduction only: label the added lines of every padded arm class 1 (see
-        ``plan_replay``). Default ``False``: no token is class 1.
+        Label the added lines class 1 (see ``plan_replay``; both studies). Default ``False``:
+        the classes the stored captures were made with.
+    label_answer_tokens : bool, optional
+        Label the answer tokens class 4 (see ``plan_replay``; both studies). Default ``False``.
 
     Returns
     -------
@@ -2678,8 +2860,8 @@ def build_jobs(
     ------
     ValueError
         When `mode` or `study` is invalid, `seeds` or `reps` holds a non-integer, `arms` is
-        not a sequence of names, or a deduction-only argument (also a true
-        `label_added_lines`) is given for the induction study (before any file is read).
+        not a sequence of names, or a deduction-only argument is given for the induction
+        study (before any file is read).
     TemplateUnavailable
         When the template or tokenizer cannot be loaded (only when there is something to
         rebuild).
@@ -2691,7 +2873,7 @@ def build_jobs(
     source = _make_source(
         study, results_root,
         _horn_rows_file(model, horn_rows) if study == "horn" else horn_rows, rungs_dir, arms, reps,
-        label_added_lines,
+        label_added_lines, label_answer_tokens,
     )
     built = _build(
         model, source, s3_prefix,
@@ -2771,10 +2953,14 @@ class ReplayPlan:
     #: the plan (``jobs``, ``per_arm``, the token totals, ``over_context`` and the storage
     #: estimate) covers only these jobs; ``runs``, ``marks`` and ``errors`` stay as built.
     selected: Optional[List[Dict[str, Any]]] = None
-    #: Deduction: whether the added lines of the padded arms are labelled class 1. When true,
-    #: ``per_arm`` also holds ``class1_tokens`` (class-1 tokens summed over the arm's planned
-    #: jobs) and ``class1_tokens_mean`` (per job; 0.0 for an arm without jobs).
+    #: Whether the added lines are labelled class 1 (deduction: the padded arms' added lines;
+    #: induction: the ``extens`` listing). When true, ``per_arm`` also holds ``class1_tokens``
+    #: (class-1 tokens summed over the arm's planned jobs) and ``class1_tokens_mean`` (per job;
+    #: 0.0 for an arm without jobs), for every arm of either study.
     label_added_lines: bool = False
+    #: Whether the answer tokens are labelled class 4. When true, ``per_arm`` also holds
+    #: ``class4_tokens`` (summed over the arm's planned jobs) and ``class4_tokens_mean``.
+    label_answer_tokens: bool = False
 
     def summary(self) -> str:
         """Return a short multi-line description of the plan.
@@ -2807,6 +2993,14 @@ class ReplayPlan:
             lines.append(
                 "  label_added_lines: the added lines of every padded arm are class 1 "
                 "(lem has none); the pad ratio is defined for those arms"
+                if horn else
+                "  label_added_lines: the extens listing is class 1 (intens, noise_intens and "
+                "related_intens keep their classes); the pad ratio is defined for extens"
+            )
+        if self.label_answer_tokens:
+            lines.append(
+                "  label_answer_tokens: the completion tokens of the stored response (after the "
+                "reasoning) are class 4"
             )
         for arm, stats in self.per_arm.items():
             line = (
@@ -2825,6 +3019,11 @@ class ReplayPlan:
                 line += (
                     f"; class-1 tokens {stats['class1_tokens']} total, "
                     f"{stats['class1_tokens_mean']:.1f} per job"
+                )
+            if "class4_tokens" in stats:
+                line += (
+                    f"; class-4 tokens {stats['class4_tokens']} total, "
+                    f"{stats['class4_tokens_mean']:.1f} per job"
                 )
             lines.append(line)
         if self.selected is not None:
@@ -2866,17 +3065,19 @@ def _estimate_bytes(
 
     Mass mode: per job, summed over ranks, ``layers x P x heads x 7 x 2`` bytes plus
     ``tp x n_tokens`` (``P = n_tokens - query_start``). Summary mode: ``layers x heads x
-    13 x 8`` bytes plus ``tp x n_tokens``; it has no ``P`` term, which is the point of
-    the mode. The ``7 = 4 + 1 + 1 + 1`` and ``13`` count the stored values per
+    26 x 8`` bytes plus ``tp x n_tokens``; it has no ``P`` term, which is the point of
+    the mode. The ``7 = 4 + 1 + 1 + 1`` and ``26`` count the stored values per
     (layer, head) (see ``_SUMMARY_VALUES_PER_HEAD``). The estimate ignores the small
     geometry arrays, the meta json and S3 overhead.
     """
     if mode == "summary":
         formula = (
-            "ESTIMATE: summary mode, per job, summed over ranks, n_attn_layers x n_heads x 13 "
+            "ESTIMATE: summary mode, per job, summed over ranks, n_attn_layers x n_heads x 26 "
             "eight-byte values (float64 sums and int64 counts: sum_entropy, sum_prompt_entropy, "
             "n_prompt_entropy, sum_mass x 4, sum_sink, sum_pad_ratio, n_pad_ratio, sum_m_hp, "
-            "sum_chain_hi, sum_chain_lo) x 8 bytes + tp x n_tokens (uint8 classes per rank); "
+            "sum_chain_hi, sum_chain_lo, sum_prompt_entropy_by_class x 3, sum_prompt_entropy_answer, "
+            "n_prompt_entropy_answer, sum_prompt_entropy_by_class_answer x 3, sum_entropy_answer, "
+            "sum_mass_answer x 4) x 8 bytes + tp x n_tokens (uint8 classes per rank); "
             "independent of the number of response rows; uncompressed npz, without the meta "
             "json and S3 overhead"
         )
@@ -3207,13 +3408,19 @@ def _plan_one(
                 "bedrock_completion_tokens": _usage_total(jobs_of_arm, "completion_tokens"),
                 "est_capture_bytes": None,  # filled below once the total is known
             })
-            if source.label_added_lines:
-                # Only with the labels: the per-arm dict of a default plan keeps its keys.
-                pad_counts = [(p.job.classes or ()).count(1) for p in jobs_of_arm]
-                per_arm[arm]["class1_tokens"] = sum(pad_counts)
-                per_arm[arm]["class1_tokens_mean"] = (
-                    sum(pad_counts) / len(pad_counts) if pad_counts else 0.0
-                )
+        if source.label_added_lines:
+            # Only with the labels (both studies): the per-arm dict of a default plan keeps its keys.
+            pad_counts = [(p.job.classes or ()).count(1) for p in jobs_of_arm]
+            per_arm[arm]["class1_tokens"] = sum(pad_counts)
+            per_arm[arm]["class1_tokens_mean"] = (
+                sum(pad_counts) / len(pad_counts) if pad_counts else 0.0
+            )
+        if source.label_answer_tokens:
+            answer_counts = [(p.job.classes or ()).count(attention.ANSWER_CLASS) for p in jobs_of_arm]
+            per_arm[arm]["class4_tokens"] = sum(answer_counts)
+            per_arm[arm]["class4_tokens_mean"] = (
+                sum(answer_counts) / len(answer_counts) if answer_counts else 0.0
+            )
 
     instance_types = tuple(INSTANCE_TYPES.get(model, ()))
     tp = ec2.derive_tp(model, instance_types[0], spec) if instance_types else None
@@ -3260,6 +3467,7 @@ def _plan_one(
         bedrock_token_counts=_HORN_BEDROCK_COUNTS_NOTE if horn else _BEDROCK_COUNTS_NOTE,
         selected=selected,
         label_added_lines=source.label_added_lines,
+        label_answer_tokens=source.label_answer_tokens,
     )
     return plan, all_planned
 
@@ -3282,6 +3490,7 @@ def plan_replay(
     capture_max_model_len: Optional[int] = None,
     job_ids: Optional[Sequence[str]] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> Dict[str, ReplayPlan]:
     """Plan the replay of each model: sizes, errors and a storage estimate. No AWS access.
 
@@ -3330,15 +3539,27 @@ def plan_replay(
         Duplicates collapse. One list cannot name the jobs of several models, so it is
         accepted for ONE model only.
     label_added_lines : bool, optional
-        Deduction only (a ``ValueError`` for induction). Default ``False``: no deduction token
-        is class 1, the classes the stored captures were made with. ``True``: the added lines
-        of every padded arm (each derivation-tree slot of the rendered library, whatever the
-        arm fills it with) are class 1, located from the rung's ``theory.json`` and checked
-        against the ``lem`` arm (``_horn_added_line_spans``); ``lem`` has no class-1 token. A
-        cell whose added lines cannot be located, or a padded cell with no class-1 token after
-        the rebuild, is a plan error. The plan records the flag and counts the class-1 tokens
-        per arm (``ReplayPlan.label_added_lines``). The job keys do not depend on the flag:
-        capture under a new ``s3_uri`` prefix, since a stored job is never re-sent.
+        Both studies. Default ``False``: the classes the stored captures were made with (no
+        deduction token is class 1; induction ``extens`` labelled by rule). ``True``, deduction:
+        the added lines of every padded arm (each derivation-tree slot of the rendered library,
+        whatever the arm fills it with) are class 1, located from the rung's ``theory.json``
+        and checked against the ``lem`` arm (``_horn_added_line_spans``); ``lem`` has no
+        class-1 token. ``True``, induction: the ``extens`` listing is class 1, located from the
+        ``intens`` query of the same seed and question (``_extens_listing_span``); the other
+        arms keep their classes. A cell or mark whose added lines cannot be located, or a
+        labelled one with no class-1 token after the rebuild, is a plan error. The plan records
+        the flag and counts the class-1 tokens per arm (``ReplayPlan.label_added_lines``). The
+        job keys do not depend on the flag: capture under a new ``s3_uri`` prefix, since a
+        stored job is never re-sent.
+    label_answer_tokens : bool, optional
+        Both studies. Default ``False``: every completion token is class 3. ``True``: the
+        completion tokens that come from the stored response or content (after the reasoning
+        block and its closing delimiter, as ``rebuild_sequence`` assembles the completion; the
+        appended end-of-turn token included) are class 4, the answer class; reasoning tokens and
+        the thinking delimiters stay class 3, and a mark or cell with no stored reasoning has
+        every completion token class 4. A job with no class-4 token is a plan error. The plan
+        records the flag and counts the class-4 tokens per arm (``ReplayPlan.label_answer_tokens``);
+        the job keys do not depend on it, so capture under a new ``s3_uri``.
 
     Returns
     -------
@@ -3374,7 +3595,7 @@ def plan_replay(
         model: _make_source(
             study, Path(results_root),
             _horn_rows_file(model, horn_rows, len(model_list)) if study == "horn" else horn_rows,
-            rungs_dir, arms, reps, label_added_lines,
+            rungs_dir, arms, reps, label_added_lines, label_answer_tokens,
         )
         for model in model_list
     }
@@ -3664,7 +3885,7 @@ def _first_cell(mask: np.ndarray) -> Tuple[int, ...]:
 
 
 def _audit_summary_arrays(
-    arrays: Any, job: attention.Job, n_layers: int, heads_local: int
+    arrays: Any, job: attention.Job, n_layers: int, heads_local: int, capture_version: int = 3
 ) -> Optional[str]:
     """Content-check one rank's summary npz against the job and the config; return a failure or ``None``.
 
@@ -3685,6 +3906,11 @@ def _audit_summary_arrays(
         Attention layer count of the config.
     heads_local : int
         Heads per tensor-parallel rank (``n_heads // tp``).
+    capture_version : int, optional
+        The rank's meta version, 3 (default) or 4. Version 4 must also hold
+        ``attention.SUMMARY_BY_CLASS_ARRAY`` and pass its checks (shape, finite, non-negative,
+        0 where no row is defined, and the identity with ``sum_prompt_entropy``); version 3 is
+        audited exactly as before, whatever else the npz holds.
 
     Returns
     -------
@@ -3705,10 +3931,16 @@ def _audit_summary_arrays(
     classes = np.asarray(arrays["classes"])
     if not np.array_equal(classes, np.asarray(job.classes)):
         return "classes differ from the job's"
-    for name in (*attention.SUMMARY_ARRAYS, "sliding_window", "has_sink"):
+    by_class = attention.SUMMARY_BY_CLASS_ARRAY
+    v4 = capture_version >= 4
+    v4_names = (*attention.SUMMARY_V4_ARRAYS, "rows_answer") if v4 else ()
+    required = (*attention.SUMMARY_ARRAYS, "sliding_window", "has_sink") + v4_names
+    for name in required:
         if name not in arrays:
-            return f"summary npz has no {name}"
-    stored = {name: np.asarray(arrays[name]) for name in (*attention.SUMMARY_ARRAYS, "sliding_window", "has_sink")}
+            return f"summary npz has no {name}" + (
+                f" (capture_version {capture_version})" if name in v4_names else ""
+            )
+    stored = {name: np.asarray(arrays[name]) for name in required}
     rows = stored["rows"]
     if rows.shape != () or int(rows) != p:
         return f"rows {rows.tolist()!r} != P = {p} (n_tokens {job.n_tokens} - query_start {query_start})"
@@ -3718,6 +3950,10 @@ def _audit_summary_arrays(
     head_shape = (n_layers, heads_local)
     expected_shapes: Dict[str, Tuple[int, ...]] = {name: head_shape for name in _SUMMARY_HEAD_ARRAYS}
     expected_shapes["sum_mass"] = head_shape + (attention.N_TOKEN_CLASSES,)
+    if v4:
+        for name, tail in attention.SUMMARY_V4_ARRAYS.items():
+            expected_shapes[name] = head_shape + tail
+        expected_shapes["rows_answer"] = ()
     expected_shapes["sliding_window"] = (n_layers,)
     expected_shapes["has_sink"] = (n_layers,)
     for name, shape in expected_shapes.items():
@@ -3727,13 +3963,14 @@ def _audit_summary_arrays(
         layers_ids = np.asarray(arrays["layers"])
         if layers_ids.ndim != 1 or len(layers_ids) != n_layers:
             return f"layers has shape {layers_ids.shape}, expected ({n_layers},)"
-    for name in (*_SUMMARY_HEAD_ARRAYS, "sum_mass"):
+    value_names = (*_SUMMARY_HEAD_ARRAYS, "sum_mass") + (tuple(attention.SUMMARY_V4_ARRAYS) if v4 else ())
+    for name in value_names:
         finite = np.isfinite(stored[name].astype(np.float64))
         if not finite.all():
             cell = _first_cell(~finite)
             return f"{name} holds a non-finite value at {_cell_text(cell)}"
 
-    values = {name: stored[name].astype(np.float64) for name in (*_SUMMARY_HEAD_ARRAYS, "sum_mass")}
+    values = {name: stored[name].astype(np.float64) for name in value_names}
     window = stored["sliding_window"].astype(np.int64)
     has_sink = stored["has_sink"].astype(bool)
     n_pe = stored["n_prompt_entropy"]
@@ -3782,6 +4019,15 @@ def _audit_summary_arrays(
             cell = _first_cell(below)
             bound = float(bound_array[cell])
             return f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is below {bound:.4g}"
+    if v4:
+        # No floor below 0: every per-row class contribution is -sum p ln p over keys with
+        # 0 < p <= 1, a sum of terms that are each >= 0 in float32 too, and float64 sums of
+        # non-negative values stay non-negative. A negative value is not rounding.
+        for name in (by_class, "sum_prompt_entropy_by_class_answer"):
+            negative = values[name] < 0.0
+            if negative.any():
+                cell = _first_cell(negative)
+                return f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is negative"
 
     # Phase 5: sums that must be exactly 0 where no row has a prompt entropy.
     undefined = n_pe == 0
@@ -3793,6 +4039,35 @@ def _audit_summary_arrays(
                 f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is not 0 although "
                 "n_prompt_entropy is 0 there"
             )
+    if v4:
+        stray = undefined[..., None] & (values[by_class] != 0.0)
+        if stray.any():
+            cell = _first_cell(stray)
+            return (
+                f"{by_class} {float(values[by_class][cell]):.4g} at {_cell_text(cell)} is not 0 "
+                "although n_prompt_entropy is 0 there"
+            )
+        # Phase 5b: the class split adds up to the prompt entropy. Per row Hp_0 + Hp_1 + Hp_2
+        # = Hp exactly; the stored sums differ only by float32 summation order (and TF32, if
+        # enabled), so the tolerance is relative to sum_prompt_entropy plus a tiny absolute part
+        # per defined row (see _BY_CLASS_IDENTITY_RTOL).
+        split_total = values[by_class].sum(-1)
+        allowed = (
+            _BY_CLASS_IDENTITY_RTOL * np.abs(values["sum_prompt_entropy"])
+            + _BY_CLASS_IDENTITY_ATOL_PER_ROW * n_pe_f
+        )
+        off = np.abs(split_total - values["sum_prompt_entropy"]) > allowed
+        if off.any():
+            cell = _first_cell(off)
+            return (
+                f"{by_class} sums to {float(split_total[cell]):.8g} at {_cell_text(cell)}, but "
+                f"sum_prompt_entropy is {float(values['sum_prompt_entropy'][cell]):.8g} (allowed "
+                f"difference {float(allowed[cell]):.3g}: {_BY_CLASS_IDENTITY_RTOL} relative + "
+                f"{_BY_CLASS_IDENTITY_ATOL_PER_ROW} per defined row)"
+            )
+        failure = _audit_answer_sums(values, stored, classes, query_start, p, expected_pe, n_pe)
+        if failure:
+            return failure
 
     # Phase 6: the masses of a row sum to 1 with the sink, so the sums add up to P.
     # Tolerance: the mass audit allows _ROW_SUM_TOL per row, and the sum over P rows of a
@@ -3885,6 +4160,104 @@ def _audit_summary_arrays(
     return None
 
 
+def _audit_answer_sums(
+    values: Mapping[str, np.ndarray],
+    stored: Mapping[str, np.ndarray],
+    classes: np.ndarray,
+    query_start: int,
+    p: int,
+    expected_pe: np.ndarray,
+    n_pe: np.ndarray,
+) -> Optional[str]:
+    """Check the version-4 sums over the answer rows (phase 5c of ``_audit_summary_arrays``).
+
+    The answer rows are the response rows whose own token is class 4. In this order:
+    ``rows_answer`` equals their number in ``classes``; ``n_prompt_entropy_answer`` is exact
+    (the answer rows among the first ``expected_pe[l]`` rows, the rows with an attendable prompt
+    key; so also ``<= n_prompt_entropy``); floors (``sum_prompt_entropy_answer`` at least
+    ``-1e-3 * n_prompt_entropy_answer``, ``sum_entropy_answer`` and ``sum_mass_answer`` at least
+    ``-1e-3 * rows_answer``); where ``n_prompt_entropy_answer == 0`` the prompt-entropy answer
+    sums are exactly 0, and with ``rows_answer == 0`` every answer sum is; every answer sum is at
+    most its all-rows counterpart (``1e-9`` relative slack: each is the sum of a subset of the
+    counterpart's non-negative terms in the same order, so it cannot exceed it beyond rounding);
+    and ``sum_prompt_entropy_by_class_answer.sum(-1)`` equals ``sum_prompt_entropy_answer`` within
+    the tolerance of the all-rows identity.
+
+    Returns
+    -------
+    Optional[str]
+        The first failure, naming the array and the cell, or ``None``.
+    """
+    answer_idx = np.flatnonzero(np.asarray(classes)[query_start:query_start + p] == attention.ANSWER_CLASS)
+    rows_answer = int(stored["rows_answer"])
+    if rows_answer != answer_idx.size:
+        return f"rows_answer {rows_answer} != {answer_idx.size}, the class-4 response rows of classes"
+    n_ans = np.asarray(stored["n_prompt_entropy_answer"])
+    # Defined rows are a prefix of the response rows (rows i < expected_pe[l]).
+    expected_ans = np.searchsorted(answer_idx, expected_pe).astype(np.int64)  # [L]
+    wrong = n_ans != expected_ans[:, None]
+    if wrong.any():
+        cell = _first_cell(wrong)
+        return (
+            f"n_prompt_entropy_answer {n_ans[cell].item()} at {_cell_text(cell)} != "
+            f"{int(expected_ans[cell[0]])}, the answer rows with an attendable prompt key"
+        )
+    n_ans_f = n_ans.astype(np.float64)
+    for name, low in (
+        ("sum_prompt_entropy_answer", _ENTROPY_FLOOR * n_ans_f),
+        ("sum_entropy_answer", _ENTROPY_FLOOR * rows_answer),
+        ("sum_mass_answer", _MASS_FLOOR * rows_answer),
+    ):
+        bound_array = np.broadcast_to(low, values[name].shape)  # [L, H] or a scalar
+        below = values[name] < bound_array
+        if below.any():
+            cell = _first_cell(below)
+            return f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is below {float(bound_array[cell]):.4g}"
+    no_rows = n_ans == 0
+    for name in ("sum_prompt_entropy_answer", "sum_prompt_entropy_by_class_answer"):
+        mask = no_rows if values[name].ndim == 2 else no_rows[..., None]
+        stray = mask & (values[name] != 0.0)
+        if stray.any():
+            cell = _first_cell(stray)
+            return (
+                f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is not 0 although "
+                "n_prompt_entropy_answer is 0 there"
+            )
+    if rows_answer == 0:
+        for name in ("sum_entropy_answer", "sum_mass_answer"):
+            if (values[name] != 0.0).any():
+                cell = _first_cell(values[name] != 0.0)
+                return f"{name} {float(values[name][cell]):.4g} at {_cell_text(cell)} is not 0 although rows_answer is 0"
+    for name, whole in (
+        ("sum_prompt_entropy_answer", "sum_prompt_entropy"),
+        ("sum_prompt_entropy_by_class_answer", attention.SUMMARY_BY_CLASS_ARRAY),
+        ("sum_entropy_answer", "sum_entropy"),
+        ("sum_mass_answer", "sum_mass"),
+    ):
+        over = values[name] > values[whole] + 1e-9 * np.maximum(np.abs(values[whole]), 1.0)
+        if over.any():
+            cell = _first_cell(over)
+            return (
+                f"{name} {float(values[name][cell]):.8g} at {_cell_text(cell)} exceeds its all-rows "
+                f"counterpart {whole} {float(values[whole][cell]):.8g}"
+            )
+    split_total = values["sum_prompt_entropy_by_class_answer"].sum(-1)
+    allowed = (
+        _BY_CLASS_IDENTITY_RTOL * np.abs(values["sum_prompt_entropy_answer"])
+        + _BY_CLASS_IDENTITY_ATOL_PER_ROW * n_ans_f
+    )
+    off = np.abs(split_total - values["sum_prompt_entropy_answer"]) > allowed
+    if off.any():
+        cell = _first_cell(off)
+        return (
+            f"sum_prompt_entropy_by_class_answer sums to {float(split_total[cell]):.8g} at "
+            f"{_cell_text(cell)}, but sum_prompt_entropy_answer is "
+            f"{float(values['sum_prompt_entropy_answer'][cell]):.8g} (allowed difference "
+            f"{float(allowed[cell]):.3g})"
+        )
+    return None
+
+
 def _cell_text(cell: Sequence[int]) -> str:
     """Return ``(layer l, head h[, class c])`` for an index into a summary array."""
     text = f"(layer {cell[0]}, head {cell[1]}"
@@ -3956,8 +4329,8 @@ def _audit_job(
         # what tells a summary npz from a mass npz, so a disagreement means the meta cannot
         # be trusted to say which arrays the npz holds.
         if rank_mode == "summary":
-            version_fits = rank_version == SUMMARY_CAPTURE_VERSION
-            needs = f"{SUMMARY_CAPTURE_VERSION}"
+            version_fits = rank_version in SUMMARY_CAPTURE_VERSIONS
+            needs = " or ".join(str(v) for v in SUMMARY_CAPTURE_VERSIONS)
         else:
             version_fits = rank_version in (1, CAPTURE_VERSION)
             needs = f"1 or {CAPTURE_VERSION}"
@@ -4008,7 +4381,7 @@ def _audit_job(
             body = client.get_object(Bucket=bucket, Key=npz_key)["Body"].read()
             loaded = np.load(io.BytesIO(body))
             if rank_mode == "summary":
-                failure = _audit_summary_arrays(loaded, job, n_layers, heads_local)
+                failure = _audit_summary_arrays(loaded, job, n_layers, heads_local, rank_version)
                 shape = (n_layers, expected_p)
                 mass_name = "sum_mass"
             else:
@@ -4085,7 +4458,8 @@ def audit_captures(
     """Audit captured objects by content; file counts prove nothing.
 
     Two kinds of capture are audited: ``mass`` (per-row arrays, capture version 1 or 2)
-    and ``summary`` (sums over the rows, version 3). The `mode` argument fixes the kind
+    and ``summary`` (sums over the rows, version 3, or 4 with the class split of the
+    prompt entropy). The `mode` argument fixes the kind
     the caller expects; with ``None`` each rank is audited by the mode its own meta
     declares. The two kinds are never mixed up: whatever the arguments say, the meta's
     mode and version must agree (see below). Everything below describes the mass audit
@@ -4097,7 +4471,7 @@ def audit_captures(
     the job's; ``rank`` equals the rank read; ``model`` equals `model`;
     ``n_tokens`` and ``query_start`` equal the job's; the meta ``mode`` equals the
     `mode` argument (when ``None``: is ``"mass"`` or ``"summary"``, and all ranks of a
-    job agree); the meta's mode and capture version agree (summary needs version 3,
+    job agree); the meta's mode and capture version agree (summary needs version 3 or 4,
     mass needs 1 or 2; the failure says ``capture_version``); the meta's
     capture version (``capture_version``, 1 when the field is absent) equals the
     `capture_version` argument, when that is not ``None``; ``len(layers) == L``; ``num_heads_local == H_local``; ``rows_shape ==
@@ -4177,7 +4551,7 @@ def audit_captures(
     unstored ``Hr`` leaves ``r ln(i + 1)`` nats of room. A version-1 capture is audited
     exactly as before.
 
-    The summary content audit (mode ``summary``, version 3) is the mass audit applied
+    The summary content audit (mode ``summary``, version 3 or 4) is the mass audit applied
     to sums over the ``P`` response rows. Every failure names the offending npz array
     and, where it applies, the first ``(layer, head)``. In this order: ``classes``
     equal the job's; every name in ``attention.SUMMARY_ARRAYS``, ``sliding_window`` and
@@ -4201,6 +4575,20 @@ def audit_captures(
     ``tol = n * (0.05 + 2e-3) + 2e-3 * max(sum_entropy, 0)``, the mass audit's per-row
     tolerance summed over the ``n`` defined rows. As for mass, no two ranks of a job may
     hold byte-identical ``sum_mass`` (all-zero arrays are not compared).
+
+    A version-4 summary rank is checked further, at the matching points of that order:
+    ``sum_prompt_entropy_by_class`` is present (a missing array fails, naming the version), has
+    shape ``[L, H_local, 3]``, is finite, is non-negative (no floor below 0: each per-row term
+    is a sum of non-negative values), is exactly 0 where ``n_prompt_entropy == 0``, and adds up
+    over its class axis to ``sum_prompt_entropy`` within ``1e-3 * |sum_prompt_entropy| + 1e-6 *
+    n_prompt_entropy`` (``_BY_CLASS_IDENTITY_RTOL``; the failure names the cell and both sums).
+    It must also hold the sums over the answer rows (rows whose token is class 4;
+    ``attention.SUMMARY_ANSWER_ARRAYS`` and the 0-d ``rows_answer``, zeros allowed), with the
+    shapes ``[L, H_local]`` (``[L, H_local, 3]`` / ``[L, H_local, 4]`` for the by-class and mass
+    forms), finite, and checked by ``_audit_answer_sums``: exact ``rows_answer`` and
+    ``n_prompt_entropy_answer``, floors, zeros where nothing is summed, each answer sum at most
+    its all-rows counterpart, and the class-split identity over the answer rows. A version-3
+    rank is audited exactly as before.
 
     The ceiling follows from how the box computes entropy: over the row's
     attended tokens plus the sink column. Row ``i`` sits at absolute position
@@ -4241,7 +4629,9 @@ def audit_captures(
     capture_version : Optional[int], optional
         Capture format every rank's meta must declare (``None``, the default,
         accepts any version and audits each rank by its own). ``replay_model``
-        passes ``CAPTURE_VERSION`` (mass) or ``SUMMARY_CAPTURE_VERSION`` (summary).
+        passes ``CAPTURE_VERSION`` (mass) or ``SUMMARY_CAPTURE_VERSION`` (summary, 4);
+        ``audit_existing`` passes each stored job's own version, so stored version-3
+        summary captures stay auditable.
     workers : int, optional
         Jobs audited at once (default 1: one after the other, on `client`). With
         ``workers > 1`` the jobs run in a thread pool of that size, and the result is
@@ -4565,6 +4955,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     gpu_memory_utilization: Optional[float] = None,
     engine_log_dir: Optional[Path] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> ReplayReport:
     """Capture one model's stored transcripts (induction marks or deduction cells) on one spot box. BILLED.
 
@@ -4694,8 +5085,11 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
         Folder for the engine log file written when the serving engine dies; default
         ``STATE_DIR``. Created if absent.
     label_added_lines : bool, optional
-        Deduction only: label the added lines of the padded arms class 1 (see
-        ``plan_replay``). Every manifest written then carries ``"label_added_lines": true``.
+        Label the added lines class 1 (see ``plan_replay``; both studies). Every manifest
+        written then carries ``"label_added_lines": true``.
+    label_answer_tokens : bool, optional
+        Label the answer tokens class 4 (see ``plan_replay``; both studies). Every manifest
+        written then carries ``"label_answer_tokens": true``.
         The keys do not depend on the flag and stored jobs are skipped, so point `s3_uri` at a
         prefix that holds no unlabelled capture.
 
@@ -4805,7 +5199,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
     )
     source = _make_source(
         study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
-        rungs_dir, arms, reps, label_added_lines,
+        rungs_dir, arms, reps, label_added_lines, label_answer_tokens,
     )
 
     # Phase 1: offline plan and the launch summary, shown before the gate.
@@ -5098,6 +5492,7 @@ def replay_model(  # pylint: disable=too-many-arguments,too-many-locals,too-many
                 make_s3(), bucket, prefix, model_key, spec, planned, report, result, tp,
                 mode=run_mode, serve=report.serve_settings,
                 label_added_lines=source.label_added_lines,
+                label_answer_tokens=source.label_answer_tokens,
             )
         except Exception as manifest_exc:  # noqa: BLE001 -- recorded, not hidden
             report.manifest_error = f"{type(manifest_exc).__name__}: {manifest_exc}"
@@ -5254,6 +5649,7 @@ def _manifest_payload(
     mode: str = "mass",
     serve: Optional[Mapping[str, Any]] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> Dict[str, Any]:
     """Return the manifest content of one run; shared by ``_write_manifests`` and ``audit_existing``.
 
@@ -5265,8 +5661,9 @@ def _manifest_payload(
     or ``"mixed"`` from ``audit_existing`` when one run directory holds both). For a
     ``HornRun`` the ``"run"`` field is ``{"study": "horn", "rung", "arm", "source_file":
     <rows file name>}``; every other key is the same for both studies. `label_added_lines` adds
-    ``"label_added_lines": True`` (the jobs' added lines are class 1); it is absent otherwise,
-    so a manifest of the default classes is unchanged.
+    ``"label_added_lines": True`` (the jobs' added lines are class 1) and `label_answer_tokens`
+    adds ``"label_answer_tokens": True`` (the jobs' answer tokens are class 4); each is absent
+    otherwise, so a manifest of the default classes is unchanged.
     """
     run_field: Dict[str, Any] = (
         {"study": "horn", "rung": run.rung, "arm": run.arm, "source_file": run.rows_path.name}
@@ -5292,6 +5689,8 @@ def _manifest_payload(
         payload["post_hoc_audit"] = True
     if label_added_lines:
         payload["label_added_lines"] = True
+    if label_answer_tokens:
+        payload["label_answer_tokens"] = True
     if serve is not None:
         payload["serve"] = dict(serve)
     return payload
@@ -5310,12 +5709,14 @@ def _write_manifests(
     mode: str = "mass",
     serve: Optional[Mapping[str, Any]] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> List[str]:
     """Write one manifest per run that had at least one job sent in this invocation.
 
     `mode` is the run's capture mode, recorded in every manifest. `serve` is the run's
     effective ``serve_settings``, recorded as ``"serve"``. `label_added_lines` is recorded as
-    ``"label_added_lines": true`` when set (see ``_manifest_payload``). A job that an earlier manifest
+    ``"label_added_lines": true`` when set, `label_answer_tokens` as ``"label_answer_tokens": true``
+    (see ``_manifest_payload``). A job that an earlier manifest
     recorded as failed and that this run verified is plainly ``"verified"`` here: the reader
     takes the union of the verified entries of all manifests of a folder.
 
@@ -5348,7 +5749,7 @@ def _write_manifests(
         payload = _manifest_payload(
             model, spec, run, entries, tp=tp, instance_type=report.instance_type,
             served_model_name=report.served_model_name, mode=mode, serve=serve,
-            label_added_lines=label_added_lines,
+            label_added_lines=label_added_lines, label_answer_tokens=label_answer_tokens,
         )
         key = write_manifest(client, bucket, run_prefix(prefix, run), payload)
         keys.append(key)
@@ -5447,6 +5848,7 @@ def audit_existing(
     capture_max_model_len: Optional[int] = None,
     job_ids: Optional[Sequence[str]] = None,
     label_added_lines: bool = False,
+    label_answer_tokens: bool = False,
 ) -> ReplayReport:
     """Audit the captures of one model that are already in the bucket, and manifest them.
 
@@ -5509,8 +5911,9 @@ def audit_existing(
         its objects exist, as without the list. There is no fill handling here: this function
         never sends anything.
     label_added_lines : bool, optional
-        Deduction only: plan the jobs with the added lines labelled class 1 (see
-        ``plan_replay``), as the run that captured them did; the audit compares the stored
+        Plan the jobs with the added lines labelled class 1 (see ``plan_replay``; both
+        studies), as the run that captured them did (`label_answer_tokens` likewise for the
+        answer tokens, recorded as ``"label_answer_tokens": true``); the audit compares the stored
         classes with the planned ones. Every manifest written then carries
         ``"label_added_lines": true``.
 
@@ -5565,7 +5968,7 @@ def audit_existing(
     _check_study(study)
     source = _make_source(
         study, Path(results_root), _horn_rows_file(model_key, horn_rows) if study == "horn" else horn_rows,
-        rungs_dir, arms, reps, label_added_lines,
+        rungs_dir, arms, reps, label_added_lines, label_answer_tokens,
     )
     plan, planned = _plan_one(
         model_key, source, prefix, tokenizer_for, template_for, config_for, seeds, None,
@@ -5701,6 +6104,7 @@ def audit_existing(
             instance_type=None, served_model_name=None, post_hoc_audit=True,
             mode=modes.pop() if len(modes) == 1 else "mixed",
             label_added_lines=source.label_added_lines,
+            label_answer_tokens=source.label_answer_tokens,
         )
         try:
             report.manifests.append(write_manifest(make_s3(), bucket, run_keys_prefix, payload))
@@ -5997,6 +6401,18 @@ class _ArmStats:
         # the global layers, and the pad ratio pooled over the job's own defined rows.
         self.mass_per_job: Dict[str, List[np.ndarray]] = {"all": [], "global": []}
         self.ratio_per_job: Dict[str, List[float]] = {"all": [], "global": []}
+        # Per job, same order: the [3] mean contribution of prompt classes 0, 1, 2 to the prompt
+        # entropy over all layers and over the global layers (NaN for a job without the split).
+        self.by_class_per_job: Dict[str, List[np.ndarray]] = {"all": [], "global": []}
+        #: Jobs that carry ``sum_prompt_entropy_by_class`` (summary captures of version 4).
+        self.n_by_class = 0
+        # Per job, same order: the prompt entropy over the ANSWER rows (class-4 tokens), all
+        # layers and global layers, and its [3] class split (NaN where not available).
+        self.answer_per_job: Dict[str, List[float]] = {"all": [], "global": []}
+        self.answer_by_class_per_job: Dict[str, List[np.ndarray]] = {"all": [], "global": []}
+        #: Jobs with answer rows the reduction could read (summary: version 4 with
+        #: ``rows_answer > 0``; mass: class 4 in ``classes`` and a ``prompt_entropy`` array).
+        self.n_answer = 0
 
     def add(self, job: Mapping[str, Any], label: str, expected_heads: int, tp: int) -> None:
         """Fold one loaded job into the arm.
@@ -6072,6 +6488,42 @@ class _ArmStats:
             rows_sum = job_sums if select is None else job_sums[select]
             rows_n = int((job_counts if select is None else job_counts[select]).sum())
             self.ratio_per_job[name].append(float(rows_sum.sum() / rows_n) if rows_n else float("nan"))
+        # Prompt entropy by class, pooled like the job's prompt-entropy mean (_pool_layers over the
+        # layers with a defined value): the class sums over the chosen layers and heads divided by
+        # the same defined-row count, so the three add up to that job's prompt_entropy value.
+        by_class = job.get(attention.SUMMARY_BY_CLASS_ARRAY) if is_summary else None
+        if by_class is not None:
+            self.n_by_class += 1
+            class_totals = np.asarray(by_class, dtype=np.float64).sum(axis=1)  # [L, 3]
+            pe_counts = np.asarray(by_layer["prompt_entropy_count"], dtype=np.int64)  # [L]
+        for name, select in (("all", None), ("global", is_global)):
+            triple = np.full(attention.N_PROMPT_CLASSES, np.nan)
+            if by_class is not None and not (name == "global" and select is None):
+                keep = pe_counts > 0
+                if select is not None:
+                    keep = keep & select
+                if keep.any():
+                    triple = class_totals[keep].sum(axis=0) / pe_counts[keep].sum()
+            self.by_class_per_job[name].append(triple)
+        # Answer rows: the same pooling as the prompt-entropy mean, over the answer rows only.
+        has_answer = "prompt_entropy_answer" in by_layer
+        if has_answer:
+            self.n_answer += 1
+            a_mean, a_count = by_layer["prompt_entropy_answer"], by_layer["prompt_entropy_answer_count"]
+        a_split = by_layer.get("prompt_entropy_by_class_answer")
+        for name, select in (("all", None), ("global", is_global)):
+            value = float("nan")
+            triple = np.full(attention.N_PROMPT_CLASSES, np.nan)
+            if has_answer and not (name == "global" and select is None):
+                value = _pool_layers(a_mean, a_count, select)
+                keep = a_count > 0
+                if select is not None:
+                    keep = keep & select
+                if a_split is not None and keep.any():
+                    # a_split is the per-layer class mean over a_count rows: weight it back.
+                    triple = (a_split[keep] * a_count[keep][:, None]).sum(axis=0) / a_count[keep].sum()
+            self.answer_per_job[name].append(value)
+            self.answer_by_class_per_job[name].append(triple)
         if is_summary:
             self.n_summary += 1
         elif job.get("prompt_entropy") is None:
@@ -6135,6 +6587,47 @@ class _ArmStats:
             out[key] = mean
         out["ratio_per_job"] = list(self.ratio_per_job["all"])
         out["ratio_global_per_job"] = list(self.ratio_per_job["global"])
+        # The class split of the prompt entropy, only for an arm with at least one job that
+        # carries it (capture version 4); an arm of earlier captures keeps its key set. Per job
+        # first, then over the jobs that have a defined triple, per class.
+        if self.n_by_class:
+            out["prompt_entropy_by_class_jobs"] = self.n_by_class
+            for name, per_job_key, mean_key in (
+                ("all", "prompt_entropy_by_class_per_job", "prompt_entropy_by_class_mean"),
+                ("global", "prompt_entropy_by_class_global_per_job", "prompt_entropy_by_class_global_mean"),
+            ):
+                stacked = np.vstack(self.by_class_per_job[name])  # [jobs, 3]
+                out[per_job_key] = [[float(v) for v in row] for row in stacked]
+                defined = ~np.isnan(stacked)
+                mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
+                np.divide(
+                    np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
+                    out=mean, where=defined.any(axis=0),
+                )
+                out[mean_key] = mean
+        # The prompt entropy over the answer rows (class-4 tokens), only for an arm with at least
+        # one job that labels them; mass and summary jobs mix (the class split is summary only).
+        if self.n_answer:
+            mean, n_defined, _sd = _mean_sd_over_jobs(self.answer_per_job["all"])
+            out["prompt_entropy_answer_per_job"] = [float(v) for v in self.answer_per_job["all"]]
+            out["prompt_entropy_answer_global_per_job"] = [float(v) for v in self.answer_per_job["global"]]
+            out["prompt_entropy_answer_mean"] = mean
+            out["prompt_entropy_answer_global_mean"] = _mean_sd_over_jobs(self.answer_per_job["global"])[0]
+            out["prompt_entropy_answer_jobs"] = n_defined
+            for name, per_job_key, mean_key in (
+                ("all", "prompt_entropy_by_class_answer_per_job", "prompt_entropy_by_class_answer_mean"),
+                ("global", "prompt_entropy_by_class_answer_global_per_job",
+                 "prompt_entropy_by_class_answer_global_mean"),
+            ):
+                stacked = np.vstack(self.answer_by_class_per_job[name])  # [jobs, 3]
+                out[per_job_key] = [[float(v) for v in row] for row in stacked]
+                defined = ~np.isnan(stacked)
+                class_mean = np.full(stacked.shape[1], np.nan, dtype=np.float64)
+                np.divide(
+                    np.where(defined, stacked, 0.0).sum(axis=0), defined.sum(axis=0),
+                    out=class_mean, where=defined.any(axis=0),
+                )
+                out[mean_key] = class_mean
         return out
 
 
@@ -6501,6 +6994,42 @@ def read_captures(
             head, layer) values (summary: ``sum_pad_ratio`` over ``n_pad_ratio``), over
             all layers and over the global layers (same rule as ``mass_global_mean``);
             NaN where the job has no defined value (no class-1 token).
+
+        The prompt entropy split by prompt key class (0 informative, 1 pad or added lines,
+        2 template), only for an arm with at least one job that carries it (a summary
+        capture of version 4); an arm of earlier captures has none of these keys. Mass jobs
+        and version-3 summary jobs of a mixed arm count as jobs without it:
+
+        ``prompt_entropy_by_class_per_job``, ``prompt_entropy_by_class_global_per_job``
+            List (in ``job_labels`` order) of ``[3]`` lists of floats. Per job, the mean
+            contribution of each class, pooled exactly like that job's
+            ``prompt_entropy_per_job`` / ``prompt_entropy_global_per_job`` value (the class
+            sums over the chosen layers and heads divided by the same defined-row count), so
+            the three add up to it (up to the capture's float32 summation order). NaN triples
+            for a job without the split or with no defined value (and for the global form, a
+            job without a ``sliding_window`` array).
+        ``prompt_entropy_by_class_mean``, ``prompt_entropy_by_class_global_mean``
+            ``[3]`` float64. Per class, the mean over the jobs with a defined triple.
+        ``prompt_entropy_by_class_jobs``
+            Int. Jobs of the arm that carry the split.
+
+        The prompt entropy over the ANSWER rows only (rows whose own token is class 4, the
+        response after the reasoning), only for an arm with at least one job that labels them
+        (a version-4 summary job with ``rows_answer > 0``, or a mass job whose ``classes``
+        holds class 4); jobs without answer rows give NaN:
+
+        ``prompt_entropy_answer_per_job``, ``prompt_entropy_answer_global_per_job``
+            List of floats (``job_labels`` order). Per job, the mean over its answer rows,
+            heads and layers (all layers / global layers), pooled like ``prompt_entropy``
+            (summary: ``sum_prompt_entropy_answer`` over ``n_prompt_entropy_answer``; mass: the
+            per-row ``prompt_entropy`` of the class-4 rows).
+        ``prompt_entropy_answer_mean``, ``prompt_entropy_answer_global_mean``
+            Float. Mean over the jobs with a defined value.
+        ``prompt_entropy_answer_jobs``
+            Int. Jobs with a defined all-layer answer value.
+        ``prompt_entropy_by_class_answer_per_job``, ``prompt_entropy_by_class_answer_global_per_job``, ``prompt_entropy_by_class_answer_mean``, ``prompt_entropy_by_class_answer_global_mean``
+            The class split over the answer rows, per job (``[3]`` lists) and as ``[3]``
+            means, as for ``prompt_entropy_by_class_*``; NaN for mass jobs (no split there).
 
     Raises
     ------

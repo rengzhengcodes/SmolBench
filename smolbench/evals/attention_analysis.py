@@ -79,7 +79,7 @@ The documented pipeline is load-then-ratio::
 from __future__ import annotations
 
 import io
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -119,6 +119,23 @@ _SUMMARY_HEAD_ARRAYS: Tuple[str, ...] = (
     "sum_chain_lo",
 )
 _SUMMARY_HEAD_AXIS: int = 1
+#: The per-(layer, head) array a version-4 summary capture adds (``[L, H_local, 3]``,
+#: the prompt entropy's contribution from each prompt key class 0, 1, 2). Optional:
+#: a version-3 capture lacks it, and the reader carries it only when every rank has it.
+_SUMMARY_BY_CLASS_ARRAY: str = "sum_prompt_entropy_by_class"
+#: Every per-(layer, head) array a version-4 summary capture adds (head axis 1): the class
+#: split and the sums over the answer rows (class-4 tokens). They come as one group, with
+#: the 0-d ``rows_answer``; a version-3 capture has none of them.
+_SUMMARY_V4_HEAD_ARRAYS: Tuple[str, ...] = (
+    _SUMMARY_BY_CLASS_ARRAY,
+    "sum_prompt_entropy_answer",
+    "n_prompt_entropy_answer",
+    "sum_prompt_entropy_by_class_answer",
+    "sum_entropy_answer",
+    "sum_mass_answer",
+)
+#: Label of an answer token (a response token after the reasoning) in ``classes``.
+ANSWER_CLASS: int = 4
 
 
 def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]:
@@ -134,8 +151,9 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
     ValueError
         When ``tp < 1``; when ranks differ in kind (message names both kinds),
         ``rows`` (summary), ``classes``, ``query_start``, ``layers``,
-        ``prompt_entropy`` presence or ``sliding_window``; the message names
-        the field and the rank.
+        ``prompt_entropy`` presence, presence of the version-4 arrays or
+        ``rows_answer`` (summary) or ``sliding_window``; the message names the field
+        and the rank.
     """
     # Guard first: ``range(0)`` would read nothing and leave rank 0 -- the
     # reference every agreement check is made against -- undefined.
@@ -153,6 +171,8 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
     sink_parts: List[np.ndarray] = []
     prompt_entropy_parts: List[np.ndarray] = []
     summary_parts: Dict[str, List[np.ndarray]] = {n: [] for n in _SUMMARY_HEAD_ARRAYS}
+    v4_parts: Dict[str, List[np.ndarray]] = {n: [] for n in _SUMMARY_V4_HEAD_ARRAYS}
+    rows_answer: Optional[int] = None
     sliding_window: np.ndarray | None = None
     classes: np.ndarray | None = None
     layers: np.ndarray | None = None
@@ -180,11 +200,25 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
         # never do, so the one array decides the layout.
         rank_kind = "summary" if "sum_entropy" in arrays else "mass"
         rank_rows = int(arrays["rows"]) if rank_kind == "summary" else 0
+        # The version-4 group, read only when the rank holds every array of it (a partial
+        # group is refused below, as a rank of another capture would be).
+        rank_v4 = (
+            rank_kind == "summary"
+            and all(n in arrays for n in _SUMMARY_V4_HEAD_ARRAYS) and "rows_answer" in arrays
+        )
+        if rank_kind == "summary" and not rank_v4 and any(
+            n in arrays for n in (*_SUMMARY_V4_HEAD_ARRAYS, "rows_answer")
+        ):
+            raise ValueError(
+                f"rank {rank} of job {job_id!r} holds only part of the version-4 summary arrays"
+            )
+        rank_rows_answer = int(arrays["rows_answer"]) if rank_v4 else None
 
         if rank == 0:
             classes, layers, query_start = rank_classes, rank_layers, rank_query_start
             sliding_window = rank_sliding_window
             kind, rows = rank_kind, rank_rows
+            rows_answer = rank_rows_answer
         else:
             # Kind first: a mass rank beside a summary rank has none of the
             # other's arrays, so every later check would be meaningless.
@@ -227,6 +261,14 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
                     "presence: the ranks come from different captures, refusing "
                     "to concatenate their heads"
                 )
+            # A version-3 summary rank beside a version-4 one is a different capture, as
+            # for prompt_entropy above: joining them would drop or misalign the split.
+            if kind == "summary" and rank_rows_answer != rows_answer:
+                raise ValueError(
+                    f"rank {rank} of job {job_id!r} disagrees about {_SUMMARY_BY_CLASS_ARRAY} "
+                    f"and rows_answer ({rank_rows_answer} != {rows_answer}; None = absent): the "
+                    "ranks come from different captures, refusing to concatenate their heads"
+                )
             if (rank_sliding_window is None) != (sliding_window is None) or (
                 sliding_window is not None
                 and not np.array_equal(rank_sliding_window, sliding_window)
@@ -240,6 +282,9 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
         if kind == "summary":
             for name in _SUMMARY_HEAD_ARRAYS:
                 summary_parts[name].append(arrays[name])
+            if rank_v4:
+                for name in _SUMMARY_V4_HEAD_ARRAYS:
+                    v4_parts[name].append(arrays[name])
             continue
         mass_parts.append(arrays["mass"])
         entropy_parts.append(arrays["entropy"])
@@ -248,7 +293,7 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
             prompt_entropy_parts.append(rank_prompt_entropy)
 
     if kind == "summary":
-        return {
+        joined: Dict[str, Any] = {
             "kind": "summary",
             "rows": rows,
             **{
@@ -260,6 +305,12 @@ def _load_ranks(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any]
             "layers": layers,
             "sliding_window": sliding_window,
         }
+        # Only when the capture has them (version 4): a version-3 job keeps its earlier key set.
+        if rows_answer is not None:
+            for name, parts in v4_parts.items():
+                joined[name] = np.concatenate(parts, axis=_SUMMARY_HEAD_AXIS)
+            joined["rows_answer"] = rows_answer
+        return joined
     # Rank order is list order, so a plain concatenate reproduces the model's
     # own head numbering. Dtypes are preserved (no ``astype``) by design.
     return {
@@ -412,6 +463,16 @@ def load_capture(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any
             ``[L, H_total]``, ranks joined on axis 1, dtype as stored.
         ``sum_mass``
             ``[L, H_total, 4]``, ranks joined on axis 1, dtype as stored.
+        ``sum_prompt_entropy_by_class``
+            ``[L, H_total, 3]``, ranks joined on axis 1, dtype as stored: per layer and
+            head, the sum over the rows where the prompt entropy is defined of each prompt
+            key class's contribution to it (classes 0, 1, 2; the three add up to
+            ``sum_prompt_entropy``). Present only for a version-4 capture.
+        ``sum_prompt_entropy_answer``, ``n_prompt_entropy_answer``, ``sum_entropy_answer``, ``sum_prompt_entropy_by_class_answer``, ``sum_mass_answer``, ``rows_answer``
+            Version 4 only: the same sums over the answer rows (rows whose token is
+            class 4), ranks joined on axis 1 (``[L, H_total]``, the by-class and mass
+            forms with their class axis), and ``rows_answer`` (``int``, the number of
+            answer rows; 0 when the job labels none).
         ``classes``, ``query_start``, ``layers``
             As in the mass dict (rank 0's, ranks agree).
         ``sliding_window``
@@ -422,8 +483,8 @@ def load_capture(store: Any, prefix: str, job_id: str, tp: int) -> Dict[str, Any
     ValueError
         When ``tp < 1``, when the ranks are of different kinds (the message
         names both), or when they disagree on ``classes``, ``query_start``,
-        ``layers``, ``sliding_window`` or (summary) ``rows``; the message names
-        the field and the rank.
+        ``layers``, ``sliding_window``, (summary) ``rows`` or the presence of
+        ``sum_prompt_entropy_by_class``; the message names the field and the rank.
     Exception
         Whatever the store raises for a missing object, unchanged.
 
@@ -473,6 +534,23 @@ def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
             ``[L]`` float64, the same mean of the whole-row entropy.
         ``entropy_count``
             ``[L]`` int64, defined values per layer.
+        ``prompt_entropy_by_class``
+            Only for a summary job that holds ``sum_prompt_entropy_by_class`` (capture
+            version 4): ``[L, 3]`` float64, per layer the mean over the defined (row,
+            head) values of each prompt key class's contribution to the prompt entropy
+            (``sum_prompt_entropy_by_class[l].sum(0) / prompt_entropy_count[l]``; NaN
+            where the count is 0). The three add up to ``prompt_entropy``, with the
+            same count, up to the capture's float32 summation order.
+        ``prompt_entropy_answer``, ``prompt_entropy_answer_count``
+            Only for a job that labels answer rows (class 4 in ``classes``; a summary
+            job also needs the version-4 arrays): ``[L]`` float64 mean and ``[L]`` int64
+            count of the prompt entropy over the answer rows only (rows whose own token
+            is class 4), heads pooled; NaN where the count is 0. Mass: from the per-row
+            ``prompt_entropy`` (NaN rows skipped); summary: ``sum_prompt_entropy_answer``
+            over ``n_prompt_entropy_answer``.
+        ``prompt_entropy_by_class_answer``
+            Summary jobs with those arrays only: ``[L, 3]``, the class split over the
+            answer rows, divided by ``prompt_entropy_answer_count``.
 
     Raises
     ------
@@ -525,12 +603,23 @@ def entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
     else:
         pe_mean, pe_count = _mean_and_count(prompt_entropy)
     e_mean, e_count = _mean_and_count(entropy)
-    return {
+    out = {
         "prompt_entropy": pe_mean,
         "prompt_entropy_count": pe_count,
         "entropy": e_mean,
         "entropy_count": e_count,
     }
+    # Answer rows (class 4): only for a job that labels them, so other jobs keep their key set.
+    classes = job.get("classes")
+    query_start = job.get("query_start")
+    if prompt_entropy is not None and classes is not None and query_start is not None:
+        row_classes = np.asarray(classes)[int(query_start):int(query_start) + entropy.shape[1]]
+        answer_rows = row_classes == ANSWER_CLASS
+        if answer_rows.any():
+            out["prompt_entropy_answer"], out["prompt_entropy_answer_count"] = _mean_and_count(
+                prompt_entropy[:, answer_rows, :]
+            )
+    return out
 
 
 def _summary_entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
@@ -549,12 +638,32 @@ def _summary_entropy_by_layer(job: Mapping[str, Any]) -> Dict[str, np.ndarray]:
     # where= keeps count 0 out of the divide: NaN, no RuntimeWarning.
     pe_mean = np.full(n_layers, np.nan, dtype=np.float64)
     np.divide(pe_total, pe_count, out=pe_mean, where=pe_count > 0)
-    return {
+    out = {
         "prompt_entropy": pe_mean,
         "prompt_entropy_count": pe_count,
         "entropy": e_mean,
         "entropy_count": e_count,
     }
+    by_class = job.get(_SUMMARY_BY_CLASS_ARRAY)
+    if by_class is not None:
+        # Same denominator as the prompt-entropy mean, so the three class means add up to it.
+        totals = np.asarray(by_class, dtype=np.float64).sum(axis=1)  # [L, 3]
+        class_mean = np.full(totals.shape, np.nan, dtype=np.float64)
+        np.divide(totals, pe_count[:, None], out=class_mean, where=pe_count[:, None] > 0)
+        out["prompt_entropy_by_class"] = class_mean
+    if job.get("rows_answer"):
+        # Version 4 with at least one answer row: the same means over the answer rows only.
+        a_count = np.asarray(job["n_prompt_entropy_answer"]).sum(axis=1).astype(np.int64)
+        a_total = np.asarray(job["sum_prompt_entropy_answer"], dtype=np.float64).sum(axis=1)
+        a_mean = np.full(n_layers, np.nan, dtype=np.float64)
+        np.divide(a_total, a_count, out=a_mean, where=a_count > 0)
+        out["prompt_entropy_answer"] = a_mean
+        out["prompt_entropy_answer_count"] = a_count
+        a_totals = np.asarray(job["sum_prompt_entropy_by_class_answer"], dtype=np.float64).sum(axis=1)
+        a_class = np.full(a_totals.shape, np.nan, dtype=np.float64)
+        np.divide(a_totals, a_count[:, None], out=a_class, where=a_count[:, None] > 0)
+        out["prompt_entropy_by_class_answer"] = a_class
+    return out
 
 
 def pad_ratio_sums(job: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndarray]:

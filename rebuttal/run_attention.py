@@ -34,11 +34,15 @@ with ``--study induction``. ``--mode {mass,summary}`` picks the capture mode (de
 driver's choice, mass for induction and summary for horn) and ``--capture-max-model-len N``
 overrides the capture context length, in both studies. All of them work with ``--audit-only``
 (``--mode`` is not needed there: the stored objects say which mode they hold).
-``--label-added-lines`` (horn only, exit 2 with ``--study induction``) labels the added lines
-of every padded arm as class 1, so the pad ratio is defined for deduction; the plan says so
-and counts the class-1 tokens per arm, and every manifest records it. Without it no deduction
-token is class 1, as in the captures stored so far. Stored jobs are skipped whatever their
-classes, so give a labelled run its own ``--s3-uri``.
+``--label-added-lines`` (both studies) labels the added lines as class 1: for horn the added
+lines of every padded arm, so the pad ratio is defined for deduction; for induction the
+``extens`` listing (the other induction arms keep their classes). The plan says so and counts
+the class-1 tokens per arm, and every manifest records it. Without it no deduction token is
+class 1 and ``extens`` is labelled by rule, as in the captures stored so far. Stored jobs are
+skipped whatever their classes, so give a labelled run its own ``--s3-uri``.
+``--label-answer-tokens`` (both studies) labels the answer tokens (the completion tokens of the
+stored response, after the reasoning block) as class 4, so a summary capture also sums the
+answer rows apart; the plan counts the class-4 tokens per arm and every manifest records it.
 
 Recapture. ``--job-ids ID [ID ...]`` narrows the plan, the run or the audit to the jobs with
 those ids (the driver rejects an id that no planned job has). An argument that starts with
@@ -255,7 +259,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rungs-dir", type=Path, default=None,
                         help="horn only: folder of the stored rung prompts (default: bedrock_trio.RUNGS_DIR)")
     parser.add_argument("--label-added-lines", action="store_true",
-                        help="horn only: label the added lines of the padded arms as class 1, the pad class; "
+                        help="label the added lines as class 1, the pad class (horn: the padded arms' added "
+                             "lines; induction: the extens listing); use a new --s3-uri, stored jobs are skipped")
+    parser.add_argument("--label-answer-tokens", action="store_true",
+                        help="label the answer tokens (the stored response after the reasoning) as class 4; "
                              "use a new --s3-uri, stored jobs are skipped")
     parser.add_argument("--job-ids", nargs="+", default=None, metavar="ID",
                         help="only these job ids; an argument starting with @ is a file with one id per "
@@ -424,8 +431,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # These flags only mean something for the horn study; a silent ignore would let a
         # typo launch the wrong (billed) replay, so name the flag and exit 2.
         for flag, value in (("--arms", args.arms), ("--reps", args.reps),
-                            ("--rows", args.rows), ("--rungs-dir", args.rungs_dir),
-                            ("--label-added-lines", args.label_added_lines or None)):
+                            ("--rows", args.rows), ("--rungs-dir", args.rungs_dir)):
             if value is not None:
                 parser.error(f"{flag} is only valid with --study horn")
     job_ids = expand_job_ids(parser, args.job_ids)
@@ -455,9 +461,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "arms": args.arms,
             "reps": args.reps,
         }
-        if args.label_added_lines:
-            # Only when given, so that a default horn call keeps its earlier keywords.
-            study_kwargs["label_added_lines"] = True
+    if args.label_added_lines:
+        # Only when given (either study), so that a default call keeps its earlier keywords.
+        study_kwargs["label_added_lines"] = True
+    if args.label_answer_tokens:
+        study_kwargs["label_answer_tokens"] = True
     try:
         if args.audit_only:
             # Design: checked before --approved so that the two flags together can never
